@@ -1,0 +1,487 @@
+
+export type TurnId = string
+export type Role = 'user' | 'assistant' | 'system'
+export type TurnStatus = 'partial' | 'final'
+
+export interface TranscriptChunk {
+  id: TurnId
+  role: Role
+  text: string
+  status: TurnStatus
+  startedAt: number
+  finalizedAt?: number
+  participant_id?: string  // Agent name or participant identifier
+}
+
+// New message processing stream types
+export interface DecisionStreamData {
+  step: string
+  decision: string
+  confidence: number
+  timing_ms: number
+  metadata: {
+    verdict?: 'safe' | 'unsafe'
+    route?: string
+    intent?: string
+    risk_score?: number
+    expert_configuration?: {
+      experts?: string[]
+      reason?: string
+      risk_score?: number
+      intent?: string
+    }
+    [key: string]: any
+  }
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+
+export interface PromptExecutionData {
+  agent_name: string
+  prompt_type: 'system' | 'analysis' | 'execution' | 'synthesis'
+  prompt_preview: string
+  model: string
+  temperature: number
+  estimated_duration_ms: number
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+export interface ExpertStatusData {
+  expert_name: string
+  status: 'started' | 'progress' | 'completed' | 'timeout' | 'error'
+  progress_percent?: number
+  intermediate_finding?: string
+  metadata?: {
+    result?: {
+      agent_name?: string
+      findings?: string
+      raw_response?: string
+      success?: boolean
+    }
+    success?: boolean
+    error_message?: string
+    error_type?: string
+  }
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+export interface SafetyCheckData {
+  check_type: 'policy' | 'hallucination' | 'pii' | 'risk_assessment'
+  status: 'checking' | 'passed' | 'warning' | 'blocked'
+  details: string
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+// Processing message types that will be displayed in chat
+export type ProcessingMessageType = 
+  | 'decision' 
+  | 'prompt_execution' 
+  | 'expert_status' 
+  | 'safety_check'
+
+export interface ProcessingMessage {
+  id: TurnId
+  type: ProcessingMessageType
+  role: 'system'
+  status: TurnStatus
+  startedAt: number
+  finalizedAt?: number
+  streamId: string
+  data: DecisionStreamData | PromptExecutionData | ExpertStatusData | SafetyCheckData
+}
+
+// Participant events for room join/leave notifications
+export interface ParticipantEvent {
+  id: TurnId
+  type: 'joined' | 'left'
+  participantId: string
+  participantName?: string
+  startedAt: number
+  messageType: 'participant'
+}
+
+export interface TransportEvents {
+  onConnected: () => void
+  onDisconnected: (reason?: string) => void
+  onError: (err: Error) => void
+  onRemoteAudioTrack: (track: MediaStreamTrack) => void
+  onTranscript: (chunk: TranscriptChunk) => void
+  onProcessingMessage: (message: ProcessingMessage) => void
+  onServerMessage: (msg: unknown) => void
+  onTTSStart: () => void
+  onTTSStop: () => void
+  onTodoListUpdate: (data: CompleteTodoListMessage) => void
+  onPlanProgress: (data: PlanProgressUpdate) => void
+  onDeliverableUpdate: (data: PlanDeliverableUpdate) => void
+  onStateChange: (data: StateChangeNotification) => void
+  onParticipantJoined: (participantId: string, participantName?: string) => void
+  onParticipantLeft: (participantId: string, participantName?: string) => void
+}
+
+export interface Transport extends TransportEvents {
+  connect: (roomName?: string) => Promise<void>
+  disconnect: () => Promise<void>
+  sendUserText: (text: string) => void
+  sendControl: (kind: string, payload?: unknown) => void
+  attachMicStream: (stream: MediaStream) => void
+  publishAudioTrack: (stream: MediaStream) => Promise<boolean>
+  unpublishAudioTrack: () => Promise<void>
+  setUserName: (name: string) => void
+}
+
+export type EnvelopeType =
+  | 'user_text'
+  | 'barge_in'
+  | 'heartbeat'
+  | 'transcript'
+  | 'transcript_chunk'
+  | 'system'
+  | 'audio_data'
+  | 'audio_stream_start'
+  | 'audio_stream_chunk'
+  | 'audio_stream_stop'
+  | 'decision_stream'
+  | 'progress_stream'
+  | 'prompt_execution'
+  | 'expert_status'
+  | 'safety_check'
+  | 'tts_start'
+  | 'tts_stop'
+  | 'tts_end'
+  | 'tts_pause'
+  | 'tts_resume'
+  | 'tts_paused'
+  | 'tts_resumed'
+  | 'complete_todo_list'
+  | 'plan_progress_update'
+  | 'plan_deliverable_update'
+  | 'state_change_notification'
+  | 'task_progress_update'
+
+export interface Envelope<T> {
+  type: EnvelopeType
+  data: T
+  participant_id?: string  // Optional sender identity for data packets
+}
+
+// State Machine Architecture Types
+export enum StateType {
+  STRICT = "strict",    // Sequential task processing
+  LOOSE = "loose"       // Flexible task processing
+}
+
+export enum TaskStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  SKIPPED = "skipped"
+}
+
+export enum StateStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed"
+}
+
+export enum DeliverableStatus {
+  PENDING = "pending",
+  PARTIAL = "partial",
+  COMPLETED = "completed",
+  SKIPPED = "skipped"
+}
+
+export interface Deliverable {
+  key: string
+  type: 'string' | 'enum' | 'boolean' | 'number'
+  description: string
+  required: boolean
+  enum_values?: string[]
+  validation_pattern?: string
+  acceptance_criteria?: string
+}
+
+export interface DeliverableState {
+  deliverable: Deliverable
+  status: DeliverableStatus
+  value: any
+  collected_at: string | null
+  source_message?: string
+  confidence: number
+  reasoning?: string  // LLM explanation for why acceptance criteria was met
+}
+
+export interface Task {
+  id: string
+  description: string
+  instruction: string
+  required: boolean
+  deliverables: Deliverable[]
+  dependencies?: string[]
+  status: TaskStatus
+}
+
+export interface StateTransition {
+  target_state_id: string
+  condition_type: string
+  condition_data?: any
+  priority: number
+}
+
+export interface State {
+  id: string
+  title: string
+  type: StateType
+  description: string
+  tasks: Task[]
+  transitions: StateTransition[]
+  status?: StateStatus
+  is_current?: boolean
+  completed_at?: string
+}
+
+export interface Plan {
+  id: string
+  title: string
+  description: string
+  initial_state_id: string
+  states: State[]
+  metadata: {
+    architecture: "state_machine"
+    states_count: number
+    tasks_count: number
+    deliverables_count: number
+  }
+}
+
+// Legacy support - keep for backward compatibility but mark as deprecated
+/** @deprecated Use State instead */
+export interface PlanStep {
+  id: string
+  type: 'Question' | 'Statement'
+  title: string
+  instruction: string
+  deliverables: Deliverable[]
+  auto_advance: boolean
+}
+
+export type StepStatus = 'not_started' | 'in_progress' | 'waiting_for_info' | 'completed' | 'skipped'
+
+/** @deprecated Use State-based TodoList instead */
+export interface TodoListStep {
+  id: string
+  title: string
+  description: string
+  status: StepStatus
+  is_current: boolean
+  created_at: string
+  updated_at: string
+  completed_at?: string
+  expert_analysis_needed: boolean
+  expert_findings_count: number
+  deliverables: Array<{
+    key: string
+    description: string
+    type: string
+    required: boolean
+    status: 'pending' | 'partial' | 'completed' | 'skipped'
+    value?: any
+    collected_at?: string | null
+    confidence?: number
+    reasoning?: string
+  }>
+  tasks: any[]
+  metadata: Record<string, any>
+  step_number?: number
+}
+
+export interface TodoList {
+  initialized: boolean
+  first_state_activated_at: string
+  total_states: number
+  current_state_index: number
+  completed_states: number
+  remaining_states: number
+  progress_percentage: number
+  agentIcon?: string  // Optional emoji icon for the agent
+  current_state: {
+    id: string
+    title: string
+    type: StateType
+    description: string
+    status: StateStatus
+    state_number: number
+    is_complete: boolean
+  } | null
+  current_task: {
+    id: string
+    description: string
+    instruction: string
+    required: boolean
+    status: TaskStatus
+  } | null
+  states: Array<{
+    id: string
+    title: string
+    type: StateType
+    description: string
+    status: StateStatus
+    is_current: boolean
+    completed_at?: string
+    tasks: Array<{
+      id: string
+      description: string
+      instruction: string
+      required: boolean
+      status: TaskStatus
+      deliverables: Array<{
+        key: string
+        description: string
+        type: string
+        required: boolean
+        status: DeliverableStatus
+        value?: any
+        collected_at?: string | null
+        confidence?: number
+        reasoning?: string
+        acceptance_criteria?: string
+      }>
+    }>
+  }>
+  tasks_summary: {
+    total_tasks: number
+    completed_tasks: number
+    pending_tasks: number
+    current_tasks: number
+  }
+  conversation_age_minutes: number
+  last_updated: string
+
+  // Legacy support
+  /** @deprecated Use states instead */
+  steps?: TodoListStep[]
+  /** @deprecated Use current_state instead */
+  current_step?: {
+    id: string
+    title: string
+    description: string
+    status: StepStatus
+    step_number: number
+  } | null
+}
+
+export interface CompleteTodoListMessage {
+  conversation_id: string
+  todo_list: TodoList
+  all_deliverable_states: Record<string, {
+    state_title: string
+    deliverables: Record<string, {
+      description: string
+      type: string
+      required: boolean
+      status: DeliverableStatus
+      value: any
+      collected_at: string | null
+      confidence: number
+      acceptance_criteria?: string
+      reasoning?: string
+    }>
+  }>
+  remaining_states_count: number
+  context: {
+    plan_id: string
+    plan_title: string
+    todo_list_initialized: boolean
+    first_state_activated_at: string
+    current_processing_mode: StateType
+  }
+  metadata: {
+    created_at: string
+    state_order: string[]
+    architecture: "state_machine"
+    states_count: number
+    tasks_count: number
+    deliverables_count: number
+  }
+  update_trigger: 'turn_completion' | 'first_message' | 'state_change' | 'task_update' | 'safe_route_completed' | 'unsafe_route_completed'
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+export interface PlanProgressUpdate {
+  session_id: string
+  progress: {
+    total_states: number
+    completed_states: number
+    current_state_index: number
+    percentage: number
+  }
+  current_state: {
+    id: string
+    title: string
+    type: StateType
+    status: StateStatus
+  }
+  deliverables: Record<string, {
+    description: string
+    type: string
+    required: boolean
+    status: DeliverableStatus
+    value: any
+    collected_at: string | null
+    confidence?: number
+    source_message?: string
+    reasoning?: string
+    acceptance_criteria?: string
+  }>
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+export interface PlanDeliverableUpdate {
+  session_id: string
+  deliverable_key: string
+  deliverable_value: any
+  state_id: string
+  reasoning: string  // Now required - LLM explanation for collection
+  confidence: number // Now required - confidence score
+  acceptance_criteria: string // Now required - criteria that was met
+  source_message?: string
+  status?: DeliverableStatus
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+export interface StateChangeNotification {
+  previous_state: string
+  current_state: string
+  state_title: string
+  state_description: string
+  action_taken: string
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}
+
+// Legacy support
+/** @deprecated Use StateChangeNotification instead */
+export interface StepChangeNotification {
+  previous_step: string
+  current_step: string
+  step_title: string
+  step_description: string
+  action_taken: string
+  participant_id: string
+  timestamp: string
+  stream_id: string
+}

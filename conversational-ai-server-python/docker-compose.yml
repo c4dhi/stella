@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  python-listener:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # Persist Sherpa-ONNX models between container restarts
+      - ./sherpa-models:/root/.cache/sherpa-onnx
+      # Mount logs directory for LLM prompt logging
+      - ./logs:/app/logs

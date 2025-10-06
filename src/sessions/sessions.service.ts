@@ -1,0 +1,763 @@
+import { Injectable, NotFoundException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { LiveKitService } from '../livekit/livekit.service';
+import { AgentsService } from '../agents/agents.service';
+import { RoomMonitorService, type LogEntry } from '../message-recorder/room-monitor.service';
+import { CreateSessionDto } from './dto/create-session.dto';
+import { UpdateSessionDto } from './dto/update-session.dto';
+import { CreateTokenDto } from './dto/create-token.dto';
+import { QuerySessionsDto } from './dto/query-sessions.dto';
+import { Prisma } from '@prisma/client';
+
+@Injectable()
+export class SessionsService {
+  private readonly logger = new Logger(SessionsService.name);
+  private connectedSessions: Set<string> = new Set(); // Track Python recorder connections
+  private lastStatusUpdate: Date = new Date();
+
+  constructor(
+    private prisma: PrismaService,
+    private livekit: LiveKitService,
+    @Inject(forwardRef(() => AgentsService))
+    private agentsService: AgentsService,
+    private roomMonitor: RoomMonitorService,
+  ) {}
+
+  async create(projectId: string, createSessionDto: CreateSessionDto) {
+    // Generate unique room name
+    const roomName = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const session = await this.prisma.session.create({
+      data: {
+        projectId,
+        name: createSessionDto.name,
+        room: {
+          create: {
+            livekitRoomName: roomName,
+            serverUrl: this.livekit.getPublicServerUrl(),
+          },
+        },
+      },
+      include: {
+        room: true,
+        _count: {
+          select: {
+            agents: true,
+            participants: true,
+            messages: true,
+          },
+        },
+      },
+    });
+
+    // Message recording is now handled by the Python message recorder service
+    // which automatically discovers and monitors all active sessions
+    this.logger.log(`Session ${session.id} created - will be auto-discovered by message recorder`);
+
+    return session;
+  }
+
+  async findAll(projectId: string, query: QuerySessionsDto) {
+    const where: Prisma.SessionWhereInput = {
+      projectId,
+    };
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.search) {
+      where.room = {
+        livekitRoomName: {
+          contains: query.search,
+          mode: 'insensitive',
+        },
+      };
+    }
+
+    const [sessions, total] = await Promise.all([
+      this.prisma.session.findMany({
+        where,
+        include: {
+          room: true,
+          _count: {
+            select: {
+              agents: true,
+              participants: true,
+              messages: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip: query.skip,
+        take: query.take,
+      }),
+      this.prisma.session.count({ where }),
+    ]);
+
+    return {
+      data: sessions,
+      total,
+      skip: query.skip,
+      take: query.take,
+    };
+  }
+
+  async findOne(id: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id },
+      include: {
+        room: true,
+        agents: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+        participants: {
+          where: {
+            leftAt: null,
+          },
+          orderBy: {
+            joinedAt: 'desc',
+          },
+        },
+        _count: {
+          select: {
+            messages: true,
+            events: true,
+          },
+        },
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    // Sync agent statuses from Kubernetes (only when session is actively viewed)
+    if (session.agents && session.agents.length > 0) {
+      this.logger.debug(`Syncing status for ${session.agents.length} agents in session ${id}`);
+
+      // Sync all agents in parallel
+      await Promise.all(
+        session.agents.map(async (agent) => {
+          try {
+            const updatedStatus = await this.agentsService.syncAgentStatus(agent.id);
+            if (updatedStatus && updatedStatus !== agent.status) {
+              // Update the in-memory agent object with the synced status
+              agent.status = updatedStatus;
+            }
+          } catch (error) {
+            this.logger.warn(`Failed to sync agent ${agent.id}: ${error.message}`);
+          }
+        })
+      );
+    }
+
+    return session;
+  }
+
+  async createJoinToken(sessionId: string, createTokenDto: CreateTokenDto) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { room: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    if (!session.room) {
+      throw new Error('Session does not have an associated room');
+    }
+
+    const token = await this.livekit.createToken(
+      session.room.livekitRoomName,
+      createTokenDto.identity,
+      createTokenDto.name,
+    );
+
+    return {
+      token,
+      serverUrl: session.room.serverUrl,
+      roomName: session.room.livekitRoomName,
+    };
+  }
+
+  async getTimeline(sessionId: string, skip: number = 0, take: number = 50) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    const [messages, events] = await Promise.all([
+      this.prisma.message.findMany({
+        where: { sessionId },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        skip,
+        take,
+      }),
+      this.prisma.roomEvent.findMany({
+        where: { sessionId },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        skip,
+        take,
+      }),
+    ]);
+
+    // Merge and sort by timestamp
+    const timeline = [
+      ...messages.map((m) => ({ type: 'message', data: m })),
+      ...events.map((e) => ({ type: 'event', data: e })),
+    ].sort((a, b) => {
+      const timeA = a.data.timestamp.getTime();
+      const timeB = b.data.timestamp.getTime();
+      return timeB - timeA;
+    });
+
+    return {
+      timeline: timeline.slice(0, take),
+      total: messages.length + events.length,
+    };
+  }
+
+  async update(id: string, updateSessionDto: UpdateSessionDto) {
+    const session = await this.prisma.session.findUnique({
+      where: { id },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    return this.prisma.session.update({
+      where: { id },
+      data: updateSessionDto,
+    });
+  }
+
+  async close(id: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    this.logger.log(`Closing session ${id} - stopping all agents`);
+
+    // Stop all running agents using centralized function
+    await this.agentsService.stopAllSessionAgents(id);
+
+    // Python message recorder will automatically stop monitoring when session becomes CLOSED
+    this.logger.log(`Session ${id} agents stopped - updating session status to CLOSED`);
+
+    await this.prisma.session.update({
+      where: { id },
+      data: {
+        status: 'CLOSED',
+        closedAt: new Date(),
+      },
+    });
+
+    return { message: 'Session closed successfully' };
+  }
+
+  async delete(id: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    this.logger.log(`Deleting session ${id} - stopping all agents and removing all data`);
+
+    // Stop all running agents using centralized function
+    await this.agentsService.stopAllSessionAgents(id);
+
+    // Delete the session (Prisma cascade will delete Room, Participants, Messages, Events, AgentInstances)
+    await this.prisma.session.delete({
+      where: { id },
+    });
+
+    this.logger.log(`Session ${id} deleted - all agents stopped, all data removed`);
+    return { message: 'Session deleted successfully' };
+  }
+
+  // Participant management methods
+  async registerParticipant(sessionId: string, name: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { room: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    if (!session.room) {
+      throw new Error('Session does not have an associated room');
+    }
+
+    // Generate unique identity for this participant
+    const identity = `participant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Create participant in database
+    const participant = await this.prisma.participant.create({
+      data: {
+        sessionId,
+        name,
+        identity,
+        isManuallyRegistered: true, // Mark as manually registered
+      },
+    });
+
+    // Generate LiveKit token for this participant
+    const token = await this.livekit.createToken(
+      session.room.livekitRoomName,
+      identity,
+      name,
+    );
+
+    return {
+      id: participant.id,
+      name: participant.name,
+      identity: participant.identity,
+      connectionInfo: {
+        token,
+        serverUrl: session.room.serverUrl,
+        roomName: session.room.livekitRoomName,
+        livekitUrl: session.room.serverUrl,
+      },
+    };
+  }
+
+  async listParticipants(sessionId: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    return this.prisma.participant.findMany({
+      where: {
+        sessionId,
+        isManuallyRegistered: true, // Only show manually registered participants
+      },
+      orderBy: {
+        joinedAt: 'desc',
+      },
+    });
+  }
+
+  async getParticipantConnectionInfo(participantId: string) {
+    const participant = await this.prisma.participant.findUnique({
+      where: { id: participantId },
+      include: {
+        session: {
+          include: {
+            room: true,
+          },
+        },
+      },
+    });
+
+    if (!participant) {
+      throw new NotFoundException(`Participant with ID ${participantId} not found`);
+    }
+
+    if (!participant.session.room) {
+      throw new Error('Participant session does not have an associated room');
+    }
+
+    // Generate fresh token
+    const token = await this.livekit.createToken(
+      participant.session.room.livekitRoomName,
+      participant.identity,
+      participant.name,
+    );
+
+    return {
+      participantName: participant.name,
+      identity: participant.identity,
+      sessionId: participant.sessionId,
+      connectionInfo: {
+        token,
+        serverUrl: participant.session.room.serverUrl,
+        roomName: participant.session.room.livekitRoomName,
+        livekitUrl: participant.session.room.serverUrl,
+      },
+    };
+  }
+
+  async removeParticipant(participantId: string) {
+    const participant = await this.prisma.participant.findUnique({
+      where: { id: participantId },
+    });
+
+    if (!participant) {
+      throw new NotFoundException(`Participant with ID ${participantId} not found`);
+    }
+
+    await this.prisma.participant.delete({
+      where: { id: participantId },
+    });
+
+    return { message: 'Participant removed successfully' };
+  }
+
+  // Message retrieval methods
+  async getMessages(
+    sessionId: string,
+    options: {
+      cursor?: string;
+      limit?: number;
+      before?: string;
+    } = {},
+  ) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    const limit = options.limit || 50;
+    const where: Prisma.MessageWhereInput = {
+      sessionId,
+      ...(options.before && { timestamp: { lt: new Date(options.before) } }),
+      ...(options.cursor && { id: { lt: options.cursor } }),
+    };
+
+    // Fetch one extra to determine if there are more messages
+    const messages = await this.prisma.message.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = messages.length > limit;
+    const results = hasMore ? messages.slice(0, -1) : messages;
+
+    return {
+      messages: results.reverse(), // Return in ascending order (oldest first)
+      hasMore,
+      nextCursor: hasMore ? results[results.length - 1].id : null,
+    };
+  }
+
+  async getMessagesSince(sessionId: string, since: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId,
+        timestamp: { gt: new Date(since) },
+      },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    return { messages };
+  }
+
+  // Get listener status for a session
+  async getListenerStatus(sessionId: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${sessionId} not found`);
+    }
+
+    // Check if Python recorder is actually connected to this session
+    const isConnected = this.connectedSessions.has(sessionId);
+    const timeSinceUpdate = Date.now() - this.lastStatusUpdate.getTime();
+    const isStale = timeSinceUpdate > 30000; // Consider stale if no update in 30s
+
+    return {
+      sessionId,
+      sessionStatus: session.status,
+      listener: {
+        isMonitoring: session.status === 'ACTIVE',
+        isConnected: isConnected && !isStale,
+        roomState: isConnected && !isStale ? 'connected' : 'not_connected',
+        service: 'python-message-recorder',
+        lastUpdate: this.lastStatusUpdate.toISOString(),
+        note: isStale ? 'Status may be stale - recorder may be restarting' : undefined,
+      },
+    };
+  }
+
+  // Get monitoring logs
+  async getMonitoringLogs(sessionId?: string): Promise<{
+    logs: LogEntry[];
+    total: number;
+    sessionId: string | null;
+  }> {
+    // Return logs from the legacy Node.js monitor (if any exist)
+    // For live monitoring, check Python message-recorder pod logs
+    const logs = this.roomMonitor.getLogs(sessionId);
+    return {
+      logs,
+      total: logs.length,
+      sessionId: sessionId || null,
+    };
+  }
+
+  // Get global monitoring status
+  async getMonitoringStatus() {
+    // Get all ACTIVE sessions from database
+    const activeSessions = await this.prisma.session.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true,
+        status: true,
+        room: {
+          select: {
+            livekitRoomName: true,
+          },
+        },
+      },
+    });
+
+    // All active sessions are monitored by Python service
+    const sessionsWithStatus = activeSessions.map(session => ({
+      sessionId: session.id,
+      roomName: session.room?.livekitRoomName,
+      sessionStatus: session.status,
+      isMonitoring: true,
+      listener: {
+        service: 'python-message-recorder',
+        isConnected: true,
+        roomState: 'monitored_by_python_service',
+        note: 'Check message-recorder pod logs for details',
+      },
+    }));
+
+    return {
+      totalActiveSessions: activeSessions.length,
+      totalMonitoredSessions: activeSessions.length,
+      service: 'python-message-recorder',
+      sessions: sessionsWithStatus,
+    };
+  }
+
+  // ============================================================================
+  // Internal API Methods (for Python message recorder service)
+  // ============================================================================
+
+  /**
+   * Store a log entry from the Python message recorder.
+   * Logs are stored in the RoomMonitorService buffer for display in UI.
+   */
+  async storeMonitoringLog(logData: {
+    level: 'log' | 'debug' | 'warn' | 'error';
+    message: string;
+    sessionId?: string;
+    data?: any;
+  }) {
+    this.roomMonitor.addLog(
+      logData.level,
+      logData.message,
+      logData.sessionId,
+      logData.data,
+    );
+    return { success: true };
+  }
+
+  /**
+   * Update monitoring status from Python message recorder.
+   * Receives list of actively connected session IDs.
+   */
+  async updateMonitoringStatus(statusData: {
+    connectedSessions: string[];
+  }) {
+    this.connectedSessions = new Set(statusData.connectedSessions);
+    this.lastStatusUpdate = new Date();
+    this.logger.debug(`Updated monitoring status: ${statusData.connectedSessions.length} connected sessions`);
+    return { success: true, receivedAt: this.lastStatusUpdate.toISOString() };
+  }
+
+  /**
+   * Store participant join/leave event.
+   * Creates a message in the timeline for conversation playback.
+   */
+  async storeParticipantEvent(
+    sessionId: string,
+    eventData: {
+      eventType: 'joined' | 'left';
+      participantIdentity: string;
+      participantName?: string;
+    },
+  ) {
+    // Validate session exists
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      this.logger.warn(`Participant event for non-existent session: ${sessionId}`);
+      return { success: false, error: 'Session not found' };
+    }
+
+    // Create message for the event
+    const content = eventData.eventType === 'joined'
+      ? `${eventData.participantName || eventData.participantIdentity} joined the session`
+      : `${eventData.participantName || eventData.participantIdentity} left the session`;
+
+    const message = await this.prisma.message.create({
+      data: {
+        sessionId,
+        content,
+        role: 'system',
+        status: 'final',
+        messageType: `participant_${eventData.eventType}`,
+        metadata: {
+          participantIdentity: eventData.participantIdentity,
+          participantName: eventData.participantName,
+          eventType: eventData.eventType,
+        },
+      },
+    });
+
+    this.logger.debug(
+      `Stored participant ${eventData.eventType} event for ${eventData.participantIdentity} in session ${sessionId}`,
+    );
+
+    return { success: true, messageId: message.id };
+  }
+
+  /**
+   * Find all active sessions that need monitoring.
+   * Returns sessions in ACTIVE status with their room information.
+   * Used by Python message recorder to discover which rooms to join.
+   */
+  async findActiveSessions() {
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        status: 'ACTIVE',
+      },
+      include: {
+        room: true,
+        project: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return sessions;
+  }
+
+  /**
+   * Store a recorded message from the Python message recorder.
+   * Simplified approach: Store the complete envelope as-is for perfect replay.
+   */
+  async storeRecordedMessage(
+    sessionId: string,
+    messageEnvelope: any,
+    participantIdentity?: string,
+    participantName?: string,
+  ) {
+    // Verify session exists
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+
+    // Extract message type
+    const messageType = messageEnvelope.type || 'unknown';
+
+    // Skip messages from the recorder itself
+    if (participantIdentity === 'message-recorder') {
+      return { success: true, stored: false, reason: 'recorder_message_skipped' };
+    }
+
+    // Find participant if identity is provided (do NOT auto-create)
+    let participant;
+    if (participantIdentity) {
+      participant = await this.prisma.participant.findFirst({
+        where: {
+          sessionId,
+          identity: participantIdentity,
+        },
+      });
+    }
+
+    // Determine message role based on participant identity
+    let role: string;
+    if (!participantIdentity) {
+      role = 'system';
+    } else if (participantIdentity.startsWith('agent-')) {
+      role = 'assistant';
+    } else {
+      role = 'user';
+    }
+
+    // Extract content for searchability (but keep full envelope in metadata)
+    const messageData = messageEnvelope.data || messageEnvelope;
+    let content: string;
+    if (messageType === 'transcript_chunk') {
+      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
+
+      // Skip partial transcripts
+      const isFinal = messageData.is_final !== false;
+      if (!isFinal) {
+        return { success: true, stored: false, reason: 'partial_transcript_skipped' };
+      }
+    } else {
+      // For non-transcript messages, store the data as JSON string
+      content = typeof messageData === 'string' ? messageData : JSON.stringify(messageData);
+    }
+
+    // Store the complete envelope in metadata for perfect replay
+    const completeMetadata = {
+      envelope: messageEnvelope,  // Complete original envelope
+      participant_identity: participantIdentity,
+      participant_name: participantName,
+    };
+
+    const message = await this.prisma.message.create({
+      data: {
+        sessionId,
+        content,
+        role,
+        status: 'final',
+        messageType,
+        metadata: completeMetadata,
+      },
+    });
+
+    return { success: true, messageId: message.id, messageType };
+  }
+}

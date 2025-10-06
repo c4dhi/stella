@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-recorder
+  namespace: ai-agents
+spec:
+  replicas: 1  # Single instance handles all rooms
+  selector:
+    matchLabels:
+      app: message-recorder
+  template:
+    metadata:
+      labels:
+        app: message-recorder
+    spec:
+      containers:
+      - name: message-recorder
+        image: message-recorder-python:latest
+        imagePullPolicy: Never  # Use local image from minikube
+        env:
+        - name: LIVEKIT_URL
+          value: "ws://livekit:7880"
+        - name: SESSION_SERVER_URL
+          value: "http://session-management-server:3000"
+        - name: POLL_INTERVAL
+          value: "10"  # Poll every 10 seconds
+        - name: LIVEKIT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: livekit-api-key
+        - name: LIVEKIT_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: livekit-api-secret
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        # Health check (optional - check if service is responsive)
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "print('alive')"
+          initialDelaySeconds: 30
+          periodSeconds: 60

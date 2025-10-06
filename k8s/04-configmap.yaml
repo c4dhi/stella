@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grace-ai-config
+  namespace: ai-agents
+data:
+  # Server
+  PORT: "3000"
+  NODE_ENV: "development"
+
+  # LiveKit
+  LIVEKIT_URL: "ws://livekit:7880"
+
+  # Kubernetes
+  KUBERNETES_NAMESPACE: "ai-agents"
+  AGENT_IMAGE: "conversational-ai-server:latest"
+  AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
+
+  # TTS Provider
+  TTS_PROVIDER: "opensource"
+
+  # Frontend
+  VITE_API_URL: "http://session-management-server:3000"
+  VITE_LIVEKIT_URL: "ws://livekit:7880"

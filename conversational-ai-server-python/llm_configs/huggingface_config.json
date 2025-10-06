@@ -1,0 +1,12 @@
+{
+  "model": "microsoft/DialoGPT-small",
+  "temperature": 0.8,
+  "max_tokens": 500,
+  "provider": "huggingface",
+  "streaming": false,
+  "timeout": 180.0,
+  "retry_attempts": 1,
+  "retry_delay": 3.0,
+  "device": "auto",
+  "context_length": 2048
+}

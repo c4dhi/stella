@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-management-server
+  namespace: ai-agents
+spec:
+  selector:
+    app: session-management-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-management-server
+  namespace: ai-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-management-server
+  template:
+    metadata:
+      labels:
+        app: session-management-server
+    spec:
+      serviceAccountName: session-management-sa
+      containers:
+      - name: server
+        image: session-management-server:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: grace-ai-config
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: database-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: jwt-secret
+        - name: LIVEKIT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: livekit-api-key
+        - name: LIVEKIT_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: livekit-api-secret
+        - name: LIVEKIT_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: livekit-webhook-secret
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: openai-api-key
+        - name: ELEVENLABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grace-ai-secrets
+              key: elevenlabs-api-key
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5

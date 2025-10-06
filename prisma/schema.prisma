@@ -1,0 +1,160 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  password           String              // bcrypt hashed
+  name               String?
+  verified           Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  projectMemberships ProjectMembership[]
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model ProjectMembership {
+  id        String     @id @default(uuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role      MemberRole @default(MEMBER)
+  createdAt DateTime   @default(now())
+
+  @@unique([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model Project {
+  id          String              @id @default(uuid())
+  name        String
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  sessions    Session[]
+  memberships ProjectMembership[]
+}
+
+enum SessionStatus {
+  ACTIVE
+  CLOSED
+}
+
+model Session {
+  id           String          @id @default(uuid())
+  projectId    String
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String?
+  status       SessionStatus   @default(ACTIVE)
+  createdAt    DateTime        @default(now())
+  closedAt     DateTime?
+  room         Room?
+  agents       AgentInstance[]
+  participants Participant[]
+  messages     Message[]
+  events       RoomEvent[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Room {
+  id              String  @id @default(uuid())
+  sessionId       String  @unique
+  session         Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  livekitRoomName String  @unique
+  serverUrl       String
+}
+
+enum AgentStatus {
+  STARTING
+  RUNNING
+  STOPPING
+  STOPPED
+  FAILED
+}
+
+model AgentInstance {
+  id            String       @id @default(uuid())
+  sessionId     String
+  session       Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name          String       // Agent name (required)
+  icon          String?      // Optional emoji icon (default: 🤖)
+  status        AgentStatus  @default(STARTING)
+  podName       String?
+  secretName    String?
+  configMapName String?
+  planId        String?
+  createdAt     DateTime     @default(now())
+  stoppedAt     DateTime?
+
+  @@index([sessionId])
+  @@index([status])
+}
+
+model Participant {
+  id                   String    @id @default(uuid())
+  sessionId            String
+  session              Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name                 String    // Display name for the participant
+  identity             String    // LiveKit identity (auto-generated)
+  isManuallyRegistered Boolean   @default(false) // True if registered via API, false if auto-discovered
+  joinedAt             DateTime  @default(now())
+  leftAt               DateTime?
+
+  @@index([sessionId])
+  @@index([identity])
+}
+
+model Message {
+  id            String       @id @default(uuid())
+  sessionId     String
+  session       Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Message content and metadata
+  content       String       @db.Text
+  messageType   String       // "transcript", "system", "task_update", "deliverable", "state_change", "participant_event"
+  role          String?      // "user", "assistant", "system"
+  status        String?      // "partial", "final"
+  metadata      Json?        // Store complete envelope with participant info, deliverables, processing messages, etc.
+
+  timestamp     DateTime     @default(now())
+  createdAt     DateTime     @default(now())
+
+  @@index([sessionId])
+  @@index([sessionId, timestamp])
+  @@index([messageType])
+  @@index([timestamp])
+}
+
+model RoomEvent {
+  id        String   @id @default(uuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  eventType String
+  data      Json
+  timestamp DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([timestamp])
+}
