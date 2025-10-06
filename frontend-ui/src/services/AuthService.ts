@@ -1,6 +1,8 @@
 // Real Authentication Service
 // Integrates with Session Management Server auth endpoints
 
+import { getRuntimeConfig } from '../config/runtime'
+
 export interface User {
   id: string
   email: string
@@ -26,8 +28,6 @@ export interface SignupCredentials extends LoginCredentials {
 const AUTH_STORAGE_KEY = 'grace_auth_token'
 const USER_STORAGE_KEY = 'grace_user'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-
 class AuthService {
   // ============================================================================
   // Real Authentication with Backend
@@ -35,7 +35,8 @@ class AuthService {
 
   async login(credentials: LoginCredentials): Promise<{ user: User; tokens: AuthTokens }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      const apiUrl = getRuntimeConfig().apiUrl
+      const response = await fetch(`${apiUrl}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(credentials),
@@ -89,7 +90,8 @@ class AuthService {
 
   async signup(credentials: SignupCredentials): Promise<{ user: User; message: string; verified: boolean }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+      const apiUrl = getRuntimeConfig().apiUrl
+      const response = await fetch(`${apiUrl}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(credentials),
@@ -150,7 +152,8 @@ class AuthService {
       throw new Error('No authentication token found')
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/me`, {
+    const apiUrl = getRuntimeConfig().apiUrl
+    const response = await fetch(`${apiUrl}/auth/me`, {
       headers: {
         'Authorization': `Bearer ${token}`,
       },

@@ -9,7 +9,7 @@ spec:
   ports:
     - port: 80
       targetPort: 80
-  type: ClusterIP
+  type: LoadBalancer
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,6 +32,9 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
+        envFrom:
+        - configMapRef:
+            name: grace-ai-config
         resources:
           requests:
             memory: "128Mi"

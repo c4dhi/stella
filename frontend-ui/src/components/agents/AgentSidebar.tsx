@@ -5,6 +5,7 @@ import ConfirmDialog from '../modals/ConfirmDialog'
 import { useToastStore } from '../../store/toastStore'
 import type { AgentInstance, AgentWithPodStatus } from '../../lib/api-types'
 import { AgentStatus, POLL_INTERVALS } from '../../lib/api-types'
+import { getRuntimeConfig } from '../../config/runtime'
 
 interface AgentSidebarProps {
   sessionId: string
@@ -262,7 +263,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
 
   // Start log streaming for an agent
   const startLogStream = (agentId: string) => {
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+    const apiUrl = getRuntimeConfig().apiUrl
     const token = localStorage.getItem('grace_auth_token')
 
     // Include JWT token as query parameter for EventSource authentication

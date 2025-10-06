@@ -13,6 +13,7 @@ import ParticipantConnectionModal from '../components/modals/ParticipantConnecti
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
+import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
 import { apiClient } from '../services/ApiClient'
@@ -47,6 +48,9 @@ export default function SessionView() {
 
   // Agent modal states
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false)
+
+  // Network info modal state
+  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Listener status for recording indicator
   const [listenerStatus, setListenerStatus] = useState<ListenerStatus | null>(null)
@@ -498,6 +502,23 @@ export default function SessionView() {
                 </button>
               </div>
             </div>
+
+            {/* Right side - Info button */}
+            <button
+              onClick={() => setIsNetworkInfoOpen(true)}
+              className="
+                p-2 rounded-lg text-xs font-light tracking-wider
+                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
+                transition-all duration-200
+              "
+              title="Network Information"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
@@ -587,6 +608,12 @@ export default function SessionView() {
         isOpen={showLogsModal}
         onClose={() => setShowLogsModal(false)}
         sessionId={sessionId}
+      />
+
+      {/* Network Info Modal */}
+      <NetworkInfoModal
+        isOpen={isNetworkInfoOpen}
+        onClose={() => setIsNetworkInfoOpen(false)}
       />
     </div>
   )

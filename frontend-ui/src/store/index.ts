@@ -1,5 +1,6 @@
 
 import { create } from 'zustand'
+import { generateUUID } from '../lib/uuid'
 import type {
   TranscriptChunk,
   Transport,
@@ -262,7 +263,7 @@ export const useStore = create<
   }),
   addFinal: (role, text) => set(() => {
     const chunk: TranscriptChunk = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       role, text, status: 'final', startedAt: Date.now(), finalizedAt: Date.now()
     }
     const next = [...get().turns, chunk]
@@ -514,7 +515,7 @@ export const useStore = create<
 
     // Create notification for deliverable collection
     const newNotification: UpdateNotification = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: 'deliverable_collected',
       title: 'Information Collected',
       message: `${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: ${String(value)}`,
@@ -526,7 +527,7 @@ export const useStore = create<
 
     // Create recent update
     const newUpdate: RecentUpdate = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: 'deliverable',
       description: `Collected "${key.replace(/_/g, ' ')}" with ${Math.round((confidence || 1) * 100)}% confidence`,
       timestamp: new Date().toISOString(),
@@ -588,7 +589,7 @@ export const useStore = create<
   handleStateChange: (data) => set((state) => {
     // Create notification for state change
     const newNotification: UpdateNotification = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: 'state_changed',
       title: 'State Changed',
       message: `Moved to: ${data.state_title}`,
@@ -600,7 +601,7 @@ export const useStore = create<
 
     // Create recent update
     const newUpdate: RecentUpdate = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: 'state',
       description: `Advanced to "${data.state_title}"`,
       timestamp: new Date().toISOString(),
@@ -645,7 +646,7 @@ export const useStore = create<
   addNotification: (notification) => set((state) => {
     const newNotification: UpdateNotification = {
       ...notification,
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       timestamp: new Date().toISOString(),
       read: false
     }
@@ -667,7 +668,7 @@ export const useStore = create<
   addRecentUpdate: (update) => set((state) => {
     const newUpdate: RecentUpdate = {
       ...update,
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       timestamp: new Date().toISOString()
     }
 

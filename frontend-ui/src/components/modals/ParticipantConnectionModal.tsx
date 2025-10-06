@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiClient } from '../../services/ApiClient'
 import type { ParticipantConnectionInfoResponse } from '../../lib/api-types'
+import { getRuntimeConfig } from '../../config/runtime'
 
 interface ParticipantConnectionModalProps {
   participantId: string
@@ -14,7 +15,7 @@ export default function ParticipantConnectionModal({
   onClose,
 }: ParticipantConnectionModalProps) {
   const [connectionInfo, setConnectionInfo] = useState<ParticipantConnectionInfoResponse | null>(null)
-  const [serverUrl, setServerUrl] = useState<string>('http://localhost:3000')
+  const [serverUrl, setServerUrl] = useState<string>(getRuntimeConfig().apiUrl)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 

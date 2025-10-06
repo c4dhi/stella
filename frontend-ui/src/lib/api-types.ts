@@ -282,8 +282,12 @@ export interface MonitoringLogsResponse {
 export interface NetworkInfoResponse {
   serverUrl: string
   livekitUrl: string
+  frontendUrl: string
   hostname: string
   platform: string
+  source: string
+  environment: string
+  detectedIp: string
 }
 
 export interface ApiError {

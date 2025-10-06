@@ -6,6 +6,7 @@ import CreateSessionModal from '../components/modals/CreateSessionModal'
 import EditSessionModal from '../components/modals/EditSessionModal'
 import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
+import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import { useToastStore } from '../store/toastStore'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
 
@@ -27,6 +28,7 @@ export default function SessionsDashboard() {
   const [sessionToClose, setSessionToClose] = useState<{ id: string; name: string } | null>(null)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Load project and sessions
   const loadData = async () => {
@@ -220,6 +222,23 @@ export default function SessionsDashboard() {
                 </p>
               </div>
             </div>
+
+            {/* Right side - Info button */}
+            <button
+              onClick={() => setIsNetworkInfoOpen(true)}
+              className="
+                p-2 rounded-lg text-xs font-light tracking-wider
+                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
+                transition-all duration-200
+              "
+              title="Network Information"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
@@ -619,6 +638,12 @@ export default function SessionsDashboard() {
           setDeleteModalOpen(false)
           setSessionToDelete(null)
         }}
+      />
+
+      {/* Network Info Modal */}
+      <NetworkInfoModal
+        isOpen={isNetworkInfoOpen}
+        onClose={() => setIsNetworkInfoOpen(false)}
       />
     </div>
   )

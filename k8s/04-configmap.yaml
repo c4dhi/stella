@@ -19,6 +19,22 @@ data:
   # TTS Provider
   TTS_PROVIDER: "opensource"
 
-  # Frontend
+  # Public URLs for external access (used when backend needs to provide URLs to clients)
+  # NOTE: With LoadBalancer services + minikube tunnel, services are exposed on standard ports
+  # The backend will auto-detect your Mac's IP and provide the correct URLs
+  # Optionally override by uncommenting and setting your IP:
+  # PUBLIC_SERVER_URL: "http://<HOST_IP>:3000"
+  # PUBLIC_LIVEKIT_URL: "ws://<HOST_IP>:7880"
+  # PUBLIC_FRONTEND_URL: "http://<HOST_IP>"
+
+  # Frontend runtime configuration
+  # NOTE: These use internal K8s service names, which triggers auto-detection in the frontend.
+  # The frontend will automatically replace these with the correct external URLs based on
+  # window.location.hostname, making the same build work from:
+  # - Phone: http://192.168.178.25:5173 → Backend at http://192.168.178.25:3000
+  # - Localhost: http://localhost:5173 → Backend at http://localhost:3000
+  # To override with explicit URLs, change these to full external URLs (e.g., http://192.168.1.10:3000)
   VITE_API_URL: "http://session-management-server:3000"
   VITE_LIVEKIT_URL: "ws://livekit:7880"
+  VITE_LIVEKIT_API_KEY: "devkey"
+  VITE_LIVEKIT_API_SECRET: "secret"

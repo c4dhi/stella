@@ -14,7 +14,7 @@ spec:
       port: 7881
       targetPort: 7881
       protocol: UDP
-  type: ClusterIP
+  type: LoadBalancer
 ---
 apiVersion: apps/v1
 kind: Deployment

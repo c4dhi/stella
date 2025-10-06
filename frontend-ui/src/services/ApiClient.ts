@@ -30,27 +30,32 @@ import type {
   MonitoringLogsResponse,
   NetworkInfoResponse,
 } from '../lib/api-types'
-
-// API base URL from environment or default
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+import { getRuntimeConfig } from '../config/runtime'
 
 class SessionManagementClient {
-  private baseUrl: string
   private pendingRequests: Map<string, Promise<any>> = new Map()
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl
+  constructor() {
+    // No initialization needed - baseUrl is fetched lazily
   }
 
   // ============================================================================
   // HTTP Helper Methods
   // ============================================================================
 
+  /**
+   * Get base URL from runtime config (lazy evaluation)
+   * This ensures we always use the correct URL even if config loads after construction
+   */
+  private getBaseUrl(): string {
+    return getRuntimeConfig().apiUrl
+  }
+
   private async request<T>(
     path: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`
+    const url = `${this.getBaseUrl()}${path}`
 
     // Get JWT token from localStorage
     const token = localStorage.getItem('grace_auth_token')
@@ -263,7 +268,7 @@ class SessionManagementClient {
       headers['Authorization'] = `Bearer ${token}`
     }
 
-    const response = await fetch(`${this.baseUrl}/agents/${agentId}/logs`, {
+    const response = await fetch(`${this.getBaseUrl()}/agents/${agentId}/logs`, {
       headers,
     })
 

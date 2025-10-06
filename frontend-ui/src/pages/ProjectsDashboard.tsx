@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
 import EditProjectModal from '../components/modals/EditProjectModal'
+import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import type { ProjectWithCounts } from '../lib/api-types'
 
 export default function ProjectsDashboard() {
@@ -18,6 +19,7 @@ export default function ProjectsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithCounts | null>(null)
+  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Load projects
   const loadProjects = async () => {
@@ -96,16 +98,33 @@ export default function ProjectsDashboard() {
               {user?.name || user?.email}
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="
-              px-4 py-2 rounded-lg text-xs font-light tracking-wider
-              text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
-              transition-all duration-200
-            "
-          >
-            Sign Out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsNetworkInfoOpen(true)}
+              className="
+                p-2 rounded-lg text-xs font-light tracking-wider
+                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
+                transition-all duration-200
+              "
+              title="Network Information"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="
+                px-4 py-2 rounded-lg text-xs font-light tracking-wider
+                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
+                transition-all duration-200
+              "
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -363,6 +382,12 @@ export default function ProjectsDashboard() {
           projectId={editingProject.id}
         />
       )}
+
+      {/* Network Info Modal */}
+      <NetworkInfoModal
+        isOpen={isNetworkInfoOpen}
+        onClose={() => setIsNetworkInfoOpen(false)}
+      />
     </div>
   )
 }

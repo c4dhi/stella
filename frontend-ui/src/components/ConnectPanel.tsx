@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import type { TranscriptChunk, ProcessingMessage, ParticipantEvent } from '../lib/types'
+import { generateUUID } from '../lib/uuid'
 
 interface ConnectPanelProps {
   roomName?: string
@@ -41,7 +42,7 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
     }
     transport.onParticipantJoined = (participantId: string, participantName?: string) => {
       const event: ParticipantEvent = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         type: 'joined',
         participantId,
         participantName,
@@ -52,7 +53,7 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
     }
     transport.onParticipantLeft = (participantId: string, participantName?: string) => {
       const event: ParticipantEvent = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         type: 'left',
         participantId,
         participantName,

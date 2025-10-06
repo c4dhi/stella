@@ -178,22 +178,37 @@ echo -e "${GREEN}======================================${NC}"
 echo -e "${GREEN}Deployment Complete!${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo ""
-echo -e "${BLUE}Useful commands:${NC}"
+
+# Detect local IP address
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost")
+
+echo -e "${BLUE}📱 Network Access (from any device on your network):${NC}"
 echo ""
-echo -e "  ${YELLOW}# View all resources${NC}"
-echo -e "  kubectl get all -n ai-agents"
+echo -e "  ${GREEN}✓ Frontend UI:${NC} http://${LOCAL_IP}:5173"
+echo -e "  ${GREEN}✓ Backend API:${NC} http://${LOCAL_IP}:3000"
+echo -e "  ${GREEN}✓ LiveKit:${NC} ws://${LOCAL_IP}:7880"
 echo ""
-echo -e "  ${YELLOW}# Access the API (in a new terminal)${NC}"
-echo -e "  kubectl port-forward -n ai-agents svc/session-management-server 3000:3000"
-echo -e "  ${BLUE}API will be available at:${NC} http://localhost:3000"
+echo -e "  ${YELLOW}💡 Tip: Click the ℹ️ button in the UI header to see a QR code!${NC}"
+echo -e "  ${YELLOW}📱 If your Mac firewall prompts, click 'Allow' for kubectl${NC}"
 echo ""
-echo -e "  ${YELLOW}# Access LiveKit (in a new terminal)${NC}"
-echo -e "  kubectl port-forward -n ai-agents svc/livekit 7880:7880"
-echo -e "  ${BLUE}LiveKit will be available at:${NC} ws://localhost:7880"
+echo -e "${BLUE}💻 Localhost Access (same URLs work on your Mac):${NC}"
 echo ""
 echo -e "  ${YELLOW}# Access Frontend UI (in a new terminal)${NC}"
 echo -e "  kubectl port-forward -n ai-agents svc/frontend-ui 5173:80"
-echo -e "  ${BLUE}Frontend will be available at:${NC} http://localhost:5173"
+echo -e "  ${BLUE}Then open:${NC} http://localhost:5173"
+echo ""
+echo -e "  ${YELLOW}# Access API (in a new terminal)${NC}"
+echo -e "  kubectl port-forward -n ai-agents svc/session-management-server 3000:3000"
+echo -e "  ${BLUE}Then open:${NC} http://localhost:3000"
+echo ""
+echo -e "  ${YELLOW}# Access LiveKit (in a new terminal)${NC}"
+echo -e "  kubectl port-forward -n ai-agents svc/livekit 7880:7880"
+echo -e "  ${BLUE}Then open:${NC} ws://localhost:7880"
+echo ""
+echo -e "${BLUE}🛠️  Useful commands:${NC}"
+echo ""
+echo -e "  ${YELLOW}# View all resources${NC}"
+echo -e "  kubectl get all -n ai-agents"
 echo ""
 echo -e "  ${YELLOW}# View logs${NC}"
 echo -e "  kubectl logs -f -n ai-agents -l app=session-management-server"
@@ -207,18 +222,37 @@ echo ""
 echo -e "  ${YELLOW}# Stop the cluster${NC}"
 echo -e "  minikube stop"
 echo ""
-echo -e "${GREEN}Starting port forwarding...${NC}"
-kubectl port-forward -n ai-agents svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-kubectl port-forward -n ai-agents svc/livekit 7880:7880 > /dev/null 2>&1 &
-kubectl port-forward -n ai-agents svc/postgres 5432:5432 > /dev/null 2>&1 &
-kubectl port-forward -n ai-agents svc/frontend-ui 5173:80 > /dev/null 2>&1 &
+echo -e "${GREEN}Starting port forwarding on all network interfaces...${NC}"
+echo -e "${YELLOW}Note: If macOS firewall prompts, click 'Allow' to enable network access${NC}"
+echo ""
+
+# Port forward with --address 0.0.0.0 to bind to all network interfaces
+# This makes services accessible from your phone and other devices on the network
+kubectl port-forward --address 0.0.0.0 -n ai-agents svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n ai-agents svc/livekit 7880:7880 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n ai-agents svc/postgres 5432:5432 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n ai-agents svc/frontend-ui 5173:80 > /dev/null 2>&1 &
+
+# Wait a moment for port forwards to establish
+sleep 2
 
 echo ""
-echo -e "${GREEN}✓ Frontend UI running at: http://localhost:5173${NC}"
-echo -e "${GREEN}✓ API running at: http://localhost:3000${NC}"
-echo -e "${GREEN}✓ LiveKit running at: ws://localhost:7880${NC}"
-echo -e "${GREEN}✓ PostgreSQL running at: localhost:5432${NC}"
+echo -e "${GREEN}✅ Services are now accessible!${NC}"
+echo ""
+echo -e "${BLUE}📱 From your phone or any device on the network:${NC}"
+echo -e "  ${GREEN}Frontend UI:${NC} http://${LOCAL_IP}:5173"
+echo -e "  ${GREEN}Backend API:${NC} http://${LOCAL_IP}:3000"
+echo -e "  ${GREEN}LiveKit:${NC} ws://${LOCAL_IP}:7880"
+echo ""
+echo -e "${BLUE}💻 From your Mac (localhost also works):${NC}"
+echo -e "  ${GREEN}Frontend UI:${NC} http://localhost:5173"
+echo -e "  ${GREEN}Backend API:${NC} http://localhost:3000"
+echo -e "  ${GREEN}LiveKit:${NC} ws://localhost:7880"
+echo -e "  ${GREEN}PostgreSQL:${NC} localhost:5432"
+echo ""
 echo -e "  ${BLUE}Database: ${POSTGRES_DB} | User: ${POSTGRES_USER} | Password: ${POSTGRES_PASSWORD}${NC}"
 echo ""
-echo -e "${BLUE}Press Ctrl+C to stop port forwarding${NC}"
+echo -e "${YELLOW}⚠️  Important: Keep this terminal open to maintain access!${NC}"
+echo -e "${BLUE}Press Ctrl+C to stop all port forwarding${NC}"
+echo ""
 wait

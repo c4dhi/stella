@@ -30,18 +30,7 @@ export class AppController {
   @Public()
   @Get('network-info')
   getNetworkInfo() {
-    // Priority 1: Use explicitly configured public URL (for production or when behind containers)
-    if (process.env.PUBLIC_SERVER_URL) {
-      return {
-        serverUrl: process.env.PUBLIC_SERVER_URL,
-        livekitUrl: this.livekit.getPublicServerUrl(),
-        hostname: os.hostname(),
-        platform: os.platform(),
-        source: 'env',
-      };
-    }
-
-    // Priority 2: Auto-detect, but filter out container/docker networks
+    // Auto-detect local IP, filtering out container/docker networks
     const networkInterfaces = os.networkInterfaces();
     let localIp = 'localhost';
 
@@ -69,15 +58,47 @@ export class AppController {
       if (localIp !== 'localhost') break;
     }
 
-    const port = process.env.PORT || 3000;
-    const serverUrl = `http://${localIp}:${port}`;
+    // Determine if running in Kubernetes by checking for K8s env vars
+    const isKubernetes = !!process.env.KUBERNETES_SERVICE_HOST;
+
+    // Build URLs based on environment
+    let serverUrl: string;
+    let livekitUrl: string;
+    let frontendUrl: string;
+    let source: string;
+
+    if (process.env.PUBLIC_SERVER_URL) {
+      // Priority 1: Use explicitly configured URLs
+      serverUrl = process.env.PUBLIC_SERVER_URL;
+      livekitUrl = process.env.PUBLIC_LIVEKIT_URL || this.livekit.getPublicServerUrl();
+      frontendUrl = process.env.PUBLIC_FRONTEND_URL || `http://${localIp}:5173`;
+      source = 'configured';
+    } else if (isKubernetes) {
+      // Priority 2: Running in K8s - use port-forward ports with detected IP
+      // Port forwarding exposes on standard service ports
+      const port = process.env.PORT || 3000;
+      serverUrl = `http://${localIp}:${port}`;
+      livekitUrl = `ws://${localIp}:7880`;
+      frontendUrl = `http://${localIp}:5173`;  // Frontend forwarded to 5173
+      source = 'kubernetes-auto-detected';
+    } else {
+      // Priority 3: Local development - use standard ports with detected IP
+      const port = process.env.PORT || 3000;
+      serverUrl = `http://${localIp}:${port}`;
+      livekitUrl = `ws://${localIp}:7880`;
+      frontendUrl = `http://${localIp}:5173`;
+      source = 'local-auto-detected';
+    }
 
     return {
       serverUrl,
-      livekitUrl: this.livekit.getPublicServerUrl(),
+      livekitUrl,
+      frontendUrl,
       hostname: os.hostname(),
       platform: os.platform(),
-      source: 'auto-detected',
+      source,
+      environment: isKubernetes ? 'kubernetes' : 'local',
+      detectedIp: localIp,
     };
   }
 }

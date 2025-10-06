@@ -14,10 +14,8 @@ import type {
   StateChangeNotification,
 } from '../lib/types'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
-
-const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'ws://localhost:7880'
-const API_KEY = import.meta.env.VITE_LIVEKIT_API_KEY || 'devkey'
-const API_SECRET = import.meta.env.VITE_LIVEKIT_API_SECRET || 'secret'
+import { getRuntimeConfig } from '../config/runtime'
+import { generateUUID } from '../lib/uuid'
 
 export class PeerTransport implements Transport {
   room?: Room
@@ -127,7 +125,7 @@ export class PeerTransport implements Transport {
             const isUserMessage = serverData.participant_id === this.userName
 
             const transcriptChunk: TranscriptChunk = {
-              id: serverData.transcript_id || crypto.randomUUID(),
+              id: serverData.transcript_id || generateUUID(),
               role: isUserMessage ? 'user' : 'assistant',
               text: serverData.text,
               status: serverData.is_final ? 'final' : 'partial',
@@ -217,7 +215,8 @@ export class PeerTransport implements Transport {
         autoSubscribe: true
       }
 
-      await room.connect(LIVEKIT_URL, token, connectOptions)
+      const config = getRuntimeConfig()
+      await room.connect(config.livekitUrl, token, connectOptions)
 
       console.log(`👤 [USER] Connected as: ${room.localParticipant.identity}`)
 
@@ -499,13 +498,14 @@ export class PeerTransport implements Transport {
     // Use fixed "human" identity for the frontend user
     const identity = 'human'
     const actualRoomName = roomName || 'voice-ai-room'
+    const config = getRuntimeConfig()
 
-    console.log(`🔗 Chat connecting to LiveKit room: "${actualRoomName}" at ${LIVEKIT_URL}`)
-    
+    console.log(`🔗 Chat connecting to LiveKit room: "${actualRoomName}" at ${config.livekitUrl}`)
+
     // Try using a minimal token that dev mode might accept
     try {
       // Option 1: Try to get a dev token from the server
-      const response = await fetch(`http://localhost:7880/devtoken?identity=${identity}&room=${actualRoomName}`)
+      const response = await fetch(`${config.livekitUrl}/devtoken?identity=${identity}&room=${actualRoomName}`)
       if (response.ok) {
         const token = await response.text()
         return token
@@ -518,7 +518,7 @@ export class PeerTransport implements Transport {
     const header = { alg: "HS256", typ: "JWT" }
     const now = Math.floor(Date.now() / 1000)
     const payload = {
-      iss: API_KEY,
+      iss: config.livekitApiKey,
       sub: identity,
       iat: now,
       exp: now + 3600,
@@ -542,9 +542,9 @@ export class PeerTransport implements Transport {
     
     const headerB64 = this.base64UrlEncode(JSON.stringify(header))
     const payloadB64 = this.base64UrlEncode(JSON.stringify(payload))
-    
+
     // Simple HMAC-SHA256 implementation for dev mode
-    const signature = await this.hmacSha256(`${headerB64}.${payloadB64}`, API_SECRET)
+    const signature = await this.hmacSha256(`${headerB64}.${payloadB64}`, config.livekitApiSecret)
     
     return `${headerB64}.${payloadB64}.${signature}`
   }
@@ -583,7 +583,7 @@ export class PeerTransport implements Transport {
     const timestamp = Date.now()
 
     return {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: messageType,
       role: 'system',
       status: 'final',
