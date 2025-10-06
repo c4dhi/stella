@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
 import { RoomMonitorService, type LogEntry } from '../message-recorder/room-monitor.service';
+import { AuthService } from '../auth/auth.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { CreateTokenDto } from './dto/create-token.dto';
@@ -21,6 +22,7 @@ export class SessionsService {
     @Inject(forwardRef(() => AgentsService))
     private agentsService: AgentsService,
     private roomMonitor: RoomMonitorService,
+    private authService: AuthService,
   ) {}
 
   async create(projectId: string, createSessionDto: CreateSessionDto) {
@@ -325,18 +327,25 @@ export class SessionsService {
     });
 
     // Generate LiveKit token for this participant
-    const token = await this.livekit.createToken(
+    const livekitToken = await this.livekit.createToken(
       session.room.livekitRoomName,
       identity,
       name,
+    );
+
+    // Generate participant JWT for API authentication
+    const participantToken = this.authService.generateParticipantToken(
+      participant.id,
+      sessionId,
     );
 
     return {
       id: participant.id,
       name: participant.name,
       identity: participant.identity,
+      token: participantToken, // JWT token for API authentication
       connectionInfo: {
-        token,
+        token: livekitToken, // LiveKit token for room connection
         serverUrl: session.room.serverUrl,
         roomName: session.room.livekitRoomName,
         livekitUrl: session.room.serverUrl,
@@ -364,6 +373,62 @@ export class SessionsService {
     });
   }
 
+  /**
+   * Get participant connection info with JWT token (for dashboard)
+   * Generates a fresh participant JWT token for QR code generation
+   */
+  async getParticipantConnectionInfoWithToken(participantId: string) {
+    const participant = await this.prisma.participant.findUnique({
+      where: { id: participantId },
+      include: {
+        session: {
+          include: {
+            room: true,
+          },
+        },
+      },
+    });
+
+    if (!participant) {
+      throw new NotFoundException(`Participant with ID ${participantId} not found`);
+    }
+
+    if (!participant.session.room) {
+      throw new Error('Participant session does not have an associated room');
+    }
+
+    // Generate fresh LiveKit token
+    const livekitToken = await this.livekit.createToken(
+      participant.session.room.livekitRoomName,
+      participant.identity,
+      participant.name,
+    );
+
+    // Generate fresh participant JWT for API authentication
+    const participantToken = this.authService.generateParticipantToken(
+      participant.id,
+      participant.sessionId,
+    );
+
+    return {
+      participantId: participant.id,
+      participantName: participant.name,
+      identity: participant.identity,
+      sessionId: participant.sessionId,
+      token: participantToken, // JWT token for QR code
+      connectionInfo: {
+        token: livekitToken,
+        serverUrl: participant.session.room.serverUrl,
+        roomName: participant.session.room.livekitRoomName,
+        livekitUrl: participant.session.room.serverUrl,
+      },
+    };
+  }
+
+  /**
+   * Get participant connection info (for mobile app)
+   * Mobile app is already authenticated with participant JWT
+   */
   async getParticipantConnectionInfo(participantId: string) {
     const participant = await this.prisma.participant.findUnique({
       where: { id: participantId },
@@ -384,19 +449,20 @@ export class SessionsService {
       throw new Error('Participant session does not have an associated room');
     }
 
-    // Generate fresh token
-    const token = await this.livekit.createToken(
+    // Generate fresh LiveKit token
+    const livekitToken = await this.livekit.createToken(
       participant.session.room.livekitRoomName,
       participant.identity,
       participant.name,
     );
 
     return {
+      participantId: participant.id, // Include participantId in response for mobile client
       participantName: participant.name,
       identity: participant.identity,
       sessionId: participant.sessionId,
       connectionInfo: {
-        token,
+        token: livekitToken,
         serverUrl: participant.session.room.serverUrl,
         roomName: participant.session.room.livekitRoomName,
         livekitUrl: participant.session.room.serverUrl,

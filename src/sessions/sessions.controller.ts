@@ -12,6 +12,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  Request,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -102,8 +103,21 @@ export class SessionsController {
     return this.sessionsService.listParticipants(sessionId);
   }
 
+  // Dashboard endpoint: Get participant connection info by ID (user-authenticated)
   @Get('participants/:participantId/connection-info')
-  getParticipantConnectionInfo(@Param('participantId') participantId: string) {
+  getParticipantConnectionInfoById(@Param('participantId') participantId: string) {
+    // User-authenticated - dashboard uses this to generate QR codes
+    return this.sessionsService.getParticipantConnectionInfoWithToken(participantId);
+  }
+
+  // Mobile app endpoint: Get own connection info (participant-authenticated)
+  @Get('participants/connection-info')
+  getParticipantConnectionInfo(@Request() req) {
+    // Extract participantId from participant JWT token
+    const participantId = req.user.participantId;
+    if (!participantId) {
+      throw new BadRequestException('Invalid participant token');
+    }
     return this.sessionsService.getParticipantConnectionInfo(participantId);
   }
 

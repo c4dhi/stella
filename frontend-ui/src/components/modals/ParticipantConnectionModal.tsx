@@ -48,11 +48,11 @@ export default function ParticipantConnectionModal({
     // Could add toast notification here
   }
 
-  // Generate QR code data - minimal format for mobile client
-  // Mobile app will fetch full connection info from backend using participantId
-  const qrCodeData = connectionInfo ? JSON.stringify({
+  // Generate QR code data - contains JWT token for authentication
+  // Mobile app will use token to authenticate and fetch connection info
+  const qrCodeData = connectionInfo?.token ? JSON.stringify({
     serverUrl: serverUrl,
-    participantId: participantId,
+    token: connectionInfo.token, // JWT token for participant authentication
   }) : ''
 
   return (
@@ -71,7 +71,7 @@ export default function ParticipantConnectionModal({
           className="
             bg-white/95 backdrop-blur-xl border border-neutral-200/60
             rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-            w-full max-w-5xl p-8
+            w-full max-w-4xl p-8
           "
           onClick={(e) => e.stopPropagation()}
         >
@@ -172,31 +172,34 @@ export default function ParticipantConnectionModal({
                     </div>
                   </div>
 
-                  {/* Participant ID */}
+                  {/* JWT Token */}
                   <div>
                     <label className="block text-xs text-neutral-600 font-light tracking-wider uppercase mb-2">
-                      Participant ID
+                      Authentication Token
                     </label>
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={participantId}
+                      <textarea
+                        rows={5}
+                        value={connectionInfo?.token || ''}
                         readOnly
                         className="
                           flex-1 px-4 py-2.5 rounded-xl
                           bg-neutral-50/50 border border-neutral-200/60
                           text-neutral-900 text-sm font-mono font-light
                           focus:outline-none
+                          resize-none
+                          break-all
                         "
                       />
                       <button
-                        onClick={() => copyToClipboard(participantId, 'Participant ID')}
+                        onClick={() => copyToClipboard(connectionInfo?.token || '', 'Authentication Token')}
                         className="
                           px-3 py-2.5 rounded-lg
                           bg-neutral-100 text-neutral-600 text-xs font-light
                           hover:bg-neutral-200
                           transition-all duration-200
                           flex-shrink-0
+                          self-start
                         "
                         title="Copy to clipboard"
                       >
@@ -214,6 +217,7 @@ export default function ParticipantConnectionModal({
                       </button>
                     </div>
                   </div>
+
                 </div>
 
                 {/* QR Code */}

@@ -144,4 +144,20 @@ export class AuthService {
 
     return this.jwtService.sign(payload);
   }
+
+  /**
+   * Generate JWT token for a participant
+   * @param participantId - Participant database ID
+   * @param sessionId - Session ID the participant belongs to
+   * @returns JWT token
+   */
+  generateParticipantToken(participantId: string, sessionId: string): string {
+    const payload = {
+      sub: participantId,
+      sessionId,
+      type: 'participant',
+    };
+
+    return this.jwtService.sign(payload);
+  }
 }

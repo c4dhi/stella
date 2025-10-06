@@ -6,7 +6,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 export interface JwtPayload {
   sub: string;
-  email: string;
+  email?: string; // Optional for participant tokens
+  type?: 'participant'; // 'participant' for participant tokens, undefined for user tokens
+  sessionId?: string; // Session ID for participant tokens
   iat?: number;
   exp?: number;
 }
@@ -30,6 +32,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
+    // Check if this is a participant token
+    if (payload.type === 'participant') {
+      const participant = await this.prisma.participant.findUnique({
+        where: { id: payload.sub },
+        include: {
+          session: true,
+        },
+      });
+
+      if (!participant) {
+        throw new UnauthorizedException('Participant not found');
+      }
+
+      return {
+        participantId: participant.id,
+        sessionId: participant.sessionId,
+        type: 'participant',
+        participantName: participant.name,
+        identity: participant.identity,
+      };
+    }
+
+    // Handle user token (existing logic)
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       select: {

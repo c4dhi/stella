@@ -238,13 +238,16 @@ export interface RegisterParticipantResponse {
   id: string
   name: string
   identity: string
+  token: string // JWT token for participant authentication
   connectionInfo: ParticipantConnectionInfo
 }
 
 export interface ParticipantConnectionInfoResponse {
+  participantId: string // Participant ID (returned for mobile client)
   participantName: string
   identity: string
   sessionId: string
+  token?: string // JWT token (only included for dashboard requests)
   connectionInfo: ParticipantConnectionInfo
 }
 
