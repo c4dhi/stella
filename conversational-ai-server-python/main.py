@@ -3,9 +3,11 @@ import asyncio
 import os
 import json
 import uuid
+import numpy as np
 from datetime import datetime, timezone
 from typing import Optional
 from livekit import rtc
+from livekit.rtc import AudioStream, TrackSource
 from livekit.api import AccessToken, VideoGrants
 
 # Load environment variables
@@ -35,6 +37,24 @@ elif TTS_PROVIDER == "opensource":
 else:
     print(f"[startup] WARNING: Unknown TTS provider '{TTS_PROVIDER}', falling back to opensource")
     TTS_PROVIDER = "opensource"
+
+# STT Provider Configuration - centralized selection in main.py
+STT_PROVIDER = os.getenv("STT_PROVIDER", "faster-whisper").lower()
+print(f"[startup] STT Provider configured: {STT_PROVIDER}")
+
+# Validate STT configuration
+if STT_PROVIDER == "faster-whisper":
+    print("[startup] Using faster-whisper (container-compatible, local/opensource)")
+    print(f"[startup] Whisper model: {os.getenv('WHISPER_MODEL', 'small.en')}")
+    print(f"[startup] Whisper device: {os.getenv('WHISPER_DEVICE', 'cpu')}")
+    print(f"[startup] Compute type: {os.getenv('WHISPER_COMPUTE_TYPE', 'int8')}")
+    print(f"[startup] VAD threshold: {os.getenv('VAD_THRESHOLD', '0.5')}")
+    print(f"[startup] Streaming chunks: {os.getenv('ENABLE_STREAMING_CHUNKS', 'true')}")
+elif STT_PROVIDER == "sherpa":
+    print("[startup] Using sherpa-onnx for offline STT (fallback mode)")
+else:
+    print(f"[startup] WARNING: Unknown STT provider '{STT_PROVIDER}', falling back to faster-whisper")
+    STT_PROVIDER = "faster-whisper"
 
 # Import the new message processing system
 from message_processing.processor import MessageProcessor
@@ -129,7 +149,7 @@ async def main():
 
     # Initialize the message processor with the room
     print("[startup] Initializing message processor...")
-    processor = MessageProcessor(room, tts_provider=TTS_PROVIDER, agent_name=AGENT_NAME, agent_icon=AGENT_ICON)
+    processor = MessageProcessor(room, tts_provider=TTS_PROVIDER, stt_provider=STT_PROVIDER, agent_name=AGENT_NAME, agent_icon=AGENT_ICON)
 
     # Load plan if PLAN_ID is specified
     if PLAN_ID:
@@ -171,7 +191,7 @@ async def main():
         print(f"[DEBUG] Room connected: {room.isconnected()}")
         print(f"[DEBUG] Local participant: {room.local_participant.identity}")
 
-        # Initialize TTS and send plan to frontend after connection
+        # Initialize TTS, STT, and send plan to frontend after connection
         async def _init_after_connection():
             print("[startup] Initializing TTS audio streaming after connection...")
             try:
@@ -179,6 +199,14 @@ async def main():
                 print("[startup] TTS audio streaming initialization completed successfully")
             except Exception as e:
                 print(f"[startup] ERROR initializing TTS audio streaming: {e}")
+
+            # Initialize STT (required for LiveKit Agent STT)
+            print("[startup] Initializing STT after connection...")
+            try:
+                await processor.initialize_stt()
+                print("[startup] STT initialization completed successfully")
+            except Exception as e:
+                print(f"[startup] ERROR initializing STT: {e}")
 
             # Send plan to frontend (plan already initialized pre-connection)
             print("[startup] Sending plan data to frontend...")
@@ -233,6 +261,57 @@ async def main():
         else:
             # For non-primary participants (e.g., other agents), don't reset conversation
             print(f"[participant] Non-primary participant {participant.identity} left - conversation preserved")
+
+    # Subscribe to audio tracks for real-time transcription
+    @room.on("track_subscribed")
+    def _on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.TrackPublication,
+        participant: rtc.RemoteParticipant
+    ):
+        """Handle incoming audio tracks from participants (e.g., mobile clients)."""
+        if track.kind == rtc.TrackKind.KIND_AUDIO:
+            print(f"🎤 [AUDIO TRACK] Subscribed to audio from {participant.identity}")
+
+            # Create async task to consume audio frames
+            async def consume_audio_track():
+                """Consume audio frames from the track and feed to STT."""
+                try:
+                    # Create AudioStream from the track (16kHz mono for Whisper)
+                    audio_stream = AudioStream(
+                        track=track,
+                        sample_rate=16000,
+                        num_channels=1
+                    )
+
+                    print(f"[AUDIO TRACK] AudioStream created for {participant.identity} (16kHz, mono)")
+
+                    frame_count = 0
+                    # Iterate over audio frames asynchronously
+                    async for frame_event in audio_stream:
+                        frame_count += 1
+
+                        # Extract PCM data as int16 samples
+                        pcm_data = np.frombuffer(frame_event.frame.data, dtype=np.int16)
+
+                        # Log periodically (every 100 frames)
+                        if frame_count % 100 == 0:
+                            print(f"[AUDIO TRACK] Received {frame_count} frames from {participant.identity}, buffer size: {len(pcm_data)} samples")
+
+                        # Feed to STT service for transcription
+                        # Pass participant identity for proper message attribution
+                        await processor.audio_transcription.process_audio_chunk(
+                            pcm_data,
+                            room_id=participant.identity
+                        )
+
+                except Exception as e:
+                    print(f"[AUDIO TRACK] Error consuming audio track: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # Launch the audio consumption task
+            asyncio.create_task(consume_audio_track())
 
     # Receive classic data packets sent via reliable or lossy data
     @room.on("data_received")
@@ -382,6 +461,10 @@ async def main():
         try:
             await processor.initialize_tts_audio_streaming()
             print("[startup] Manual TTS audio streaming initialization completed")
+
+            # Initialize STT
+            await processor.initialize_stt()
+            print("[startup] Manual STT initialization completed")
 
             # Send plan to frontend (plan already initialized pre-connection)
             await processor.send_plan_to_frontend()

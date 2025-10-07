@@ -14,17 +14,24 @@ from .input_gate import InputGate, GateResult
 from .expert_pool import ExpertPool
 from .aggregator import Aggregator
 from .simple_audio_transcription import SimpleAudioTranscriptionService
-from .barge_in_coordinator import BargeInCoordinator
 from .task_manager import TaskManager
 from .plan_service import PlanService
 from tts.service import TTSService
 from .llm_service import LLMService
 
+# Import FasterWhisperSTT (container-compatible, no pvporcupine) with fallback
+try:
+    from .faster_whisper_stt_service import FasterWhisperSTTService
+    FASTER_WHISPER_STT_AVAILABLE = True
+except ImportError as e:
+    print(f"[MessageProcessor] WARNING: FasterWhisperSTT not available: {e}")
+    FASTER_WHISPER_STT_AVAILABLE = False
+
 
 class MessageProcessor:
     """Main orchestrator for message processing pipeline."""
 
-    def __init__(self, room: rtc.Room, tts_provider: str = "opensource", agent_name: str = "task-manager", agent_icon: str = "🤖"):
+    def __init__(self, room: rtc.Room, tts_provider: str = "opensource", stt_provider: str = "sherpa", agent_name: str = "task-manager", agent_icon: str = "🤖"):
         self.room = room
         self.stream_service = StreamService(room, agent_name=agent_name, agent_icon=agent_icon)
 
@@ -63,25 +70,47 @@ class MessageProcessor:
         self.expert_pool = ExpertPool(self.stream_service, llm_service=self.llm_service)
         self.aggregator = Aggregator(self.stream_service, self.tts_service, self.llm_service, self.task_manager)
 
-        # Initialize barge-in coordinator before audio transcription
-        self.barge_in_coordinator = BargeInCoordinator(
-            stream_service=self.stream_service,
-            llm_service=self.llm_service,
-            on_barge_in_event=self.handle_barge_in_event
-        )
+        # STT Provider Selection - centralized configuration
+        print(f"[MessageProcessor] Using STT provider: {stt_provider}")
+        self.stt_provider = stt_provider
+        self.stt_uses_faster_whisper = False
 
-        self.audio_transcription = SimpleAudioTranscriptionService(
-            self.stream_service,
-            on_final_transcript=self.handle_transcribed_text,
-            language="en"  # or "de"
-        )
+        # Initialize appropriate STT service based on provider
+        if stt_provider == "faster-whisper" and FASTER_WHISPER_STT_AVAILABLE:
+            try:
+                self.audio_transcription = FasterWhisperSTTService(
+                    room=self.room,
+                    stream_service=self.stream_service,
+                    on_final_transcript=self.handle_transcribed_text,
+                    language="en"  # or "de"
+                )
+                self.stt_uses_faster_whisper = True
+                print(f"[MessageProcessor] ✅ FasterWhisper STT (container-compatible) initialized")
+            except Exception as e:
+                print(f"[MessageProcessor] ❌ FasterWhisper STT initialization failed: {e}")
+                print(f"[MessageProcessor] Falling back to sherpa-onnx")
+                self.audio_transcription = SimpleAudioTranscriptionService(
+                    self.stream_service,
+                    on_final_transcript=self.handle_transcribed_text,
+                    language="en"
+                )
+                self.stt_provider = "sherpa"
+        else:
+            if stt_provider == "faster-whisper":
+                print(f"[MessageProcessor] WARNING: FasterWhisper STT requested but not available")
+                print(f"[MessageProcessor] Install with: pip install faster-whisper torch torchaudio")
+                print(f"[MessageProcessor] Falling back to sherpa-onnx")
+            self.audio_transcription = SimpleAudioTranscriptionService(
+                self.stream_service,
+                on_final_transcript=self.handle_transcribed_text,
+                language="en"  # or "de"
+            )
+            self.stt_provider = "sherpa"
 
         # Set up TTS callback to transcription service for voice activity coordination
         self.tts_service.on_speaking_state_change = self.audio_transcription.on_assistant_speaking_change
         self.audio_transcription.set_tts_service(self.tts_service)
 
-        # Set up barge-in coordinator in audio transcription
-        self.audio_transcription.set_barge_in_coordinator(self.barge_in_coordinator)
         self.conversation_history: List[Dict[str, Any]] = []
         self.system_assessments: List[Dict[str, Any]] = []
 
@@ -97,6 +126,26 @@ class MessageProcessor:
         # Initialize provider and setup audio track
         await self.tts_service.initialize_provider()
         await self.tts_service.initialize_tts_audio_streaming()
+
+    async def initialize_stt(self):
+        """Initialize STT service (required for FasterWhisper STT)."""
+        if self.stt_uses_faster_whisper:
+            try:
+                success = await self.audio_transcription.initialize()
+                if success:
+                    print(f"[MessageProcessor] ✅ FasterWhisper STT initialized successfully")
+                    # Start transcription processing
+                    await self.audio_transcription.start_transcription()
+                    print(f"[MessageProcessor] ✅ FasterWhisper STT transcription started")
+                else:
+                    print(f"[MessageProcessor] ❌ FasterWhisper STT initialization failed")
+                return success
+            except Exception as e:
+                print(f"[MessageProcessor] ❌ Error initializing FasterWhisper STT: {e}")
+                return False
+        else:
+            print(f"[MessageProcessor] Using sherpa-onnx STT (no additional initialization needed)")
+            return True
 
     async def initialize_plan(self):
         """Initialize the plan state machine (no room connection required)."""
@@ -630,62 +679,8 @@ class MessageProcessor:
         return {
             "available_agents": self.expert_pool.get_agent_info(),
             "total_agents": len(self.expert_pool.agents),
-            "conversation_length": len(self.conversation_history),
-            "barge_in_stats": self.barge_in_coordinator.get_statistics() if self.barge_in_coordinator else {}
+            "conversation_length": len(self.conversation_history)
         }
-
-    async def handle_barge_in_event(self, event_type: str, event_data: Dict[str, Any]):
-        """Handle barge-in events from the coordinator."""
-        try:
-            print(f"[MessageProcessor] Handling barge-in event: {event_type}")
-
-            if event_type == "process_new_message":
-                # Process the interruption as a new user message
-                interruption_text = event_data.get("text", "")
-                interruption_id = event_data.get("interruption_id", "")
-
-                if interruption_text.strip():
-                    print(f"[MessageProcessor] Processing barge-in message: '{interruption_text}'")
-
-                    # Process through normal pipeline but mark as voice transcription
-                    # to avoid double-echoing to frontend
-                    success = await self.process_message(
-                        user_text=interruption_text,
-                        participant_id="room",
-                        is_voice_transcription=True
-                    )
-
-                    if success:
-                        print(f"[MessageProcessor] Barge-in message processed successfully: {interruption_id}")
-                    else:
-                        print(f"[MessageProcessor] Failed to process barge-in message: {interruption_id}")
-
-            elif event_type == "resume_tts":
-                # Resume TTS from the pause point
-                resume_data = event_data.get("resume_data")
-                interruption_id = event_data.get("interruption_id", "")
-
-                print(f"[MessageProcessor] Resuming TTS after invalid barge-in: {interruption_id}")
-
-                try:
-                    success = await self.tts_service.resume_from_barge_in(resume_data)
-                    if success:
-                        print(f"[MessageProcessor] TTS resumed successfully after barge-in: {interruption_id}")
-                    else:
-                        print(f"[MessageProcessor] Failed to resume TTS after barge-in: {interruption_id}")
-                        # Fallback: just resume without state
-                        await self.tts_service.resume()
-
-                except Exception as e:
-                    print(f"[MessageProcessor] Error resuming TTS after barge-in: {e}")
-                    # Fallback: just resume without state
-                    await self.tts_service.resume()
-
-            else:
-                print(f"[MessageProcessor] Unknown barge-in event type: {event_type}")
-
-        except Exception as e:
-            print(f"[MessageProcessor] Error handling barge-in event {event_type}: {e}")
 
     def _build_plan_context_for_aggregator(self) -> Dict[str, Any]:
         """Build plan context for the aggregator to handle problematic conversations appropriately."""
@@ -821,25 +816,6 @@ class MessageProcessor:
                 plan_context["all_deliverable_states"] = all_deliverable_states
 
         return plan_context
-
-    def get_barge_in_status(self) -> Dict[str, Any]:
-        """Get current barge-in status and statistics."""
-        if not self.barge_in_coordinator:
-            return {"enabled": False, "error": "No barge-in coordinator"}
-
-        return {
-            "enabled": True,
-            "active": self.barge_in_coordinator.is_barge_in_active(),
-            "current_status": self.barge_in_coordinator.get_current_barge_in_status(),
-            "statistics": self.barge_in_coordinator.get_statistics(),
-            "transcription_barge_in_active": self.audio_transcription.is_barge_in_active() if self.audio_transcription else False
-        }
-
-    async def force_abandon_barge_in(self):
-        """Force abandon current barge-in (for debugging/admin purposes)."""
-        if self.barge_in_coordinator:
-            await self.barge_in_coordinator.force_abandon_current_barge_in()
-            print("[MessageProcessor] Force abandoned current barge-in")
 
     # Room-level audio transcription methods - simplified approach
     async def handle_audio_stream_start(self, data: Dict[str, Any], room_id: str = "room") -> bool:

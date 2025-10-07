@@ -2,6 +2,12 @@
 livekit>=0.9.0
 livekit-api>=0.5.0
 
+# Real-time STT with local/opensource models (container-compatible)
+faster-whisper>=1.0.0  # Optimized Whisper for CPU/GPU, container-friendly
+silero-vad>=5.0  # Silero VAD for voice activity detection
+torch>=2.0.0  # Required for Silero VAD
+torchaudio>=2.0.0  # Required for audio processing
+
 # LangChain for agent orchestration
 langchain>=0.1.0
 langchain-openai>=0.1.0
