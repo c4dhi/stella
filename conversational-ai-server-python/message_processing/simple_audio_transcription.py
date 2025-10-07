@@ -43,13 +43,6 @@ class SimpleAudioTranscriptionService:
         self.assistant_speaking = False
         self.tts_service = None  # Will be set by MessageProcessor
 
-        # Barge-in functionality - detect speech onset during TTS playback
-        self.barge_in_coordinator = None  # Will be set by MessageProcessor
-        self.barge_in_mode = False  # Track when system is speaking (TTS active)
-        self.current_barge_in_id = None  # Track active barge-in session
-        self.speech_onset_threshold = 0.15  # 150ms for immediate speech detection
-        self.barge_in_detection_enabled = True
-
         # Periodic flushing and timeout mechanism
         self.last_buffer_flush = time.time()
         self.last_speech_activity = time.time()
@@ -219,22 +212,36 @@ class SimpleAudioTranscriptionService:
                 await self._handle_silence_chunk(room_id, current_time)
                 return
 
-            # Convert bytes to float32 audio array with validation
-            byte_array = np.array(audio_data, dtype=np.uint8)
+            # Handle both numpy arrays (from AudioStream) and bytes (legacy data channel)
+            if isinstance(audio_data, np.ndarray):
+                # Already int16 samples from AudioStream.frame.data
+                audio_int16 = audio_data
+            elif isinstance(audio_data, (list, bytes, bytearray)):
+                # Legacy: convert bytes/list to int16
+                if isinstance(audio_data, list):
+                    # Data channel sends as list of integers
+                    audio_data = bytes(audio_data)
 
-            # Validate minimum audio chunk size
-            if len(byte_array) < 2:
-                if debug_this_chunk:
-                    print(f"[SimpleAudioTranscription] Chunk too small: {len(byte_array)} bytes")
+                byte_array = np.array(audio_data, dtype=np.uint8)
+
+                # Validate minimum audio chunk size
+                if len(byte_array) < 2:
+                    if debug_this_chunk:
+                        print(f"[SimpleAudioTranscription] Chunk too small: {len(byte_array)} bytes")
+                    return
+
+                # Ensure even number of bytes for int16 conversion
+                if len(byte_array) % 2 != 0:
+                    byte_array = np.append(byte_array, 0)
+
+                # Convert to int16
+                audio_int16 = byte_array.view(np.int16)
+            else:
+                print(f"[SimpleAudioTranscription] Unknown audio data type: {type(audio_data)}")
                 return
-
-            # Ensure even number of bytes for int16 conversion
-            if len(byte_array) % 2 != 0:
-                byte_array = np.append(byte_array, 0)
 
             # Convert to int16 then float32 with error handling
             try:
-                audio_int16 = byte_array.view(np.int16)
                 audio_array = audio_int16.astype(np.float32) / 32768.0
 
                 # Validate audio array
@@ -268,9 +275,6 @@ class SimpleAudioTranscriptionService:
                 self.last_speech_activity = current_time
                 self.continuous_silence_duration = 0.0
 
-                # Check for barge-in detection during TTS playback
-                await self._check_barge_in_detection(current_time, audio_rms, room_id)
-
             # Always add audio to queue (speech or silence)
             self.audio_queue.append({
                 'audio': audio_array,
@@ -302,8 +306,8 @@ class SimpleAudioTranscriptionService:
                 print(f"[SimpleAudioTranscription] VAD detected speech endpoint. Text: '{self.accumulated_text}', RMS: {audio_rms:.6f}")
                 await self._handle_speech_end(room_id, reason="VAD_endpoint")
             elif is_endpoint:
-                # Don't trigger endpoint on empty text - reduce logging in silent response mode
-                if debug_this_chunk and not self._should_suppress_vad_logging(current_time):
+                # Don't trigger endpoint on empty text
+                if debug_this_chunk:
                     print(f"[SimpleAudioTranscription] VAD endpoint ignored - no accumulated text (RMS: {audio_rms:.6f})")
 
             # Periodic health monitoring
@@ -528,8 +532,9 @@ class SimpleAudioTranscriptionService:
                     self.ai_pipeline_running = True
                     self.ai_pipeline_text = final_text
                     try:
-                        # Use barge-in aware transcription handler
-                        await self.handle_transcribed_text_with_barge_in(final_text, room_id)
+                        # Trigger AI pipeline with final transcript
+                        if self.on_final_transcript:
+                            await self.on_final_transcript(final_text, room_id)
                         print(f"[SimpleAudioTranscription] AI pipeline completed successfully")
                     except Exception as ai_error:
                         print(f"[SimpleAudioTranscription] AI pipeline failed: {ai_error}")
@@ -685,8 +690,9 @@ class SimpleAudioTranscriptionService:
                     self.ai_pipeline_running = True
                     self.ai_pipeline_text = final_text
                     try:
-                        # Use barge-in aware transcription handler
-                        await self.handle_transcribed_text_with_barge_in(final_text, room_id)
+                        # Trigger AI pipeline with final transcript
+                        if self.on_final_transcript:
+                            await self.on_final_transcript(final_text, room_id)
                         print(f"[SimpleAudioTranscription] AI pipeline from mute completed successfully")
                     except Exception as ai_error:
                         print(f"[SimpleAudioTranscription] AI pipeline from mute failed: {ai_error}")
@@ -728,159 +734,19 @@ class SimpleAudioTranscriptionService:
         print("[SimpleAudioTranscription] TTS service reference set")
 
     async def on_assistant_speaking_change(self, is_speaking: bool):
-        """Handle assistant speaking state change for voice activity management."""
+        """Handle assistant speaking state change - blocks/unblocks audio processing."""
         try:
             self.assistant_speaking = is_speaking
-            # Update barge-in mode based on TTS speaking state
-            self.barge_in_mode = is_speaking
 
             if is_speaking:
-                print("[SimpleAudioTranscription] Assistant started speaking - enabling barge-in detection")
-                # Reset any active barge-in when new TTS starts
-                if self.current_barge_in_id:
-                    await self._reset_barge_in_state()
+                print("[SimpleAudioTranscription] 🔊 TTS started - blocking audio input")
             else:
-                print("[SimpleAudioTranscription] Assistant stopped speaking - disabling barge-in detection")
-                # Clean up barge-in state when TTS stops
-                if self.current_barge_in_id:
-                    await self._reset_barge_in_state()
+                print("[SimpleAudioTranscription] 🔇 TTS ended - unblocking audio input")
+                # When TTS ends, also clear AI pipeline flag to fully unblock
+                self.ai_pipeline_running = False
 
         except Exception as e:
             print(f"[SimpleAudioTranscription] Error handling speaking state change: {e}")
-
-    def set_barge_in_coordinator(self, barge_in_coordinator):
-        """Set barge-in coordinator reference."""
-        self.barge_in_coordinator = barge_in_coordinator
-        print("[SimpleAudioTranscription] Barge-in coordinator reference set")
-
-    async def on_silent_response_completion(self):
-        """Handle completion of AI response without TTS (silent response)."""
-        try:
-            print("[SimpleAudioTranscription] Silent response completed - resetting VAD state")
-
-            # Reset conversation turn state similar to what happens when TTS stops
-            self.ai_pipeline_running = False
-            self.ai_pipeline_text = ""
-
-            # Clean up any accumulated text that should be processed
-            if self.accumulated_text.strip():
-                # If we have accumulated text, it should have been processed already
-                # Clear it to prevent VAD confusion
-                self.accumulated_text = ''
-                self.last_transcript_update = time.time()
-
-            # Reset VAD-related timing to prevent false endpoints
-            self.last_speech_activity = time.time()
-            self.silence_start_time = None
-            self.continuous_silence_duration = 0.0
-
-            # Clean up any barge-in state since no TTS was active
-            if self.current_barge_in_id:
-                await self._reset_barge_in_state()
-
-            # Ensure we're not in barge-in mode
-            self.barge_in_mode = False
-            self.assistant_speaking = False
-
-            # Set silent response mode to reduce VAD logging temporarily
-            self.silent_response_mode = True
-            self.last_silent_response = time.time()
-
-            print("[SimpleAudioTranscription] VAD state reset for silent response completion")
-
-        except Exception as e:
-            print(f"[SimpleAudioTranscription] Error handling silent response completion: {e}")
-
-    def _should_suppress_vad_logging(self, current_time: float) -> bool:
-        """Determine if VAD endpoint logging should be suppressed."""
-        # Suppress logging for 10 seconds after a silent response completion
-        return (self.silent_response_mode or
-                (current_time - self.last_silent_response < 10.0))
-
-    async def _check_barge_in_detection(self, current_time: float, audio_rms: float, room_id: str):
-        """Check for barge-in detection during TTS playback."""
-        # Only check for barge-in if:
-        # 1. Barge-in detection is enabled
-        # 2. System is in barge-in mode (TTS is speaking)
-        # 3. We don't already have an active barge-in
-        # 4. We have a barge-in coordinator
-        if (not self.barge_in_detection_enabled or
-            not self.barge_in_mode or
-            self.current_barge_in_id or
-            not self.barge_in_coordinator):
-            return
-
-        # Check if speech is strong enough to trigger barge-in
-        # Use a higher threshold than normal speech detection for more confidence
-        barge_in_threshold = 0.002  # Slightly higher than normal speech threshold
-
-        if audio_rms > barge_in_threshold:
-            print(f"[SimpleAudioTranscription] Barge-in speech detected! RMS: {audio_rms:.6f}")
-
-            try:
-                # Initiate barge-in through coordinator
-                self.current_barge_in_id = await self.barge_in_coordinator.handle_speech_during_tts(
-                    tts_service=self.tts_service,
-                    audio_transcription_service=self,
-                    interrupted_message_id=None  # Could be enhanced to track message IDs
-                )
-
-                print(f"[SimpleAudioTranscription] Barge-in initiated: {self.current_barge_in_id}")
-
-                # Switch to barge-in transcription mode
-                self.assistant_speaking = False  # Allow transcription to continue for barge-in
-
-            except Exception as e:
-                print(f"[SimpleAudioTranscription] Error initiating barge-in: {e}")
-
-    async def handle_transcribed_text_with_barge_in(self, transcribed_text: str, room_id: str = "room") -> bool:
-        """Enhanced version of handle_transcribed_text that considers barge-in context."""
-        try:
-            # If we have an active barge-in, send transcription update to coordinator
-            if self.current_barge_in_id and self.barge_in_coordinator:
-                print(f"[SimpleAudioTranscription] Sending barge-in transcription update: '{transcribed_text}'")
-
-                await self.barge_in_coordinator.handle_transcription_update(
-                    interruption_id=self.current_barge_in_id,
-                    transcribed_text=transcribed_text,
-                    is_final=True
-                )
-
-                # Reset barge-in state after final transcription
-                await self._reset_barge_in_state()
-                return True
-            else:
-                # Normal transcription processing - use the callback to MessageProcessor
-                if self.on_final_transcript:
-                    return await self.on_final_transcript(transcribed_text, room_id)
-                return False
-
-        except Exception as e:
-            print(f"[SimpleAudioTranscription] Error in barge-in transcription handling: {e}")
-            await self._reset_barge_in_state()
-            return False
-
-    async def _reset_barge_in_state(self):
-        """Reset barge-in related state variables."""
-        if self.current_barge_in_id:
-            print(f"[SimpleAudioTranscription] Resetting barge-in state: {self.current_barge_in_id}")
-            self.current_barge_in_id = None
-
-        # Note: Don't reset assistant_speaking here as it's managed by TTS state
-
-    def is_barge_in_active(self) -> bool:
-        """Check if barge-in is currently active."""
-        return self.current_barge_in_id is not None
-
-    def enable_barge_in_detection(self):
-        """Enable barge-in detection."""
-        self.barge_in_detection_enabled = True
-        print("[SimpleAudioTranscription] Barge-in detection enabled")
-
-    def disable_barge_in_detection(self):
-        """Disable barge-in detection."""
-        self.barge_in_detection_enabled = False
-        print("[SimpleAudioTranscription] Barge-in detection disabled")
 
     def cleanup(self):
         """Clean up resources."""

@@ -39,7 +39,7 @@ else:
     TTS_PROVIDER = "opensource"
 
 # STT Provider Configuration - centralized selection in main.py
-STT_PROVIDER = os.getenv("STT_PROVIDER", "faster-whisper").lower()
+STT_PROVIDER = os.getenv("STT_PROVIDER", "sherpa").lower()
 print(f"[startup] STT Provider configured: {STT_PROVIDER}")
 
 # Validate STT configuration
@@ -51,10 +51,10 @@ if STT_PROVIDER == "faster-whisper":
     print(f"[startup] VAD threshold: {os.getenv('VAD_THRESHOLD', '0.5')}")
     print(f"[startup] Streaming chunks: {os.getenv('ENABLE_STREAMING_CHUNKS', 'true')}")
 elif STT_PROVIDER == "sherpa":
-    print("[startup] Using sherpa-onnx for offline STT (fallback mode)")
+    print("[startup] Using sherpa-onnx for offline STT (default, lightweight)")
 else:
-    print(f"[startup] WARNING: Unknown STT provider '{STT_PROVIDER}', falling back to faster-whisper")
-    STT_PROVIDER = "faster-whisper"
+    print(f"[startup] WARNING: Unknown STT provider '{STT_PROVIDER}', falling back to sherpa")
+    STT_PROVIDER = "sherpa"
 
 # Import the new message processing system
 from message_processing.processor import MessageProcessor
