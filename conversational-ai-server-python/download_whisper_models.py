@@ -12,8 +12,8 @@ def download_whisper_model():
     try:
         from faster_whisper import WhisperModel
 
-        # Get model from environment or use default
-        model_name = os.getenv("WHISPER_MODEL", "small.en")
+        # Get model from environment or use default (base.en recommended for production/Kubernetes)
+        model_name = os.getenv("WHISPER_MODEL", "base.en")
         device = os.getenv("WHISPER_DEVICE", "cpu")
         compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 

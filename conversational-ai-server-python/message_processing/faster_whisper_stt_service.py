@@ -77,9 +77,14 @@ class FasterWhisperSTTService:
         self.partial_interval_ms = int(os.getenv("PARTIAL_TRANSCRIPT_INTERVAL_MS", "1000"))  # 1 second default
         self.partial_interval_samples = int(self.sample_rate * self.partial_interval_ms / 1000)
 
+        # Transcription optimization settings (for real-time/CPU efficiency)
+        self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "1"))  # 1=greedy (fastest), 5=beam search (slower, more accurate)
+        self.word_timestamps = os.getenv("WHISPER_WORD_TIMESTAMPS", "false").lower() == "true"  # Adds overhead
+
         print(f"[FasterWhisper] Initializing with model={self.model_size}, device={self.device}, language={language}")
         print(f"[FasterWhisper] VAD threshold={self.vad_threshold}, min_speech={self.vad_min_speech_ms}ms")
         print(f"[FasterWhisper] Streaming={self.enable_streaming}, partial_interval={self.partial_interval_ms}ms")
+        print(f"[FasterWhisper] Optimization: beam_size={self.beam_size}, word_timestamps={self.word_timestamps}")
 
         # Whisper model and VAD - will be initialized in initialize()
         self.whisper_model = None
@@ -381,13 +386,13 @@ class FasterWhisperSTTService:
 
             print(f"[FasterWhisper] 🎯 Transcribing {len(audio_samples)} samples ({audio_duration_sec:.2f}s)...")
 
-            # Transcribe with faster-whisper
+            # Transcribe with faster-whisper (optimized for real-time/CPU)
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=self.language,
-                beam_size=5,
+                beam_size=self.beam_size,  # Configurable: 1=greedy (fastest), 5=beam search
                 vad_filter=False,  # We use Silero VAD externally
-                word_timestamps=True,
+                word_timestamps=self.word_timestamps,  # Configurable: usually false for speed
                 condition_on_previous_text=False,
             )
 
@@ -436,8 +441,9 @@ class FasterWhisperSTTService:
                 segments, info = self.whisper_model.transcribe(
                     audio_float,
                     language=self.language,
-                    beam_size=5,
+                    beam_size=self.beam_size,  # Configurable: 1=greedy (fastest)
                     vad_filter=False,
+                    word_timestamps=self.word_timestamps,
                 )
 
                 final_text = ""
