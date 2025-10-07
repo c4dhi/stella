@@ -61,6 +61,9 @@ class FasterWhisperSTTService:
         self.device = os.getenv("WHISPER_DEVICE", "cpu")
         self.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")  # int8 for CPU, float16 for GPU
 
+        # Audio configuration (must be defined before streaming config)
+        self.sample_rate = 16000  # LiveKit uses 16kHz
+
         # VAD Configuration
         self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
         self.vad_min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "250"))
@@ -70,9 +73,13 @@ class FasterWhisperSTTService:
         self.enable_streaming = os.getenv("ENABLE_STREAMING_CHUNKS", "true").lower() == "true"
         self.chunk_length_ms = int(os.getenv("CHUNK_LENGTH_MS", "1000"))  # Process every 1 second
 
+        # Partial transcript interval (how often to send partial results while speaking)
+        self.partial_interval_ms = int(os.getenv("PARTIAL_TRANSCRIPT_INTERVAL_MS", "1000"))  # 1 second default
+        self.partial_interval_samples = int(self.sample_rate * self.partial_interval_ms / 1000)
+
         print(f"[FasterWhisper] Initializing with model={self.model_size}, device={self.device}, language={language}")
         print(f"[FasterWhisper] VAD threshold={self.vad_threshold}, min_speech={self.vad_min_speech_ms}ms")
-        print(f"[FasterWhisper] Streaming={self.enable_streaming}, chunk_length={self.chunk_length_ms}ms")
+        print(f"[FasterWhisper] Streaming={self.enable_streaming}, partial_interval={self.partial_interval_ms}ms")
 
         # Whisper model and VAD - will be initialized in initialize()
         self.whisper_model = None
@@ -81,7 +88,6 @@ class FasterWhisperSTTService:
 
         # Audio buffer for chunk-based processing
         self.audio_buffer = []
-        self.sample_rate = 16000  # LiveKit uses 16kHz
         self.samples_per_chunk = int(self.sample_rate * self.chunk_length_ms / 1000)
 
         # VAD window size (Silero VAD requires exactly 512 samples for 16kHz)
@@ -96,6 +102,7 @@ class FasterWhisperSTTService:
         self.segment_count = 0
         self.last_final_text = ""
         self.last_final_time = 0
+        self.last_partial_time = 0  # Track when we last sent a partial transcript
 
         # Speech detection state
         self.speech_detected = False
@@ -281,9 +288,18 @@ class FasterWhisperSTTService:
                         # Check for speech with Silero VAD
                         await self._check_speech_activity(window_float, window_array)
 
-                    # Trigger partial transcription if we have enough speech audio
-                    # (transcribe every 3 seconds of accumulated speech for partial results)
-                    if self.speech_detected and len(self.speech_audio_buffer) >= self.sample_rate * 3:
+                    # Trigger partial transcription while speaking for real-time feedback
+                    current_time = time.time()
+                    time_since_last_partial = (current_time - self.last_partial_time) * 1000  # Convert to ms
+
+                    # Transcribe if:
+                    # 1. Speech is detected
+                    # 2. We have enough audio (based on configured interval)
+                    # 3. Enough time has passed since last partial (avoid over-transcribing)
+                    if (self.speech_detected and
+                        len(self.speech_audio_buffer) >= self.partial_interval_samples and
+                        time_since_last_partial >= self.partial_interval_ms):
+                        self.last_partial_time = current_time
                         await self._transcribe_accumulated_audio()
 
                 except asyncio.TimeoutError:
