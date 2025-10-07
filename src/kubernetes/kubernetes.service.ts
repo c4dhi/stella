@@ -175,7 +175,11 @@ export class KubernetesService {
 
   async deletePod(podName: string): Promise<void> {
     try {
-      await this.k8sApi.deleteNamespacedPod({ name: podName, namespace: this.namespace });
+      await this.k8sApi.deleteNamespacedPod({
+        name: podName,
+        namespace: this.namespace,
+        gracePeriodSeconds: 0  // Force immediate termination (SIGKILL)
+      });
       this.logger.log(`Deleted pod ${podName} from namespace ${this.namespace}`);
     } catch (error) {
       if (error.response?.statusCode === 404) {

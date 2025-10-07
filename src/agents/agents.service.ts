@@ -338,9 +338,6 @@ export class AgentsService {
       this.logger.error(`K8s cleanup failed for agent ${id}: ${error.message}`);
     }
 
-    // Wait 800ms for UI feedback
-    await new Promise(resolve => setTimeout(resolve, 800));
-
     // Update final status to STOPPED
     const stoppedAgent = await this.prisma.agentInstance.update({
       where: { id },

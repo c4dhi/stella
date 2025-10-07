@@ -16,8 +16,8 @@ def download_sherpa_model():
     model_name = "sherpa-onnx-streaming-zipformer-en-2023-06-21"
     model_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
 
-    # Setup directories - use local directory instead of home cache
-    cache_dir = "./sherpa-models"
+    # Setup directories - use same cache directory as runtime code
+    cache_dir = os.path.expanduser("~/.cache/sherpa-onnx")
     os.makedirs(cache_dir, exist_ok=True)
     model_dir = os.path.join(cache_dir, model_name)
 

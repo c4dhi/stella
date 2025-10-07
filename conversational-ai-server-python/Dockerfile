@@ -24,6 +24,10 @@ COPY requirements.txt .
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download sherpa-onnx model during build
+COPY download_sherpa_model.py .
+RUN python download_sherpa_model.py && rm download_sherpa_model.py
+
 # Copy the application code
 COPY main.py .
 COPY message_processing/ ./message_processing/

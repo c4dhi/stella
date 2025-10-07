@@ -56,7 +56,7 @@ class SimpleAudioTranscriptionService:
         self.silence_start_time = None
         self.buffer_flush_interval = 0.5  # 500ms periodic flushing
         self.speech_timeout = 10.0  # 10 second timeout for forced endpoint
-        self.silence_threshold = 0.8  # 800ms silence detection (more responsive)
+        self.silence_threshold = 1.5  # 1500ms silence detection (allows natural pauses)
 
         # Enhanced monitoring
         self.continuous_silence_duration = 0.0
@@ -173,7 +173,7 @@ class SimpleAudioTranscriptionService:
                     print(f"[SimpleAudioTranscription] Missing model file: {path}")
                     return None
 
-            # Create streaming recognizer with responsive VAD settings - optimized for real-time transcription
+            # Create streaming recognizer with less aggressive VAD settings - allows complete sentences
             recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                 encoder=encoder_path,
                 decoder=decoder_path,
@@ -182,9 +182,9 @@ class SimpleAudioTranscriptionService:
                 sample_rate=16000,
                 num_threads=2,
                 enable_endpoint_detection=True,
-                rule1_min_trailing_silence=0.8,   # Responsive endpoint detection - natural pause
-                rule2_min_trailing_silence=0.6,   # Quick pauses and breathing
-                rule3_min_utterance_length=200,   # Lower threshold for shorter phrases
+                rule1_min_trailing_silence=1.5,   # Allow natural sentence pauses
+                rule2_min_trailing_silence=1.2,   # Allow breathing pauses between phrases
+                rule3_min_utterance_length=400,   # Longer minimum to avoid premature cutoff
                 decoding_method="greedy_search",
                 max_active_paths=4
             )
