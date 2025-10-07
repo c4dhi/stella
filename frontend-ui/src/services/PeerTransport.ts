@@ -88,13 +88,6 @@ export class PeerTransport implements Transport {
           if (env.type === 'transcript' || env.type === 'transcript_chunk') {
             // Transform server transcript chunk format to frontend format
             const serverData = env.data
-            // console.log('🔍 [DEBUG] Processing transcript data:', {
-            //   text: serverData.text,
-            //   is_final: serverData.is_final,
-            //   participant_id: serverData.participant_id,
-            //   transcript_id: serverData.transcript_id,
-            //   timestamp: serverData.timestamp
-            // })
 
             // WORKAROUND: Server timestamps are unreliable (2 hours behind)
             // Use client time for consistent timestamps with participant events
@@ -133,14 +126,6 @@ export class PeerTransport implements Transport {
               finalizedAt: serverData.is_final ? startedAtMs : undefined,
               participant_id: serverData.participant_id
             }
-
-            // console.log('🔍 [DEBUG] Transformed transcript chunk for display:', {
-            //   id: transcriptChunk.id,
-            //   role: transcriptChunk.role,
-            //   text: transcriptChunk.text,
-            //   status: transcriptChunk.status,
-            //   startedAt: transcriptChunk.startedAt
-            // })
 
             this.onTranscript(transcriptChunk)
           } else if (this.isProcessingMessage(env.type)) {

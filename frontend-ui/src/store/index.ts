@@ -395,7 +395,11 @@ export const useStore = create<
   // Multi-agent actions
   setAgentTaskList: (agentId, todoList, agentName) => set((state) => {
     const newMap = new Map(state.agentTaskLists)
+    const isUpdate = state.agentTaskLists.has(agentId)
     newMap.set(agentId, { ...todoList, agentName })
+
+    console.log(`[TaskPanel] ${isUpdate ? 'Updated' : 'Added'} task list for agent "${agentName || agentId}"`)
+
     return {
       agentTaskLists: newMap,
       showTaskPanel: true,
@@ -427,7 +431,7 @@ export const useStore = create<
       )
 
       if (exists) {
-        console.log('[TaskTimeline] Skipping duplicate live update')
+        console.log('[TaskTimeline] Skipping duplicate live update in timeline')
         return {}
       }
 
@@ -447,7 +451,8 @@ export const useStore = create<
       return { taskUpdateHistory: newTimeline }
     })
 
-    // Update current display (reuse existing logic)
+    // Update current display (this will UPDATE existing agent if exists, not create duplicate)
+    // Map.set() replaces the value if the key already exists
     get().setAgentTaskList(agentId, todoList, agentName)
   },
 
@@ -715,24 +720,38 @@ export const useStore = create<
       return
     }
 
-    // Get the most recent task update
-    const latestUpdate = taskUpdateHistory[taskUpdateHistory.length - 1]
-    console.log('[TaskTimeline] Applying latest task state from', new Date(latestUpdate.timestamp).toLocaleTimeString())
+    // Group updates by agentId and get the latest update for each agent
+    const agentLatestUpdates = new Map<string, typeof taskUpdateHistory[0]>()
 
-    // Apply it to the current state
+    taskUpdateHistory.forEach(update => {
+      const existing = agentLatestUpdates.get(update.agentId)
+      if (!existing || update.timestamp > existing.timestamp) {
+        agentLatestUpdates.set(update.agentId, update)
+      }
+    })
+
+    console.log('[TaskTimeline] Applying latest task state for', agentLatestUpdates.size, 'agent(s)')
+
+    // Apply latest state for ALL agents
     set((state) => {
-      const newMap = new Map(state.agentTaskLists)
-      newMap.set(latestUpdate.agentId, {
-        ...latestUpdate.todoList,
-        agentName: latestUpdate.agentName
+      const newMap = new Map<string, TodoList & { agentName?: string }>()
+
+      agentLatestUpdates.forEach((update, agentId) => {
+        newMap.set(agentId, {
+          ...update.todoList,
+          agentName: update.agentName
+        })
       })
+
+      // Get the most recent update overall for legacy todoList
+      const mostRecentUpdate = taskUpdateHistory[taskUpdateHistory.length - 1]
 
       return {
         agentTaskLists: newMap,
-        showTaskPanel: true,
+        showTaskPanel: newMap.size > 0,
         isTaskPanelInHistoryMode: false, // Latest state is not history mode
         currentHistoricalTimestamp: null,
-        todoList: state.todoList || latestUpdate.todoList // Legacy compat
+        todoList: state.todoList || mostRecentUpdate.todoList // Legacy compat
       }
     })
   },
@@ -740,32 +759,46 @@ export const useStore = create<
   applyTaskStateAtTime: (timestamp) => {
     const { taskUpdateHistory } = get()
 
-    // Find the most recent task update at or before the given timestamp
-    const applicableUpdate = taskUpdateHistory
-      .filter(update => update.timestamp <= timestamp)
-      .sort((a, b) => b.timestamp - a.timestamp)[0] // Most recent first
+    // Find all updates at or before the given timestamp
+    const updatesAtTime = taskUpdateHistory.filter(update => update.timestamp <= timestamp)
 
-    if (!applicableUpdate) {
+    if (updatesAtTime.length === 0) {
       console.log('[TaskTimeline] No task update found at timestamp', timestamp)
       return
     }
 
-    console.log('[TaskTimeline] Applying task state from', new Date(applicableUpdate.timestamp).toLocaleTimeString())
+    // Group by agentId and get the most recent update for each agent at this time
+    const agentUpdatesAtTime = new Map<string, typeof taskUpdateHistory[0]>()
 
-    // Apply the historical state
+    updatesAtTime.forEach(update => {
+      const existing = agentUpdatesAtTime.get(update.agentId)
+      if (!existing || update.timestamp > existing.timestamp) {
+        agentUpdatesAtTime.set(update.agentId, update)
+      }
+    })
+
+    console.log('[TaskTimeline] Applying task state for', agentUpdatesAtTime.size, 'agent(s) at', new Date(timestamp).toLocaleTimeString())
+
+    // Apply the historical state for ALL agents
     set((state) => {
-      const newMap = new Map(state.agentTaskLists)
-      newMap.set(applicableUpdate.agentId, {
-        ...applicableUpdate.todoList,
-        agentName: applicableUpdate.agentName
+      const newMap = new Map<string, TodoList & { agentName?: string }>()
+
+      agentUpdatesAtTime.forEach((update, agentId) => {
+        newMap.set(agentId, {
+          ...update.todoList,
+          agentName: update.agentName
+        })
       })
+
+      // Get the most recent update overall for legacy todoList
+      const mostRecentAtTime = updatesAtTime[updatesAtTime.length - 1]
 
       return {
         agentTaskLists: newMap,
-        showTaskPanel: true,
+        showTaskPanel: newMap.size > 0,
         isTaskPanelInHistoryMode: true,
-        currentHistoricalTimestamp: applicableUpdate.timestamp,
-        todoList: state.todoList || applicableUpdate.todoList // Legacy compat
+        currentHistoricalTimestamp: timestamp,
+        todoList: state.todoList || mostRecentAtTime.todoList // Legacy compat
       }
     })
   },
