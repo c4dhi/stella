@@ -338,21 +338,57 @@ class AbstractTTSProvider(ABC):
         """Callback when audio playback starts."""
         self.is_speaking = True
         self.state = TTSState.STREAMING
+
+        # Notify via callback
         if self.on_speaking_state_change:
             try:
                 await self.on_speaking_state_change(True)
             except Exception as e:
                 print(f"[{self.provider_name}] Error in speaking state callback: {e}")
 
+        # Send explicit speaking state message to clients
+        if self.stream_service:
+            try:
+                import time
+                await self.stream_service.send_message({
+                    "type": "agent_speaking_start",
+                    "data": {
+                        "is_speaking": True,
+                        "provider": self.provider_name,
+                        "timestamp": time.time()
+                    }
+                })
+                print(f"[{self.provider_name}] 🔊 Sent agent_speaking_start to clients")
+            except Exception as e:
+                print(f"[{self.provider_name}] Error sending speaking start message: {e}")
+
     async def _on_audio_stop(self):
         """Callback when audio playback stops."""
         self.is_speaking = False
         self.state = TTSState.IDLE
+
+        # Notify via callback
         if self.on_speaking_state_change:
             try:
                 await self.on_speaking_state_change(False)
             except Exception as e:
                 print(f"[{self.provider_name}] Error in speaking state callback: {e}")
+
+        # Send explicit speaking state message to clients
+        if self.stream_service:
+            try:
+                import time
+                await self.stream_service.send_message({
+                    "type": "agent_speaking_stop",
+                    "data": {
+                        "is_speaking": False,
+                        "provider": self.provider_name,
+                        "timestamp": time.time()
+                    }
+                })
+                print(f"[{self.provider_name}] 🔇 Sent agent_speaking_stop to clients")
+            except Exception as e:
+                print(f"[{self.provider_name}] Error sending speaking stop message: {e}")
 
     async def _resume_from_pause_state(self):
         """Resume from stored pause state - to be implemented by providers."""

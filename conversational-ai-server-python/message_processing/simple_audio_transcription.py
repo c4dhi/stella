@@ -305,10 +305,6 @@ class SimpleAudioTranscriptionService:
             if is_endpoint and self.accumulated_text.strip():
                 print(f"[SimpleAudioTranscription] VAD detected speech endpoint. Text: '{self.accumulated_text}', RMS: {audio_rms:.6f}")
                 await self._handle_speech_end(room_id, reason="VAD_endpoint")
-            elif is_endpoint:
-                # Don't trigger endpoint on empty text
-                if debug_this_chunk:
-                    print(f"[SimpleAudioTranscription] VAD endpoint ignored - no accumulated text (RMS: {audio_rms:.6f})")
 
             # Periodic health monitoring
             if current_time - self.last_health_report > self.health_report_interval:

@@ -237,6 +237,21 @@ class StreamService:
             print(f"[StreamService] Failed to send message: {e}")
             return False
 
+    async def send_message(self, message: Dict[str, Any]) -> bool:
+        """
+        Send arbitrary message to frontend via data channel.
+
+        Public wrapper for _send_message() to allow sending custom messages
+        (e.g., agent_speaking_start, agent_speaking_stop from TTS providers).
+
+        Args:
+            message: Dictionary containing message type and data
+
+        Returns:
+            bool: True if message sent successfully, False otherwise
+        """
+        return await self._send_message(message)
+
     async def send_plan_started(
         self,
         plan_id: str,

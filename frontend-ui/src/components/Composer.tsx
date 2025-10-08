@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
-import { startPCMCapture } from '../services/audio/capture'
+import { startMicWithVu } from '../services/audio/capture'
 import TTSControlButton from './TTSControlButton'
 
 export default function Composer() {
@@ -16,7 +16,7 @@ export default function Composer() {
   const vu = useStore(s => s.vu)
 
   const audioContextRef = useRef<AudioContext | null>(null)
-  const pcmCaptureRef = useRef<any>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
   const send = () => {
     if (!text.trim() || !transport) return
@@ -30,15 +30,10 @@ export default function Composer() {
     if (isMuted) {
       // Unmute - start streaming audio
       try {
-        // Prevent multiple concurrent sessions
-        if (pcmCaptureRef.current) {
-          // Use flushAndStop for clean session transition
-          if (typeof pcmCaptureRef.current.flushAndStop === 'function') {
-            await pcmCaptureRef.current.flushAndStop()
-          } else {
-            pcmCaptureRef.current.stop()
-          }
-          pcmCaptureRef.current = null
+        // Clean up any existing stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop())
+          streamRef.current = null
         }
 
         let audioContext = audioContextRef.current
@@ -47,12 +42,12 @@ export default function Composer() {
           audioContextRef.current = audioContext
         }
 
-        // Start PCM capture for transcription
-        const pcmCapture = await startPCMCapture(audioContext, transport as any)
-        pcmCaptureRef.current = pcmCapture
+        // Get microphone stream with VU meter
+        const stream = await startMicWithVu(audioContext, transport as any)
+        streamRef.current = stream
 
-        // Publish WebRTC audio track to enable backend streaming
-        await transport.publishAudioTrack(pcmCapture.stream)
+        // Publish audio track to LiveKit
+        await transport.publishAudioTrack(stream)
 
         setIsMuted(false)
         setIsRecording(true)
@@ -62,22 +57,16 @@ export default function Composer() {
         setIsRecording(false)
       }
     } else {
-      // Mute - stop streaming audio with flush
+      // Mute - stop streaming audio
 
-      // Stop PCM capture for transcription
-      if (pcmCaptureRef.current) {
-        // Use flushAndStop to ensure remaining audio chunks are sent and mute signal is triggered
-        if (typeof pcmCaptureRef.current.flushAndStop === 'function') {
-          await pcmCaptureRef.current.flushAndStop()
-        } else {
-          // Fallback to normal stop if flushAndStop not available
-          pcmCaptureRef.current.stop()
-        }
-        pcmCaptureRef.current = null
-      }
-
-      // Unpublish WebRTC audio track to completely stop transmission to backend
+      // Unpublish audio track from LiveKit
       await transport.unpublishAudioTrack()
+
+      // Stop and clean up stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
 
       setIsMuted(true)
       setIsRecording(false)
@@ -98,14 +87,9 @@ export default function Composer() {
         }
       } else if (status !== 'connected' && audioContextRef.current) {
         // Clean up when disconnected
-        if (pcmCaptureRef.current) {
-          // Use flushAndStop for clean disconnection
-          if (typeof pcmCaptureRef.current.flushAndStop === 'function') {
-            pcmCaptureRef.current.flushAndStop()
-          } else {
-            pcmCaptureRef.current.stop()
-          }
-          pcmCaptureRef.current = null
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop())
+          streamRef.current = null
         }
 
         // Ensure audio track is unpublished when disconnecting
@@ -128,14 +112,9 @@ export default function Composer() {
   useEffect(() => {
     return () => {
       const cleanup = async () => {
-        if (pcmCaptureRef.current) {
-          // Use flushAndStop for clean unmount
-          if (typeof pcmCaptureRef.current.flushAndStop === 'function') {
-            await pcmCaptureRef.current.flushAndStop()
-          } else {
-            pcmCaptureRef.current.stop()
-          }
-          pcmCaptureRef.current = null
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop())
+          streamRef.current = null
         }
 
         // Ensure audio track is unpublished on unmount

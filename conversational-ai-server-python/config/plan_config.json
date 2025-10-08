@@ -1,5 +1,5 @@
 {
-  "default_plan": "cognitive_stimulation_demo_sm",
+  "default_plan": "grace_smalltalk",
   "plan_settings": {
     "auto_advance_statements": true,
     "require_explicit_completion": false,

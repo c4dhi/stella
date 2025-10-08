@@ -149,26 +149,7 @@ async def main():
 
     # Initialize the message processor with the room
     print("[startup] Initializing message processor...")
-    processor = MessageProcessor(room, tts_provider=TTS_PROVIDER, stt_provider=STT_PROVIDER, agent_name=AGENT_NAME, agent_icon=AGENT_ICON)
-
-    # Load plan if PLAN_ID is specified
-    if PLAN_ID:
-        try:
-            plan_path = f"plans/{PLAN_ID}.json"
-            if os.path.exists(plan_path):
-                print(f"[startup] Loading plan from {plan_path}...")
-                with open(plan_path, 'r') as f:
-                    plan_data = json.load(f)
-                # Assuming processor has a load_plan method
-                if hasattr(processor, 'load_plan'):
-                    processor.load_plan(plan_data)
-                    print(f"[startup] Plan '{plan_data.get('title')}' loaded successfully")
-                else:
-                    print("[startup] WARNING: Processor does not support plan loading")
-            else:
-                print(f"[startup] WARNING: Plan file not found: {plan_path}")
-        except Exception as e:
-            print(f"[startup] ERROR loading plan: {e}")
+    processor = MessageProcessor(room, tts_provider=TTS_PROVIDER, stt_provider=STT_PROVIDER, agent_name=AGENT_NAME, agent_icon=AGENT_ICON, plan_id=PLAN_ID)
 
     # Initialize plan BEFORE connecting to room (eliminates all race conditions)
     print("[startup] Initializing plan state machine (pre-connection)...")
@@ -254,8 +235,9 @@ async def main():
                 if is_reconnected:
                     print(f"[participant] {participant.identity} reconnected - preserving conversation state")
                 else:
-                    print(f"[participant] {participant.identity} did not reconnect - resetting conversation")
-                    processor.reset_conversation_history(participant.identity)
+                    print(f"[participant] {participant.identity} did not reconnect - conversation preserved in memory")
+                    # Note: Not resetting conversation to preserve state across disconnect/reconnect
+                    # Conversation will persist until agent pod restarts
 
             asyncio.create_task(_check_reconnect())
         else:
@@ -294,15 +276,11 @@ async def main():
                         # Extract PCM data as int16 samples
                         pcm_data = np.frombuffer(frame_event.frame.data, dtype=np.int16)
 
-                        # Log periodically (every 100 frames)
-                        if frame_count % 100 == 0:
-                            print(f"[AUDIO TRACK] Received {frame_count} frames from {participant.identity}, buffer size: {len(pcm_data)} samples")
-
                         # Feed to STT service for transcription
-                        # Pass participant identity for proper message attribution
+                        # Pass participant name (or identity as fallback) for proper message attribution
                         await processor.audio_transcription.process_audio_chunk(
                             pcm_data,
-                            room_id=participant.identity
+                            room_id=participant.name or participant.identity
                         )
 
                 except Exception as e:

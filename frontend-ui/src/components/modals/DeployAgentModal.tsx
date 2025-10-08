@@ -15,7 +15,7 @@ export default function DeployAgentModal({
 }: DeployAgentModalProps) {
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤖')
-  const [planId, setPlanId] = useState('cognitive_stimulation_demo_sm')
+  const [planId, setPlanId] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -150,7 +150,7 @@ export default function DeployAgentModal({
                     transition-all duration-200
                     placeholder:text-neutral-400
                   "
-                  placeholder="e.g., cognitive_stimulation_demo_sm"
+                  placeholder="e.g., grace_smalltalk"
                 />
                 <div className="mt-2 text-xs text-neutral-500 font-light">
                   Leave empty for default agent configuration

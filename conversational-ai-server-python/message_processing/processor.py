@@ -31,7 +31,7 @@ except ImportError as e:
 class MessageProcessor:
     """Main orchestrator for message processing pipeline."""
 
-    def __init__(self, room: rtc.Room, tts_provider: str = "opensource", stt_provider: str = "sherpa", agent_name: str = "task-manager", agent_icon: str = "🤖"):
+    def __init__(self, room: rtc.Room, tts_provider: str = "opensource", stt_provider: str = "sherpa", agent_name: str = "task-manager", agent_icon: str = "🤖", plan_id: str = None):
         self.room = room
         self.stream_service = StreamService(room, agent_name=agent_name, agent_icon=agent_icon)
 
@@ -46,7 +46,13 @@ class MessageProcessor:
         self.plan_service = PlanService(stream_service=self.stream_service, llm_service=self.llm_service)
 
         # Keep TaskManager for backward compatibility (some components may still need it)
-        self.task_manager = TaskManager()
+        self.task_manager = TaskManager(plan_name=plan_id)
+
+        # Log which plan is being used
+        if plan_id:
+            print(f"[MessageProcessor] Using plan ID from environment: {plan_id}")
+        else:
+            print(f"[MessageProcessor] No plan ID specified, using config default")
 
         # Set stream service for real-time deliverable notifications
         self.task_manager.set_stream_service(self.stream_service)

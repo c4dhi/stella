@@ -123,6 +123,9 @@ class FasterWhisperSTTService:
         self.processing_endpoint = False
         self.ai_pipeline_running = False
 
+        # Participant tracking
+        self.current_participant_id = "room"  # Default fallback
+
         # Background processing
         self._processing_task = None
         self._shutdown_event = asyncio.Event()
@@ -210,6 +213,9 @@ class FasterWhisperSTTService:
             audio_data: Raw audio as int16 numpy array OR bytes (16kHz, int16)
             room_id: Room identifier (participant identity for proper message attribution)
         """
+        # Store participant ID for transcript attribution
+        self.current_participant_id = room_id
+
         # Block audio processing during AI response generation or TTS playback
         if self.assistant_speaking or self.ai_pipeline_running:
             # Log periodically to avoid spam (every 100 chunks)
@@ -411,7 +417,7 @@ class FasterWhisperSTTService:
                     await self.stream_service.send_transcript_chunk(
                         text=transcribed_text,
                         is_final=False,
-                        participant_id="room",
+                        participant_id=self.current_participant_id,
                         transcript_id=self.transcript_id,
                         confidence=0.8
                     )
@@ -482,7 +488,7 @@ class FasterWhisperSTTService:
             await self.stream_service.send_transcript_chunk(
                 text=final_text,
                 is_final=True,
-                participant_id="room",
+                participant_id=self.current_participant_id,
                 transcript_id=self.transcript_id,
                 confidence=0.95
             )
@@ -501,7 +507,7 @@ class FasterWhisperSTTService:
                 print(f"[FasterWhisper] Starting AI pipeline - blocking audio input")
                 self.ai_pipeline_running = True
                 try:
-                    await self.on_final_transcript(final_text, "room")
+                    await self.on_final_transcript(final_text, self.current_participant_id)
                 except Exception as e:
                     print(f"[FasterWhisper] AI pipeline error: {e}")
                 finally:

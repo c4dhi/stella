@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useStore } from '../store'
-import { startPCMCapture } from '../services/audio/capture'
+import { startMicWithVu } from '../services/audio/capture'
 
 export default function PushToTalkButton() {
   const status = useStore(s => s.status)
@@ -13,8 +13,6 @@ export default function PushToTalkButton() {
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const vuNodeRef = useRef<AudioWorkletNode | null>(null)
-  const pcmCaptureRef = useRef<any>(null)
 
   const startRecording = useCallback(async () => {
     if (!transport || status !== 'connected') {
@@ -27,15 +25,12 @@ export default function PushToTalkButton() {
       const audioContext = new AudioContext()
       audioContextRef.current = audioContext
 
-      // Start PCM capture for real-time transcription (same as continuous mode)
-      const pcmCapture = await startPCMCapture(audioContext, transport as any)
-      pcmCaptureRef.current = pcmCapture
+      // Get microphone stream with VU meter
+      const stream = await startMicWithVu(audioContext, transport as any)
+      streamRef.current = stream
 
-      // Store the stream reference for VU meter
-      streamRef.current = pcmCapture.stream
-
-      // Set up VU meter for visual feedback using the same stream
-      await setupVUMeter(pcmCapture.stream)
+      // Publish audio track to LiveKit
+      await transport.publishAudioTrack(stream)
 
       setIsRecording(true)
 
@@ -47,28 +42,26 @@ export default function PushToTalkButton() {
   }, [transport, status, setIsRecording, setPushToTalkActive])
 
   const stopRecording = useCallback(async () => {
-    if (pcmCaptureRef.current && isRecording) {
-      // Use flushAndStop to ensure remaining audio chunks are sent
-      if (typeof pcmCaptureRef.current.flushAndStop === 'function') {
-        await pcmCaptureRef.current.flushAndStop()
-      } else {
-        // Fallback to normal stop if flushAndStop not available
-        pcmCaptureRef.current.stop()
+    if (streamRef.current && isRecording) {
+      // Unpublish audio track from LiveKit
+      await transport?.unpublishAudioTrack()
+
+      // Stop and clean up stream
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+
+      // Close audio context
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+        audioContextRef.current = null
       }
-
-      pcmCaptureRef.current = null
-
-      // Clean up VU meter
-      cleanupVUMeter()
 
       // Update state
       setIsRecording(false)
       setPushToTalkActive(false)
-
-      // Clear stream reference
-      streamRef.current = null
+      useStore.getState().setVu(0) // Reset VU meter
     }
-  }, [isRecording, setIsRecording, setPushToTalkActive])
+  }, [isRecording, transport, setIsRecording, setPushToTalkActive])
 
   const handleMouseDown = useCallback(() => {
     if (!isPushToTalkActive) {
@@ -88,57 +81,15 @@ export default function PushToTalkButton() {
   // Clean up on component unmount
   useEffect(() => {
     return () => {
-      if (pcmCaptureRef.current) {
-        pcmCaptureRef.current.stop()
-      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
       }
-      cleanupVUMeter()
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+      }
+      useStore.getState().setVu(0)
     }
   }, [])
-
-  const setupVUMeter = async (stream: MediaStream) => {
-    try {
-      const audioContext = new AudioContext()
-      audioContextRef.current = audioContext
-
-      const src = audioContext.createMediaStreamSource(stream)
-
-      // Load worklet if not already loaded
-      // @ts-ignore
-      if (!audioContext.audioWorklet?.modules?.length) {
-        await audioContext.audioWorklet.addModule('/src/services/audio/vu-worklet.js')
-      }
-
-      const vuNode = new AudioWorkletNode(audioContext, 'vu-processor')
-      vuNodeRef.current = vuNode
-
-      vuNode.port.onmessage = (e) => {
-        const vuValue = Math.min(1, Math.max(0, Number(e.data) || 0))
-        useStore.getState().setVu(vuValue)
-      }
-
-      src.connect(vuNode)
-      vuNode.connect(audioContext.destination)
-
-    } catch (error) {
-      console.error('Error setting up VU meter:', error)
-    }
-  }
-
-  const cleanupVUMeter = () => {
-    if (vuNodeRef.current) {
-      vuNodeRef.current.disconnect()
-      vuNodeRef.current = null
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-    // Reset VU meter display
-    useStore.getState().setVu(0)
-  }
 
 
   const buttonClasses = `
