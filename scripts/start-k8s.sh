@@ -76,6 +76,45 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 
+# Check if required ports are available
+echo -e "${GREEN}Checking port availability...${NC}"
+REQUIRED_PORTS=(3000 5173 7880 5432)
+PORTS_IN_USE=()
+
+for port in "${REQUIRED_PORTS[@]}"; do
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+        PORTS_IN_USE+=($port)
+        PROCESS_INFO=$(lsof -Pi :$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1 " (PID: " $2 ")"}')
+        echo -e "${RED}✗ Port $port is already in use by $PROCESS_INFO${NC}"
+    else
+        echo -e "${GREEN}✓ Port $port is available${NC}"
+    fi
+done
+
+if [ ${#PORTS_IN_USE[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${RED}Error: The following ports are already in use:${NC}"
+    for port in "${PORTS_IN_USE[@]}"; do
+        PROCESS_INFO=$(lsof -Pi :$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print "  Port " $9 ": " $1 " (PID: " $2 ")"}')
+        echo -e "${RED}$PROCESS_INFO${NC}"
+    done
+    echo ""
+    echo -e "${YELLOW}Please stop these services before continuing:${NC}"
+    echo ""
+    echo -e "${YELLOW}To kill a specific process:${NC}"
+    echo -e "  kill -9 <PID>"
+    echo ""
+    echo -e "${YELLOW}To stop Docker containers on these ports:${NC}"
+    echo -e "  docker ps | grep <port>"
+    echo -e "  docker stop <container-id>"
+    echo ""
+    echo -e "${YELLOW}If open-webui is running on port 3000:${NC}"
+    echo -e "  docker stop open-webui"
+    echo ""
+    exit 1
+fi
+echo ""
+
 # Check if minikube is installed
 if ! command -v minikube &> /dev/null; then
     echo -e "${YELLOW}minikube not found. Installing...${NC}"
@@ -120,13 +159,26 @@ echo -e "${GREEN}Building Docker images...${NC}"
 cd "$(dirname "$0")/.."
 
 echo -e "${BLUE}Building session-management-server image...${NC}"
-docker build -t session-management-server:latest .
+DOCKER_BUILDKIT=1 docker build \
+  --progress=plain \
+  --build-arg BUILDKIT_STEP_TIMEOUT=3600 \
+  --network=host \
+  -t session-management-server:latest .
 
 echo -e "${BLUE}Building conversational-ai-server image...${NC}"
-docker build -t conversational-ai-server:latest ./conversational-ai-server-python
+DOCKER_BUILDKIT=1 docker build \
+  --progress=plain \
+  --build-arg BUILDKIT_STEP_TIMEOUT=3600 \
+  --network=host \
+  -t conversational-ai-server:latest \
+  ./conversational-ai-server-python
 
 echo -e "${BLUE}Building frontend-ui image...${NC}"
-docker build -t frontend-ui:latest ./frontend-ui
+DOCKER_BUILDKIT=1 docker build \
+  --progress=plain \
+  --build-arg BUILDKIT_STEP_TIMEOUT=3600 \
+  --network=host \
+  -t frontend-ui:latest ./frontend-ui
 
 # Apply Kubernetes manifests
 echo -e "${GREEN}Deploying to Kubernetes...${NC}"
