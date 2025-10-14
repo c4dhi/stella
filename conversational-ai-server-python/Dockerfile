@@ -22,7 +22,12 @@ COPY requirements.txt .
 
 # Update pip and install Python dependencies
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# Install large dependencies first (PyTorch takes longest - ~1-2GB for ARM)
+RUN pip install --no-cache-dir --timeout=2000 --retries=5 \
+    torch>=2.0.0 \
+    torchaudio>=2.0.0
+# Install remaining dependencies with timeout and retries
+RUN pip install --no-cache-dir --timeout=2000 --retries=5 -r requirements.txt
 
 # Pre-download sherpa-onnx model during build
 COPY download_sherpa_model.py .
