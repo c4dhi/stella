@@ -124,6 +124,7 @@ export interface TransportEvents {
   onStateChange: (data: StateChangeNotification) => void
   onParticipantJoined: (participantId: string, participantName?: string) => void
   onParticipantLeft: (participantId: string, participantName?: string) => void
+  onLLMConfig: (config: any) => void
 }
 
 export interface Transport extends TransportEvents {
@@ -165,6 +166,7 @@ export type EnvelopeType =
   | 'plan_deliverable_update'
   | 'state_change_notification'
   | 'task_progress_update'
+  | 'llm_config'
 
 export interface Envelope<T> {
   type: EnvelopeType

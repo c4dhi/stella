@@ -46,6 +46,7 @@ export class PeerTransport implements Transport {
   onStateChange = (_data: StateChangeNotification) => {}
   onParticipantJoined = (_participantId: string, _participantName?: string) => {}
   onParticipantLeft = (_participantId: string, _participantName?: string) => {}
+  onLLMConfig = (_config: any) => {}
 
   async connect(roomName?: string) {
     try {
@@ -168,6 +169,11 @@ export class PeerTransport implements Transport {
             // Handle task progress update (backward compatibility)
             console.log(`📝 [TASK UPDATE] Legacy task progress update received`)
             this.onServerMessage(env)
+          } else if (env.type === 'llm_config') {
+            // Handle LLM configuration from backend
+            const llmConfig = env.data
+            console.log(`🤖 [LLM CONFIG] Provider: ${llmConfig.provider}, Model: ${llmConfig.model}`)
+            this.onLLMConfig(llmConfig)
           } else {
             // console.log('🔍 [DEBUG] Other message type:', env.type)
             this.onServerMessage(env)

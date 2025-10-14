@@ -585,6 +585,38 @@ class StreamService:
         }
         return await self._send_message(message)
 
+    async def send_llm_config(
+        self,
+        provider: str,
+        model: str,
+        base_url: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 800,
+        streaming: bool = True,
+        participant_id: Optional[str] = None,
+        stream_id: str = "system-stream"
+    ) -> bool:
+        """Send LLM configuration to frontend for display."""
+        # Use agent_name as default participant_id if not provided
+        if participant_id is None:
+            participant_id = self.agent_name
+
+        message = {
+            "type": "llm_config",
+            "data": {
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "streaming": streaming,
+                "participant_id": participant_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "stream_id": stream_id
+            }
+        }
+        return await self._send_message(message)
+
     def generate_stream_id(self) -> str:
         """Generate a unique stream ID."""
         return f"python_stream_{int(datetime.now(timezone.utc).timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"

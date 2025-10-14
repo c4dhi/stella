@@ -98,12 +98,16 @@ class LangChainAgent:
 
     def _create_llm_config(self) -> LLMConfig:
         """Create LLM configuration for this agent."""
+        # Use model and provider from LLM service's default config (loaded from llm_config.json)
+        # This allows experts to use the globally configured model (Ollama, OpenAI, etc.)
+        # Expert configs still control temperature, max_tokens, prompts, and trigger keywords
         return LLMConfig(
-            model=self.config.model,
+            model=self.llm_service.default_config.model,  # Use global model from llm_config.json
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             streaming=False,  # Most experts don't need streaming
-            provider=LLMProvider.OPENAI_LANGCHAIN
+            provider=self.llm_service.default_config.provider,
+            base_url=self.llm_service.default_config.base_url  # Include base_url for Ollama/local models
         )
 
     def _build_prompt(self, user_input: str, context: str) -> str:

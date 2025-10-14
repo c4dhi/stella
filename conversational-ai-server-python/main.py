@@ -197,6 +197,14 @@ async def main():
             except Exception as e:
                 print(f"[startup] ERROR sending plan to frontend: {e}")
 
+            # Send LLM config to frontend
+            print("[startup] Sending LLM config to frontend...")
+            try:
+                await processor.send_llm_config_to_frontend()
+                print("[startup] LLM config sent to frontend successfully")
+            except Exception as e:
+                print(f"[startup] ERROR sending LLM config to frontend: {e}")
+
         asyncio.create_task(_init_after_connection())
 
     @room.on("disconnected")
@@ -447,6 +455,10 @@ async def main():
             # Send plan to frontend (plan already initialized pre-connection)
             await processor.send_plan_to_frontend()
             print("[startup] Manual plan data sent to frontend")
+
+            # Send LLM config to frontend
+            await processor.send_llm_config_to_frontend()
+            print("[startup] Manual LLM config sent to frontend")
         except Exception as e:
             print(f"[startup] ERROR in manual initialization: {e}")
 

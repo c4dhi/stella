@@ -384,8 +384,28 @@ class LLMService:
                     # Update default config with loaded values
                     for key, value in config_data.items():
                         if hasattr(self.default_config, key):
+                            # Convert provider string to enum if needed
+                            if key == "provider" and isinstance(value, str):
+                                try:
+                                    value = LLMProvider(value)
+                                except ValueError:
+                                    print(f"[LLMService] Unknown provider '{value}', using default")
+                                    continue
                             setattr(self.default_config, key, value)
                 print(f"[LLMService] Loaded config from {self.config_path}")
+
+                # Print LLM configuration details for startup visibility
+                provider_name = getattr(self.default_config.provider, 'value', str(self.default_config.provider))
+                print(f"[LLMService] ══════════════════════════════════════════════")
+                print(f"[LLMService] LLM Configuration:")
+                print(f"[LLMService]   Provider: {provider_name}")
+                print(f"[LLMService]   Model: {self.default_config.model}")
+                if self.default_config.base_url:
+                    print(f"[LLMService]   Base URL: {self.default_config.base_url}")
+                print(f"[LLMService]   Temperature: {self.default_config.temperature}")
+                print(f"[LLMService]   Max Tokens: {self.default_config.max_tokens}")
+                print(f"[LLMService]   Streaming: {self.default_config.streaming}")
+                print(f"[LLMService] ══════════════════════════════════════════════")
             except Exception as e:
                 print(f"[LLMService] Failed to load config: {e}")
 
@@ -570,17 +590,13 @@ class OllamaProvider(LLMProvider_Interface):
         try:
             import requests
             self.requests = requests
-            # Test if Ollama server is running
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            if response.status_code == 200:
-                self.available = True
-                print("[LLMService] Ollama provider initialized")
-            else:
-                print("[LLMService] Ollama server not responding")
+            # Mark as available if requests library is present
+            # Server connectivity will be checked at runtime using base_url from config
+            self.available = True
+            print("[LLMService] Ollama provider initialized (server connection will be verified at runtime)")
         except ImportError:
             print("[LLMService] Ollama provider requires 'requests' package: pip install requests")
-        except Exception as e:
-            print(f"[LLMService] Ollama provider not available: {e}")
+            self.available = False
 
     def get_provider_name(self) -> str:
         return "ollama"

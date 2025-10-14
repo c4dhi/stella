@@ -336,13 +336,8 @@ class InputGate:
         self.plan_service = plan_service
         self.processor = processor
 
-        # Configuration for input gate
-        self.config = LLMConfig(
-            model="gpt-4o-mini",
-            temperature=0.3,
-            streaming=True,
-            provider=LLMProvider.OPENAI_LANGCHAIN
-        )
+        # Configuration for input gate - use LLM service's config (loaded from llm_config.json)
+        self.config = self.llm_service.default_config
 
         # Common greetings that should NOT be interpreted as deliverable values
         self.greeting_patterns = [
