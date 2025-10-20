@@ -36,8 +36,8 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Expose port 80
-EXPOSE 80
+# Expose port 8080
+EXPOSE 8080
 
 # Use entrypoint script to inject runtime config
 ENTRYPOINT ["/entrypoint.sh"]

@@ -428,33 +428,105 @@ export class AgentsService {
   }
 
   /**
-   * Restart an agent - stops then recreates with same config.
+   * Restart an agent - recreates pod/secret with same agent ID.
    * Used for config changes, troubleshooting, etc.
+   * Unlike stopAgent(), this keeps the same agent ID and replaces it in-place.
    */
   async restartAgent(id: string): Promise<any> {
     const agent = await this.prisma.agentInstance.findUnique({
       where: { id },
-      include: { session: true },
+      include: { session: { include: { room: true, project: true } } },
     });
 
     if (!agent) {
       throw new NotFoundException(`Agent with ID ${id} not found`);
     }
 
-    this.logger.log(`Restarting agent ${id}`);
+    if (!agent.session.room) {
+      throw new Error('Session does not have an associated room');
+    }
 
-    // Stop existing agent
-    await this.stopAgent(id);
+    this.logger.log(`Restarting agent ${id} (keeping same ID)`);
 
-    // Recreate with same configuration
-    const newAgent = await this.create(agent.sessionId, {
-      name: agent.name,
-      icon: agent.icon || undefined,
-      planId: agent.planId || undefined,
+    // Delete Kubernetes resources (pod + secret) without updating DB status
+    try {
+      if (agent.podName) {
+        await this.k8s.deletePod(agent.podName);
+      }
+      if (agent.secretName) {
+        await this.k8s.deleteSecret(agent.secretName);
+      }
+    } catch (error) {
+      this.logger.error(`K8s cleanup failed for agent ${id}: ${error.message}`);
+    }
+
+    // Update agent status to STARTING
+    await this.prisma.agentInstance.update({
+      where: { id },
+      data: {
+        status: AgentStatus.STARTING,
+        stoppedAt: null,
+      },
     });
 
-    this.logger.log(`Agent ${id} restarted as ${newAgent.id}`);
-    return newAgent;
+    // Get environment variables
+    const livekitApiKey = this.configService.get<string>('LIVEKIT_API_KEY');
+    const livekitApiSecret = this.configService.get<string>('LIVEKIT_API_SECRET');
+
+    if (!livekitApiKey || !livekitApiSecret) {
+      const missing: string[] = [];
+      if (!livekitApiKey) missing.push('LIVEKIT_API_KEY');
+      if (!livekitApiSecret) missing.push('LIVEKIT_API_SECRET');
+      throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    }
+
+    const livekitUrl = this.configService.get<string>('LIVEKIT_URL', agent.session.room.serverUrl);
+
+    this.logger.log(
+      `🔗 Agent ${id} reconnecting to LiveKit room: "${agent.session.room.livekitRoomName}" at ${livekitUrl}`
+    );
+
+    // Recreate Kubernetes pod with SAME agent ID
+    try {
+      const { podName, secretName } = await this.k8s.createAgentPod({
+        agentId: id, // SAME ID - this ensures pod/secret are unique to this agent
+        sessionId: agent.sessionId,
+        projectId: agent.session.projectId,
+        agentName: agent.name,
+        agentIcon: agent.icon || '🤖',
+        roomName: agent.session.room.livekitRoomName,
+        livekitUrl,
+        livekitApiKey,
+        livekitApiSecret,
+        ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
+        planId: agent.planId || undefined,
+      });
+
+      // Update agent with new pod info
+      const updatedAgent = await this.prisma.agentInstance.update({
+        where: { id },
+        data: {
+          podName,
+          secretName,
+          status: AgentStatus.RUNNING,
+        },
+      });
+
+      this.logger.log(`Agent ${id} restarted successfully with pod ${podName}`);
+      return updatedAgent;
+    } catch (error) {
+      // Update agent status to FAILED
+      await this.prisma.agentInstance.update({
+        where: { id },
+        data: {
+          status: AgentStatus.FAILED,
+          stoppedAt: new Date(),
+        },
+      });
+
+      this.logger.error(`Failed to restart agent ${id}: ${error.message}`);
+      throw new BadRequestException(`Failed to restart agent: ${error.message}`);
+    }
   }
 
   // ============================================================================

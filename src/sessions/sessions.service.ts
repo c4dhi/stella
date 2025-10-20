@@ -181,9 +181,12 @@ export class SessionsService {
       createTokenDto.name,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       token,
-      serverUrl: session.room.serverUrl,
+      serverUrl: publicLivekitUrl,
       roomName: session.room.livekitRoomName,
     };
   }
@@ -339,6 +342,9 @@ export class SessionsService {
       sessionId,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       id: participant.id,
       name: participant.name,
@@ -346,9 +352,9 @@ export class SessionsService {
       token: participantToken, // JWT token for API authentication
       connectionInfo: {
         token: livekitToken, // LiveKit token for room connection
-        serverUrl: session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: session.room.livekitRoomName,
-        livekitUrl: session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }
@@ -410,6 +416,10 @@ export class SessionsService {
       participant.sessionId,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    // This ensures network-accessible URLs even if room was created before PUBLIC_LIVEKIT_URL was set
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       participantId: participant.id,
       participantName: participant.name,
@@ -418,9 +428,9 @@ export class SessionsService {
       token: participantToken, // JWT token for QR code
       connectionInfo: {
         token: livekitToken,
-        serverUrl: participant.session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: participant.session.room.livekitRoomName,
-        livekitUrl: participant.session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }
@@ -456,6 +466,10 @@ export class SessionsService {
       participant.name,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    // This ensures network-accessible URLs even if room was created before PUBLIC_LIVEKIT_URL was set
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       participantId: participant.id, // Include participantId in response for mobile client
       participantName: participant.name,
@@ -463,9 +477,9 @@ export class SessionsService {
       sessionId: participant.sessionId,
       connectionInfo: {
         token: livekitToken,
-        serverUrl: participant.session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: participant.session.room.livekitRoomName,
-        livekitUrl: participant.session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }

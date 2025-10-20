@@ -102,9 +102,26 @@ DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --netwo
 echo -n "  • frontend-ui... "
 DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
+# Detect network IP for public URLs
+NETWORK_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
+
+# Inject network IP into ConfigMap
+echo -n "  • Updating ConfigMap with network IP... "
+sed "s/NETWORK_IP_PLACEHOLDER/${NETWORK_IP}/g" k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
+echo -e "${GREEN}✓${NC}"
+
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
-kubectl apply -f k8s/ > /dev/null
+kubectl apply -f k8s/00-namespace.yaml > /dev/null
+kubectl apply -f k8s/01-postgres.yaml > /dev/null
+kubectl apply -f k8s/02-livekit.yaml > /dev/null
+kubectl apply -f k8s/03-secrets.yaml > /dev/null
+kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
+kubectl apply -f k8s/05-rbac.yaml > /dev/null
+kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
+kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
+kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
 # Create secrets
 DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
@@ -139,27 +156,79 @@ echo -n "  • Waiting for frontend... "
 kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 
-# Start port forwarding
-echo -e "${GREEN}🌐 Starting port forwarding...${NC}"
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/livekit 7880:7880 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/postgres 5432:5432 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/frontend-ui 5173:80 > /dev/null 2>&1 &
+# Start port-forwards to expose services on localhost and network
+echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
+
+# Port forward commands (run in background)
+kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > /dev/null 2>&1 &
+PF_FRONTEND=$!
+
+kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+PF_BACKEND=$!
+
+kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > /dev/null 2>&1 &
+PF_LIVEKIT=$!
+
+kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > /dev/null 2>&1 &
+PF_POSTGRES=$!
+
+echo -e "${GREEN}✓ Port forwards started${NC}"
+
+# Give port forwards a moment to initialize
 sleep 2
 
-# Get local IP for network access
-LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost")
+# Cleanup function to stop all services
+cleanup() {
+  echo ""
+  echo ""
+  echo -e "${YELLOW}🛑 Stopping all services...${NC}"
+  echo ""
+
+  # Kill port-forward processes
+  echo -e "${BLUE}Stopping port forwards...${NC}"
+  [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
+  [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
+  [ ! -z "$PF_LIVEKIT" ] && kill $PF_LIVEKIT 2>/dev/null
+  [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
+
+  # Stop minikube (stops all services gracefully)
+  echo -e "${BLUE}Stopping minikube cluster...${NC}"
+  minikube stop
+
+  echo ""
+  echo -e "${GREEN}✅ All services stopped${NC}"
+  echo -e "${BLUE}To restart, run: ./scripts/start-k8s.sh${NC}"
+  echo ""
+  exit 0
+}
+
+# Trap SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM
 
 echo ""
 echo -e "${GREEN}✅ Deployment Complete!${NC}"
 echo ""
-echo -e "${BLUE}Access URLs:${NC}"
-echo -e "  Frontend:  ${GREEN}http://localhost:5173${NC}  (or http://${LOCAL_IP}:5173)"
-echo -e "  Backend:   ${GREEN}http://localhost:3000${NC}  (or http://${LOCAL_IP}:3000)"
-echo -e "  LiveKit:   ${GREEN}ws://localhost:7880${NC}  (or ws://${LOCAL_IP}:7880)"
-echo -e "  Database:  ${GREEN}localhost:5432${NC}"
+echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
-echo -e "${YELLOW}💡 Network URLs work from any device on your local network${NC}"
-echo -e "${YELLOW}⚠️  Keep this terminal open • Press Ctrl+C to stop${NC}"
+echo -e "${GREEN}Localhost Access:${NC}"
+echo -e "  ${GREEN}Frontend:${NC}  http://localhost"
+echo -e "  ${GREEN}Backend:${NC}   http://localhost:3000"
+echo -e "  ${GREEN}LiveKit:${NC}   ws://localhost:7880"
+echo -e "  ${GREEN}Database:${NC}  localhost:5432"
 echo ""
-wait
+echo -e "${GREEN}Network Access (from other devices):${NC}"
+echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}"
+echo -e "  ${GREEN}Backend:${NC}   http://${NETWORK_IP}:3000"
+echo -e "  ${GREEN}LiveKit:${NC}   ws://${NETWORK_IP}:7880"
+echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
+echo ""
+echo -e "${YELLOW}💡 Use the network URLs to access from phones, tablets, or other computers${NC}"
+echo ""
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}✨ Services are running${NC}"
+echo -e "${RED}⚠️  Press Ctrl+C to stop all services and shutdown minikube${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+# Keep script running
+tail -f /dev/null
