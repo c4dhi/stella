@@ -89,6 +89,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       switch (serverType) {
         case 'decision_stream': return 'decision'
         case 'expert_status': return 'expert_status'
+        case 'expert_results': return 'expert_status'
         case 'prompt_execution': return 'prompt_execution'
         case 'safety_check': return 'safety_check'
         default: return 'decision'
@@ -136,7 +137,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           participant_id: getParticipantName(msg),
           source: 'db' as const,
         }
-      } else if (['decision_stream', 'expert_status', 'prompt_execution', 'safety_check'].includes(messageType)) {
+      } else if (['decision_stream', 'expert_status', 'expert_results', 'prompt_execution', 'safety_check'].includes(messageType)) {
         // Processing messages
         const processingType = mapToProcessingType(messageType)
         return {

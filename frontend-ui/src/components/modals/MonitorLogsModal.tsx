@@ -183,7 +183,7 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-3 border-t rounded-b-sm border-neutral-200 bg-neutral-50 flex items-center justify-between">
+              <div className="px-6 py-3 border-t rounded-b-2xl border-neutral-200 bg-neutral-50 flex items-center justify-between">
                 <div className="text-xs text-neutral-500">
                   {logs.length} log {logs.length === 1 ? 'entry' : 'entries'}
                   {isLoading && <span className="ml-2 text-neutral-400">• Refreshing...</span>}
