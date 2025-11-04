@@ -217,8 +217,20 @@ if ! command -v minikube &> /dev/null; then
 fi
 
 if ! command -v kubectl &> /dev/null; then
-    echo -e "${RED}✗ kubectl not installed${NC}"
-    exit 1
+    echo -e "${YELLOW}Installing kubectl...${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        brew install kubectl
+    elif [[ "$OS_TYPE" == "linux" ]]; then
+        # Download and install kubectl for Linux
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/kubectl
+        echo -e "${GREEN}✓ kubectl installed${NC}"
+    else
+        echo -e "${RED}✗ Unable to auto-install kubectl on this platform${NC}"
+        echo -e "${YELLOW}Visit: https://kubernetes.io/docs/tasks/tools/${NC}"
+        exit 1
+    fi
 fi
 
 # Start minikube if not running
