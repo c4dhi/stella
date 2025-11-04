@@ -399,16 +399,17 @@ echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Use nohup and save PIDs
-    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+    # Using non-standard ports to avoid conflicts with nginx
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
     PF_FRONTEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3001:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7881:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
     PF_LIVEKIT=$!
 
-    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5433:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
     PF_POSTGRES=$!
 
     # Save PIDs to file
@@ -421,16 +422,17 @@ if [ "$DAEMON_MODE" = true ]; then
     disown -a
 else
     # Foreground mode: Normal background processes
-    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
+    # Using non-standard ports to avoid conflicts with nginx
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
     PF_FRONTEND=$!
 
-    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3001:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7881:7880 > /dev/null 2>&1 &
     PF_LIVEKIT=$!
 
-    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5433:5432 > /dev/null 2>&1 &
     PF_POSTGRES=$!
 fi
 
@@ -474,19 +476,23 @@ echo -e "${GREEN}✅ Deployment Complete!${NC}"
 echo ""
 echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
-echo -e "${GREEN}Localhost Access:${NC}"
+echo -e "${GREEN}Direct Access (via kubectl port-forward):${NC}"
 echo -e "  ${GREEN}Frontend:${NC}  http://localhost:8080"
-echo -e "  ${GREEN}Backend:${NC}   http://localhost:3000"
-echo -e "  ${GREEN}LiveKit:${NC}   ws://localhost:7880"
-echo -e "  ${GREEN}Database:${NC}  localhost:5432"
+echo -e "  ${GREEN}Backend:${NC}   http://localhost:3001"
+echo -e "  ${GREEN}LiveKit:${NC}   ws://localhost:7881"
+echo -e "  ${GREEN}Database:${NC}  localhost:5433"
 echo ""
-echo -e "${GREEN}Network Access (from other devices):${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}:8080 ${YELLOW}(or port 80 via nginx)${NC}"
+echo -e "${YELLOW}⚠️  Configure nginx to proxy standard ports → localhost${NC}"
+echo -e "${YELLOW}   Port 80 → 8080 (Frontend)${NC}"
+echo -e "${YELLOW}   Port 3000 → 3001 (Backend)${NC}"
+echo -e "${YELLOW}   Port 7880 → 7881 (LiveKit)${NC}"
+echo -e "${YELLOW}   Port 5432 → 5433 (Database)${NC}"
+echo ""
+echo -e "${GREEN}After nginx setup, services will be available at:${NC}"
+echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}"
 echo -e "  ${GREEN}Backend:${NC}   http://${NETWORK_IP}:3000"
 echo -e "  ${GREEN}LiveKit:${NC}   ws://${NETWORK_IP}:7880"
 echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
-echo ""
-echo -e "${YELLOW}💡 Configure nginx to proxy port 80 → 8080 for public access${NC}"
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
