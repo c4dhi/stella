@@ -120,6 +120,8 @@ model Participant {
   isManuallyRegistered Boolean   @default(false) // True if registered via API, false if auto-discovered
   joinedAt             DateTime  @default(now())
   leftAt               DateTime?
+  tokenRevokedAt       DateTime? // When token was revoked (soft delete for security)
+  lastTokenRefresh     DateTime? // Last time LiveKit token was refreshed
 
   @@index([sessionId])
   @@index([identity])

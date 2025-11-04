@@ -45,6 +45,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Participant not found');
       }
 
+      // Check if token has been revoked
+      if (participant.tokenRevokedAt) {
+        throw new UnauthorizedException('Participant token has been revoked');
+      }
+
       return {
         participantId: participant.id,
         sessionId: participant.sessionId,

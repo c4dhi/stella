@@ -23,10 +23,16 @@ export class LiveKitService {
     this.url = url;
   }
 
-  async createToken(roomName: string, identity: string, name?: string): Promise<string> {
+  async createToken(
+    roomName: string,
+    identity: string,
+    name?: string,
+    ttl?: string | number
+  ): Promise<string> {
     const at = new AccessToken(this.apiKey, this.apiSecret, {
       identity,
       name: name || identity,
+      ttl: ttl || '24h', // Default to 24 hours for participant tokens
     });
 
     at.addGrant({

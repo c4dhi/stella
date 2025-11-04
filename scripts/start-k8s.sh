@@ -1,16 +1,102 @@
 #!/bin/bash
 set -e
 
+# Parse command line flags
+DAEMON_MODE=false
+STOP_MODE=false
+PID_DIR="/tmp/grace-ai-k8s"
+
+for arg in "$@"; do
+    case $arg in
+        --daemon|-d)
+            DAEMON_MODE=true
+            shift
+            ;;
+        --stop)
+            STOP_MODE=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --daemon, -d    Run in background (survives SSH logout)"
+            echo "  --stop          Stop background services"
+            echo "  --help, -h      Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0              # Run in foreground (Ctrl+C to stop)"
+            echo "  $0 --daemon     # Run in background"
+            echo "  $0 --stop       # Stop background services"
+            exit 0
+            ;;
+    esac
+done
+
+# Handle stop mode
+if [ "$STOP_MODE" = true ]; then
+    echo "🛑 Stopping Grace AI Kubernetes services..."
+
+    # Stop port-forwards
+    if [ -f "$PID_DIR/port-forwards.pid" ]; then
+        while read pid; do
+            kill $pid 2>/dev/null && echo "  ✓ Stopped port-forward (PID: $pid)" || true
+        done < "$PID_DIR/port-forwards.pid"
+        rm "$PID_DIR/port-forwards.pid"
+    fi
+
+    # Stop minikube
+    echo "  • Stopping minikube cluster..."
+    minikube stop
+
+    echo ""
+    echo "✅ All services stopped"
+    exit 0
+fi
+
 # Force English language for all commands
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 
-# Ensure Docker and other tools are in PATH (for OrbStack and Docker Desktop)
-# OrbStack installs Docker at /usr/local/bin via symlink
-export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin:$PATH"
+# Create PID directory
+mkdir -p "$PID_DIR"
 
-# OrbStack may need the Docker socket set explicitly
-export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
+# Setup logging for daemon mode
+if [ "$DAEMON_MODE" = true ]; then
+    LOG_FILE="$PID_DIR/grace-ai-k8s.log"
+    exec 1> >(tee -a "$LOG_FILE")
+    exec 2>&1
+    echo "=== Grace AI K8s Deployment - $(date) ==="
+fi
+
+# Detect operating system
+OS_TYPE=""
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS_TYPE="macos"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS_TYPE="linux"
+else
+    echo "Warning: Unknown OS type: $OSTYPE. Assuming Linux."
+    OS_TYPE="linux"
+fi
+
+# Ensure Docker and other tools are in PATH
+if [[ "$OS_TYPE" == "macos" ]]; then
+    # macOS: Include Homebrew and OrbStack paths
+    export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin:$PATH"
+else
+    # Linux: Use standard paths
+    export PATH="/usr/local/bin:/usr/bin:/usr/sbin:$PATH"
+fi
+
+# Set Docker socket path based on OS
+if [[ "$OS_TYPE" == "macos" ]]; then
+    # macOS: OrbStack socket
+    export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
+else
+    # Linux: Standard Docker socket
+    export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -48,7 +134,23 @@ fi
 # Check if Docker is running
 if ! docker info > /dev/null 2>&1; then
     echo -e "${RED}✗ Docker is not running${NC}"
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        echo -e "${YELLOW}💡 On Linux, you may need to:${NC}"
+        echo -e "   1. Start Docker: sudo systemctl start docker"
+        echo -e "   2. Add your user to docker group: sudo usermod -aG docker \$USER"
+        echo -e "   3. Log out and back in for group changes to take effect"
+    fi
     exit 1
+fi
+
+# Check Docker permissions on Linux
+if [[ "$OS_TYPE" == "linux" ]]; then
+    if ! groups | grep -q docker; then
+        echo -e "${YELLOW}⚠️  Warning: Your user is not in the 'docker' group${NC}"
+        echo -e "${YELLOW}   You may encounter permission issues.${NC}"
+        echo -e "${YELLOW}   To fix: sudo usermod -aG docker \$USER && newgrp docker${NC}"
+        echo ""
+    fi
 fi
 
 # Check if required ports are available
@@ -56,9 +158,36 @@ REQUIRED_PORTS=(3000 5173 7880 5432)
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
-    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+    PORT_IN_USE=false
+    PROCESS_INFO=""
+
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        # macOS: Use lsof
+        if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+            PORT_IN_USE=true
+            PROCESS_INFO=$(lsof -Pi :$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1 " (PID: " $2 ")"}')
+        fi
+    else
+        # Linux: Try ss first, fallback to lsof if available
+        if command -v ss &> /dev/null; then
+            if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+                PORT_IN_USE=true
+                PROCESS_INFO=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+                if [ -n "$PROCESS_INFO" ]; then
+                    PROCESS_NAME=$(ps -p $PROCESS_INFO -o comm= 2>/dev/null || echo "unknown")
+                    PROCESS_INFO="$PROCESS_NAME (PID: $PROCESS_INFO)"
+                fi
+            fi
+        elif command -v lsof &> /dev/null; then
+            if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                PORT_IN_USE=true
+                PROCESS_INFO=$(lsof -Pi :$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1 " (PID: " $2 ")"}')
+            fi
+        fi
+    fi
+
+    if [ "$PORT_IN_USE" = true ]; then
         PORTS_IN_USE+=($port)
-        PROCESS_INFO=$(lsof -Pi :$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1 " (PID: " $2 ")"}')
         echo -e "${RED}✗ Port $port in use: $PROCESS_INFO${NC}"
     fi
 done
@@ -71,7 +200,20 @@ fi
 # Check if required tools are installed
 if ! command -v minikube &> /dev/null; then
     echo -e "${YELLOW}Installing minikube...${NC}"
-    [[ "$OSTYPE" == "darwin"* ]] && brew install minikube || { echo -e "${RED}✗ Install minikube: https://minikube.sigs.k8s.io/docs/start/${NC}"; exit 1; }
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        brew install minikube
+    elif [[ "$OS_TYPE" == "linux" ]]; then
+        # Download and install minikube for Linux
+        MINIKUBE_VERSION=$(curl -s https://api.github.com/repos/kubernetes/minikube/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+        curl -LO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
+        sudo install minikube-linux-amd64 /usr/local/bin/minikube
+        rm minikube-linux-amd64
+        echo -e "${GREEN}✓ Minikube installed${NC}"
+    else
+        echo -e "${RED}✗ Unable to auto-install minikube on this platform${NC}"
+        echo -e "${YELLOW}Visit: https://minikube.sigs.k8s.io/docs/start/${NC}"
+        exit 1
+    fi
 fi
 
 if ! command -v kubectl &> /dev/null; then
@@ -91,7 +233,6 @@ eval $(minikube docker-env)
 
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
-cd "$(dirname "$0")/.."
 
 echo -n "  • session-management-server... "
 DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
@@ -106,7 +247,19 @@ echo -n "  • message-recorder... "
 DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 # Detect network IP for public URLs
-NETWORK_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+if [[ "$OS_TYPE" == "macos" ]]; then
+    # macOS: Use ifconfig
+    NETWORK_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+else
+    # Linux: Use hostname -I (simpler and more reliable)
+    NETWORK_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    # Fallback to ip command if hostname -I fails
+    if [ -z "$NETWORK_IP" ]; then
+        NETWORK_IP=$(ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d'/' -f1 | head -1)
+    fi
+fi
+
 echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 
 # Inject network IP into ConfigMap
@@ -162,51 +315,77 @@ kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev
 # Start port-forwards to expose services on localhost and network
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
-# Port forward commands (run in background)
-kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > /dev/null 2>&1 &
-PF_FRONTEND=$!
+if [ "$DAEMON_MODE" = true ]; then
+    # Daemon mode: Use nohup and save PIDs
+    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+    PF_FRONTEND=$!
 
-kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-PF_BACKEND=$!
+    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+    PF_BACKEND=$!
 
-kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > /dev/null 2>&1 &
-PF_LIVEKIT=$!
+    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+    PF_LIVEKIT=$!
 
-kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > /dev/null 2>&1 &
-PF_POSTGRES=$!
+    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    PF_POSTGRES=$!
+
+    # Save PIDs to file
+    echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
+    echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
+    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
+    echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
+
+    # Detach from session
+    disown -a
+else
+    # Foreground mode: Normal background processes
+    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > /dev/null 2>&1 &
+    PF_FRONTEND=$!
+
+    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+    PF_BACKEND=$!
+
+    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/livekit 7880:7880 > /dev/null 2>&1 &
+    PF_LIVEKIT=$!
+
+    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/postgres 5432:5432 > /dev/null 2>&1 &
+    PF_POSTGRES=$!
+fi
 
 echo -e "${GREEN}✓ Port forwards started${NC}"
 
 # Give port forwards a moment to initialize
 sleep 2
 
-# Cleanup function to stop all services
-cleanup() {
-  echo ""
-  echo ""
-  echo -e "${YELLOW}🛑 Stopping all services...${NC}"
-  echo ""
+# Cleanup function to stop all services (only for foreground mode)
+if [ "$DAEMON_MODE" = false ]; then
+  cleanup() {
+    echo ""
+    echo ""
+    echo -e "${YELLOW}🛑 Stopping all services...${NC}"
+    echo ""
 
-  # Kill port-forward processes
-  echo -e "${BLUE}Stopping port forwards...${NC}"
-  [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
-  [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
-  [ ! -z "$PF_LIVEKIT" ] && kill $PF_LIVEKIT 2>/dev/null
-  [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
+    # Kill port-forward processes
+    echo -e "${BLUE}Stopping port forwards...${NC}"
+    [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
+    [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
+    [ ! -z "$PF_LIVEKIT" ] && kill $PF_LIVEKIT 2>/dev/null
+    [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
-  # Stop minikube (stops all services gracefully)
-  echo -e "${BLUE}Stopping minikube cluster...${NC}"
-  minikube stop
+    # Stop minikube (stops all services gracefully)
+    echo -e "${BLUE}Stopping minikube cluster...${NC}"
+    minikube stop
 
-  echo ""
-  echo -e "${GREEN}✅ All services stopped${NC}"
-  echo -e "${BLUE}To restart, run: ./scripts/start-k8s.sh${NC}"
-  echo ""
-  exit 0
-}
+    echo ""
+    echo -e "${GREEN}✅ All services stopped${NC}"
+    echo -e "${BLUE}To restart, run: ./scripts/start-k8s.sh${NC}"
+    echo ""
+    exit 0
+  }
 
-# Trap SIGINT (Ctrl+C) and SIGTERM
-trap cleanup SIGINT SIGTERM
+  # Trap SIGINT (Ctrl+C) and SIGTERM in foreground mode only
+  trap cleanup SIGINT SIGTERM
+fi
 
 echo ""
 echo -e "${GREEN}✅ Deployment Complete!${NC}"
@@ -227,11 +406,26 @@ echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
 echo ""
 echo -e "${YELLOW}💡 Use the network URLs to access from phones, tablets, or other computers${NC}"
 echo ""
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✨ Services are running${NC}"
-echo -e "${RED}⚠️  Press Ctrl+C to stop all services and shutdown minikube${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
 
-# Keep script running
-tail -f /dev/null
+if [ "$DAEMON_MODE" = true ]; then
+    # Daemon mode: Show status and exit
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✨ Services running in background${NC}"
+    echo -e "${YELLOW}📝 Logs: $LOG_FILE${NC}"
+    echo -e "${YELLOW}🛑 Stop: ./scripts/start-k8s.sh --stop${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "Port-forward PIDs saved to: $PID_DIR/port-forwards.pid"
+    echo "Services will continue running after SSH logout."
+    echo ""
+else
+    # Foreground mode: Keep script running
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✨ Services are running${NC}"
+    echo -e "${RED}⚠️  Press Ctrl+C to stop all services and shutdown minikube${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    # Keep script running
+    tail -f /dev/null
+fi

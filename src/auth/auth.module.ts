@@ -15,7 +15,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: '7d',
+          expiresIn: '365d', // Long-lived tokens for mobile clients (1 year)
         },
       }),
       inject: [ConfigService],

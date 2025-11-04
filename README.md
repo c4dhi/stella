@@ -15,6 +15,9 @@ nano .env  # Set OPENAI_API_KEY and database credentials
 
 # 2. Deploy everything
 ./scripts/start-k8s.sh
+
+# OR: Run in background (survives SSH logout) 🆕
+./scripts/start-k8s.sh --daemon
 ```
 
 ✅ **Done!** System is now running at:
@@ -22,6 +25,26 @@ nano .env  # Set OPENAI_API_KEY and database credentials
 - API: http://localhost:3000
 - LiveKit: ws://localhost:7880
 - Agents: Auto-created as Kubernetes pods
+
+### Deployment Modes
+
+**Foreground Mode** (Default):
+```bash
+./scripts/start-k8s.sh
+# Press Ctrl+C to stop all services
+```
+
+**Background Mode** (Daemon) - Perfect for servers:
+```bash
+# Start in background (survives SSH logout)
+./scripts/start-k8s.sh --daemon
+
+# Stop all services
+./scripts/start-k8s.sh --stop
+
+# View logs
+tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+```
 
 📖 **Full Kubernetes Guide**: See [K8S_DEPLOYMENT.md](./K8S_DEPLOYMENT.md) or [KUBERNETES_QUICK_START.md](../KUBERNETES_QUICK_START.md)
 
@@ -129,10 +152,15 @@ This server manages the lifecycle of conversational AI sessions, including:
 ## Prerequisites
 
 ### Option 1: Kubernetes Deployment (Recommended)
-- **Docker Desktop** with Kubernetes enabled
+- **Docker** (Docker Desktop on macOS, Docker Engine on Linux)
 - **kubectl** CLI tool
-- **minikube** (auto-installed by startup script on macOS)
+- **minikube** (auto-installed by startup script on both macOS and Ubuntu)
 - **OpenAI API key**
+
+**Supported Platforms:**
+- ✅ macOS (Intel & Apple Silicon)
+- ✅ Ubuntu/Linux
+- ✅ Windows (via WSL2)
 
 ### Option 2: Standalone Deployment (Local Development)
 - **Node.js** 18+ and npm
@@ -162,6 +190,12 @@ chmod +x scripts/start-k8s.sh
 
 # 3. Deploy everything
 ./scripts/start-k8s.sh
+
+# OR: Run in background (daemon mode)
+./scripts/start-k8s.sh --daemon
+
+# View help and all options
+./scripts/start-k8s.sh --help
 ```
 
 **What gets deployed:**
@@ -178,6 +212,54 @@ chmod +x scripts/start-k8s.sh
 - API: http://localhost:3000
 - LiveKit: ws://localhost:7880
 
+**Deployment Modes:**
+
+| Feature | Foreground Mode | Background Mode (Daemon) |
+|---------|----------------|--------------------------|
+| **Command** | `./scripts/start-k8s.sh` | `./scripts/start-k8s.sh --daemon` |
+| **Output** | Live to terminal | Logged to `/tmp/grace-ai-k8s/` |
+| **SSH Logout** | ❌ Stops services | ✅ Services continue |
+| **Stop Method** | Ctrl+C | `./scripts/start-k8s.sh --stop` |
+| **Best For** | Local development | Remote servers, production |
+| **Process Management** | Attached to terminal | `nohup` + `disown` |
+
+1. **Foreground Mode** (default):
+   ```bash
+   ./scripts/start-k8s.sh
+   # Press Ctrl+C to stop all services
+   ```
+   - Interactive mode with live output
+   - Stops when terminal closes or Ctrl+C is pressed
+   - Best for local development
+
+2. **Background Mode** (daemon):
+   ```bash
+   # Start in background
+   ./scripts/start-k8s.sh --daemon
+
+   # Services continue running after SSH logout ✓
+   # View logs
+   tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+
+   # Stop services
+   ./scripts/start-k8s.sh --stop
+   ```
+   - Runs as background processes using `nohup`
+   - Survives SSH disconnections
+   - Perfect for remote servers and production
+   - All logs saved to `/tmp/grace-ai-k8s/`
+
+**Log Files (Daemon Mode):**
+```
+/tmp/grace-ai-k8s/
+├── grace-ai-k8s.log          # Main deployment log
+├── port-forwards.pid          # PIDs of port-forward processes
+├── pf-frontend.log            # Frontend port-forward logs
+├── pf-backend.log             # Backend port-forward logs
+├── pf-livekit.log             # LiveKit port-forward logs
+└── pf-postgres.log            # PostgreSQL port-forward logs
+```
+
 **Useful commands:**
 ```bash
 # View all resources
@@ -189,11 +271,25 @@ kubectl get pods -n ai-agents -l app=conversational-ai-agent
 # View backend logs
 kubectl logs -f -n ai-agents -l app=session-management-server
 
-# Stop cluster
+# Monitor daemon mode logs
+tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+
+# Check port-forward processes (daemon mode)
+cat /tmp/grace-ai-k8s/port-forwards.pid
+ps -p $(cat /tmp/grace-ai-k8s/port-forwards.pid)
+
+# Stop cluster (foreground mode)
+# Press Ctrl+C
+
+# Stop cluster (daemon mode)
+./scripts/start-k8s.sh --stop
+
+# OR manually stop minikube
 minikube stop
 
 # Restart cluster
-./scripts/start-k8s.sh
+./scripts/start-k8s.sh          # foreground
+./scripts/start-k8s.sh --daemon # background
 ```
 
 📖 **Full Guide**: See [K8S_DEPLOYMENT.md](./K8S_DEPLOYMENT.md)
@@ -627,6 +723,55 @@ These are automatically applied by `./scripts/start-k8s.sh`.
 - Ensure LiveKit server is running
 - Check `LIVEKIT_URL` is accessible from the server
 - Verify API key/secret match LiveKit config
+
+### Daemon Mode Issues
+
+**Port forwards not working after SSH logout:**
+```bash
+# Check if processes are still running
+cat /tmp/grace-ai-k8s/port-forwards.pid
+ps -p $(cat /tmp/grace-ai-k8s/port-forwards.pid)
+
+# If not running, restart daemon mode
+./scripts/start-k8s.sh --daemon
+```
+
+**View daemon mode logs:**
+```bash
+# Main deployment log
+tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+
+# Individual port-forward logs
+tail -f /tmp/grace-ai-k8s/pf-frontend.log
+tail -f /tmp/grace-ai-k8s/pf-backend.log
+tail -f /tmp/grace-ai-k8s/pf-livekit.log
+tail -f /tmp/grace-ai-k8s/pf-postgres.log
+```
+
+**Clean up stale daemon processes:**
+```bash
+# Stop everything
+./scripts/start-k8s.sh --stop
+
+# Or manually kill port-forwards
+kill $(cat /tmp/grace-ai-k8s/port-forwards.pid)
+rm -rf /tmp/grace-ai-k8s/
+
+# Restart
+./scripts/start-k8s.sh --daemon
+```
+
+### Platform-Specific Issues
+
+**Ubuntu/Linux:**
+- Ensure user is in docker group: `sudo usermod -aG docker $USER`
+- Restart session after adding to docker group: `newgrp docker`
+- Install minikube: Auto-installed by script or manual install
+
+**macOS:**
+- Ensure Docker Desktop or OrbStack is running
+- Homebrew should be installed for auto-installing minikube
+- If using OrbStack, ensure it's running before starting script
 
 ## Environment Variables Reference
 
