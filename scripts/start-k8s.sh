@@ -153,8 +153,8 @@ if [[ "$OS_TYPE" == "linux" ]]; then
     fi
 fi
 
-# Check if required ports are available
-REQUIRED_PORTS=(3000 5173 7880 5432)
+# Check if required ports are available (kubectl port-forward ports, NOT nginx ports)
+REQUIRED_PORTS=(8080 3001 7881 5433)
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
