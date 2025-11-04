@@ -46,6 +46,7 @@ export class PeerTransport implements Transport {
   onStateChange = (_data: StateChangeNotification) => {}
   onParticipantJoined = (_participantId: string, _participantName?: string) => {}
   onParticipantLeft = (_participantId: string, _participantName?: string) => {}
+  onLLMConfig = (_config: any) => {}
 
   async connect(roomName?: string) {
     try {
@@ -168,6 +169,11 @@ export class PeerTransport implements Transport {
             // Handle task progress update (backward compatibility)
             console.log(`📝 [TASK UPDATE] Legacy task progress update received`)
             this.onServerMessage(env)
+          } else if (env.type === 'llm_config') {
+            // Handle LLM configuration from backend
+            const llmConfig = env.data
+            console.log(`🤖 [LLM CONFIG] Provider: ${llmConfig.provider}, Model: ${llmConfig.model}`)
+            this.onLLMConfig(llmConfig)
           } else {
             // console.log('🔍 [DEBUG] Other message type:', env.type)
             this.onServerMessage(env)
@@ -490,13 +496,22 @@ export class PeerTransport implements Transport {
     // Try using a minimal token that dev mode might accept
     try {
       // Option 1: Try to get a dev token from the server
-      const response = await fetch(`${config.livekitUrl}/devtoken?identity=${identity}&room=${actualRoomName}`)
+      // Convert WebSocket URL to HTTP URL for the token endpoint
+      const tokenUrl = config.livekitUrl
+        .replace(/^ws:\/\//, 'http://')
+        .replace(/^wss:\/\//, 'https://')
+
+      console.log(`🔑 [TOKEN] Fetching dev token from: ${tokenUrl}/devtoken`)
+      const response = await fetch(`${tokenUrl}/devtoken?identity=${identity}&room=${actualRoomName}`)
       if (response.ok) {
         const token = await response.text()
+        console.log('✓ [TOKEN] Successfully obtained dev token')
         return token
+      } else {
+        console.warn(`[TOKEN] Dev token endpoint returned ${response.status}`)
       }
     } catch (e) {
-      console.log('Dev token endpoint not available, using manual token')
+      console.log('Dev token endpoint not available, using manual token generation')
     }
 
     // Option 2: Create a properly signed JWT with HMAC-SHA256
@@ -542,6 +557,27 @@ export class PeerTransport implements Transport {
   }
   
   private async hmacSha256(data: string, secret: string): Promise<string> {
+    // Check if crypto.subtle is available (requires secure context)
+    if (!crypto.subtle) {
+      const currentUrl = window.location.href
+      const isSecureContext = window.isSecureContext
+
+      console.error('❌ [CRYPTO] crypto.subtle is not available')
+      console.error('   This requires a secure context (HTTPS or localhost)')
+      console.error(`   Current URL: ${currentUrl}`)
+      console.error(`   Is secure context: ${isSecureContext}`)
+      console.error('')
+      console.error('💡 Solutions:')
+      console.error('   1. Access via localhost: http://localhost:5173')
+      console.error('   2. Use HTTPS with SSL certificates')
+      console.error('   3. Ask your backend team to add a token generation endpoint')
+
+      throw new Error(
+        'crypto.subtle unavailable - requires secure context (HTTPS or localhost). ' +
+        `Current URL: ${currentUrl}. Try accessing via localhost instead.`
+      )
+    }
+
     // Simple HMAC-SHA256 for dev purposes
     const encoder = new TextEncoder()
     const key = await crypto.subtle.importKey(
@@ -551,7 +587,7 @@ export class PeerTransport implements Transport {
       false,
       ['sign']
     )
-    
+
     const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data))
     return this.base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)))
   }

@@ -96,12 +96,14 @@ class Aggregator:
         self.llm_service = llm_service or LLMService()
         self.task_manager = task_manager
 
-        # Configuration for aggregator
+        # Configuration for aggregator - use model and provider from LLM service's default config
+        # This allows aggregator to use the globally configured model (Ollama, OpenAI, etc.)
         self.config = LLMConfig(
-            model="gpt-4o-mini",
+            model=self.llm_service.default_config.model,  # Use global model from llm_config.json
             temperature=0.7,  # Higher temperature for more natural conversation
             streaming=True,
-            provider=LLMProvider.OPENAI_LANGCHAIN
+            provider=self.llm_service.default_config.provider,
+            base_url=self.llm_service.default_config.base_url  # Include base_url for Ollama/local models
         )
 
         self.synthesis_prompt = """You're creating a natural, spoken response that handles potentially problematic conversations with grace while maintaining helpful conversation flow.
@@ -266,14 +268,9 @@ Remember: Expert findings help you understand WHY it's problematic, but your res
 
             response = llm_response.content
 
-            # Determine step management based on expert analysis
-            step_analysis = None
-            if self.task_manager:
-                step_analysis = self.task_manager.determine_next_step_based_on_analysis(
-                    user_input, expert_findings, conversation_context
-                )
-                # Update task manager based on analysis
-                await self._update_task_manager_based_on_analysis(step_analysis, expert_findings, user_input)
+            # Note: Step management is now handled by the state machine in TaskManager
+            # The old determine_next_step_based_on_analysis method has been deprecated
+            # State transitions are managed through the execution_state and plan structure
 
             # Send final transcript chunk
             await self.stream_service.send_transcript_chunk(

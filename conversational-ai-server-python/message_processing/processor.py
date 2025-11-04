@@ -213,10 +213,38 @@ class MessageProcessor:
 
         return send_success
 
+    async def send_llm_config_to_frontend(self):
+        """Send LLM configuration to frontend for display."""
+        try:
+            # Get LLM config from the service
+            config = self.llm_service.default_config
+            provider_name = getattr(config.provider, 'value', str(config.provider))
+
+            # Send LLM config to frontend
+            send_success = await self.stream_service.send_llm_config(
+                provider=provider_name,
+                model=config.model,
+                base_url=config.base_url,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                streaming=config.streaming
+            )
+
+            if send_success:
+                print(f"[MessageProcessor] ✅ Successfully sent LLM config to frontend")
+            else:
+                print(f"[MessageProcessor] ❌ Failed to send LLM config to frontend")
+
+            return send_success
+        except Exception as e:
+            print(f"[MessageProcessor] Error sending LLM config: {e}")
+            return False
+
     async def initialize_plan_on_connection(self):
         """Legacy method - now calls initialize_plan() and send_plan_to_frontend()."""
         await self.initialize_plan()
         await self.send_plan_to_frontend()
+        await self.send_llm_config_to_frontend()
 
     async def pause_tts(self):
         """Pause TTS synthesis and streaming."""

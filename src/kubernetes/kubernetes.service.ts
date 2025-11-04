@@ -67,9 +67,6 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
-        // Automatically delete pods after they complete or fail (1 hour)
-        // This prevents accumulation of stopped pods in the cluster
-        activeDeadlineSeconds: 3600, // 1 hour maximum runtime
         containers: [
           {
             name: 'agent',

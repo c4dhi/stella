@@ -23,10 +23,16 @@ export class LiveKitService {
     this.url = url;
   }
 
-  async createToken(roomName: string, identity: string, name?: string): Promise<string> {
+  async createToken(
+    roomName: string,
+    identity: string,
+    name?: string,
+    ttl?: string | number
+  ): Promise<string> {
     const at = new AccessToken(this.apiKey, this.apiSecret, {
       identity,
       name: name || identity,
+      ttl: ttl || '24h', // Default to 24 hours for participant tokens
     });
 
     at.addGrant({
@@ -46,7 +52,7 @@ export class LiveKitService {
 
   /**
    * Get publicly accessible LiveKit server URL
-   * Priority: PUBLIC_LIVEKIT_URL env var → auto-detect network IP → LIVEKIT_URL fallback
+   * Priority: PUBLIC_LIVEKIT_URL env var → USE_LOCALHOST check → auto-detect network IP → LIVEKIT_URL fallback
    */
   getPublicServerUrl(): string {
     // Priority 1: Use explicitly configured public URL (for production or when behind containers)
@@ -55,7 +61,16 @@ export class LiveKitService {
       return publicUrl;
     }
 
-    // Priority 2: Auto-detect, but filter out container/docker networks
+    // Priority 2: Check USE_LOCALHOST setting (defaults to true)
+    const useLocalhost = this.configService.get<string>('USE_LOCALHOST');
+    const shouldUseLocalhost = useLocalhost !== 'false'; // true if unset or explicitly true
+
+    if (shouldUseLocalhost) {
+      // Use localhost - return LIVEKIT_URL as-is
+      return this.url;
+    }
+
+    // Priority 3: Auto-detect, but filter out container/docker networks
     const detectedIp = this.detectNetworkIp();
     if (detectedIp !== 'localhost') {
       // Extract protocol and port from LIVEKIT_URL
@@ -65,7 +80,7 @@ export class LiveKitService {
       return `${protocol}://${detectedIp}:${port}`;
     }
 
-    // Priority 3: Fall back to configured LIVEKIT_URL
+    // Priority 4: Fall back to configured LIVEKIT_URL
     return this.url;
   }
 

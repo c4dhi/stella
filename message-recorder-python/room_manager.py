@@ -173,16 +173,17 @@ class RoomManager:
             if message_type != 'audio_stream_chunk':
                 print(f"📨 Message in {room_name}: type={message_type}, from={participant_identity}")
 
-                # Log transcript messages to dashboard
+                # Log transcript messages to dashboard (only final transcripts)
                 if message_type == 'transcript_chunk':
                     is_final = envelope.get('data', {}).get('is_final', True)
-                    status = 'final' if is_final else 'partial'
-                    await self.message_client.post_log(
-                        'debug',
-                        f'Received {status} transcript from {participant_identity or "unknown"}',
-                        session_id=session_id,
-                        data={'type': message_type, 'is_final': is_final}
-                    )
+                    # Only log final transcripts, skip partial ones
+                    if is_final:
+                        await self.message_client.post_log(
+                            'debug',
+                            f'Received final transcript from {participant_identity or "unknown"}',
+                            session_id=session_id,
+                            data={'type': message_type, 'is_final': is_final}
+                        )
 
             # Store complete message envelope via API
             await self.message_client.store_message(

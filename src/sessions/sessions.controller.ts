@@ -111,8 +111,21 @@ export class SessionsController {
   }
 
   // Mobile app endpoint: Get own connection info (participant-authenticated)
+  // This endpoint also serves as token refresh - returns a fresh LiveKit token (24h TTL)
   @Get('participants/connection-info')
   getParticipantConnectionInfo(@Request() req) {
+    // Extract participantId from participant JWT token
+    const participantId = req.user.participantId;
+    if (!participantId) {
+      throw new BadRequestException('Invalid participant token');
+    }
+    return this.sessionsService.getParticipantConnectionInfo(participantId);
+  }
+
+  // Explicit token refresh endpoint for mobile apps
+  // Returns fresh LiveKit token (24h TTL) for indefinite connection
+  @Post('participants/refresh')
+  refreshLivekitToken(@Request() req) {
     // Extract participantId from participant JWT token
     const participantId = req.user.participantId;
     if (!participantId) {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiClient } from '../../services/ApiClient'
+import { useStore } from '../../store'
 import type { NetworkInfoResponse } from '../../lib/api-types'
 
 interface NetworkInfoModalProps {
@@ -13,6 +14,7 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
   const [networkInfo, setNetworkInfo] = useState<NetworkInfoResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const llmConfig = useStore(s => s.llmConfig)
 
   useEffect(() => {
     if (isOpen) {
@@ -170,6 +172,56 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
                     </div>
                   </div>
                 </div>
+
+                {/* LLM Configuration */}
+                {llmConfig && (
+                  <div className="pt-3 border-t border-neutral-200/60">
+                    <h3 className="text-sm font-normal text-neutral-700 tracking-wide mb-3">AI Configuration</h3>
+                    <div className="grid gap-3">
+                      {/* Provider and Model */}
+                      <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
+                        <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                          Provider & Model
+                        </div>
+                        <div className="text-sm font-mono text-neutral-900">
+                          {llmConfig.provider} / {llmConfig.model}
+                        </div>
+                      </div>
+
+                      {/* Base URL (if local) */}
+                      {llmConfig.base_url && (
+                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
+                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                            Base URL
+                          </div>
+                          <div className="text-sm font-mono text-neutral-900 break-all">
+                            {llmConfig.base_url}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Settings */}
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
+                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                            Temperature
+                          </div>
+                          <div className="text-sm font-mono text-neutral-900">
+                            {llmConfig.temperature}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
+                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                            Max Tokens
+                          </div>
+                          <div className="text-sm font-mono text-neutral-900">
+                            {llmConfig.max_tokens}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Instructions */}
                 <div className="p-4 rounded-xl bg-blue-50/80 border border-blue-200/40 text-sm text-blue-800 font-light space-y-2">

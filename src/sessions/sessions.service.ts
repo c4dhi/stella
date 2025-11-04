@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
@@ -181,9 +181,12 @@ export class SessionsService {
       createTokenDto.name,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       token,
-      serverUrl: session.room.serverUrl,
+      serverUrl: publicLivekitUrl,
       roomName: session.room.livekitRoomName,
     };
   }
@@ -323,6 +326,7 @@ export class SessionsService {
         name,
         identity,
         isManuallyRegistered: true, // Mark as manually registered
+        lastTokenRefresh: new Date(), // Set initial token refresh timestamp
       },
     });
 
@@ -339,6 +343,9 @@ export class SessionsService {
       sessionId,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       id: participant.id,
       name: participant.name,
@@ -346,9 +353,9 @@ export class SessionsService {
       token: participantToken, // JWT token for API authentication
       connectionInfo: {
         token: livekitToken, // LiveKit token for room connection
-        serverUrl: session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: session.room.livekitRoomName,
-        livekitUrl: session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }
@@ -410,6 +417,10 @@ export class SessionsService {
       participant.sessionId,
     );
 
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    // This ensures network-accessible URLs even if room was created before PUBLIC_LIVEKIT_URL was set
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
+
     return {
       participantId: participant.id,
       participantName: participant.name,
@@ -418,9 +429,9 @@ export class SessionsService {
       token: participantToken, // JWT token for QR code
       connectionInfo: {
         token: livekitToken,
-        serverUrl: participant.session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: participant.session.room.livekitRoomName,
-        livekitUrl: participant.session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }
@@ -428,6 +439,7 @@ export class SessionsService {
   /**
    * Get participant connection info (for mobile app)
    * Mobile app is already authenticated with participant JWT
+   * This endpoint is used for token refresh
    */
   async getParticipantConnectionInfo(participantId: string) {
     const participant = await this.prisma.participant.findUnique({
@@ -445,16 +457,32 @@ export class SessionsService {
       throw new NotFoundException(`Participant with ID ${participantId} not found`);
     }
 
+    // Check if token has been revoked
+    if (participant.tokenRevokedAt) {
+      throw new UnauthorizedException(`Participant access has been revoked`);
+    }
+
     if (!participant.session.room) {
       throw new Error('Participant session does not have an associated room');
     }
 
-    // Generate fresh LiveKit token
+    // Update lastTokenRefresh timestamp
+    await this.prisma.participant.update({
+      where: { id: participantId },
+      data: { lastTokenRefresh: new Date() },
+    });
+
+    // Generate fresh LiveKit token with 24h TTL
     const livekitToken = await this.livekit.createToken(
       participant.session.room.livekitRoomName,
       participant.identity,
       participant.name,
+      '24h', // 24-hour TTL for auto-refresh
     );
+
+    // Use current PUBLIC_LIVEKIT_URL instead of database value
+    // This ensures network-accessible URLs even if room was created before PUBLIC_LIVEKIT_URL was set
+    const publicLivekitUrl = this.livekit.getPublicServerUrl();
 
     return {
       participantId: participant.id, // Include participantId in response for mobile client
@@ -463,9 +491,9 @@ export class SessionsService {
       sessionId: participant.sessionId,
       connectionInfo: {
         token: livekitToken,
-        serverUrl: participant.session.room.serverUrl,
+        serverUrl: publicLivekitUrl,
         roomName: participant.session.room.livekitRoomName,
-        livekitUrl: participant.session.room.serverUrl,
+        livekitUrl: publicLivekitUrl,
       },
     };
   }
@@ -479,9 +507,17 @@ export class SessionsService {
       throw new NotFoundException(`Participant with ID ${participantId} not found`);
     }
 
-    await this.prisma.participant.delete({
+    // Soft delete: revoke token instead of deleting participant
+    // This prevents future token refreshes and maintains audit trail
+    await this.prisma.participant.update({
       where: { id: participantId },
+      data: {
+        tokenRevokedAt: new Date(),
+        leftAt: new Date(), // Also mark as left for UI purposes
+      },
     });
+
+    this.logger.log(`Participant ${participantId} token revoked and marked as left`);
 
     return { message: 'Participant removed successfully' };
   }
@@ -811,6 +847,8 @@ export class SessionsService {
       envelope: messageEnvelope,  // Complete original envelope
       participant_identity: participantIdentity,
       participant_name: participantName,
+      // Store logical sender from envelope for accurate message attribution
+      display_name: messageEnvelope.participant_id || participantName || participantIdentity,
     };
 
     const message = await this.prisma.message.create({

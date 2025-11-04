@@ -346,21 +346,8 @@ class AbstractTTSProvider(ABC):
             except Exception as e:
                 print(f"[{self.provider_name}] Error in speaking state callback: {e}")
 
-        # Send explicit speaking state message to clients
-        if self.stream_service:
-            try:
-                import time
-                await self.stream_service.send_message({
-                    "type": "agent_speaking_start",
-                    "data": {
-                        "is_speaking": True,
-                        "provider": self.provider_name,
-                        "timestamp": time.time()
-                    }
-                })
-                print(f"[{self.provider_name}] 🔊 Sent agent_speaking_start to clients")
-            except Exception as e:
-                print(f"[{self.provider_name}] Error sending speaking start message: {e}")
+        # Note: Removed agent_speaking_start message - frontend now detects speech via audio levels
+        print(f"[{self.provider_name}] 🔊 Audio playback started")
 
     async def _on_audio_stop(self):
         """Callback when audio playback stops."""
@@ -374,21 +361,8 @@ class AbstractTTSProvider(ABC):
             except Exception as e:
                 print(f"[{self.provider_name}] Error in speaking state callback: {e}")
 
-        # Send explicit speaking state message to clients
-        if self.stream_service:
-            try:
-                import time
-                await self.stream_service.send_message({
-                    "type": "agent_speaking_stop",
-                    "data": {
-                        "is_speaking": False,
-                        "provider": self.provider_name,
-                        "timestamp": time.time()
-                    }
-                })
-                print(f"[{self.provider_name}] 🔇 Sent agent_speaking_stop to clients")
-            except Exception as e:
-                print(f"[{self.provider_name}] Error sending speaking stop message: {e}")
+        # Note: Removed agent_speaking_stop message - frontend now detects speech via audio levels
+        print(f"[{self.provider_name}] 🔇 Audio playback stopped")
 
     async def _resume_from_pause_state(self):
         """Resume from stored pause state - to be implemented by providers."""

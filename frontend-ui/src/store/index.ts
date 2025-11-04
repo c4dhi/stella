@@ -51,6 +51,20 @@ type MediaActions = {
   setTTSPaused: (v: boolean) => void
 }
 
+type LLMConfigState = {
+  llmConfig: {
+    provider: string
+    model: string
+    base_url?: string
+    temperature: number
+    max_tokens: number
+    streaming: boolean
+  } | null
+}
+type LLMConfigActions = {
+  setLLMConfig: (config: LLMConfigState['llmConfig']) => void
+}
+
 type ChatState = {
   turns: TranscriptChunk[]
   processingMessages: ProcessingMessage[]
@@ -190,7 +204,7 @@ type TaskActions = {
 }
 
 export const useStore = create<
-  ConnectionState & ConnectionActions & MediaState & MediaActions & ChatState & ChatActions & TaskState & TaskActions
+  ConnectionState & ConnectionActions & MediaState & MediaActions & LLMConfigState & LLMConfigActions & ChatState & ChatActions & TaskState & TaskActions
 >((set, get) => ({
   // connection
   status: 'idle',
@@ -219,6 +233,10 @@ export const useStore = create<
   setIsMuted: (v) => set({ isMuted: v }),
   setTTSPlaying: (v) => set({ isTTSPlaying: v }),
   setTTSPaused: (v) => set({ isTTSPaused: v }),
+
+  // llm config
+  llmConfig: null,
+  setLLMConfig: (config) => set({ llmConfig: config }),
 
   // chat
   turns: [],

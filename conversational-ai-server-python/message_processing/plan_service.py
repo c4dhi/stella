@@ -36,12 +36,14 @@ class PlanService:
         # Active plan session (only one at a time)
         self.active_session_id: Optional[str] = None
 
-        # LLM config for plan-related processing
+        # LLM config for plan-related processing - use model and provider from LLM service's default config
+        # This allows plan service to use the globally configured model (Ollama, OpenAI, etc.)
         self.llm_config = LLMConfig(
-            model="gpt-4o-mini",
+            model=self.llm_service.default_config.model,  # Use global model from llm_config.json
             temperature=0.3,
             streaming=False,
-            provider=LLMProvider.OPENAI_LANGCHAIN
+            provider=self.llm_service.default_config.provider,
+            base_url=self.llm_service.default_config.base_url  # Include base_url for Ollama/local models
         )
 
     def load_plan(self, plan_id: str) -> Optional[Plan]:

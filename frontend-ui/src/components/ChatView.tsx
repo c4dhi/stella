@@ -76,12 +76,15 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   // Convert historical DB messages to display format and merge with real-time messages
   const allMessages = useMemo(() => {
     // Helper to extract participant name from various sources
+    // Priority: envelope.participant_id (logical sender) > display_name > LiveKit participant info > role
     const getParticipantName = (msg: any) => {
-      return msg.metadata?.participant_name
-        || msg.metadata?.participant_identity
-        || msg.participant?.name
-        || msg.participant?.identity
-        || msg.role
+      return msg.metadata?.envelope?.participant_id  // Logical sender from message envelope
+        || msg.metadata?.display_name                // Stored display name (fallback)
+        || msg.metadata?.participant_name             // LiveKit participant name
+        || msg.metadata?.participant_identity         // LiveKit participant identity
+        || msg.participant?.name                      // Legacy participant name
+        || msg.participant?.identity                  // Legacy participant identity
+        || msg.role                                   // Last resort: use role
     }
 
     // Helper to map server message type to frontend processing type
@@ -89,6 +92,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       switch (serverType) {
         case 'decision_stream': return 'decision'
         case 'expert_status': return 'expert_status'
+        case 'expert_results': return 'expert_status'
         case 'prompt_execution': return 'prompt_execution'
         case 'safety_check': return 'safety_check'
         default: return 'decision'
@@ -136,7 +140,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           participant_id: getParticipantName(msg),
           source: 'db' as const,
         }
-      } else if (['decision_stream', 'expert_status', 'prompt_execution', 'safety_check'].includes(messageType)) {
+      } else if (['decision_stream', 'expert_status', 'expert_results', 'prompt_execution', 'safety_check'].includes(messageType)) {
         // Processing messages
         const processingType = mapToProcessingType(messageType)
         return {

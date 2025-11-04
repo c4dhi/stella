@@ -19,6 +19,7 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   const addParticipantEvent = useStore(s => s.addParticipantEvent)
   const setTTSPlaying = useStore(s => s.setTTSPlaying)
   const setTTSPaused = useStore(s => s.setTTSPaused)
+  const setLLMConfig = useStore(s => s.setLLMConfig)
 
   // Get transport from store (already initialized during store creation)
   const transport = useStore(s => s.transport)
@@ -62,8 +63,12 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
       }
       addParticipantEvent(event)
     }
+    transport.onLLMConfig = (config: any) => {
+      console.log('[ConnectPanel] Received LLM config:', config)
+      setLLMConfig(config)
+    }
 
-  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused])
+  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused, setLLMConfig])
 
   const connect = async () => {
     try {
