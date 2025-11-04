@@ -243,20 +243,45 @@ minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
+# Detect if BuildKit/buildx is available
+USE_BUILDKIT=false
+if docker buildx version > /dev/null 2>&1; then
+    USE_BUILDKIT=true
+    echo -e "${GREEN}✓ BuildKit available, using optimized builds${NC}"
+else
+    echo -e "${YELLOW}⚠️  BuildKit not available, using legacy build mode${NC}"
+fi
+
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 
 echo -n "  • session-management-server... "
-DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+if [ "$USE_BUILDKIT" = true ]; then
+    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+else
+    docker build -q --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
 
 echo -n "  • conversational-ai-server... "
-DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t conversational-ai-server:latest ./conversational-ai-server-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+if [ "$USE_BUILDKIT" = true ]; then
+    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t conversational-ai-server:latest ./conversational-ai-server-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+else
+    docker build -q --network=host -t conversational-ai-server:latest ./conversational-ai-server-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
 
 echo -n "  • frontend-ui... "
-DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+if [ "$USE_BUILDKIT" = true ]; then
+    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+else
+    docker build -q --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
 
 echo -n "  • message-recorder... "
-DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+if [ "$USE_BUILDKIT" = true ]; then
+    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+else
+    docker build -q --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
 
 # Detect network IP for public URLs
 if [[ "$OS_TYPE" == "macos" ]]; then
