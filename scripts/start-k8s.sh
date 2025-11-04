@@ -253,19 +253,47 @@ else
 
     # Auto-install on Linux
     if [[ "$OS_TYPE" == "linux" ]]; then
-        echo -e "${YELLOW}Installing docker-buildx-plugin...${NC}"
-        sudo apt-get update -qq > /dev/null 2>&1
-        sudo apt-get install -y docker-buildx-plugin > /dev/null 2>&1
+        echo -e "${YELLOW}Installing docker-buildx...${NC}"
 
-        # Check if installation succeeded
-        if docker buildx version > /dev/null 2>&1; then
+        # Temporarily disable exit on error
+        set +e
+
+        # Method 1: Try package installation first
+        INSTALL_RESULT=$(sudo apt-get install -y docker-buildx-plugin 2>&1)
+        INSTALL_EXIT_CODE=$?
+
+        # Check if package install worked
+        if [ $INSTALL_EXIT_CODE -eq 0 ] && docker buildx version > /dev/null 2>&1; then
             USE_BUILDKIT=true
-            echo -e "${GREEN}✓ BuildKit installed successfully${NC}"
+            echo -e "${GREEN}✓ BuildKit installed via apt package${NC}"
+        # Method 2: Package not found, try manual installation
+        elif echo "$INSTALL_RESULT" | grep -q "Unable to locate package"; then
+            echo -e "${YELLOW}   Package not available, trying manual installation...${NC}"
+
+            # Create docker CLI plugins directory
+            mkdir -p ~/.docker/cli-plugins
+
+            # Download buildx binary
+            BUILDX_VERSION=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+            curl -sL "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+
+            # Verify installation
+            if docker buildx version > /dev/null 2>&1; then
+                USE_BUILDKIT=true
+                echo -e "${GREEN}✓ BuildKit installed manually (v${BUILDX_VERSION})${NC}"
+            else
+                echo -e "${YELLOW}⚠️  Manual installation failed, using legacy build mode${NC}"
+            fi
         else
-            echo -e "${YELLOW}⚠️  BuildKit installation failed, using legacy build mode${NC}"
+            echo -e "${YELLOW}⚠️  BuildKit installation failed (exit code: $INSTALL_EXIT_CODE)${NC}"
+            echo -e "${YELLOW}   Using legacy build mode${NC}"
         fi
+
+        # Re-enable exit on error
+        set -e
     else
-        echo -e "${YELLOW}⚠️  Using legacy build mode (install docker-buildx-plugin for better performance)${NC}"
+        echo -e "${YELLOW}⚠️  Using legacy build mode (install docker-buildx for better performance)${NC}"
     fi
 fi
 
