@@ -494,6 +494,17 @@ echo -e "  ${GREEN}Backend:${NC}   http://${NETWORK_IP}:3000"
 echo -e "  ${GREEN}LiveKit:${NC}   ws://${NETWORK_IP}:7880"
 echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
 echo ""
+echo -e "${BLUE}🔐 Database Credentials:${NC}"
+echo -e "  ${GREEN}Database:${NC}   ${POSTGRES_DB}"
+echo -e "  ${GREEN}Username:${NC}   ${POSTGRES_USER}"
+echo -e "  ${GREEN}Password:${NC}   ${POSTGRES_PASSWORD}"
+echo ""
+echo -e "  ${YELLOW}Internal (used by services):${NC}"
+echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
+echo ""
+echo -e "  ${YELLOW}External (access from outside):${NC}"
+echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${NETWORK_IP}:5432/${POSTGRES_DB}"
+echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Show status and exit
