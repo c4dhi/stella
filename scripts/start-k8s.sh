@@ -399,7 +399,7 @@ echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Use nohup and save PIDs
-    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
     PF_FRONTEND=$!
 
     nohup kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
@@ -421,7 +421,7 @@ if [ "$DAEMON_MODE" = true ]; then
     disown -a
 else
     # Foreground mode: Normal background processes
-    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 80:8080 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 0.0.0.0 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
     PF_FRONTEND=$!
 
     kubectl port-forward -n ai-agents --address 0.0.0.0 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
@@ -475,18 +475,18 @@ echo ""
 echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
 echo -e "${GREEN}Localhost Access:${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://localhost"
+echo -e "  ${GREEN}Frontend:${NC}  http://localhost:8080"
 echo -e "  ${GREEN}Backend:${NC}   http://localhost:3000"
 echo -e "  ${GREEN}LiveKit:${NC}   ws://localhost:7880"
 echo -e "  ${GREEN}Database:${NC}  localhost:5432"
 echo ""
 echo -e "${GREEN}Network Access (from other devices):${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}"
+echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}:8080 ${YELLOW}(or port 80 via nginx)${NC}"
 echo -e "  ${GREEN}Backend:${NC}   http://${NETWORK_IP}:3000"
 echo -e "  ${GREEN}LiveKit:${NC}   ws://${NETWORK_IP}:7880"
 echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
 echo ""
-echo -e "${YELLOW}💡 Use the network URLs to access from phones, tablets, or other computers${NC}"
+echo -e "${YELLOW}💡 Configure nginx to proxy port 80 → 8080 for public access${NC}"
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
