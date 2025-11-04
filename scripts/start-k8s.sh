@@ -249,7 +249,24 @@ if docker buildx version > /dev/null 2>&1; then
     USE_BUILDKIT=true
     echo -e "${GREEN}✓ BuildKit available, using optimized builds${NC}"
 else
-    echo -e "${YELLOW}⚠️  BuildKit not available, using legacy build mode${NC}"
+    echo -e "${YELLOW}⚠️  BuildKit not available${NC}"
+
+    # Auto-install on Linux
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        echo -e "${YELLOW}Installing docker-buildx-plugin...${NC}"
+        sudo apt-get update -qq > /dev/null 2>&1
+        sudo apt-get install -y docker-buildx-plugin > /dev/null 2>&1
+
+        # Check if installation succeeded
+        if docker buildx version > /dev/null 2>&1; then
+            USE_BUILDKIT=true
+            echo -e "${GREEN}✓ BuildKit installed successfully${NC}"
+        else
+            echo -e "${YELLOW}⚠️  BuildKit installation failed, using legacy build mode${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Using legacy build mode (install docker-buildx-plugin for better performance)${NC}"
+    fi
 fi
 
 # Build Docker images
