@@ -19,22 +19,15 @@ data:
   # TTS Provider
   TTS_PROVIDER: "opensource"
 
-  # Public URLs for external access (used when backend needs to provide URLs to clients)
-  # NOTE: These are injected by the start script with your machine's network IP
-  # This ensures the participant connection modal shows network-accessible URLs
-  # Override by setting these to your desired public URLs
-  PUBLIC_SERVER_URL: "http://NETWORK_IP_PLACEHOLDER:3000"
-  PUBLIC_LIVEKIT_URL: "ws://NETWORK_IP_PLACEHOLDER:7880"
-  PUBLIC_FRONTEND_URL: "http://NETWORK_IP_PLACEHOLDER"
+  # Public URLs for external access (uses PUBLIC_DOMAIN from .env)
+  # These are replaced by the start script with the PUBLIC_DOMAIN value
+  PUBLIC_SERVER_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
+  PUBLIC_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
+  PUBLIC_FRONTEND_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER"
 
   # Frontend runtime configuration
-  # NOTE: These use internal K8s service names, which triggers auto-detection in the frontend.
-  # The frontend will automatically replace these with the correct external URLs based on
-  # window.location.hostname, making the same build work from:
-  # - Phone: http://192.168.178.25 → Backend at http://192.168.178.25:3000
-  # - Localhost: http://localhost → Backend at http://localhost:3000
-  # To override with explicit URLs, change these to full external URLs (e.g., http://192.168.1.10:3000)
-  VITE_API_URL: "http://session-management-server:3000"
-  VITE_LIVEKIT_URL: "ws://livekit:7880"
+  # Using PUBLIC_DOMAIN_PLACEHOLDER which gets replaced by start-k8s.sh
+  VITE_API_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
+  VITE_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
   VITE_LIVEKIT_API_KEY: "devkey"
   VITE_LIVEKIT_API_SECRET: "secret"

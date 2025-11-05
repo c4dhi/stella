@@ -344,9 +344,17 @@ fi
 
 echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 
-# Inject network IP into ConfigMap
-echo -n "  • Updating ConfigMap with network IP... "
-sed "s/NETWORK_IP_PLACEHOLDER/${NETWORK_IP}/g" k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
+# Use PUBLIC_DOMAIN from .env if set, otherwise use NETWORK_IP
+if [ -z "$PUBLIC_DOMAIN" ] || [ "$PUBLIC_DOMAIN" = "localhost" ]; then
+    PUBLIC_DOMAIN="$NETWORK_IP"
+    echo -e "${YELLOW}⚠️  PUBLIC_DOMAIN not set in .env, using network IP: ${NETWORK_IP}${NC}"
+else
+    echo -e "${GREEN}✓ Using PUBLIC_DOMAIN from .env: ${PUBLIC_DOMAIN}${NC}"
+fi
+
+# Inject public domain into ConfigMap
+echo -n "  • Updating ConfigMap with public domain... "
+sed "s/PUBLIC_DOMAIN_PLACEHOLDER/${PUBLIC_DOMAIN}/g" k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
 # Deploy to Kubernetes
@@ -489,10 +497,10 @@ echo -e "${YELLOW}   Port 7880 → 7881 (LiveKit)${NC}"
 echo -e "${YELLOW}   Port 5432 → 5433 (Database)${NC}"
 echo ""
 echo -e "${GREEN}After nginx setup, services will be available at:${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://${NETWORK_IP}"
-echo -e "  ${GREEN}Backend:${NC}   http://${NETWORK_IP}:3000"
-echo -e "  ${GREEN}LiveKit:${NC}   ws://${NETWORK_IP}:7880"
-echo -e "  ${GREEN}Database:${NC}  ${NETWORK_IP}:5432"
+echo -e "  ${GREEN}Frontend:${NC}  http://${PUBLIC_DOMAIN}"
+echo -e "  ${GREEN}Backend:${NC}   http://${PUBLIC_DOMAIN}:3000"
+echo -e "  ${GREEN}LiveKit:${NC}   ws://${PUBLIC_DOMAIN}:7880"
+echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DOMAIN}:5432"
 echo ""
 echo -e "${BLUE}🔐 Database Credentials:${NC}"
 echo -e "  ${GREEN}Database:${NC}   ${POSTGRES_DB}"
@@ -503,7 +511,7 @@ echo -e "  ${YELLOW}Internal (used by services):${NC}"
 echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 echo ""
 echo -e "  ${YELLOW}External (access from outside):${NC}"
-echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${NETWORK_IP}:5432/${POSTGRES_DB}"
+echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DOMAIN}:5432/${POSTGRES_DB}"
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
