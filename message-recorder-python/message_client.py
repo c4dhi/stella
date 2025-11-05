@@ -29,7 +29,7 @@ class MessageClient:
         Poll the API for active sessions.
         Returns list of sessions that need monitoring.
         """
-        url = f"{self.base_url}/api/internal/active-sessions"
+        url = f"{self.base_url}/internal/active-sessions"
 
         try:
             # Create session if not exists (for non-context-manager usage)
@@ -65,7 +65,7 @@ class MessageClient:
         Store a recorded message via the API.
         Returns True if successful, False otherwise.
         """
-        url = f"{self.base_url}/api/internal/sessions/{session_id}/messages"
+        url = f"{self.base_url}/internal/sessions/{session_id}/messages"
 
         payload = {
             'message': message_envelope,
@@ -111,7 +111,7 @@ class MessageClient:
         Post a log entry to the session management server.
         Logs are displayed in the monitoring dashboard.
         """
-        url = f"{self.base_url}/api/internal/monitoring/logs"
+        url = f"{self.base_url}/internal/monitoring/logs"
 
         payload = {
             'level': level,
@@ -143,7 +143,7 @@ class MessageClient:
         Update the monitoring status with currently connected sessions.
         This allows the dashboard to show real-time connection state.
         """
-        url = f"{self.base_url}/api/internal/monitoring/status"
+        url = f"{self.base_url}/internal/monitoring/status"
 
         payload = {
             'connectedSessions': connected_session_ids
@@ -176,7 +176,7 @@ class MessageClient:
         Store a participant join/leave event.
         This creates a message in the conversation timeline.
         """
-        url = f"{self.base_url}/api/internal/sessions/{session_id}/participant-events"
+        url = f"{self.base_url}/internal/sessions/{session_id}/participant-events"
 
         payload = {
             'eventType': event_type,  # 'joined' or 'left'

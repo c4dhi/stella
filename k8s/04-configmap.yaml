@@ -6,9 +6,17 @@ metadata:
 data:
   # Server
   PORT: "3000"
-  NODE_ENV: "development"
+  NODE_ENV: "production"  # Changed to production for Kubernetes deployment
 
-  # LiveKit
+  # API Prefix (applied in production mode)
+  # Leave commented for smart defaults (production = /api prefix)
+  # API_PREFIX: "api"
+
+  # CORS Configuration
+  # In production, should be set to your domain
+  # CORS_ORIGIN: "https://PUBLIC_DOMAIN_PLACEHOLDER"
+
+  # LiveKit (internal cluster communication)
   LIVEKIT_URL: "ws://livekit:7880"
 
   # Kubernetes
@@ -19,15 +27,34 @@ data:
   # TTS Provider
   TTS_PROVIDER: "opensource"
 
-  # Public URLs for external access (uses PUBLIC_DOMAIN from .env)
-  # These are replaced by the start script with the PUBLIC_DOMAIN value
-  PUBLIC_SERVER_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
-  PUBLIC_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
-  PUBLIC_FRONTEND_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER"
+  # ============================================================================
+  # Public URLs for external access (replaced by start-k8s.sh script)
+  # ============================================================================
+  # OPTION 1: Subdomain-based routing (recommended)
+  # Requires: DNS A records for api.*, livekit.*, and root domain
+  # Nginx Ingress with host-based routing
+  PUBLIC_SERVER_URL: "https://api.PUBLIC_DOMAIN_PLACEHOLDER"
+  PUBLIC_LIVEKIT_URL: "wss://livekit.PUBLIC_DOMAIN_PLACEHOLDER"
+  PUBLIC_FRONTEND_URL: "https://PUBLIC_DOMAIN_PLACEHOLDER"
 
+  # OPTION 2: Path-based routing (single domain)
+  # Requires: Single DNS A record, Nginx with path-based routing
+  # Uncomment these and comment out OPTION 1 above:
+  # PUBLIC_SERVER_URL: "https://PUBLIC_DOMAIN_PLACEHOLDER/api"
+  # PUBLIC_LIVEKIT_URL: "wss://PUBLIC_DOMAIN_PLACEHOLDER/livekit"
+  # PUBLIC_FRONTEND_URL: "https://PUBLIC_DOMAIN_PLACEHOLDER"
+
+  # ============================================================================
   # Frontend runtime configuration
-  # Using PUBLIC_DOMAIN_PLACEHOLDER which gets replaced by start-k8s.sh
-  VITE_API_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
-  VITE_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
+  # ============================================================================
+  # OPTION 1: Subdomain-based (matches PUBLIC URLs above)
+  VITE_API_URL: "https://api.PUBLIC_DOMAIN_PLACEHOLDER"
+  VITE_LIVEKIT_URL: "wss://livekit.PUBLIC_DOMAIN_PLACEHOLDER"
+
+  # OPTION 2: Path-based (uncomment if using path-based routing)
+  # VITE_API_URL: "https://PUBLIC_DOMAIN_PLACEHOLDER/api"
+  # VITE_LIVEKIT_URL: "wss://PUBLIC_DOMAIN_PLACEHOLDER/livekit"
+
+  # LiveKit Credentials
   VITE_LIVEKIT_API_KEY: "devkey"
   VITE_LIVEKIT_API_SECRET: "secret"

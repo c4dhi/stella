@@ -773,14 +773,135 @@ rm -rf /tmp/grace-ai-k8s/
 - Homebrew should be installed for auto-installing minikube
 - If using OrbStack, ensure it's running before starting script
 
+## Routing Configuration
+
+The backend supports both **direct port access** (development) and **path-based routing** (production with reverse proxy) with smart defaults.
+
+### Development Mode (Direct Port Access)
+
+**Default behavior** with `NODE_ENV=development`:
+- Routes accessible at root: `/projects`, `/sessions`, etc.
+- No API prefix applied
+- CORS allows all origins (`*`)
+
+```bash
+# .env
+NODE_ENV=development
+PORT=3000
+
+# Access API at:
+http://localhost:3000/projects
+http://localhost:3000/sessions
+```
+
+### Production Mode (Path-Based Routing)
+
+**Default behavior** with `NODE_ENV=production`:
+- Routes prefixed with `/api`: `/api/projects`, `/api/sessions`, etc.
+- Internal routes stay at `/internal/*` (no prefix)
+- CORS should be configured for your domain
+
+```bash
+# .env
+NODE_ENV=production
+PORT=3000
+CORS_ORIGIN=https://yourdomain.com
+
+# With Nginx reverse proxy:
+# External: https://yourdomain.com/api/projects
+# Internal: http://localhost:3000/projects (prefix added by NestJS)
+```
+
+### Nginx Reverse Proxy Configuration
+
+For production deployment with path-based routing:
+
+```nginx
+# Backend API - /api/*
+location /api/ {
+    proxy_pass http://127.0.0.1:3000/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# Internal APIs (Python services) - /internal/*
+location /internal/ {
+    proxy_pass http://127.0.0.1:3000/;
+    # Same proxy headers as above
+}
+
+# LiveKit WebSocket - /livekit
+location /livekit {
+    proxy_pass http://127.0.0.1:7880;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    # WebSocket-specific configuration
+}
+```
+
+### Manual Override
+
+Override smart defaults with explicit configuration:
+
+```bash
+# Force API prefix regardless of NODE_ENV
+API_PREFIX=api
+
+# Disable prefix in production
+API_PREFIX=
+
+# Use custom prefix
+API_PREFIX=v1
+```
+
+### Frontend Configuration
+
+Update frontend environment variables to match backend routing:
+
+```bash
+# Development (no prefix)
+VITE_API_URL=http://localhost:3000
+
+# Production with path-based routing
+VITE_API_URL=https://yourdomain.com/api
+VITE_LIVEKIT_URL=wss://yourdomain.com/livekit
+
+# Production with subdomain
+VITE_API_URL=https://api.yourdomain.com
+VITE_LIVEKIT_URL=wss://livekit.yourdomain.com
+```
+
+### Route Structure
+
+**Public API Routes** (with prefix in production):
+- `/projects` → `/api/projects`
+- `/sessions` → `/api/sessions`
+- `/agents` → `/api/agents`
+- `/participants` → `/api/participants`
+
+**Internal API Routes** (no prefix):
+- `/internal/active-sessions` (Python message recorder)
+- `/internal/sessions/:id/messages`
+- `/internal/monitoring/*`
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | Required |
 | `PORT` | Server port | `3000` |
-| `NODE_ENV` | Environment | `development` |
-| `LIVEKIT_URL` | LiveKit server URL | `ws://localhost:7880` |
+| `NODE_ENV` | Environment (`development`/`production`) | `development` |
+| `API_PREFIX` | Global route prefix (smart default based on NODE_ENV) | `''` (dev), `'api'` (prod) |
+| `CORS_ORIGIN` | CORS allowed origins | `*` (dev), domain (prod) |
+| `PUBLIC_SERVER_URL` | Public API URL for mobile clients | Auto-detected |
+| `PUBLIC_LIVEKIT_URL` | Public LiveKit URL for clients | Auto-detected |
+| `LIVEKIT_URL` | LiveKit server URL (internal) | `ws://localhost:7880` |
 | `LIVEKIT_API_KEY` | LiveKit API key | `devkey` |
 | `LIVEKIT_API_SECRET` | LiveKit API secret | `secret` |
 | `KUBERNETES_NAMESPACE` | K8s namespace for agents | `ai-agents` |
@@ -788,7 +909,6 @@ rm -rf /tmp/grace-ai-k8s/
 | `AGENT_IMAGE_PULL_POLICY` | Image pull policy | `IfNotPresent` |
 | `OPENAI_API_KEY` | OpenAI API key (for agents) | Required |
 | `TTS_PROVIDER` | TTS provider for agents | `opensource` |
-| `CORS_ORIGIN` | CORS allowed origins | `*` |
 
 ## Contributing
 

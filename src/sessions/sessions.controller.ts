@@ -217,6 +217,7 @@ export class SessionsController {
 
   // ============================================================================
   // Internal API Endpoints (for Python message recorder service)
+  // Note: These routes are at /internal/* (excluded from global /api prefix)
   // ============================================================================
 
   /**
@@ -224,7 +225,7 @@ export class SessionsController {
    * Used by the Python message recorder to discover rooms to join.
    */
   @Public()
-  @Get('api/internal/active-sessions')
+  @Get('internal/active-sessions')
   async getActiveSessions() {
     return this.sessionsService.findActiveSessions();
   }
@@ -234,7 +235,7 @@ export class SessionsController {
    * This replaces the WebRTC-based recording from the Node.js monitor.
    */
   @Public()
-  @Post('api/internal/sessions/:sessionId/messages')
+  @Post('internal/sessions/:sessionId/messages')
   async storeRecordedMessage(
     @Param('sessionId') sessionId: string,
     @Body() data: {
@@ -256,7 +257,7 @@ export class SessionsController {
    * Allows Python service to submit logs for display in the dashboard.
    */
   @Public()
-  @Post('api/internal/monitoring/logs')
+  @Post('internal/monitoring/logs')
   async storeMonitoringLog(
     @Body() logData: {
       level: 'log' | 'debug' | 'warn' | 'error';
@@ -273,7 +274,7 @@ export class SessionsController {
    * Allows Python service to report which sessions it's actively monitoring.
    */
   @Public()
-  @Post('api/internal/monitoring/status')
+  @Post('internal/monitoring/status')
   async updateMonitoringStatus(
     @Body() statusData: {
       connectedSessions: string[];
@@ -287,7 +288,7 @@ export class SessionsController {
    * Creates timeline messages for conversation playback.
    */
   @Public()
-  @Post('api/internal/sessions/:sessionId/participant-events')
+  @Post('internal/sessions/:sessionId/participant-events')
   async storeParticipantEvent(
     @Param('sessionId') sessionId: string,
     @Body() eventData: {
