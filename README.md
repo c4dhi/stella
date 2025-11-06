@@ -794,12 +794,13 @@ http://localhost:3000/projects
 http://localhost:3000/sessions
 ```
 
-### Production Mode (Path-Based Routing)
+### Production Mode
 
 **Default behavior** with `NODE_ENV=production`:
-- Routes prefixed with `/api`: `/api/projects`, `/api/sessions`, etc.
-- Internal routes stay at `/internal/*` (no prefix)
+- Routes at root level: `/projects`, `/sessions`, etc. (no `/api` prefix)
+- Internal routes at `/internal/*`
 - CORS should be configured for your domain
+- `API_PREFIX=""` is set in ConfigMap to disable prefix
 
 ```bash
 # .env
@@ -807,25 +808,37 @@ NODE_ENV=production
 PORT=3000
 CORS_ORIGIN=https://yourdomain.com
 
-# With Nginx reverse proxy:
-# External: https://yourdomain.com/api/projects
-# Internal: http://localhost:3000/projects (prefix added by NestJS)
+# With Nginx reverse proxy (optional /api prefix):
+# External: https://yourdomain.com/projects (direct)
+#       or: https://yourdomain.com/api/projects (nginx rewrite)
+# Internal: http://localhost:3000/projects (no prefix)
 ```
 
 ### Nginx Reverse Proxy Configuration
 
-For production deployment with path-based routing:
+For production deployment, you have two options:
 
 ```nginx
-# Backend API - /api/*
-location /api/ {
-    proxy_pass http://127.0.0.1:3000/;
+# OPTION 1: Direct proxy (no /api prefix in external URLs)
+location ~ ^/(auth|projects|sessions|agents|health) {
+    proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
+
+# OPTION 2: Add /api prefix for external URLs (optional)
+# location /api/ {
+#     rewrite ^/api/(.*) /$1 break;
+#     proxy_pass http://127.0.0.1:3000;
+#     proxy_http_version 1.1;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Real-IP $remote_addr;
+#     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#     proxy_set_header X-Forwarded-Proto $scheme;
+# }
 
 # Internal APIs (Python services) - /internal/*
 location /internal/ {
@@ -863,25 +876,29 @@ API_PREFIX=v1
 Update frontend environment variables to match backend routing:
 
 ```bash
-# Development (no prefix)
+# Development (local)
 VITE_API_URL=http://localhost:3000
+VITE_LIVEKIT_URL=ws://localhost:7880
 
-# Production with path-based routing
-VITE_API_URL=https://yourdomain.com/api
+# Production with IP:port (direct access)
+VITE_API_URL=http://192.168.1.100:3000
+VITE_LIVEKIT_URL=ws://192.168.1.100:7880
+
+# Production with reverse proxy (optional /api prefix via nginx rewrite)
+VITE_API_URL=https://yourdomain.com
+# Or with explicit /api prefix: https://yourdomain.com/api
 VITE_LIVEKIT_URL=wss://yourdomain.com/livekit
-
-# Production with subdomain
-VITE_API_URL=https://api.yourdomain.com
-VITE_LIVEKIT_URL=wss://livekit.yourdomain.com
 ```
 
 ### Route Structure
 
-**Public API Routes** (with prefix in production):
-- `/projects` → `/api/projects`
-- `/sessions` → `/api/sessions`
-- `/agents` → `/api/agents`
-- `/participants` → `/api/participants`
+**Public API Routes** (no prefix - all at root level):
+- `/projects`
+- `/sessions`
+- `/agents`
+- `/participants`
+- `/auth`
+- `/health`
 
 **Internal API Routes** (no prefix):
 - `/internal/active-sessions` (Python message recorder)

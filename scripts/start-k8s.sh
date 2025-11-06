@@ -154,8 +154,8 @@ if [[ "$OS_TYPE" == "linux" ]]; then
     fi
 fi
 
-# Check if required ports are available (kubectl port-forward ports, NOT nginx ports)
-REQUIRED_PORTS=(8080 3001 7881 5433)
+# Check if required ports are available (standard ports used by kubectl port-forward)
+REQUIRED_PORTS=(8080 3000 7880 5432)
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
@@ -346,7 +346,7 @@ fi
 echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 
 # Use PUBLIC_DOMAIN from .env if set, otherwise use NETWORK_IP
-if [ -z "$PUBLIC_DOMAIN" ] || [ "$PUBLIC_DOMAIN" = "localhost" ]; then
+if [ -z "$PUBLIC_DOMAIN" ]; then
     PUBLIC_DOMAIN="$NETWORK_IP"
     echo -e "${YELLOW}⚠️  PUBLIC_DOMAIN not set in .env, using network IP: ${NETWORK_IP}${NC}"
 else
@@ -408,17 +408,17 @@ echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Use nohup and save PIDs
-    # Using non-standard ports to avoid conflicts with nginx
+    # Using standard ports for direct access
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
     PF_FRONTEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3001:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7881:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
     PF_LIVEKIT=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5433:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
     PF_POSTGRES=$!
 
     # Save PIDs to file
@@ -431,17 +431,17 @@ if [ "$DAEMON_MODE" = true ]; then
     disown -a
 else
     # Foreground mode: Normal background processes
-    # Using non-standard ports to avoid conflicts with nginx
+    # Using standard ports for direct access
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
     PF_FRONTEND=$!
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3001:3000 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7881:7880 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
     PF_LIVEKIT=$!
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5433:5432 > /dev/null 2>&1 &
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
     PF_POSTGRES=$!
 fi
 
@@ -485,20 +485,8 @@ echo -e "${GREEN}✅ Deployment Complete!${NC}"
 echo ""
 echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
-echo -e "${GREEN}Direct Access (via kubectl port-forward):${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://localhost:8080"
-echo -e "  ${GREEN}Backend:${NC}   http://localhost:3001"
-echo -e "  ${GREEN}LiveKit:${NC}   ws://localhost:7881"
-echo -e "  ${GREEN}Database:${NC}  localhost:5433"
-echo ""
-echo -e "${YELLOW}⚠️  Configure nginx to proxy standard ports → localhost${NC}"
-echo -e "${YELLOW}   Port 80 → 8080 (Frontend)${NC}"
-echo -e "${YELLOW}   Port 3000 → 3001 (Backend)${NC}"
-echo -e "${YELLOW}   Port 7880 → 7881 (LiveKit)${NC}"
-echo -e "${YELLOW}   Port 5432 → 5433 (Database)${NC}"
-echo ""
-echo -e "${GREEN}After nginx setup, services will be available at:${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://${PUBLIC_DOMAIN}"
+echo -e "${GREEN}Standard ports (via kubectl port-forward):${NC}"
+echo -e "  ${GREEN}Frontend:${NC}  http://${PUBLIC_DOMAIN}:8080"
 echo -e "  ${GREEN}Backend:${NC}   http://${PUBLIC_DOMAIN}:3000"
 echo -e "  ${GREEN}LiveKit:${NC}   ws://${PUBLIC_DOMAIN}:7880"
 echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DOMAIN}:5432"
@@ -511,7 +499,7 @@ echo ""
 echo -e "  ${YELLOW}Internal (used by services):${NC}"
 echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 echo ""
-echo -e "  ${YELLOW}External (access from outside):${NC}"
+echo -e "  ${YELLOW}External (via port-forward):${NC}"
 echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DOMAIN}:5432/${POSTGRES_DB}"
 echo ""
 

@@ -20,29 +20,14 @@ async function bootstrap() {
   // Global exception filter
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Configure API prefix based on environment
+  // No API prefix - all routes are at root level (/, /auth/*, /projects/*, etc.)
+  // Internal routes (/internal/*) are at root level alongside public routes
   const nodeEnv = process.env.NODE_ENV || 'development';
-  const isDevelopment = nodeEnv === 'development';
-
-  // API_PREFIX: explicit override, or smart default based on NODE_ENV
-  // Development: no prefix (routes at /)
-  // Production: 'api' prefix (routes at /api/*)
-  const apiPrefix = process.env.API_PREFIX !== undefined
-    ? process.env.API_PREFIX
-    : (isDevelopment ? '' : 'api');
-
-  if (apiPrefix) {
-    // Exclude /internal routes from the global prefix
-    app.setGlobalPrefix(apiPrefix, {
-      exclude: ['/internal', '/internal/*path'],
-    });
-    logger.log(`🔧 API prefix enabled: /${apiPrefix}`);
-  } else {
-    logger.log(`🔧 API prefix disabled (development mode)`);
-  }
+  logger.log(`🔧 API prefix disabled - all routes at root level`);
 
   // Configure CORS
-  const corsOrigin = process.env.CORS_ORIGIN || (isDevelopment ? '*' : process.env.PUBLIC_SERVER_URL);
+  const isDevelopment = nodeEnv === 'development';
+  const corsOrigin = process.env.CORS_ORIGIN || (isDevelopment ? '*' : process.env.PUBLIC_FRONTEND_URL);
   app.enableCors({
     origin: corsOrigin,
     credentials: true,
@@ -52,7 +37,7 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
 
-  const baseUrl = apiPrefix ? `http://localhost:${port}/${apiPrefix}` : `http://localhost:${port}`;
+  const baseUrl = `http://localhost:${port}`;
 
   logger.log(`🚀 Session Management Server running on http://0.0.0.0:${port}`);
   logger.log(`📦 Environment: ${nodeEnv}`);

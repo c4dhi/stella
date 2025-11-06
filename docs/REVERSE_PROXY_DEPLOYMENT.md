@@ -28,7 +28,9 @@ The backend automatically detects the environment (`NODE_ENV`) and configures ro
 | Mode | NODE_ENV | API Prefix | Example Routes |
 |------|----------|------------|----------------|
 | Development | `development` | None | `/projects`, `/sessions` |
-| Production | `production` | `/api` | `/api/projects`, `/api/sessions` |
+| Production | `production` | None (disabled) | `/projects`, `/sessions` |
+
+**Note**: API prefix is disabled by default (`API_PREFIX=""`). Reverse proxy can optionally add `/api` prefix for external URLs.
 
 **Internal APIs** (for Python services) always remain at `/internal/*` regardless of mode.
 
@@ -46,7 +48,7 @@ The backend automatically detects the environment (`NODE_ENV`) and configures ro
 **URLs:**
 ```
 Frontend:  https://yourdomain.com/
-API:       https://yourdomain.com/api/
+API:       https://yourdomain.com/projects (or /api/projects with rewrite)
 LiveKit:   wss://yourdomain.com/livekit
 Internal:  https://yourdomain.com/internal/
 ```
@@ -146,12 +148,13 @@ server {
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
-    # Backend API - /api/*
-    location /api/ {
-        # Remove /api prefix when proxying to backend
-        # Backend adds it back with setGlobalPrefix('api')
-        rewrite ^/api/(.*) /$1 break;
+    # Backend API
+    # Backend routes are at root level: /auth/login, /projects, /sessions, etc.
+    # Choose one of the options below:
 
+    # OPTION 1: Direct proxy (no /api prefix in external URLs)
+    # External URLs: https://yourdomain.com/projects
+    location ~ ^/(auth|projects|sessions|agents|health|network-info) {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -163,6 +166,22 @@ server {
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
     }
+
+    # OPTION 2: Add /api prefix for cleaner external URLs (commented out)
+    # External URLs: https://yourdomain.com/api/projects → Internal: /projects
+    # Uncomment this and comment out OPTION 1 if you prefer /api prefix externally
+    # location /api/ {
+    #     rewrite ^/api/(.*) /$1 break;
+    #     proxy_pass http://127.0.0.1:3000;
+    #     proxy_http_version 1.1;
+    #     proxy_set_header Host $host;
+    #     proxy_set_header X-Real-IP $remote_addr;
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    #     proxy_connect_timeout 60s;
+    #     proxy_send_timeout 60s;
+    #     proxy_read_timeout 60s;
+    # }
 
     # Internal APIs (Python services) - /internal/*
     location /internal/ {
@@ -380,7 +399,9 @@ The backend automatically configures based on `NODE_ENV`:
 | NODE_ENV | API Prefix | CORS | Behavior |
 |----------|------------|------|----------|
 | `development` | None | `*` | Routes at `/`, all origins |
-| `production` | `api` | Specific domain | Routes at `/api/`, restricted CORS |
+| `production` | None (disabled) | Specific domain | Routes at `/`, restricted CORS |
+
+**Note**: `API_PREFIX=""` is set in ConfigMap to disable prefix in all environments.
 
 ### Manual Override
 
@@ -520,7 +541,10 @@ curl http://localhost:7880
 # Frontend
 curl -I https://yourdomain.com
 
-# API (path-based)
+# API (direct routes)
+curl -I https://yourdomain.com/projects
+
+# API (with /api prefix via nginx rewrite - optional)
 curl -I https://yourdomain.com/api/projects
 
 # API (subdomain)
@@ -648,7 +672,7 @@ sudo systemctl reload nginx
 
 ### Internal API 404 Errors
 
-**Cause**: Python services calling old `/api/internal` routes
+**Cause**: Python services calling incorrect internal routes
 
 **Solution**:
 ```bash
