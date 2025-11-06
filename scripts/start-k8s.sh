@@ -113,8 +113,8 @@ cd "$(dirname "$0")/.."
 # Load environment variables from .env file
 if [ -f .env ]; then
     set -a  # automatically export all variables
-    # Source .env while filtering out comments and blank lines
-    source <(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')
+    # Load .env while filtering out comments and blank lines
+    eval "$(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')"
     set +a
 else
     echo -e "${RED}✗ Error: .env file not found${NC}"

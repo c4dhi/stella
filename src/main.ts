@@ -34,7 +34,7 @@ async function bootstrap() {
   if (apiPrefix) {
     // Exclude /internal routes from the global prefix
     app.setGlobalPrefix(apiPrefix, {
-      exclude: ['/internal{,/*}'],
+      exclude: ['/internal', '/internal/*path'],
     });
     logger.log(`🔧 API prefix enabled: /${apiPrefix}`);
   } else {
