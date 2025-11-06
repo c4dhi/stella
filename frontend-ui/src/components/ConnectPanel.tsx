@@ -20,6 +20,8 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   const setTTSPlaying = useStore(s => s.setTTSPlaying)
   const setTTSPaused = useStore(s => s.setTTSPaused)
   const setLLMConfig = useStore(s => s.setLLMConfig)
+  const setAudioLevel = useStore(s => s.setAudioLevel)
+  const setIsRemoteSpeaking = useStore(s => s.setIsRemoteSpeaking)
 
   // Get transport from store (already initialized during store creation)
   const transport = useStore(s => s.transport)
@@ -67,8 +69,10 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
       console.log('[ConnectPanel] Received LLM config:', config)
       setLLMConfig(config)
     }
+    transport.onAudioLevel = (level: number) => setAudioLevel(level)
+    transport.onRemoteSpeaking = (speaking: boolean) => setIsRemoteSpeaking(speaking)
 
-  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused, setLLMConfig])
+  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused, setLLMConfig, setAudioLevel, setIsRemoteSpeaking])
 
   const connect = async () => {
     try {

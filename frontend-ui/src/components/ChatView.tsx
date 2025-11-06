@@ -2,6 +2,7 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useParams } from 'react-router-dom'
+import { Eye } from 'lucide-react'
 import { useStore } from '../store'
 import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
@@ -24,6 +25,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   const showTaskPanel = useStore(s => s.showTaskPanel)
   const agentTaskLists = useStore(s => s.agentTaskLists)
   const setShowTaskPanel = useStore(s => s.setShowTaskPanel)
+  const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
 
   // Historical messages from database
   const historicalMessages = useStore(s => s.historicalMessages)
@@ -316,6 +318,18 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                 </button>
               )
             })()}
+
+            {/* Face Button */}
+            <button
+              onClick={() => setFaceModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-50/60 border border-neutral-200/60 hover:bg-neutral-100/80 hover:border-neutral-300/80 transition-all duration-200 cursor-pointer"
+              title="Show GRACE face interface"
+            >
+              <Eye className="w-3 h-3 text-neutral-400" />
+              <span className="text-[10px] text-neutral-600 font-light tracking-wider uppercase">
+                FACE
+              </span>
+            </button>
           </div>
 
           {/* Task Panel Toggle Button - only show when panel is hidden and agent tasks exist */}

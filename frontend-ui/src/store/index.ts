@@ -38,6 +38,10 @@ type MediaState = {
   isMuted: boolean
   isTTSPlaying: boolean
   isTTSPaused: boolean
+  // Face interface state
+  isFaceModalOpen: boolean
+  audioLevel: number
+  isRemoteSpeaking: boolean
 }
 type MediaActions = {
   setMicGranted: (v: boolean) => void
@@ -49,6 +53,10 @@ type MediaActions = {
   setIsMuted: (v: boolean) => void
   setTTSPlaying: (v: boolean) => void
   setTTSPaused: (v: boolean) => void
+  // Face interface actions
+  setFaceModalOpen: (v: boolean) => void
+  setAudioLevel: (v: number) => void
+  setIsRemoteSpeaking: (v: boolean) => void
 }
 
 type LLMConfigState = {
@@ -224,6 +232,9 @@ export const useStore = create<
   isMuted: true, // Default to muted
   isTTSPlaying: false,
   isTTSPaused: false,
+  isFaceModalOpen: false,
+  audioLevel: 0,
+  isRemoteSpeaking: false,
   setMicGranted: (v) => set({ micGranted: v }),
   setVu: (v) => set({ vu: v }),
   setVadEnabled: (v) => set({ vadEnabled: v }),
@@ -233,6 +244,9 @@ export const useStore = create<
   setIsMuted: (v) => set({ isMuted: v }),
   setTTSPlaying: (v) => set({ isTTSPlaying: v }),
   setTTSPaused: (v) => set({ isTTSPaused: v }),
+  setFaceModalOpen: (v) => set({ isFaceModalOpen: v }),
+  setAudioLevel: (v) => set({ audioLevel: v }),
+  setIsRemoteSpeaking: (v) => set({ isRemoteSpeaking: v }),
 
   // llm config
   llmConfig: null,

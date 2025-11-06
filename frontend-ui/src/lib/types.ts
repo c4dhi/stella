@@ -125,6 +125,8 @@ export interface TransportEvents {
   onParticipantJoined: (participantId: string, participantName?: string) => void
   onParticipantLeft: (participantId: string, participantName?: string) => void
   onLLMConfig: (config: any) => void
+  onAudioLevel: (level: number) => void
+  onRemoteSpeaking: (speaking: boolean) => void
 }
 
 export interface Transport extends TransportEvents {

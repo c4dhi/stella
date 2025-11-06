@@ -25,6 +25,8 @@ export class PeerTransport implements Transport {
   pausedAudioTime?: number
   isStreamingPaused: boolean = false
   private userName: string = 'User'  // Default fallback name
+  private audioLevelInterval?: number
+  private remoteAudioTrack?: RemoteAudioTrack
 
   // Set the user's actual name for proper message attribution
   setUserName(name: string) {
@@ -47,6 +49,8 @@ export class PeerTransport implements Transport {
   onParticipantJoined = (_participantId: string, _participantName?: string) => {}
   onParticipantLeft = (_participantId: string, _participantName?: string) => {}
   onLLMConfig = (_config: any) => {}
+  onAudioLevel = (_level: number) => {}
+  onRemoteSpeaking = (_speaking: boolean) => {}
 
   async connect(roomName?: string) {
     try {
@@ -69,8 +73,12 @@ export class PeerTransport implements Transport {
           const audioEl = audioTrack.attach()
           audioEl.autoplay = true
           this.remoteAudio = audioEl
+          this.remoteAudioTrack = audioTrack
           this.setupAudioEventListeners(audioEl)
           this.onRemoteAudioTrack(audioTrack.mediaStreamTrack)
+
+          // Start monitoring audio levels for face animation
+          this.startAudioLevelMonitoring()
         }
       })
 
@@ -226,12 +234,16 @@ export class PeerTransport implements Transport {
   }
 
   async disconnect() {
+    // Stop audio level monitoring
+    this.stopAudioLevelMonitoring()
+
     if (this.room) {
       await this.room.disconnect()
       this.room = undefined
     }
     this.remoteAudio?.pause()
     this.remoteAudio = undefined
+    this.remoteAudioTrack = undefined
     this.publishedAudioTrack = undefined
     this.onDisconnected('client disconnect')
   }
@@ -699,6 +711,47 @@ export class PeerTransport implements Transport {
         this.onTTSStop()
       }
     })
+  }
+
+  // Start monitoring audio levels for face animation
+  private startAudioLevelMonitoring() {
+    // Clear existing interval if any
+    if (this.audioLevelInterval) {
+      clearInterval(this.audioLevelInterval)
+    }
+
+    let lastSpeakingState = false
+
+    // Poll audio level every 50ms (20 FPS for smooth animation)
+    this.audioLevelInterval = window.setInterval(() => {
+      if (this.remoteAudioTrack && this.remoteAudio) {
+        // Get current audio level (0.0 to 1.0)
+        const volume = this.remoteAudioTrack.getVolume() || 0
+
+        // Emit audio level for face animation
+        this.onAudioLevel(volume)
+
+        // Detect speaking state (threshold of 0.02 to filter out noise)
+        const isSpeaking = volume > 0.02
+
+        // Only emit speaking state change if it actually changed
+        if (isSpeaking !== lastSpeakingState) {
+          this.onRemoteSpeaking(isSpeaking)
+          lastSpeakingState = isSpeaking
+        }
+      }
+    }, 50)
+
+    console.log('🎙️ [AUDIO] Started audio level monitoring for face animation')
+  }
+
+  // Stop monitoring audio levels
+  private stopAudioLevelMonitoring() {
+    if (this.audioLevelInterval) {
+      clearInterval(this.audioLevelInterval)
+      this.audioLevelInterval = undefined
+      console.log('🎙️ [AUDIO] Stopped audio level monitoring')
+    }
   }
 
 }

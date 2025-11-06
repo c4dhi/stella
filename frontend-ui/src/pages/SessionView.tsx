@@ -14,6 +14,7 @@ import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
 import NetworkInfoModal from '../components/modals/NetworkInfoModal'
+import GraceFaceModal from '../components/face/GraceFaceModal'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
 import { apiClient } from '../services/ApiClient'
@@ -69,6 +70,12 @@ export default function SessionView() {
   const setAllDeliverableStates = useStore(s => s.setAllDeliverableStates)
   const setProcessingMode = useStore(s => s.setProcessingMode)
   const addNotification = useStore(s => s.addNotification)
+
+  // Face modal state
+  const isFaceModalOpen = useStore(s => s.isFaceModalOpen)
+  const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
+  const audioLevel = useStore(s => s.audioLevel)
+  const isRemoteSpeaking = useStore(s => s.isRemoteSpeaking)
 
   // Load session details
   useEffect(() => {
@@ -614,6 +621,14 @@ export default function SessionView() {
       <NetworkInfoModal
         isOpen={isNetworkInfoOpen}
         onClose={() => setIsNetworkInfoOpen(false)}
+      />
+
+      {/* GRACE Face Modal - Full Screen */}
+      <GraceFaceModal
+        isOpen={isFaceModalOpen}
+        onClose={() => setFaceModalOpen(false)}
+        isRemoteSpeaking={isRemoteSpeaking}
+        audioLevel={audioLevel}
       />
     </div>
   )
