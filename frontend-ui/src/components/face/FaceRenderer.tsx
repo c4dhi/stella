@@ -4,7 +4,7 @@
  * Renders eyes, eyebrows, and mouth using SVG
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import type { FaceRendererProps, MouthEmotion, EyeEmotion } from './types';
 
@@ -22,7 +22,7 @@ const MOUTH_COLOR = '#B0B0B0';      // Light grey for softer appearance on black
 const EYEBROW_COLOR = '#B0B0B0';    // Light grey matching mouth
 const EYEBROW_WIDTH = 180;
 const EYEBROW_THICKNESS = 12;
-const MOUTH_HEIGHT_BASE = 50;
+const MOUTH_HEIGHT_BASE = 70;  // Increased from 50 for larger mouth
 
 // Mouth expression shapes
 const MOUTH_EXPRESSIONS: Record<MouthEmotion, { curvature: number; width: number; height: number }> = {
@@ -91,18 +91,18 @@ const interpolate = (value: number, inputRange: number[], outputRange: number[])
 // Calculate mouth SVG path (matches mobile calculateMouthPath function)
 const calculateMouthPath = (
   mouthOpenness: number,
-  mouthEmotion: MouthEmotion
+  mouthEmotion: MouthEmotion,
+  isSpeaking: boolean
 ): string => {
   const centerX = 110;
   const centerY = 45;
 
   const shape = MOUTH_EXPRESSIONS[mouthEmotion] || MOUTH_EXPRESSIONS.neutral;
-  const isSpeaking = mouthOpenness > 0.1;
 
   if (isSpeaking) {
     // Speaking: O-shaped mouth (ellipse)
-    const baseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 0.6, 20);
-    const baseHeight = Math.max(shape.height * 8, 8);
+    const baseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 0.8, 30);  // Increased from 0.6, 20
+    const baseHeight = Math.max(shape.height * 12, 12);  // Increased from 8, 8
 
     // Use openness to control mouth size (audio-reactive)
     const openness = interpolate(
@@ -164,6 +164,20 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
 }) => {
   const scale = size / 600; // Base size is 600px
 
+  // Hysteresis for smooth mouth shape transitions (prevents jitter)
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const ENTER_THRESHOLD = 0.15;  // Must exceed this to start showing oval (increased from 0.10)
+  const EXIT_THRESHOLD = 0.03;   // Must drop below this to show smile
+
+  // Apply hysteresis to prevent rapid switching between line and oval
+  useEffect(() => {
+    if (!isSpeaking && mouthOpenness > ENTER_THRESHOLD) {
+      setIsSpeaking(true);
+    } else if (isSpeaking && mouthOpenness < EXIT_THRESHOLD) {
+      setIsSpeaking(false);
+    }
+  }, [mouthOpenness, isSpeaking]);
+
   const eyebrowShape = EYEBROW_EXPRESSIONS[eyeEmotion] || EYEBROW_EXPRESSIONS.neutral;
   const leftEyebrowPath = calculateEyebrowPath(
     eyebrowShape.leftCurvature,
@@ -176,7 +190,7 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
     false
   );
 
-  const mouthPath = calculateMouthPath(mouthOpenness, mouthEmotion);
+  const mouthPath = calculateMouthPath(mouthOpenness, mouthEmotion, isSpeaking);
 
   const renderEye = (eye: typeof leftEye, index: number) => {
     const pupilOffsetX = clamp(eye.x * MAX_PUPIL_OFFSET_X, -MAX_PUPIL_OFFSET_X, MAX_PUPIL_OFFSET_X);
@@ -301,7 +315,7 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
             fill="none"
             initial={false}
             animate={{ d: mouthPath }}
-            transition={{ duration: 0.1 }}
+            transition={{ duration: 0.1 }}  // Smooth transition for shape changes
           />
         </svg>
       </div>

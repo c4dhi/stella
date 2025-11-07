@@ -45,7 +45,7 @@ const GraceFace: React.FC<GraceFaceProps> = ({
     audioLevel,
     isRemoteSpeaking,
     emotion: mouthEmotion,
-    smoothingFactor: 0.2
+    smoothingFactor: 0.5  // Higher = faster response (was 0.2)
   });
 
   // Calculate responsive size

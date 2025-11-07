@@ -28,6 +28,11 @@ export class PeerTransport implements Transport {
   private audioLevelInterval?: number
   private remoteAudioTrack?: RemoteAudioTrack
 
+  // Web Audio API for accurate speech detection
+  private audioContext?: AudioContext
+  private audioAnalyser?: AnalyserNode
+  private audioAnalysisFrame?: number
+
   // Set the user's actual name for proper message attribution
   setUserName(name: string) {
     this.userName = name
@@ -76,6 +81,9 @@ export class PeerTransport implements Transport {
           this.remoteAudioTrack = audioTrack
           this.setupAudioEventListeners(audioEl)
           this.onRemoteAudioTrack(audioTrack.mediaStreamTrack)
+
+          // Set up Web Audio API for accurate speech detection
+          this.setupWebAudioAnalysis(audioTrack)
 
           // Start monitoring audio levels for face animation
           this.startAudioLevelMonitoring()
@@ -236,6 +244,16 @@ export class PeerTransport implements Transport {
   async disconnect() {
     // Stop audio level monitoring
     this.stopAudioLevelMonitoring()
+
+    // Clean up Web Audio resources
+    if (this.audioAnalyser) {
+      this.audioAnalyser.disconnect()
+      this.audioAnalyser = undefined
+    }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      await this.audioContext.close()
+      this.audioContext = undefined
+    }
 
     if (this.room) {
       await this.room.disconnect()
@@ -713,45 +731,110 @@ export class PeerTransport implements Transport {
     })
   }
 
-  // Start monitoring audio levels for face animation
-  private startAudioLevelMonitoring() {
-    // Clear existing interval if any
-    if (this.audioLevelInterval) {
-      clearInterval(this.audioLevelInterval)
-    }
+  // Set up Web Audio API for accurate speech detection from remote audio
+  private setupWebAudioAnalysis(audioTrack: RemoteAudioTrack) {
+    try {
+      // Create AudioContext if not exists
+      if (!this.audioContext) {
+        this.audioContext = new AudioContext()
+      }
 
+      // Create source from remote track's MediaStreamTrack
+      const mediaStream = new MediaStream([audioTrack.mediaStreamTrack])
+      const source = this.audioContext.createMediaStreamSource(mediaStream)
+
+      // Create analyser for audio content analysis
+      const analyser = this.audioContext.createAnalyser()
+      analyser.fftSize = 2048
+      analyser.smoothingTimeConstant = 0.8
+
+      // Connect source to analyser (no need to connect to destination - audio already playing)
+      source.connect(analyser)
+
+      this.audioAnalyser = analyser
+      console.log('🎙️ [AUDIO] Web Audio API setup complete for speech detection')
+    } catch (error) {
+      console.error('❌ [AUDIO] Failed to setup Web Audio API:', error)
+      // Will fall back to basic volume detection in startAudioLevelMonitoring
+    }
+  }
+
+  // Calculate RMS (Root Mean Square) amplitude from audio samples
+  private calculateRMS(timeData: Uint8Array): number {
+    let sumSquares = 0
+    for (let i = 0; i < timeData.length; i++) {
+      // Normalize to -1 to 1 range (Uint8Array is 0-255, center at 128)
+      const normalized = (timeData[i] - 128) / 128
+      sumSquares += normalized * normalized
+    }
+    return Math.sqrt(sumSquares / timeData.length)
+  }
+
+  // Start monitoring audio levels for face animation with RMS analysis
+  private startAudioLevelMonitoring() {
     let lastSpeakingState = false
 
-    // Poll audio level every 50ms (20 FPS for smooth animation)
-    this.audioLevelInterval = window.setInterval(() => {
-      if (this.remoteAudioTrack && this.remoteAudio) {
-        // Get current audio level (0.0 to 1.0)
-        const volume = this.remoteAudioTrack.getVolume() || 0
+    const analyzeAudio = () => {
+      if (!this.remoteAudioTrack) return
 
-        // Emit audio level for face animation
-        this.onAudioLevel(volume)
+      let audioLevel = 0
+      let isSpeaking = false
 
-        // Detect speaking state (threshold of 0.02 to filter out noise)
-        const isSpeaking = volume > 0.02
+      if (this.audioAnalyser) {
+        // Use Web Audio API for accurate audio content analysis
+        const bufferLength = this.audioAnalyser.frequencyBinCount
+        const dataArray = new Uint8Array(bufferLength)
 
-        // Only emit speaking state change if it actually changed
-        if (isSpeaking !== lastSpeakingState) {
-          this.onRemoteSpeaking(isSpeaking)
-          lastSpeakingState = isSpeaking
-        }
+        // Get time-domain audio data (waveform)
+        this.audioAnalyser.getByteTimeDomainData(dataArray)
+
+        // Calculate RMS amplitude (accurate loudness)
+        const rms = this.calculateRMS(dataArray)
+
+        // Normalize to 0.0-1.0 range and amplify for visible mouth animation
+        audioLevel = Math.min(1.0, rms * 8.0)  // Increased from 3.0 to 8.0 for more visible movement
+
+        // Speech detection: RMS threshold of 0.02 (empirically tuned)
+        isSpeaking = rms > 0.02
+      } else {
+        // Fallback: use basic volume detection if Web Audio failed
+        audioLevel = this.remoteAudioTrack.getVolume() || 0
+        isSpeaking = audioLevel > 0.05
       }
-    }, 50)
 
-    console.log('🎙️ [AUDIO] Started audio level monitoring for face animation')
+      // Emit audio level for mouth animation
+      this.onAudioLevel(audioLevel)
+
+      // Only emit speaking state change if it actually changed
+      if (isSpeaking !== lastSpeakingState) {
+        this.onRemoteSpeaking(isSpeaking)
+        lastSpeakingState = isSpeaking
+      }
+
+      // Continue animation loop at 60 FPS
+      this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
+    }
+
+    // Start the analysis loop
+    this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
+    console.log('🎙️ [AUDIO] Started audio level monitoring (Web Audio RMS analysis)')
   }
 
   // Stop monitoring audio levels
   private stopAudioLevelMonitoring() {
+    // Cancel animation frame
+    if (this.audioAnalysisFrame !== undefined) {
+      cancelAnimationFrame(this.audioAnalysisFrame)
+      this.audioAnalysisFrame = undefined
+    }
+
+    // Clear legacy interval if exists
     if (this.audioLevelInterval) {
       clearInterval(this.audioLevelInterval)
       this.audioLevelInterval = undefined
-      console.log('🎙️ [AUDIO] Stopped audio level monitoring')
     }
+
+    console.log('🎙️ [AUDIO] Stopped audio level monitoring')
   }
 
 }

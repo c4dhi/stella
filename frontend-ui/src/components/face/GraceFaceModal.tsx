@@ -179,7 +179,7 @@ const GraceFaceModal: React.FC<GraceFaceModalProps> = ({
               isRemoteSpeaking={isRemoteSpeaking}
               audioLevel={audioLevel}
               eyeEmotion="listening"
-              mouthEmotion={isRemoteSpeaking ? 'speaking' : 'listening'}
+              mouthEmotion={isRemoteSpeaking ? 'speaking' : 'smile'}
             />
           </motion.div>
 
