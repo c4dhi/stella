@@ -464,11 +464,11 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
   --from-literal=postgres-password="$POSTGRES_PASSWORD" \
   --from-literal=database-url="$DATABASE_URL" \
   --from-literal=openai-api-key="$OPENAI_API_KEY" \
-  --from-literal=jwt-secret="dev-secret-change-in-production" \
-  --from-literal=livekit-api-key="devkey" \
-  --from-literal=livekit-api-secret="secret" \
-  --from-literal=livekit-webhook-secret="webhook-secret" \
-  --from-literal=elevenlabs-api-key="" \
+  --from-literal=jwt-secret="$JWT_SECRET" \
+  --from-literal=livekit-api-key="$LIVEKIT_API_KEY" \
+  --from-literal=livekit-api-secret="$LIVEKIT_API_SECRET" \
+  --from-literal=livekit-webhook-secret="$LIVEKIT_WEBHOOK_SECRET" \
+  --from-literal=elevenlabs-api-key="${ELEVENLABS_API_KEY:-}" \
   --dry-run=client -o yaml | kubectl apply -f - > /dev/null
 
 # Wait for services

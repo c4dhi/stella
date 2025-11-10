@@ -182,12 +182,12 @@ case "${1:-}" in
         echo "===================="
         if [ -f "$PID_DIR/port-forwards.pid" ]; then
             # Set postgres port based on environment
-            local POSTGRES_PORT="5432"
+            POSTGRES_PORT="5432"
             if [ "$NODE_ENV" = "production" ]; then
                 POSTGRES_PORT="15432"
             fi
-            local services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:$POSTGRES_PORT")
-            local index=0
+            services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:$POSTGRES_PORT")
+            index=0
             while read pid; do
                 if [ ! -z "$pid" ]; then
                     if ps -p $pid > /dev/null 2>&1; then
