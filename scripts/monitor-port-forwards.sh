@@ -89,7 +89,22 @@ restart_port_forwards() {
     PF_FRONTEND=$(start_port_forward "frontend-ui" "8080")
     PF_BACKEND=$(start_port_forward "session-management-server" "3000")
     PF_LIVEKIT=$(start_port_forward "livekit" "7880")
-    PF_POSTGRES=$(start_port_forward "postgres" "5432")
+
+    # Postgres: Use different local port in production (nginx uses 5432)
+    if [ "$NODE_ENV" = "production" ]; then
+        log "Starting port-forward: postgres -> localhost:15432"
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+        PF_POSTGRES=$!
+        sleep 2
+        if ps -p $PF_POSTGRES > /dev/null 2>&1; then
+            log "✓ Port-forward started: postgres (PID: $PF_POSTGRES)"
+        else
+            log "✗ Failed to start port-forward: postgres"
+            PF_POSTGRES=""
+        fi
+    else
+        PF_POSTGRES=$(start_port_forward "postgres" "5432")
+    fi
 
     # Save PIDs
     echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
@@ -166,7 +181,12 @@ case "${1:-}" in
         echo "Port-Forward Status:"
         echo "===================="
         if [ -f "$PID_DIR/port-forwards.pid" ]; then
-            local services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:5432")
+            # Set postgres port based on environment
+            local POSTGRES_PORT="5432"
+            if [ "$NODE_ENV" = "production" ]; then
+                POSTGRES_PORT="15432"
+            fi
+            local services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:$POSTGRES_PORT")
             local index=0
             while read pid; do
                 if [ ! -z "$pid" ]; then

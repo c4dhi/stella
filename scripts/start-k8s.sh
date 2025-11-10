@@ -190,8 +190,13 @@ if [[ "$OS_TYPE" == "linux" ]]; then
 fi
 
 # Check if required ports are available (standard ports used by kubectl port-forward)
-# All services (including database) use port-forwards in both local and production
-REQUIRED_PORTS=(8080 3000 7880 5432)
+# In production: postgres uses port 15432 (nginx uses 5432 for external access)
+# In local: postgres uses port 5432 (no nginx conflict)
+if [ "$NODE_ENV" = "production" ]; then
+    REQUIRED_PORTS=(8080 3000 7880 15432)
+else
+    REQUIRED_PORTS=(8080 3000 7880 5432)
+fi
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
@@ -500,8 +505,14 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
     PF_LIVEKIT=$!
 
-    # Create postgres port-forward (consistent with other services)
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    # Create postgres port-forward
+    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
+    # Local: Use port 5432 (no nginx conflict)
+    if [ "$NODE_ENV" = "production" ]; then
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    else
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    fi
     PF_POSTGRES=$!
 
     # Save PIDs to file
@@ -523,8 +534,14 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
     PF_LIVEKIT=$!
 
-    # Create postgres port-forward (consistent with other services)
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+    # Create postgres port-forward
+    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
+    # Local: Use port 5432 (no nginx conflict)
+    if [ "$NODE_ENV" = "production" ]; then
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > /dev/null 2>&1 &
+    else
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+    fi
     PF_POSTGRES=$!
 fi
 
