@@ -190,7 +190,12 @@ if [[ "$OS_TYPE" == "linux" ]]; then
 fi
 
 # Check if required ports are available (standard ports used by kubectl port-forward)
-REQUIRED_PORTS=(8080 3000 7880 5432)
+# In production, skip port 5432 check as nginx stream uses it for database access
+if [ "$NODE_ENV" = "production" ]; then
+    REQUIRED_PORTS=(8080 3000 7880)
+else
+    REQUIRED_PORTS=(8080 3000 7880 5432)
+fi
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
@@ -437,62 +442,64 @@ echo -n "  • Waiting for frontend... "
 kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 
-# Start port-forwards (LOCAL mode only)
-if [ "$NODE_ENV" != "production" ]; then
-    echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
+# Start port-forwards
+# In production: Create port-forwards for 8080, 3000, 7880 (NOT 5432 - nginx stream handles it)
+# In local: Create port-forwards for all including 5432
+echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
-    if [ "$DAEMON_MODE" = true ]; then
-        # Daemon mode: Use nohup and save PIDs
-        # Using standard ports for direct access
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
-        PF_FRONTEND=$!
+if [ "$DAEMON_MODE" = true ]; then
+    # Daemon mode: Use nohup and save PIDs
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+    PF_FRONTEND=$!
 
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
-        PF_BACKEND=$!
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+    PF_BACKEND=$!
 
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
-        PF_LIVEKIT=$!
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+    PF_LIVEKIT=$!
 
+    # Only create postgres port-forward in local mode
+    if [ "$NODE_ENV" != "production" ]; then
         nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-        PF_POSTGRES=$!
-
-        # Save PIDs to file
-        echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
-        echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
-        echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
-        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
-
-        # Detach from session
-        disown -a
-    else
-        # Foreground mode: Normal background processes
-        # Using standard ports for direct access
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
-        PF_FRONTEND=$!
-
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-        PF_BACKEND=$!
-
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
-        PF_LIVEKIT=$!
-
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
         PF_POSTGRES=$!
     fi
 
-    echo -e "${GREEN}✓ Port forwards started${NC}"
+    # Save PIDs to file
+    echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
+    echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
+    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
+    if [ "$NODE_ENV" != "production" ]; then
+        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
+    fi
 
-    # Give port forwards a moment to initialize
-    sleep 2
+    # Detach from session
+    disown -a
 else
-    echo -e "${BLUE}ℹ️  Production mode: Using NodePort services (no port-forwards needed)${NC}"
-    echo -e "${YELLOW}   Make sure nginx is configured to proxy to NodePorts:${NC}"
-    echo -e "${YELLOW}   - Frontend:  127.0.0.1:30080${NC}"
-    echo -e "${YELLOW}   - Backend:   127.0.0.1:30000${NC}"
-    echo -e "${YELLOW}   - LiveKit:   127.0.0.1:30880${NC}"
-    echo -e "${YELLOW}   - Database:  127.0.0.1:30432${NC}"
-    echo ""
+    # Foreground mode: Normal background processes
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
+    PF_FRONTEND=$!
+
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+    PF_BACKEND=$!
+
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
+    PF_LIVEKIT=$!
+
+    # Only create postgres port-forward in local mode
+    if [ "$NODE_ENV" != "production" ]; then
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+        PF_POSTGRES=$!
+    fi
 fi
+
+echo -e "${GREEN}✓ Port forwards started${NC}"
+
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "${BLUE}ℹ️  Production mode: Database access via nginx stream (port 5432)${NC}"
+fi
+
+# Give port forwards a moment to initialize
+sleep 2
 
 # Cleanup function to stop all services (only for foreground mode)
 if [ "$DAEMON_MODE" = false ]; then

@@ -79,21 +79,34 @@ restart_port_forwards() {
         done < "$PID_DIR/port-forwards.pid"
     fi
 
+    # Detect environment from .env
+    NODE_ENV="local"
+    if [ -f .env ]; then
+        NODE_ENV=$(grep "^NODE_ENV=" .env | cut -d'=' -f2)
+    fi
+
     # Start new port-forwards
     PF_FRONTEND=$(start_port_forward "frontend-ui" "8080")
     PF_BACKEND=$(start_port_forward "session-management-server" "3000")
     PF_LIVEKIT=$(start_port_forward "livekit" "7880")
-    PF_POSTGRES=$(start_port_forward "postgres" "5432")
+
+    # Only create postgres port-forward in local mode
+    if [ "$NODE_ENV" != "production" ]; then
+        PF_POSTGRES=$(start_port_forward "postgres" "5432")
+    fi
 
     # Save PIDs
-    cat > "$PID_DIR/port-forwards.pid" <<EOF
-$PF_FRONTEND
-$PF_BACKEND
-$PF_LIVEKIT
-$PF_POSTGRES
-EOF
+    echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
+    echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
+    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
+    if [ "$NODE_ENV" != "production" ]; then
+        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
+    fi
 
     log "All port-forwards restarted successfully"
+    if [ "$NODE_ENV" = "production" ]; then
+        log "Production mode: Database access via nginx stream (not port-forward)"
+    fi
     log "================================================"
 }
 
@@ -153,19 +166,35 @@ case "${1:-}" in
         ;;
     --status)
         # Show status
+        # Detect environment
+        NODE_ENV="local"
+        if [ -f .env ]; then
+            NODE_ENV=$(grep "^NODE_ENV=" .env | cut -d'=' -f2)
+        fi
+
         echo "Port-Forward Status:"
         echo "===================="
         if [ -f "$PID_DIR/port-forwards.pid" ]; then
-            local services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:5432")
+            local services=("frontend-ui:8080" "backend:3000" "livekit:7880")
+            if [ "$NODE_ENV" != "production" ]; then
+                services+=("postgres:5432")
+            fi
             local index=0
             while read pid; do
-                if ps -p $pid > /dev/null 2>&1; then
-                    echo -e "  ${GREEN}✓${NC} ${services[$index]} (PID: $pid)"
-                else
-                    echo -e "  ${RED}✗${NC} ${services[$index]} (PID: $pid - DEAD)"
+                if [ ! -z "$pid" ]; then
+                    if ps -p $pid > /dev/null 2>&1; then
+                        echo -e "  ${GREEN}✓${NC} ${services[$index]} (PID: $pid)"
+                    else
+                        echo -e "  ${RED}✗${NC} ${services[$index]} (PID: $pid - DEAD)"
+                    fi
+                    index=$((index + 1))
                 fi
-                index=$((index + 1))
             done < "$PID_DIR/port-forwards.pid"
+
+            if [ "$NODE_ENV" = "production" ]; then
+                echo ""
+                echo -e "  ${BLUE}ℹ${NC}  postgres:5432 - Handled by nginx stream (not port-forward)"
+            fi
         else
             echo "  No port-forwards running"
         fi
