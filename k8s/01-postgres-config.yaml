@@ -1,0 +1,41 @@
+# PostgreSQL Configuration ConfigMap
+# Configures PostgreSQL to accept external connections for production deployments
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: ai-agents
+data:
+  # Custom postgresql.conf settings
+  # Appended to default PostgreSQL configuration
+  custom-postgresql.conf: |
+    # Listen on all interfaces for external access
+    # In production with NodePort, this allows connections from outside the cluster
+    listen_addresses = '*'
+
+    # Connection settings
+    max_connections = 100
+
+    # Logging (helpful for debugging connection issues)
+    log_connections = on
+    log_disconnections = on
+
+  # pg_hba.conf - Host-based authentication
+  # Controls which hosts can connect and how they authenticate
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+    # Local connections (from within the pod)
+    local   all             all                                     trust
+
+    # IPv4 connections from anywhere (password required)
+    # In production, consider restricting to specific IP ranges
+    host    all             all             0.0.0.0/0               md5
+
+    # IPv6 connections from anywhere (password required)
+    host    all             all             ::0/0                   md5
+
+    # Kubernetes cluster internal connections (from other pods)
+    host    all             all             10.0.0.0/8              md5
+    host    all             all             172.16.0.0/12           md5
+    host    all             all             192.168.0.0/16          md5

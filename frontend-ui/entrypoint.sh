@@ -2,6 +2,7 @@
 
 # Entrypoint script for frontend container
 # Injects runtime environment variables into config.js
+# Supports both local (localhost) and production (custom domains) deployments
 
 set -e
 
@@ -10,16 +11,26 @@ echo "Frontend Container Entrypoint"
 echo "========================================"
 echo ""
 
+# Detect environment based on URLs
+if echo "${VITE_API_URL}" | grep -q "https://"; then
+    echo "[entrypoint] Running in PRODUCTION mode"
+else
+    echo "[entrypoint] Running in LOCAL mode"
+fi
+echo ""
+
 # Set defaults if not provided
 export VITE_API_URL="${VITE_API_URL:-http://localhost:3000}"
 export VITE_LIVEKIT_URL="${VITE_LIVEKIT_URL:-ws://localhost:7880}"
 export VITE_LIVEKIT_API_KEY="${VITE_LIVEKIT_API_KEY:-devkey}"
 export VITE_LIVEKIT_API_SECRET="${VITE_LIVEKIT_API_SECRET:-secret}"
 
-echo "[entrypoint] Environment variables:"
-echo "  VITE_API_URL: ${VITE_API_URL}"
-echo "  VITE_LIVEKIT_URL: ${VITE_LIVEKIT_URL}"
-echo "  VITE_LIVEKIT_API_KEY: ${VITE_LIVEKIT_API_KEY}"
+echo "[entrypoint] Runtime configuration:"
+echo "  VITE_API_URL:           ${VITE_API_URL}"
+echo "  VITE_LIVEKIT_URL:       ${VITE_LIVEKIT_URL}"
+echo "  VITE_LIVEKIT_API_KEY:   ${VITE_LIVEKIT_API_KEY}"
+echo ""
+echo "[entrypoint] Note: Frontend (browser) connects directly to LiveKit"
 echo ""
 
 echo "[entrypoint] Generating runtime config from template..."

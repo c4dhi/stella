@@ -59,6 +59,12 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: postgres-password
+        # Configure PostgreSQL for external access via environment
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "md5"
+        args:
+          - -c
+          - listen_addresses=*
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data

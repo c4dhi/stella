@@ -1,0 +1,26 @@
+# LiveKit NodePort Service for Production
+# This service exposes LiveKit on NodePort 30880 for external WebSocket access
+# Used with nginx reverse proxy at wss://livekit.DOMAIN (port 443 -> 30880)
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit-nodeport
+  namespace: ai-agents
+  labels:
+    app: livekit
+    env: production
+spec:
+  selector:
+    app: livekit
+  type: NodePort
+  ports:
+    - name: http
+      port: 7880
+      targetPort: 7880
+      nodePort: 30880
+      protocol: TCP
+    - name: rtp
+      port: 7881
+      targetPort: 7881
+      nodePort: 30881
+      protocol: UDP

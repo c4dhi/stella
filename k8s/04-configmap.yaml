@@ -4,18 +4,18 @@ metadata:
   name: grace-ai-config
   namespace: ai-agents
 data:
-  # Server
+  # Server Configuration
   PORT: "3000"
-  NODE_ENV: "production"  # Changed to production for Kubernetes deployment
+  NODE_ENV: "${NODE_ENV}"
 
   # API Prefix - Disabled (all routes at root level)
   API_PREFIX: ""
 
   # CORS Configuration
-  # Allow requests from the frontend
-  CORS_ORIGIN: "http://PUBLIC_DOMAIN_PLACEHOLDER:8080"
+  # Automatically set by deployment scripts based on environment
+  CORS_ORIGIN: "${CORS_ORIGIN}"
 
-  # LiveKit (internal cluster communication)
+  # LiveKit (internal cluster communication - always uses K8s service name)
   LIVEKIT_URL: "ws://livekit:7880"
 
   # Kubernetes
@@ -24,24 +24,33 @@ data:
   AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
 
   # TTS Provider
-  TTS_PROVIDER: "opensource"
+  TTS_PROVIDER: "${TTS_PROVIDER}"
 
   # ============================================================================
-  # Public URLs for external access (replaced by start-k8s.sh script)
+  # Public URLs for external access (injected by deployment scripts)
   # ============================================================================
-  # Direct IP:port access using standard ports
-  # Port-forwards bind to standard ports for easy access
-  PUBLIC_SERVER_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
-  PUBLIC_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
-  PUBLIC_FRONTEND_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:8080"
+  # Local (NODE_ENV=local):
+  #   - Uses localhost with standard ports (8080, 3000, 7880)
+  # Production (NODE_ENV=production):
+  #   - Uses custom domains with SSL (frontend.DOMAIN, backend.DOMAIN, livekit.DOMAIN)
+  PUBLIC_API_URL: "${PUBLIC_API_URL}"
+  PUBLIC_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
+  PUBLIC_FRONTEND_URL: "${PUBLIC_FRONTEND_URL}"
+
+  # Database public access (for external tools)
+  PUBLIC_DB_HOST: "${PUBLIC_DB_HOST}"
+  PUBLIC_DB_PORT: "${PUBLIC_DB_PORT}"
 
   # ============================================================================
   # Frontend runtime configuration
   # ============================================================================
-  # Direct IP:port access (matches PUBLIC URLs above)
-  VITE_API_URL: "http://PUBLIC_DOMAIN_PLACEHOLDER:3000"
-  VITE_LIVEKIT_URL: "ws://PUBLIC_DOMAIN_PLACEHOLDER:7880"
+  # These are injected into the frontend at container startup
+  # Frontend (browser) connects directly to these URLs:
+  #   - API for REST endpoints
+  #   - LiveKit for WebSocket/WebRTC connections
+  VITE_API_URL: "${PUBLIC_API_URL}"
+  VITE_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
 
   # LiveKit Credentials
-  VITE_LIVEKIT_API_KEY: "devkey"
-  VITE_LIVEKIT_API_SECRET: "secret"
+  VITE_LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
+  VITE_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"

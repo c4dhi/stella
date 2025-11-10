@@ -122,6 +122,41 @@ else
     exit 1
 fi
 
+# Set environment-specific URLs based on NODE_ENV
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "${BLUE}🚀 Running in PRODUCTION mode${NC}"
+    echo -e "${GREEN}✓ Domain: ${PRODUCTION_DOMAIN}${NC}"
+
+    # Production URLs (custom domains with SSL)
+    export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
+    export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
+    export PUBLIC_LIVEKIT_URL="wss://livekit.${PRODUCTION_DOMAIN}"
+    export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN}"
+    export PUBLIC_DB_PORT="5432"
+    export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN}"
+else
+    echo -e "${BLUE}🏠 Running in LOCAL mode${NC}"
+
+    # Local URLs (localhost with port-forwards)
+    export NODE_ENV="local"
+    export PUBLIC_FRONTEND_URL="http://localhost:8080"
+    export PUBLIC_API_URL="http://localhost:3000"
+    export PUBLIC_LIVEKIT_URL="ws://localhost:7880"
+    export PUBLIC_DB_HOST="localhost"
+    export PUBLIC_DB_PORT="5432"
+    export CORS_ORIGIN="http://localhost:8080"
+fi
+
+# Set TTS_PROVIDER default if not set
+export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
+
+echo -e "${GREEN}Environment Configuration:${NC}"
+echo -e "  Frontend: ${PUBLIC_FRONTEND_URL}"
+echo -e "  Backend:  ${PUBLIC_API_URL}"
+echo -e "  LiveKit:  ${PUBLIC_LIVEKIT_URL}"
+echo -e "  Database: ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
+echo ""
+
 # Validate required environment variables
 if [ -z "$OPENAI_API_KEY" ] || [ -z "$POSTGRES_DB" ] || [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
     echo -e "${RED}✗ Missing required environment variables in .env${NC}"
@@ -345,22 +380,15 @@ fi
 
 echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 
-# Use PUBLIC_DOMAIN from .env if set, otherwise use NETWORK_IP
-if [ -z "$PUBLIC_DOMAIN" ]; then
-    PUBLIC_DOMAIN="$NETWORK_IP"
-    echo -e "${YELLOW}⚠️  PUBLIC_DOMAIN not set in .env, using network IP: ${NETWORK_IP}${NC}"
-else
-    echo -e "${GREEN}✓ Using PUBLIC_DOMAIN from .env: ${PUBLIC_DOMAIN}${NC}"
-fi
-
-# Inject public domain into ConfigMap
-echo -n "  • Updating ConfigMap with public domain... "
-sed "s/PUBLIC_DOMAIN_PLACEHOLDER/${PUBLIC_DOMAIN}/g" k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
+# Inject environment variables into ConfigMap using envsubst
+echo -n "  • Updating ConfigMap with environment variables... "
+envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
+kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
 kubectl apply -f k8s/01-postgres.yaml > /dev/null
 kubectl apply -f k8s/02-livekit.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
@@ -369,6 +397,12 @@ kubectl apply -f k8s/05-rbac.yaml > /dev/null
 kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
+
+# Apply NodePort services in production mode
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "${BLUE}  • Applying NodePort services for production...${NC}"
+    kubectl apply -f k8s/production/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
+fi
 
 # Create secrets
 DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
@@ -403,52 +437,62 @@ echo -n "  • Waiting for frontend... "
 kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 
-# Start port-forwards to expose services on localhost and network
-echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
+# Start port-forwards (LOCAL mode only)
+if [ "$NODE_ENV" != "production" ]; then
+    echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
-if [ "$DAEMON_MODE" = true ]; then
-    # Daemon mode: Use nohup and save PIDs
-    # Using standard ports for direct access
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
-    PF_FRONTEND=$!
+    if [ "$DAEMON_MODE" = true ]; then
+        # Daemon mode: Use nohup and save PIDs
+        # Using standard ports for direct access
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+        PF_FRONTEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
-    PF_BACKEND=$!
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+        PF_BACKEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
-    PF_LIVEKIT=$!
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+        PF_LIVEKIT=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    PF_POSTGRES=$!
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+        PF_POSTGRES=$!
 
-    # Save PIDs to file
-    echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
-    echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
-    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
-    echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
+        # Save PIDs to file
+        echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
+        echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
+        echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
+        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
 
-    # Detach from session
-    disown -a
+        # Detach from session
+        disown -a
+    else
+        # Foreground mode: Normal background processes
+        # Using standard ports for direct access
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
+        PF_FRONTEND=$!
+
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+        PF_BACKEND=$!
+
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
+        PF_LIVEKIT=$!
+
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+        PF_POSTGRES=$!
+    fi
+
+    echo -e "${GREEN}✓ Port forwards started${NC}"
+
+    # Give port forwards a moment to initialize
+    sleep 2
 else
-    # Foreground mode: Normal background processes
-    # Using standard ports for direct access
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
-    PF_FRONTEND=$!
-
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-    PF_BACKEND=$!
-
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
-    PF_LIVEKIT=$!
-
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
-    PF_POSTGRES=$!
+    echo -e "${BLUE}ℹ️  Production mode: Using NodePort services (no port-forwards needed)${NC}"
+    echo -e "${YELLOW}   Make sure nginx is configured to proxy to NodePorts:${NC}"
+    echo -e "${YELLOW}   - Frontend:  127.0.0.1:30080${NC}"
+    echo -e "${YELLOW}   - Backend:   127.0.0.1:30000${NC}"
+    echo -e "${YELLOW}   - LiveKit:   127.0.0.1:30880${NC}"
+    echo -e "${YELLOW}   - Database:  127.0.0.1:30432${NC}"
+    echo ""
 fi
-
-echo -e "${GREEN}✓ Port forwards started${NC}"
-
-# Give port forwards a moment to initialize
-sleep 2
 
 # Cleanup function to stop all services (only for foreground mode)
 if [ "$DAEMON_MODE" = false ]; then
@@ -485,11 +529,10 @@ echo -e "${GREEN}✅ Deployment Complete!${NC}"
 echo ""
 echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
-echo -e "${GREEN}Standard ports (via kubectl port-forward):${NC}"
-echo -e "  ${GREEN}Frontend:${NC}  http://${PUBLIC_DOMAIN}:8080"
-echo -e "  ${GREEN}Backend:${NC}   http://${PUBLIC_DOMAIN}:3000"
-echo -e "  ${GREEN}LiveKit:${NC}   ws://${PUBLIC_DOMAIN}:7880"
-echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DOMAIN}:5432"
+echo -e "  ${GREEN}Frontend:${NC}  ${PUBLIC_FRONTEND_URL}"
+echo -e "  ${GREEN}Backend:${NC}   ${PUBLIC_API_URL}"
+echo -e "  ${GREEN}LiveKit:${NC}   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 echo ""
 echo -e "${BLUE}🔐 Database Credentials:${NC}"
 echo -e "  ${GREEN}Database:${NC}   ${POSTGRES_DB}"
@@ -499,8 +542,13 @@ echo ""
 echo -e "  ${YELLOW}Internal (used by services):${NC}"
 echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 echo ""
-echo -e "  ${YELLOW}External (via port-forward):${NC}"
-echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DOMAIN}:5432/${POSTGRES_DB}"
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "  ${YELLOW}External (production):${NC}"
+    echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}/${POSTGRES_DB}"
+else
+    echo -e "  ${YELLOW}External (via port-forward):${NC}"
+    echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}/${POSTGRES_DB}"
+fi
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
