@@ -89,24 +89,15 @@ restart_port_forwards() {
     PF_FRONTEND=$(start_port_forward "frontend-ui" "8080")
     PF_BACKEND=$(start_port_forward "session-management-server" "3000")
     PF_LIVEKIT=$(start_port_forward "livekit" "7880")
-
-    # Only create postgres port-forward in local mode
-    if [ "$NODE_ENV" != "production" ]; then
-        PF_POSTGRES=$(start_port_forward "postgres" "5432")
-    fi
+    PF_POSTGRES=$(start_port_forward "postgres" "5432")
 
     # Save PIDs
     echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
     echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
     echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
-    if [ "$NODE_ENV" != "production" ]; then
-        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
-    fi
+    echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
 
     log "All port-forwards restarted successfully"
-    if [ "$NODE_ENV" = "production" ]; then
-        log "Production mode: Database access via nginx stream (not port-forward)"
-    fi
     log "================================================"
 }
 
@@ -175,10 +166,7 @@ case "${1:-}" in
         echo "Port-Forward Status:"
         echo "===================="
         if [ -f "$PID_DIR/port-forwards.pid" ]; then
-            local services=("frontend-ui:8080" "backend:3000" "livekit:7880")
-            if [ "$NODE_ENV" != "production" ]; then
-                services+=("postgres:5432")
-            fi
+            local services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:5432")
             local index=0
             while read pid; do
                 if [ ! -z "$pid" ]; then
@@ -190,11 +178,6 @@ case "${1:-}" in
                     index=$((index + 1))
                 fi
             done < "$PID_DIR/port-forwards.pid"
-
-            if [ "$NODE_ENV" = "production" ]; then
-                echo ""
-                echo -e "  ${BLUE}ℹ${NC}  postgres:5432 - Handled by nginx stream (not port-forward)"
-            fi
         else
             echo "  No port-forwards running"
         fi

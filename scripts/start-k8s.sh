@@ -190,12 +190,8 @@ if [[ "$OS_TYPE" == "linux" ]]; then
 fi
 
 # Check if required ports are available (standard ports used by kubectl port-forward)
-# In production, skip port 5432 check as nginx stream uses it for database access
-if [ "$NODE_ENV" = "production" ]; then
-    REQUIRED_PORTS=(8080 3000 7880)
-else
-    REQUIRED_PORTS=(8080 3000 7880 5432)
-fi
+# All services (including database) use port-forwards in both local and production
+REQUIRED_PORTS=(8080 3000 7880 5432)
 PORTS_IN_USE=()
 
 for port in "${REQUIRED_PORTS[@]}"; do
@@ -338,36 +334,82 @@ else
     fi
 fi
 
+# Function to build Docker images with live progress preview
+build_with_progress() {
+    local IMAGE_NAME=$1
+    local TAG=$2
+    local CONTEXT=$3
+    local USE_BUILDKIT=$4
+
+    local LOG_FILE="/tmp/docker-build-${IMAGE_NAME}.log"
+
+    echo "  • ${IMAGE_NAME}..."
+
+    # Run docker build in background and capture output
+    if [ "$USE_BUILDKIT" = true ]; then
+        DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+    else
+        docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+    fi
+
+    local BUILD_PID=$!
+
+    # Show last 4 lines of build output, updating in place
+    local LINE_COUNT=0
+    local LAST_LINES=""
+
+    while kill -0 $BUILD_PID 2>/dev/null; do
+        if [ -f "${LOG_FILE}" ]; then
+            # Get last 4 non-empty lines
+            LAST_LINES=$(tail -n 4 "${LOG_FILE}" 2>/dev/null | grep -v "^$" | sed 's/^/    /')
+
+            # Clear previous lines if we had any
+            if [ $LINE_COUNT -gt 0 ]; then
+                for i in $(seq 1 $LINE_COUNT); do
+                    echo -ne "\033[1A\033[2K"  # Move up and clear line
+                done
+            fi
+
+            # Print new lines
+            echo "$LAST_LINES"
+            LINE_COUNT=$(echo "$LAST_LINES" | wc -l)
+        fi
+        sleep 0.5
+    done
+
+    # Wait for build to complete and get exit code
+    wait $BUILD_PID
+    local EXIT_CODE=$?
+
+    # Clear progress lines AND the service name line (LINE_COUNT + 1 total lines)
+    local TOTAL_LINES=$((LINE_COUNT + 1))
+    for i in $(seq 1 $TOTAL_LINES); do
+        echo -ne "\033[1A\033[2K"
+    done
+
+    # Show final status (replaces the original service name line)
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo -e "  • ${IMAGE_NAME}... ${GREEN}✓${NC}"
+    else
+        echo -e "  • ${IMAGE_NAME}... ${RED}✗${NC}"
+        echo -e "${RED}Build failed. See log: ${LOG_FILE}${NC}"
+    fi
+
+    # Clean up log file on success
+    if [ $EXIT_CODE -eq 0 ]; then
+        rm -f "${LOG_FILE}"
+    fi
+
+    return $EXIT_CODE
+}
+
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 
-echo -n "  • session-management-server... "
-if [ "$USE_BUILDKIT" = true ]; then
-    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-else
-    docker build -q --network=host -t session-management-server:latest . > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-fi
-
-echo -n "  • conversational-ai-server... "
-if [ "$USE_BUILDKIT" = true ]; then
-    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t conversational-ai-server:latest ./conversational-ai-server-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-else
-    docker build -q --network=host -t conversational-ai-server:latest ./conversational-ai-server-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-fi
-
-echo -n "  • frontend-ui... "
-if [ "$USE_BUILDKIT" = true ]; then
-    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-else
-    docker build -q --network=host -t frontend-ui:latest ./frontend-ui > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-fi
-
-echo -n "  • message-recorder... "
-if [ "$USE_BUILDKIT" = true ]; then
-    DOCKER_BUILDKIT=1 docker build -q --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-else
-    docker build -q --network=host -t message-recorder-python:latest ./message-recorder-python > /dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-fi
+build_with_progress "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT"
+build_with_progress "conversational-ai-server" "conversational-ai-server:latest" "./conversational-ai-server-python" "$USE_BUILDKIT"
+build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
+build_with_progress "message-recorder" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
 # Detect network IP for public URLs
 if [[ "$OS_TYPE" == "macos" ]]; then
@@ -443,8 +485,8 @@ kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev
 
 
 # Start port-forwards
-# In production: Create port-forwards for 8080, 3000, 7880 (NOT 5432 - nginx stream handles it)
-# In local: Create port-forwards for all including 5432
+# Create port-forwards for all services: frontend (8080), backend (3000), livekit (7880), postgres (5432)
+# nginx proxies handle external access, port-forwards enable localhost connectivity
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
@@ -458,19 +500,15 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
     PF_LIVEKIT=$!
 
-    # Only create postgres port-forward in local mode
-    if [ "$NODE_ENV" != "production" ]; then
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-        PF_POSTGRES=$!
-    fi
+    # Create postgres port-forward (consistent with other services)
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    PF_POSTGRES=$!
 
     # Save PIDs to file
     echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
     echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
     echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
-    if [ "$NODE_ENV" != "production" ]; then
-        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
-    fi
+    echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
 
     # Detach from session
     disown -a
@@ -485,18 +523,12 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
     PF_LIVEKIT=$!
 
-    # Only create postgres port-forward in local mode
-    if [ "$NODE_ENV" != "production" ]; then
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
-        PF_POSTGRES=$!
-    fi
+    # Create postgres port-forward (consistent with other services)
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+    PF_POSTGRES=$!
 fi
 
 echo -e "${GREEN}✓ Port forwards started${NC}"
-
-if [ "$NODE_ENV" = "production" ]; then
-    echo -e "${BLUE}ℹ️  Production mode: Database access via nginx stream (port 5432)${NC}"
-fi
 
 # Give port forwards a moment to initialize
 sleep 2
