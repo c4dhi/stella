@@ -45,12 +45,9 @@ data:
   # Frontend runtime configuration
   # ============================================================================
   # These are injected into the frontend at container startup
-  # Frontend (browser) connects directly to these URLs:
-  #   - API for REST endpoints
+  # Frontend (browser) connects to:
+  #   - API for REST endpoints and LiveKit token generation
   #   - LiveKit for WebSocket/WebRTC connections
+  # Note: LiveKit credentials are kept secure on the backend only
   VITE_API_URL: "${PUBLIC_API_URL}"
   VITE_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
-
-  # LiveKit Credentials
-  VITE_LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
-  VITE_LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"

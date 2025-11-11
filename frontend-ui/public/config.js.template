@@ -2,7 +2,5 @@
 // This file is generated from environment variables
 window.__ENV__ = {
   apiUrl: '${VITE_API_URL}',
-  livekitUrl: '${VITE_LIVEKIT_URL}',
-  livekitApiKey: '${VITE_LIVEKIT_API_KEY}',
-  livekitApiSecret: '${VITE_LIVEKIT_API_SECRET}'
+  livekitUrl: '${VITE_LIVEKIT_URL}'
 };

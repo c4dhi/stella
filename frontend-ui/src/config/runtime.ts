@@ -5,8 +5,6 @@
 export interface RuntimeConfig {
   apiUrl: string
   livekitUrl: string
-  livekitApiKey: string
-  livekitApiSecret: string
 }
 
 // Global window interface extension
@@ -20,8 +18,6 @@ declare global {
 const DEFAULT_CONFIG: RuntimeConfig = {
   apiUrl: 'http://localhost:3000',
   livekitUrl: 'ws://localhost:7880',
-  livekitApiKey: 'devkey',
-  livekitApiSecret: 'secret',
 }
 
 let runtimeConfig: RuntimeConfig | null = null
@@ -44,8 +40,6 @@ function autoDetectUrls(): RuntimeConfig {
   const config = {
     apiUrl: `http://${hostname}:3000`,
     livekitUrl: `ws://${hostname}:7880`,
-    livekitApiKey: 'devkey',
-    livekitApiSecret: 'secret',
   }
 
   console.log(`[RuntimeConfig] Auto-detected config:`, config)
@@ -75,13 +69,7 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
     if (isInternalServiceUrl(config.apiUrl) || isInternalServiceUrl(config.livekitUrl)) {
       console.log('[RuntimeConfig] ✓ Detected internal K8s service names')
       console.log('[RuntimeConfig] ✓ Auto-detecting URLs based on hostname...')
-      const detectedConfig = autoDetectUrls()
-      // Keep API keys from config, but use detected URLs
-      runtimeConfig = {
-        ...detectedConfig,
-        livekitApiKey: config.livekitApiKey,
-        livekitApiSecret: config.livekitApiSecret,
-      }
+      runtimeConfig = autoDetectUrls()
       console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
       return runtimeConfig
     }
@@ -113,12 +101,7 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
         if (isInternalServiceUrl(config.apiUrl) || isInternalServiceUrl(config.livekitUrl)) {
           console.log('[RuntimeConfig] ✓ Detected internal K8s service names from fetch')
           console.log('[RuntimeConfig] ✓ Auto-detecting URLs...')
-          const detectedConfig = autoDetectUrls()
-          runtimeConfig = {
-            ...detectedConfig,
-            livekitApiKey: config.livekitApiKey,
-            livekitApiSecret: config.livekitApiSecret,
-          }
+          runtimeConfig = autoDetectUrls()
           console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
           return runtimeConfig
         }
@@ -138,8 +121,6 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
   const envConfig = {
     apiUrl: import.meta.env.VITE_API_URL || DEFAULT_CONFIG.apiUrl,
     livekitUrl: import.meta.env.VITE_LIVEKIT_URL || DEFAULT_CONFIG.livekitUrl,
-    livekitApiKey: import.meta.env.VITE_LIVEKIT_API_KEY || DEFAULT_CONFIG.livekitApiKey,
-    livekitApiSecret: import.meta.env.VITE_LIVEKIT_API_SECRET || DEFAULT_CONFIG.livekitApiSecret,
   } as RuntimeConfig
 
   console.log('[RuntimeConfig] Env config:', envConfig)
@@ -148,12 +129,7 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
   if (isInternalServiceUrl(envConfig.apiUrl) || isInternalServiceUrl(envConfig.livekitUrl)) {
     console.log('[RuntimeConfig] ✓ Detected internal K8s service names in env config')
     console.log('[RuntimeConfig] ✓ Auto-detecting URLs...')
-    const detectedConfig = autoDetectUrls()
-    runtimeConfig = {
-      ...detectedConfig,
-      livekitApiKey: envConfig.livekitApiKey,
-      livekitApiSecret: envConfig.livekitApiSecret,
-    }
+    runtimeConfig = autoDetectUrls()
     console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
     return runtimeConfig
   }

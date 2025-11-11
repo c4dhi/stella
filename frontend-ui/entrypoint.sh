@@ -22,15 +22,12 @@ echo ""
 # Set defaults if not provided
 export VITE_API_URL="${VITE_API_URL:-http://localhost:3000}"
 export VITE_LIVEKIT_URL="${VITE_LIVEKIT_URL:-ws://localhost:7880}"
-export VITE_LIVEKIT_API_KEY="${VITE_LIVEKIT_API_KEY:-devkey}"
-export VITE_LIVEKIT_API_SECRET="${VITE_LIVEKIT_API_SECRET:-secret}"
 
 echo "[entrypoint] Runtime configuration:"
 echo "  VITE_API_URL:           ${VITE_API_URL}"
 echo "  VITE_LIVEKIT_URL:       ${VITE_LIVEKIT_URL}"
-echo "  VITE_LIVEKIT_API_KEY:   ${VITE_LIVEKIT_API_KEY}"
 echo ""
-echo "[entrypoint] Note: Frontend (browser) connects directly to LiveKit"
+echo "[entrypoint] Note: Frontend fetches LiveKit tokens from backend for security"
 echo ""
 
 echo "[entrypoint] Generating runtime config from template..."
@@ -42,7 +39,7 @@ if [ ! -f /usr/share/nginx/html/config.js.template ]; then
 fi
 
 # Substitute environment variables in the template
-envsubst '${VITE_API_URL} ${VITE_LIVEKIT_URL} ${VITE_LIVEKIT_API_KEY} ${VITE_LIVEKIT_API_SECRET}' \
+envsubst '${VITE_API_URL} ${VITE_LIVEKIT_URL}' \
   < /usr/share/nginx/html/config.js.template \
   > /usr/share/nginx/html/config.js
 

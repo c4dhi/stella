@@ -513,113 +513,40 @@ export class PeerTransport implements Transport {
 
   // Generate a development token for LiveKit dev mode
   private async generateAccessToken(roomName?: string): Promise<string> {
-    // For MVP, let's try the simplest possible approach
-    // Use the LiveKit dev server's built-in token generation
-
-    // Use fixed "human" identity for the frontend user
+    // Fetch token from backend API (secure - API secret never exposed to browser)
     const identity = 'human'
     const actualRoomName = roomName || 'voice-ai-room'
     const config = getRuntimeConfig()
 
     console.log(`🔗 Chat connecting to LiveKit room: "${actualRoomName}" at ${config.livekitUrl}`)
 
-    // Try using a minimal token that dev mode might accept
     try {
-      // Option 1: Try to get a dev token from the server
-      // Convert WebSocket URL to HTTP URL for the token endpoint
-      const tokenUrl = config.livekitUrl
-        .replace(/^ws:\/\//, 'http://')
-        .replace(/^wss:\/\//, 'https://')
+      console.log(`🔑 [TOKEN] Requesting token from backend: ${config.apiUrl}/livekit/token`)
+      const response = await fetch(`${config.apiUrl}/livekit/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomName: actualRoomName,
+          identity: identity,
+          name: this.userName,
+        }),
+      })
 
-      console.log(`🔑 [TOKEN] Fetching dev token from: ${tokenUrl}/devtoken`)
-      const response = await fetch(`${tokenUrl}/devtoken?identity=${identity}&room=${actualRoomName}`)
       if (response.ok) {
-        const token = await response.text()
-        console.log('✓ [TOKEN] Successfully obtained dev token')
-        return token
+        const data = await response.json()
+        console.log('✓ [TOKEN] Successfully obtained token from backend')
+        return data.token
       } else {
-        console.warn(`[TOKEN] Dev token endpoint returned ${response.status}`)
+        const errorText = await response.text()
+        console.error(`[TOKEN] Backend token endpoint returned ${response.status}:`, errorText)
+        throw new Error(`Failed to get token from backend: ${response.status} ${errorText}`)
       }
     } catch (e) {
-      console.log('Dev token endpoint not available, using manual token generation')
+      console.error('[TOKEN] Failed to fetch token from backend:', e)
+      throw e
     }
-
-    // Option 2: Create a properly signed JWT with HMAC-SHA256
-    const header = { alg: "HS256", typ: "JWT" }
-    const now = Math.floor(Date.now() / 1000)
-    const payload = {
-      iss: config.livekitApiKey,
-      sub: identity,
-      iat: now,
-      exp: now + 3600,
-      nbf: now,
-      jti: identity,
-      // Standard LiveKit token format
-      video: {
-        room: actualRoomName,
-        roomJoin: true,
-        canPublish: true,
-        canSubscribe: true,
-        canPublishData: true,
-        canSubscribeData: true,
-        canUpdateOwnMetadata: true
-      },
-      // Additional fields for compatibility
-      room: actualRoomName,
-      identity: identity,
-      name: this.userName  // Use actual user name for proper attribution
-    }
-    
-    const headerB64 = this.base64UrlEncode(JSON.stringify(header))
-    const payloadB64 = this.base64UrlEncode(JSON.stringify(payload))
-
-    // Simple HMAC-SHA256 implementation for dev mode
-    const signature = await this.hmacSha256(`${headerB64}.${payloadB64}`, config.livekitApiSecret)
-    
-    return `${headerB64}.${payloadB64}.${signature}`
-  }
-  
-  private base64UrlEncode(str: string): string {
-    return window.btoa(str)
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '')
-  }
-  
-  private async hmacSha256(data: string, secret: string): Promise<string> {
-    // Check if crypto.subtle is available (requires secure context)
-    if (!crypto.subtle) {
-      const currentUrl = window.location.href
-      const isSecureContext = window.isSecureContext
-
-      console.error('❌ [CRYPTO] crypto.subtle is not available')
-      console.error('   This requires a secure context (HTTPS or localhost)')
-      console.error(`   Current URL: ${currentUrl}`)
-      console.error(`   Is secure context: ${isSecureContext}`)
-      console.error('')
-      console.error('💡 Solutions:')
-      console.error('   1. Access via localhost: http://localhost:5173')
-      console.error('   2. Use HTTPS with SSL certificates')
-      console.error('   3. Ask your backend team to add a token generation endpoint')
-
-      throw new Error(
-        'crypto.subtle unavailable - requires secure context (HTTPS or localhost). ' +
-        `Current URL: ${currentUrl}. Try accessing via localhost instead.`
-      )
-    }
-
-    // Simple HMAC-SHA256 for dev purposes
-    const encoder = new TextEncoder()
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    )
-
-    const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data))
-    return this.base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)))
   }
 
   private isProcessingMessage(type: string): boolean {
