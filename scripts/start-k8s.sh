@@ -155,6 +155,14 @@ export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
 #           ws://localhost:7880 → localhost
 export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
 
+# Enable TURN only for production (disable for local development)
+# TURN provides NAT traversal for remote clients but is not needed for localhost
+if [ "$NODE_ENV" = "production" ]; then
+    export LIVEKIT_TURN_ENABLED="true"
+else
+    export LIVEKIT_TURN_ENABLED="false"
+fi
+
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend: ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:  ${PUBLIC_API_URL}"
@@ -169,6 +177,34 @@ if [ -z "$OPENAI_API_KEY" ] || [ -z "$POSTGRES_DB" ] || [ -z "$POSTGRES_USER" ] 
     [ -z "$POSTGRES_DB" ] && echo "  - POSTGRES_DB"
     [ -z "$POSTGRES_USER" ] && echo "  - POSTGRES_USER"
     [ -z "$POSTGRES_PASSWORD" ] && echo "  - POSTGRES_PASSWORD"
+    exit 1
+fi
+
+# Validate LiveKit API credentials
+if [ -z "$LIVEKIT_API_KEY" ] || [ -z "$LIVEKIT_API_SECRET" ]; then
+    echo -e "${RED}✗ Missing required LiveKit API credentials in .env${NC}"
+    [ -z "$LIVEKIT_API_KEY" ] && echo "  - LIVEKIT_API_KEY"
+    [ -z "$LIVEKIT_API_SECRET" ] && echo "  - LIVEKIT_API_SECRET"
+    exit 1
+fi
+
+# Validate LiveKit API key length (must be at least 32 characters)
+KEY_LENGTH=${#LIVEKIT_API_KEY}
+if [ $KEY_LENGTH -lt 32 ]; then
+    echo -e "${RED}✗ LIVEKIT_API_KEY is too short (${KEY_LENGTH} characters)${NC}"
+    echo -e "${RED}  LiveKit requires API keys to be at least 32 characters for security${NC}"
+    echo -e "${YELLOW}  Generate a secure key with:${NC}"
+    echo -e "${YELLOW}    LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
+    exit 1
+fi
+
+# Validate LiveKit API secret length (must be at least 32 characters)
+SECRET_LENGTH=${#LIVEKIT_API_SECRET}
+if [ $SECRET_LENGTH -lt 32 ]; then
+    echo -e "${RED}✗ LIVEKIT_API_SECRET is too short (${SECRET_LENGTH} characters)${NC}"
+    echo -e "${RED}  LiveKit requires API secrets to be at least 32 characters for security${NC}"
+    echo -e "${YELLOW}  Generate a secure secret with:${NC}"
+    echo -e "${YELLOW}    LIVEKIT_API_SECRET=\$(openssl rand -base64 48)${NC}"
     exit 1
 fi
 
@@ -413,6 +449,99 @@ build_with_progress() {
     return $EXIT_CODE
 }
 
+# Function to wait for LiveKit with live log preview
+wait_for_livekit_with_logs() {
+    local LOG_FILE="/tmp/livekit-wait.log"
+
+    echo "  • Waiting for LiveKit..."
+
+    # Start kubectl wait in background
+    kubectl wait --for=condition=ready pod -l app=livekit -n ai-agents --timeout=120s > /dev/null 2>&1 &
+    local WAIT_PID=$!
+
+    # Show last 4 lines of LiveKit logs, updating in place
+    local LINE_COUNT=0
+    local LAST_LINES=""
+    local PREV_LINES=""
+
+    while kill -0 $WAIT_PID 2>/dev/null; do
+        # Get LiveKit pod name (select the newest pod by creation timestamp)
+        local POD_NAME=$(kubectl get pods -n ai-agents -l app=livekit --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)
+
+        # Determine what to display
+        if [ ! -z "$POD_NAME" ]; then
+            # Get last 4 non-empty lines from pod logs
+            local LOGS_OUTPUT=$(kubectl logs -n ai-agents "$POD_NAME" --tail=4 2>/dev/null | grep -v "^$" | sed 's/^/    /')
+            if [ -z "$LOGS_OUTPUT" ]; then
+                LAST_LINES="    [Waiting for logs...]"
+            else
+                LAST_LINES="$LOGS_OUTPUT"
+            fi
+        else
+            # Pod not found yet
+            LAST_LINES="    [Waiting for pod to start...]"
+        fi
+
+        # Only update display if content has changed
+        if [ "$LAST_LINES" != "$PREV_LINES" ]; then
+            # Clear previous lines if we had any
+            if [ $LINE_COUNT -gt 0 ]; then
+                for i in $(seq 1 $LINE_COUNT); do
+                    echo -ne "\033[1A\033[2K"  # Move up and clear line
+                done
+            fi
+
+            # Print new lines only if there's content
+            if [ ! -z "$LAST_LINES" ]; then
+                echo "$LAST_LINES"
+                # Count actual lines with content (not empty strings)
+                LINE_COUNT=$(echo "$LAST_LINES" | grep -c "." || echo "0")
+            else
+                LINE_COUNT=0
+            fi
+
+            PREV_LINES="$LAST_LINES"
+        fi
+
+        sleep 0.5
+    done
+
+    # Wait for kubectl wait to complete and get exit code
+    wait $WAIT_PID
+    local EXIT_CODE=$?
+
+    # Clear progress lines AND the service name line (LINE_COUNT + 1 total lines)
+    local TOTAL_LINES=$((LINE_COUNT + 1))
+    for i in $(seq 1 $TOTAL_LINES); do
+        echo -ne "\033[1A\033[2K"
+    done
+
+    # Show final status (replaces the original service name line)
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo -e "  • Waiting for LiveKit... ${GREEN}✓${NC}"
+    else
+        echo -e "  • Waiting for LiveKit... ${RED}✗${NC}"
+
+        # On failure, show more context from the newest pod
+        local POD_NAME=$(kubectl get pods -n ai-agents -l app=livekit --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)
+        if [ ! -z "$POD_NAME" ]; then
+            echo -e "${RED}Last 10 lines of LiveKit logs:${NC}"
+            kubectl logs -n ai-agents "$POD_NAME" --tail=10 2>/dev/null | sed 's/^/    /'
+            echo ""
+            echo -e "${RED}Pod status:${NC}"
+            kubectl describe pod -n ai-agents "$POD_NAME" | grep -A 10 "Events:" | sed 's/^/    /'
+        else
+            echo -e "${RED}LiveKit pod not found. Check deployment:${NC}"
+            echo -e "${YELLOW}  kubectl get pods -n ai-agents -l app=livekit${NC}"
+        fi
+    fi
+
+    # Clean up log file
+    rm -f "${LOG_FILE}"
+
+    return $EXIT_CODE
+}
+
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 
@@ -442,6 +571,25 @@ echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 envsubst < k8s/livekit-config.yaml > /tmp/livekit-config-updated.yaml
 echo -e "${GREEN}✓${NC}"
+
+# Verify LiveKit API keys were substituted
+echo -n "  • Verifying LiveKit API key configuration... "
+KEYS_LINE=$(grep -A 1 "^  keys:" /tmp/livekit-config-updated.yaml | tail -1 | sed 's/^[[:space:]]*//')
+if echo "$KEYS_LINE" | grep -q '${LIVEKIT_API_KEY}'; then
+    echo -e "${RED}✗${NC}"
+    echo -e "${RED}    Error: Environment variables not substituted in LiveKit config${NC}"
+    echo -e "${YELLOW}    Found: $KEYS_LINE${NC}"
+    echo -e "${YELLOW}    Expected: <api-key>: <api-secret>${NC}"
+    exit 1
+elif [ "$LIVEKIT_API_KEY" = "devkey" ] || [ "$LIVEKIT_API_SECRET" = "secret" ]; then
+    echo -e "${YELLOW}⚠${NC}"
+    echo -e "${YELLOW}    Warning: Using development placeholder keys (devkey/secret)${NC}"
+    echo -e "${YELLOW}    For production, generate secure keys:${NC}"
+    echo -e "${YELLOW}      LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
+    echo -e "${YELLOW}      LIVEKIT_API_SECRET=\$(openssl rand -hex 32)${NC}"
+else
+    echo -e "${GREEN}✓${NC}"
+fi
 
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
@@ -482,8 +630,7 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
 echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
-echo -n "  • Waiting for LiveKit... "
-kubectl wait --for=condition=ready pod -l app=livekit -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+wait_for_livekit_with_logs
 
 # Restart deployments
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1

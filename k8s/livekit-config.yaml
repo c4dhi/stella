@@ -32,7 +32,8 @@ data:
     turn:
       # Enable built-in TURN server for NAT traversal
       # Essential for mobile networks and corporate firewalls
-      enabled: true
+      # Disabled for local development (localhost), enabled for production
+      enabled: ${LIVEKIT_TURN_ENABLED}
 
       # TURN domain - extracted from PUBLIC_LIVEKIT_URL environment variable
       # Will be substituted at deployment time by start-k8s.sh

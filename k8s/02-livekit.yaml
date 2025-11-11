@@ -100,6 +100,8 @@ spec:
           - /etc/livekit/config.yaml
           - --bind
           - "0.0.0.0"
+          - --node-ip
+          - "$(POD_IP)"
         ports:
         - containerPort: 7880
           name: http
@@ -147,6 +149,10 @@ spec:
           name: udp-mux-11
           protocol: UDP
         env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         - name: LIVEKIT_PORT
           value: "7880"
         - name: LIVEKIT_API_KEY
