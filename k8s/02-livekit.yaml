@@ -139,6 +139,8 @@ spec:
           name: udp-mux-11
           protocol: UDP
         env:
+        - name: LIVEKIT_PORT
+          value: "7880"
         - name: LIVEKIT_API_KEY
           valueFrom:
             secretKeyRef:
