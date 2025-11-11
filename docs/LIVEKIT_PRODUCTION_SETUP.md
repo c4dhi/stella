@@ -224,6 +224,28 @@ kubectl logs -n ai-agents -l app=livekit --tail=50
 # [INFO] UDP mux ports: 7882-7892
 ```
 
+### Issue: "could not resolve external IP: context deadline exceeded"
+
+**Symptoms:**
+- LiveKit pod keeps restarting
+- Logs show: `could not validate RTC config: could not resolve external IP: context deadline exceeded`
+- Startup probe fails repeatedly
+
+**Root Cause:**
+LiveKit config has `use_external_ip: true`, which tries to auto-detect external IP via STUN servers. This times out in Minikube/isolated environments.
+
+**Solution:**
+The config uses `node_ip: ${LIVEKIT_TURN_DOMAIN}` instead of `use_external_ip: true`. This is automatically substituted during deployment from your `PUBLIC_LIVEKIT_URL` environment variable.
+
+Verify:
+```bash
+# Check the applied ConfigMap has the correct domain
+kubectl get configmap livekit-config -n ai-agents -o yaml | grep node_ip
+
+# Should show:
+# node_ip: livekit.c4dhi.moserfelix.com
+```
+
 ## 6. Monitoring
 
 Check LiveKit logs for TURN usage:

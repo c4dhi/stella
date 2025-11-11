@@ -21,8 +21,9 @@ data:
       udp_port: 7882-7892
 
       # Critical for cloud/Kubernetes deployments
-      # Without this, clients won't receive correct ICE candidates
-      use_external_ip: true
+      # Set explicit external IP/domain for ICE candidates
+      # Using the same domain as TURN server (avoids external STUN queries)
+      node_ip: ${LIVEKIT_TURN_DOMAIN}
 
     turn:
       # Enable built-in TURN server for NAT traversal
