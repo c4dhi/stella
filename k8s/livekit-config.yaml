@@ -11,6 +11,10 @@ data:
     port: 7880
     log_level: info
 
+    # API keys for authentication
+    keys:
+      ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
     rtc:
       # TCP fallback for UDP-blocked networks
       tcp_port: 7881

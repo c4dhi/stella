@@ -246,6 +246,41 @@ kubectl get configmap livekit-config -n ai-agents -o yaml | grep node_ip
 # node_ip: livekit.c4dhi.moserfelix.com
 ```
 
+### Issue: "one of key-file or keys must be provided"
+
+**Symptoms:**
+- LiveKit pod keeps restarting
+- Logs show: `one of key-file or keys must be provided`
+- Pod crashes immediately after startup
+
+**Root Cause:**
+LiveKit config is missing the `keys:` section that defines API key/secret pairs for authentication.
+
+**Solution:**
+The config includes a `keys:` section with environment variable substitution:
+```yaml
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+```
+
+These are automatically substituted from your `.env` file during deployment.
+
+Verify:
+```bash
+# Check the applied ConfigMap has the keys section
+kubectl get configmap livekit-config -n ai-agents -o yaml | grep -A1 "keys:"
+
+# Should show:
+# keys:
+#   devkey: secret
+```
+
+If keys are missing, ensure your `.env` file contains:
+```bash
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+```
+
 ## 6. Monitoring
 
 Check LiveKit logs for TURN usage:
