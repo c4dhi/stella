@@ -39,8 +39,6 @@ data:
       # Will be substituted at deployment time by start-k8s.sh
       domain: ${LIVEKIT_TURN_DOMAIN}
 
-      # TURN over TLS on port 443 - works through any firewall
-      tls_port: 443
-
-      # TURN over UDP on port 443 - for QUIC/modern WebRTC
+      # TURN over UDP on port 443 - works through most firewalls
+      # Note: TLS port disabled because nginx handles TLS termination
       udp_port: 443
