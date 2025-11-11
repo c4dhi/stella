@@ -175,6 +175,14 @@ spec:
             port: 7880
           periodSeconds: 10
           failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7880
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
         resources:
           requests:
             memory: "256Mi"
