@@ -84,9 +84,17 @@ spec:
       labels:
         app: livekit
     spec:
+      securityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+        fsGroup: 0
       containers:
       - name: livekit
         image: livekit/livekit-server:v1.9.1
+        securityContext:
+          capabilities:
+            add:
+              - NET_BIND_SERVICE
         args:
           - --config
           - /etc/livekit/config.yaml
@@ -155,6 +163,19 @@ spec:
         - name: config
           mountPath: /etc/livekit
           readOnly: true
+        startupProbe:
+          httpGet:
+            path: /
+            port: 7880
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 12
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7880
+          periodSeconds: 10
+          failureThreshold: 3
         resources:
           requests:
             memory: "256Mi"
