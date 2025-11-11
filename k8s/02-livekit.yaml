@@ -10,9 +10,62 @@ spec:
     - name: http
       port: 7880
       targetPort: 7880
-    - name: rtp
+      protocol: TCP
+    - name: rtc-tcp
       port: 7881
       targetPort: 7881
+      protocol: TCP
+    - name: turn-tls
+      port: 443
+      targetPort: 443
+      protocol: TCP
+    - name: turn-udp
+      port: 443
+      targetPort: 443
+      protocol: UDP
+    - name: udp-mux-1
+      port: 7882
+      targetPort: 7882
+      protocol: UDP
+    - name: udp-mux-2
+      port: 7883
+      targetPort: 7883
+      protocol: UDP
+    - name: udp-mux-3
+      port: 7884
+      targetPort: 7884
+      protocol: UDP
+    - name: udp-mux-4
+      port: 7885
+      targetPort: 7885
+      protocol: UDP
+    - name: udp-mux-5
+      port: 7886
+      targetPort: 7886
+      protocol: UDP
+    - name: udp-mux-6
+      port: 7887
+      targetPort: 7887
+      protocol: UDP
+    - name: udp-mux-7
+      port: 7888
+      targetPort: 7888
+      protocol: UDP
+    - name: udp-mux-8
+      port: 7889
+      targetPort: 7889
+      protocol: UDP
+    - name: udp-mux-9
+      port: 7890
+      targetPort: 7890
+      protocol: UDP
+    - name: udp-mux-10
+      port: 7891
+      targetPort: 7891
+      protocol: UDP
+    - name: udp-mux-11
+      port: 7892
+      targetPort: 7892
       protocol: UDP
   type: ClusterIP
 ---
@@ -35,17 +88,57 @@ spec:
       - name: livekit
         image: livekit/livekit-server:v1.9.1
         args:
-          - --dev
+          - --config
+          - /etc/livekit/config.yaml
           - --bind
           - "0.0.0.0"
         ports:
         - containerPort: 7880
+          name: http
           protocol: TCP
         - containerPort: 7881
+          name: rtc-tcp
+          protocol: TCP
+        - containerPort: 443
+          name: turn-tls
+          protocol: TCP
+        - containerPort: 443
+          name: turn-udp
+          protocol: UDP
+        - containerPort: 7882
+          name: udp-mux-1
+          protocol: UDP
+        - containerPort: 7883
+          name: udp-mux-2
+          protocol: UDP
+        - containerPort: 7884
+          name: udp-mux-3
+          protocol: UDP
+        - containerPort: 7885
+          name: udp-mux-4
+          protocol: UDP
+        - containerPort: 7886
+          name: udp-mux-5
+          protocol: UDP
+        - containerPort: 7887
+          name: udp-mux-6
+          protocol: UDP
+        - containerPort: 7888
+          name: udp-mux-7
+          protocol: UDP
+        - containerPort: 7889
+          name: udp-mux-8
+          protocol: UDP
+        - containerPort: 7890
+          name: udp-mux-9
+          protocol: UDP
+        - containerPort: 7891
+          name: udp-mux-10
+          protocol: UDP
+        - containerPort: 7892
+          name: udp-mux-11
           protocol: UDP
         env:
-        - name: LIVEKIT_PORT
-          value: "7880"
         - name: LIVEKIT_API_KEY
           valueFrom:
             secretKeyRef:
@@ -56,6 +149,10 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: livekit-api-secret
+        volumeMounts:
+        - name: config
+          mountPath: /etc/livekit
+          readOnly: true
         resources:
           requests:
             memory: "256Mi"
@@ -63,3 +160,7 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
+      volumes:
+      - name: config
+        configMap:
+          name: livekit-config

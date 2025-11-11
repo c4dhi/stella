@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+  namespace: ai-agents
+data:
+  config.yaml: |
+    # LiveKit Production Configuration
+    # This config is injected with environment variables at deployment time
+
+    port: 7880
+    log_level: info
+
+    rtc:
+      # TCP fallback for UDP-blocked networks
+      tcp_port: 7881
+
+      # UDP multiplexing ports (10 ports for efficient connection handling)
+      # Adjust based on expected concurrent users (2 ports per user)
+      # 10 ports = ~500 concurrent users
+      udp_port: 7882-7892
+
+      # Critical for cloud/Kubernetes deployments
+      # Without this, clients won't receive correct ICE candidates
+      use_external_ip: true
+
+    turn:
+      # Enable built-in TURN server for NAT traversal
+      # Essential for mobile networks and corporate firewalls
+      enabled: true
+
+      # TURN domain - extracted from PUBLIC_LIVEKIT_URL environment variable
+      # Will be substituted at deployment time by start-k8s.sh
+      domain: ${LIVEKIT_TURN_DOMAIN}
+
+      # TURN over TLS on port 443 - works through any firewall
+      tls_port: 443
+
+      # TURN over UDP on port 443 - for QUIC/modern WebRTC
+      udp_port: 443

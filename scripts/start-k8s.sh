@@ -150,6 +150,11 @@ fi
 # Set TTS_PROVIDER default if not set
 export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
 
+# Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
+# Examples: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
+#           ws://localhost:7880 → localhost
+export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
+
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend: ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:  ${PUBLIC_API_URL}"
@@ -432,9 +437,10 @@ fi
 
 echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 
-# Inject environment variables into ConfigMap using envsubst
-echo -n "  • Updating ConfigMap with environment variables... "
+# Inject environment variables into ConfigMaps using envsubst
+echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
+envsubst < k8s/livekit-config.yaml > /tmp/livekit-config-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
 # Deploy to Kubernetes
@@ -442,6 +448,7 @@ echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
 kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
 kubectl apply -f k8s/01-postgres.yaml > /dev/null
+kubectl apply -f /tmp/livekit-config-updated.yaml > /dev/null
 kubectl apply -f k8s/02-livekit.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
