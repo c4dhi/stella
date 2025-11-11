@@ -27,12 +27,6 @@ spec:
       targetPort: 7881
       nodePort: 30881
       protocol: TCP
-    # TURN over TLS (port 443) - works through firewalls
-    - name: turn-tls
-      port: 443
-      targetPort: 443
-      nodePort: 30443
-      protocol: TCP
     # TURN over UDP (port 443) - for QUIC/modern WebRTC
     - name: turn-udp
       port: 443

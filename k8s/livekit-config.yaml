@@ -40,5 +40,8 @@ data:
       domain: ${LIVEKIT_TURN_DOMAIN}
 
       # TURN over UDP on port 443 - works through most firewalls
-      # Note: TLS port disabled because nginx handles TLS termination
       udp_port: 443
+
+      # External TLS termination (nginx handles TLS)
+      # This tells LiveKit NOT to look for cert_file/key_file
+      external_tls: true

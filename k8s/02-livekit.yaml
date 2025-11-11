@@ -15,10 +15,6 @@ spec:
       port: 7881
       targetPort: 7881
       protocol: TCP
-    - name: turn-tls
-      port: 443
-      targetPort: 443
-      protocol: TCP
     - name: turn-udp
       port: 443
       targetPort: 443
@@ -108,9 +104,6 @@ spec:
           protocol: TCP
         - containerPort: 7881
           name: rtc-tcp
-          protocol: TCP
-        - containerPort: 443
-          name: turn-tls
           protocol: TCP
         - containerPort: 443
           name: turn-udp
