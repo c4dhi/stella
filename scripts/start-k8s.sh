@@ -157,10 +157,11 @@ export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://
 
 # Enable TURN only for production (disable for local development)
 # TURN provides NAT traversal for remote clients but is not needed for localhost
+# If LIVEKIT_TURN_ENABLED is already set in .env, respect that value
 if [ "$NODE_ENV" = "production" ]; then
-    export LIVEKIT_TURN_ENABLED="true"
+    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
 else
-    export LIVEKIT_TURN_ENABLED="false"
+    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
 fi
 
 echo -e "${GREEN}Environment Configuration:${NC}"
@@ -168,6 +169,7 @@ echo -e "  Frontend: ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:  ${PUBLIC_API_URL}"
 echo -e "  LiveKit:  ${PUBLIC_LIVEKIT_URL}"
 echo -e "  Database: ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
+echo -e "  TURN:     ${LIVEKIT_TURN_ENABLED} (domain: ${LIVEKIT_TURN_DOMAIN})"
 echo ""
 
 # Validate required environment variables
