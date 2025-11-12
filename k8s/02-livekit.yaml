@@ -96,8 +96,9 @@ spec:
           - /etc/livekit/config.yaml
           - --bind
           - "0.0.0.0"
-          - --node-ip
-          - "$(POD_IP)"
+          # Note: --node-ip removed to use value from config file
+          # Config file sets node_ip: ${LIVEKIT_TURN_DOMAIN} for external access
+          # Internal agents connect via 'livekit:7880' service name
         ports:
         - containerPort: 7880
           name: http
