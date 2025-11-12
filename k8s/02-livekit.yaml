@@ -80,6 +80,11 @@ spec:
       labels:
         app: livekit
     spec:
+      # Use host network in production to avoid port mapping issues
+      # This allows LiveKit to bind directly to node ports (7880, 7882-7892)
+      # without Kubernetes NodePort translation (30882-30892)
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       securityContext:
         runAsUser: 0
         runAsNonRoot: false
