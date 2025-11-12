@@ -166,14 +166,26 @@ fi
 
 # Configure LiveKit ICE settings based on environment
 # Local: Full ICE negotiation with auto-discovery (works in Kubernetes/minikube)
-# Production: ICE Lite with public domain (optimized for external browsers)
+# Production: ICE Lite with resolved public IP (optimized for external browsers)
 if [ "$NODE_ENV" = "production" ]; then
     export LIVEKIT_USE_ICE_LITE="true"
     export LIVEKIT_USE_EXTERNAL_IP="false"
-    export LIVEKIT_NODE_IP="$LIVEKIT_TURN_DOMAIN"
+
+    # Resolve domain to actual IP address (node_ip requires IP, not domain)
+    echo -e "${YELLOW}Resolving LiveKit domain to IP address...${NC}"
+    RESOLVED_IP=$(dig +short "$LIVEKIT_TURN_DOMAIN" | head -1)
+
+    if [ -z "$RESOLVED_IP" ]; then
+        echo -e "${RED}ERROR: Could not resolve $LIVEKIT_TURN_DOMAIN to IP address${NC}"
+        echo -e "${RED}Please check your DNS configuration or set LIVEKIT_PUBLIC_IP in .env${NC}"
+        exit 1
+    fi
+
+    export LIVEKIT_NODE_IP="$RESOLVED_IP"
+    echo -e "${GREEN}Resolved $LIVEKIT_TURN_DOMAIN to $RESOLVED_IP${NC}"
 else
     export LIVEKIT_USE_ICE_LITE="false"
-    export LIVEKIT_USE_EXTERNAL_IP="true"
+    export LIVEKIT_USE_EXTERNAL_IP="false"
     export LIVEKIT_NODE_IP=""
 fi
 
