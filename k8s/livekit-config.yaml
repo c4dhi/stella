@@ -24,18 +24,15 @@ data:
       # 10 ports = ~500 concurrent users
       udp_port: 7882-7892
 
-      # Port range mapping for NodePort (production only)
-      # Maps internal ports 7882-7892 to external NodePorts 30882-30892
-      port_range_start: 7882
-      port_range_end: 7892
+      # Use ICE Lite (single candidate)
+      # Reduces candidate gathering time
+      ice_lite: true
 
-      # Critical for cloud/Kubernetes deployments
-      # Use public domain for ICE candidates (browsers can reach this)
-      # Internal agents connect via 'livekit:7880' service name (not affected)
-      node_ip: ${LIVEKIT_TURN_DOMAIN}
-
-      # Use mDNS for local network discovery (helps internal agents)
-      use_external_ip: true
+      # Critical: Advertise public address for browser clients
+      # This is what gets sent to browsers in ICE candidates
+      # Internal agents still connect via 'livekit:7880' service
+      # Format: domain or IP address
+      advertise_ip: ${LIVEKIT_TURN_DOMAIN}
 
     turn:
       # Enable built-in TURN server for NAT traversal
