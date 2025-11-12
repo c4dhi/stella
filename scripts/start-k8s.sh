@@ -164,12 +164,27 @@ else
     export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
 fi
 
+# Configure LiveKit ICE settings based on environment
+# Local: Full ICE negotiation with auto-discovery (works in Kubernetes/minikube)
+# Production: ICE Lite with public domain (optimized for external browsers)
+if [ "$NODE_ENV" = "production" ]; then
+    export LIVEKIT_USE_ICE_LITE="true"
+    export LIVEKIT_USE_EXTERNAL_IP="false"
+    export LIVEKIT_NODE_IP="$LIVEKIT_TURN_DOMAIN"
+else
+    export LIVEKIT_USE_ICE_LITE="false"
+    export LIVEKIT_USE_EXTERNAL_IP="true"
+    export LIVEKIT_NODE_IP=""
+fi
+
 echo -e "${GREEN}Environment Configuration:${NC}"
-echo -e "  Frontend: ${PUBLIC_FRONTEND_URL}"
-echo -e "  Backend:  ${PUBLIC_API_URL}"
-echo -e "  LiveKit:  ${PUBLIC_LIVEKIT_URL}"
-echo -e "  Database: ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
-echo -e "  TURN:     ${LIVEKIT_TURN_ENABLED} (domain: ${LIVEKIT_TURN_DOMAIN})"
+echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
+echo -e "  Backend:   ${PUBLIC_API_URL}"
+echo -e "  LiveKit:   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  Database:  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
+echo -e "  TURN:      ${LIVEKIT_TURN_ENABLED} (domain: ${LIVEKIT_TURN_DOMAIN})"
+echo -e "  ICE Lite:  ${LIVEKIT_USE_ICE_LITE}"
+echo -e "  ICE IP:    ${LIVEKIT_NODE_IP:-auto-discover}"
 echo ""
 
 # Validate required environment variables
