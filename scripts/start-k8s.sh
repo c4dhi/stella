@@ -347,7 +347,53 @@ fi
 
 # Start minikube if not running
 echo -e "${GREEN}⚙️  Starting minikube...${NC}"
-minikube status | grep -q "Running" || minikube start --driver=docker --cpus=4 --memory=8192
+
+# Check if minikube is already running
+MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
+
+if [ "$MINIKUBE_RUNNING" = "no" ]; then
+    # Minikube needs to be started
+    if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
+        echo -e "${YELLOW}⚠️  Minikube not running. For LiveKit UDP ports to work, minikube needs to be recreated with port mappings.${NC}"
+        echo -e "${YELLOW}This will delete your existing minikube cluster and create a new one.${NC}"
+        echo -e "${YELLOW}Starting minikube with UDP port exposure for production...${NC}"
+
+        # Delete existing cluster to ensure clean state
+        minikube delete 2>/dev/null || true
+
+        # Start with explicit port mappings for LiveKit UDP ports
+        # Note: minikube --ports format is host:container
+        minikube start --driver=docker --cpus=4 --memory=8192 \
+            --ports=30880:30880 \
+            --ports=30881:30881 \
+            --ports=30882:30882/udp \
+            --ports=30883:30883/udp \
+            --ports=30884:30884/udp \
+            --ports=30885:30885/udp \
+            --ports=30886:30886/udp \
+            --ports=30887:30887/udp \
+            --ports=30888:30888/udp \
+            --ports=30889:30889/udp \
+            --ports=30890:30890/udp \
+            --ports=30891:30891/udp \
+            --ports=30892:30892/udp
+
+        echo -e "${GREEN}✓ Minikube started with LiveKit UDP port mappings${NC}"
+    else
+        echo -e "${YELLOW}Local development mode - starting minikube without UDP port mappings${NC}"
+        echo -e "${YELLOW}WebRTC will use TCP fallback (port 7881) for local testing${NC}"
+        minikube start --driver=docker --cpus=4 --memory=8192
+    fi
+else
+    echo -e "${GREEN}✓ Minikube already running${NC}"
+
+    # Check if we're in production and ports might not be mapped
+    if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
+        echo -e "${YELLOW}⚠️  Warning: Minikube is already running.${NC}"
+        echo -e "${YELLOW}If this is the first production deployment, you may need to recreate minikube with:${NC}"
+        echo -e "${YELLOW}  minikube delete && ./scripts/start-k8s.sh${NC}"
+    fi
+fi
 
 # Configure environment
 minikube addons enable metrics-server 2>/dev/null
