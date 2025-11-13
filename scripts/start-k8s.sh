@@ -352,17 +352,17 @@ echo -e "${GREEN}⚙️  Starting minikube...${NC}"
 MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
 
 if [ "$MINIKUBE_RUNNING" = "no" ]; then
-    # Minikube needs to be started
+    # Minikube needs to be started (but NOT deleted automatically)
     if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
-        echo -e "${YELLOW}⚠️  Minikube not running. For LiveKit UDP ports to work, minikube needs to be recreated with port mappings.${NC}"
-        echo -e "${YELLOW}This will delete your existing minikube cluster and create a new one.${NC}"
+        echo -e "${YELLOW}⚠️  Minikube not running.${NC}"
         echo -e "${YELLOW}Starting minikube with UDP port exposure for production...${NC}"
-
-        # Delete existing cluster to ensure clean state
-        minikube delete 2>/dev/null || true
+        echo -e "${YELLOW}Note: If minikube was previously created without port mappings,${NC}"
+        echo -e "${YELLOW}you may need to manually delete and recreate:${NC}"
+        echo -e "${YELLOW}  minikube delete && export NODE_ENV=production && ./scripts/start-k8s.sh${NC}"
 
         # Start with explicit port mappings for LiveKit UDP ports
         # Note: minikube --ports format is host:container
+        # This will fail if minikube exists but is stopped - user must delete manually
         minikube start --driver=docker --cpus=4 --memory=8192 \
             --ports=30880:30880 \
             --ports=30881:30881 \
@@ -390,8 +390,8 @@ else
     # Check if we're in production and ports might not be mapped
     if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
         echo -e "${YELLOW}⚠️  Warning: Minikube is already running.${NC}"
-        echo -e "${YELLOW}If this is the first production deployment, you may need to recreate minikube with:${NC}"
-        echo -e "${YELLOW}  minikube delete && ./scripts/start-k8s.sh${NC}"
+        echo -e "${YELLOW}If UDP ports aren't working, you may need to recreate minikube with port mappings:${NC}"
+        echo -e "${YELLOW}  minikube delete && export NODE_ENV=production && ./scripts/start-k8s.sh${NC}"
     fi
 fi
 
@@ -475,25 +475,33 @@ build_with_progress() {
 
     local BUILD_PID=$!
 
-    # Show last 4 lines of build output, updating in place
+    # Show last 6 lines of build output, updating in place
     local LINE_COUNT=0
     local LAST_LINES=""
 
+    # Wait a moment for log file to be created and have content
+    sleep 1
+
     while kill -0 $BUILD_PID 2>/dev/null; do
         if [ -f "${LOG_FILE}" ]; then
-            # Get last 4 non-empty lines
-            LAST_LINES=$(tail -n 4 "${LOG_FILE}" 2>/dev/null | grep -v "^$" | sed 's/^/    /')
+            # Get last 6 non-empty lines
+            LAST_LINES=$(tail -n 6 "${LOG_FILE}" 2>/dev/null | grep -v "^$" | sed 's/^/    /')
 
-            # Clear previous lines if we had any
-            if [ $LINE_COUNT -gt 0 ]; then
-                for i in $(seq 1 $LINE_COUNT); do
-                    echo -ne "\033[1A\033[2K"  # Move up and clear line
-                done
+            # Only update display if we have content
+            if [ -n "$LAST_LINES" ]; then
+                # Clear previous lines if we had any
+                if [ $LINE_COUNT -gt 0 ]; then
+                    for i in $(seq 1 $LINE_COUNT); do
+                        echo -ne "\033[1A\033[2K"  # Move up and clear line
+                    done
+                fi
+
+                # Print new lines using printf to avoid extra newline
+                printf "%s\n" "$LAST_LINES"
+
+                # Count actual lines (not newlines)
+                LINE_COUNT=$(printf "%s\n" "$LAST_LINES" | wc -l | tr -d ' ')
             fi
-
-            # Print new lines
-            echo "$LAST_LINES"
-            LINE_COUNT=$(echo "$LAST_LINES" | wc -l)
         fi
         sleep 0.5
     done
@@ -534,10 +542,13 @@ wait_for_livekit_with_logs() {
     kubectl wait --for=condition=ready pod -l app=livekit -n ai-agents --timeout=120s > /dev/null 2>&1 &
     local WAIT_PID=$!
 
-    # Show last 4 lines of LiveKit logs, updating in place
+    # Show last 6 lines of LiveKit logs, updating in place
     local LINE_COUNT=0
     local LAST_LINES=""
     local PREV_LINES=""
+
+    # Wait a moment for pod to be created
+    sleep 1
 
     while kill -0 $WAIT_PID 2>/dev/null; do
         # Get LiveKit pod name (select the newest pod by creation timestamp)
@@ -545,8 +556,8 @@ wait_for_livekit_with_logs() {
 
         # Determine what to display
         if [ ! -z "$POD_NAME" ]; then
-            # Get last 4 non-empty lines from pod logs
-            local LOGS_OUTPUT=$(kubectl logs -n ai-agents "$POD_NAME" --tail=4 2>/dev/null | grep -v "^$" | sed 's/^/    /')
+            # Get last 6 non-empty lines from pod logs
+            local LOGS_OUTPUT=$(kubectl logs -n ai-agents "$POD_NAME" --tail=6 2>/dev/null | grep -v "^$" | sed 's/^/    /')
             if [ -z "$LOGS_OUTPUT" ]; then
                 LAST_LINES="    [Waiting for logs...]"
             else
@@ -567,10 +578,11 @@ wait_for_livekit_with_logs() {
             fi
 
             # Print new lines only if there's content
-            if [ ! -z "$LAST_LINES" ]; then
-                echo "$LAST_LINES"
-                # Count actual lines with content (not empty strings)
-                LINE_COUNT=$(echo "$LAST_LINES" | grep -c "." || echo "0")
+            if [ -n "$LAST_LINES" ]; then
+                # Print using printf to avoid extra newline
+                printf "%s\n" "$LAST_LINES"
+                # Count actual lines (not newlines)
+                LINE_COUNT=$(printf "%s\n" "$LAST_LINES" | wc -l | tr -d ' ')
             else
                 LINE_COUNT=0
             fi
