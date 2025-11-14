@@ -130,18 +130,18 @@ if [ "$NODE_ENV" = "production" ]; then
     # Production URLs (custom domains with SSL)
     export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
     export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
-    export PUBLIC_LIVEKIT_URL="wss://livekit.${PRODUCTION_DOMAIN}"
+    # PUBLIC_LIVEKIT_URL: Read from .env file (required)
     export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN}"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN}"
 else
     echo -e "${BLUE}🏠 Running in LOCAL mode${NC}"
 
-    # Local URLs (minikube IP will be set after minikube starts)
+    # Local URLs
     export NODE_ENV="local"
     export PUBLIC_FRONTEND_URL="http://localhost:8080"
     export PUBLIC_API_URL="http://localhost:3000"
-    # PUBLIC_LIVEKIT_URL will be set after minikube starts (need minikube IP)
+    # PUBLIC_LIVEKIT_URL: Read from .env file (required)
     export PUBLIC_DB_HOST="localhost"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="http://localhost:8080"
@@ -150,40 +150,17 @@ fi
 # Set TTS_PROVIDER default if not set
 export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
 
-# Production mode: Configure LiveKit settings now (URL is already set)
-# Local mode: These will be configured after minikube starts (URL not set yet)
-if [ "$NODE_ENV" = "production" ]; then
-    # Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
-    # Example: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
-    export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
+# Configure TURN settings for external LiveKit server
+# All LiveKit configuration should be read from .env file
+# LIVEKIT_TURN_DOMAIN and LIVEKIT_TURN_ENABLED are set in .env
+# If not set, provide minimal defaults
+export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
 
-    # Enable TURN for production
-    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
-
-    # ICE Lite with resolved public IP
-    export LIVEKIT_USE_ICE_LITE="true"
-    export LIVEKIT_USE_EXTERNAL_IP="false"
-
-    # Resolve domain to actual IP address (node_ip requires IP, not domain)
-    echo -e "${YELLOW}Resolving LiveKit domain to IP address...${NC}"
-    RESOLVED_IP=$(dig +short "$LIVEKIT_TURN_DOMAIN" | head -1)
-
-    if [ -z "$RESOLVED_IP" ]; then
-        echo -e "${RED}ERROR: Could not resolve $LIVEKIT_TURN_DOMAIN to IP address${NC}"
-        echo -e "${RED}Please check your DNS configuration or set LIVEKIT_PUBLIC_IP in .env${NC}"
-        exit 1
-    fi
-
-    export LIVEKIT_NODE_IP="$RESOLVED_IP"
-    echo -e "${GREEN}Resolved $LIVEKIT_TURN_DOMAIN to $RESOLVED_IP${NC}"
-else
-    # Local mode: Placeholder values, will be set after minikube starts
-    export LIVEKIT_TURN_DOMAIN="localhost"
-    export LIVEKIT_TURN_ENABLED="false"
-    export LIVEKIT_USE_ICE_LITE="false"
-    export LIVEKIT_USE_EXTERNAL_IP="false"
-    export LIVEKIT_NODE_IP=""
-fi
+# Note: No need to set ICE/node_ip as external LiveKit server is already configured
+# These are only needed when deploying local LiveKit instance
+export LIVEKIT_USE_ICE_LITE=""
+export LIVEKIT_USE_EXTERNAL_IP=""
+export LIVEKIT_NODE_IP=""
 
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
@@ -210,26 +187,6 @@ if [ -z "$LIVEKIT_API_KEY" ] || [ -z "$LIVEKIT_API_SECRET" ]; then
     echo -e "${RED}✗ Missing required LiveKit API credentials in .env${NC}"
     [ -z "$LIVEKIT_API_KEY" ] && echo "  - LIVEKIT_API_KEY"
     [ -z "$LIVEKIT_API_SECRET" ] && echo "  - LIVEKIT_API_SECRET"
-    exit 1
-fi
-
-# Validate LiveKit API key length (must be at least 32 characters)
-KEY_LENGTH=${#LIVEKIT_API_KEY}
-if [ $KEY_LENGTH -lt 32 ]; then
-    echo -e "${RED}✗ LIVEKIT_API_KEY is too short (${KEY_LENGTH} characters)${NC}"
-    echo -e "${RED}  LiveKit requires API keys to be at least 32 characters for security${NC}"
-    echo -e "${YELLOW}  Generate a secure key with:${NC}"
-    echo -e "${YELLOW}    LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
-    exit 1
-fi
-
-# Validate LiveKit API secret length (must be at least 32 characters)
-SECRET_LENGTH=${#LIVEKIT_API_SECRET}
-if [ $SECRET_LENGTH -lt 32 ]; then
-    echo -e "${RED}✗ LIVEKIT_API_SECRET is too short (${SECRET_LENGTH} characters)${NC}"
-    echo -e "${RED}  LiveKit requires API secrets to be at least 32 characters for security${NC}"
-    echo -e "${YELLOW}  Generate a secure secret with:${NC}"
-    echo -e "${YELLOW}    LIVEKIT_API_SECRET=\$(openssl rand -base64 48)${NC}"
     exit 1
 fi
 
@@ -397,12 +354,13 @@ minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
+# Note: Disabled - using external LiveKit server from .env for both local and production
 # Set LiveKit URL for local mode (now that minikube is running)
-if [ "$NODE_ENV" != "production" ]; then
-    MINIKUBE_IP=$(minikube ip)
-    export PUBLIC_LIVEKIT_URL="ws://${MINIKUBE_IP}:30880"
-    echo -e "${GREEN}📡 Detected network IP: ${MINIKUBE_IP}${NC}"
-fi
+# if [ "$NODE_ENV" != "production" ]; then
+#     MINIKUBE_IP=$(minikube ip)
+#     export PUBLIC_LIVEKIT_URL="ws://${MINIKUBE_IP}:30880"
+#     echo -e "${GREEN}📡 Detected network IP: ${MINIKUBE_IP}${NC}"
+# fi
 
 # Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
 # Examples: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
@@ -697,35 +655,21 @@ echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 # Inject environment variables into ConfigMaps using envsubst
 echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
-envsubst < k8s/livekit-config.yaml > /tmp/livekit-config-updated.yaml
+# Note: LiveKit config disabled - using external LiveKit server
+# envsubst < k8s/livekit-config.yaml > /tmp/livekit-config-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
-# Verify LiveKit API keys were substituted
-echo -n "  • Verifying LiveKit API key configuration... "
-KEYS_LINE=$(grep -A 1 "^  keys:" /tmp/livekit-config-updated.yaml | tail -1 | sed 's/^[[:space:]]*//')
-if echo "$KEYS_LINE" | grep -q '${LIVEKIT_API_KEY}'; then
-    echo -e "${RED}✗${NC}"
-    echo -e "${RED}    Error: Environment variables not substituted in LiveKit config${NC}"
-    echo -e "${YELLOW}    Found: $KEYS_LINE${NC}"
-    echo -e "${YELLOW}    Expected: <api-key>: <api-secret>${NC}"
-    exit 1
-elif [ "$LIVEKIT_API_KEY" = "devkey" ] || [ "$LIVEKIT_API_SECRET" = "secret" ]; then
-    echo -e "${YELLOW}⚠${NC}"
-    echo -e "${YELLOW}    Warning: Using development placeholder keys (devkey/secret)${NC}"
-    echo -e "${YELLOW}    For production, generate secure keys:${NC}"
-    echo -e "${YELLOW}      LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
-    echo -e "${YELLOW}      LIVEKIT_API_SECRET=\$(openssl rand -hex 32)${NC}"
-else
-    echo -e "${GREEN}✓${NC}"
-fi
+# Note: LiveKit API key verification skipped - using external LiveKit server
+# The external server is pre-configured with its own API keys
 
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
 kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
 kubectl apply -f k8s/01-postgres.yaml > /dev/null
-kubectl apply -f /tmp/livekit-config-updated.yaml > /dev/null
-kubectl apply -f k8s/02-livekit.yaml > /dev/null
+# Note: LiveKit deployment disabled - using external LiveKit server
+# kubectl apply -f /tmp/livekit-config-updated.yaml > /dev/null
+# kubectl apply -f k8s/02-livekit.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
@@ -761,7 +705,9 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
 echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
-wait_for_livekit_with_logs
+# Note: LiveKit wait skipped - using external LiveKit server
+# wait_for_livekit_with_logs
+echo -e "  • LiveKit: Using external server (${LIVEKIT_URL}) ${GREEN}✓${NC}"
 
 # Restart deployments
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
@@ -788,11 +734,8 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    # LiveKit port-forward only for production (local uses NodePort for UDP support)
-    if [ "$NODE_ENV" = "production" ]; then
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
-        PF_LIVEKIT=$!
-    fi
+    # Note: LiveKit port-forward disabled - using external LiveKit server
+    # LiveKit is accessible directly via LIVEKIT_URL from .env
 
     # Create postgres port-forward
     # Production: Use port 15432 locally (nginx listens on 5432 for external access)
@@ -807,7 +750,7 @@ if [ "$DAEMON_MODE" = true ]; then
     # Save PIDs to file
     echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
     echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
-    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
+    # Note: PF_LIVEKIT removed - using external LiveKit server
     echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
 
     # Detach from session
@@ -820,11 +763,8 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    # LiveKit port-forward only for production (local uses NodePort for UDP support)
-    if [ "$NODE_ENV" = "production" ]; then
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
-        PF_LIVEKIT=$!
-    fi
+    # Note: LiveKit port-forward disabled - using external LiveKit server
+    # LiveKit is accessible directly via LIVEKIT_URL from .env
 
     # Create postgres port-forward
     # Production: Use port 15432 locally (nginx listens on 5432 for external access)
@@ -854,7 +794,7 @@ if [ "$DAEMON_MODE" = false ]; then
     echo -e "${BLUE}Stopping port forwards...${NC}"
     [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
-    [ ! -z "$PF_LIVEKIT" ] && kill $PF_LIVEKIT 2>/dev/null
+    # Note: PF_LIVEKIT removed - using external LiveKit server
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
     # Stop minikube (stops all services gracefully)

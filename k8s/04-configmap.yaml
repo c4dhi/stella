@@ -15,8 +15,13 @@ data:
   # Automatically set by deployment scripts based on environment
   CORS_ORIGIN: "${CORS_ORIGIN}"
 
-  # LiveKit (internal cluster communication - always uses K8s service name)
-  LIVEKIT_URL: "ws://livekit:7880"
+  # LiveKit (external server - using hosted LiveKit instead of local K8s)
+  # Values are injected from .env file by deployment script
+  LIVEKIT_URL: "${LIVEKIT_URL}"
+
+  # TURN Server Configuration
+  LIVEKIT_TURN_ENABLED: "${LIVEKIT_TURN_ENABLED}"
+  LIVEKIT_TURN_DOMAIN: "${LIVEKIT_TURN_DOMAIN}"
 
   # Kubernetes
   KUBERNETES_NAMESPACE: "ai-agents"
