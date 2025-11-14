@@ -1,0 +1,85 @@
+# LiveKit NodePort Service for Local Development
+# This service exposes LiveKit ports for localhost access via minikube
+# Access: ws://localhost:30880 (with minikube tunnel)
+# Direct: ws://$(minikube ip):30880
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit-nodeport
+  namespace: ai-agents
+  labels:
+    app: livekit
+    env: local
+spec:
+  selector:
+    app: livekit
+  type: NodePort
+  ports:
+    # WebSocket signaling
+    - name: http
+      port: 7880
+      targetPort: 7880
+      nodePort: 30880
+      protocol: TCP
+    # RTC TCP fallback
+    - name: rtc-tcp
+      port: 7881
+      targetPort: 7881
+      nodePort: 30881
+      protocol: TCP
+    # UDP multiplexing ports (7882-7892) for efficient RTC connections
+    - name: udp-mux-1
+      port: 7882
+      targetPort: 7882
+      nodePort: 30882
+      protocol: UDP
+    - name: udp-mux-2
+      port: 7883
+      targetPort: 7883
+      nodePort: 30883
+      protocol: UDP
+    - name: udp-mux-3
+      port: 7884
+      targetPort: 7884
+      nodePort: 30884
+      protocol: UDP
+    - name: udp-mux-4
+      port: 7885
+      targetPort: 7885
+      nodePort: 30885
+      protocol: UDP
+    - name: udp-mux-5
+      port: 7886
+      targetPort: 7886
+      nodePort: 30886
+      protocol: UDP
+    - name: udp-mux-6
+      port: 7887
+      targetPort: 7887
+      nodePort: 30887
+      protocol: UDP
+    - name: udp-mux-7
+      port: 7888
+      targetPort: 7888
+      nodePort: 30888
+      protocol: UDP
+    - name: udp-mux-8
+      port: 7889
+      targetPort: 7889
+      nodePort: 30889
+      protocol: UDP
+    - name: udp-mux-9
+      port: 7890
+      targetPort: 7890
+      nodePort: 30890
+      protocol: UDP
+    - name: udp-mux-10
+      port: 7891
+      targetPort: 7891
+      nodePort: 30891
+      protocol: UDP
+    - name: udp-mux-11
+      port: 7892
+      targetPort: 7892
+      nodePort: 30892
+      protocol: UDP

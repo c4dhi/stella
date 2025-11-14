@@ -137,11 +137,11 @@ if [ "$NODE_ENV" = "production" ]; then
 else
     echo -e "${BLUE}🏠 Running in LOCAL mode${NC}"
 
-    # Local URLs (localhost with port-forwards)
+    # Local URLs (minikube IP will be set after minikube starts)
     export NODE_ENV="local"
     export PUBLIC_FRONTEND_URL="http://localhost:8080"
     export PUBLIC_API_URL="http://localhost:3000"
-    export PUBLIC_LIVEKIT_URL="ws://localhost:7880"
+    # PUBLIC_LIVEKIT_URL will be set after minikube starts (need minikube IP)
     export PUBLIC_DB_HOST="localhost"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="http://localhost:8080"
@@ -150,24 +150,17 @@ fi
 # Set TTS_PROVIDER default if not set
 export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
 
-# Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
-# Examples: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
-#           ws://localhost:7880 → localhost
-export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
-
-# Enable TURN only for production (disable for local development)
-# TURN provides NAT traversal for remote clients but is not needed for localhost
-# If LIVEKIT_TURN_ENABLED is already set in .env, respect that value
+# Production mode: Configure LiveKit settings now (URL is already set)
+# Local mode: These will be configured after minikube starts (URL not set yet)
 if [ "$NODE_ENV" = "production" ]; then
+    # Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
+    # Example: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
+    export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
+
+    # Enable TURN for production
     export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
-else
-    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
-fi
 
-# Configure LiveKit ICE settings based on environment
-# Local: Full ICE negotiation with auto-discovery (works in Kubernetes/minikube)
-# Production: ICE Lite with resolved public IP (optimized for external browsers)
-if [ "$NODE_ENV" = "production" ]; then
+    # ICE Lite with resolved public IP
     export LIVEKIT_USE_ICE_LITE="true"
     export LIVEKIT_USE_EXTERNAL_IP="false"
 
@@ -184,6 +177,9 @@ if [ "$NODE_ENV" = "production" ]; then
     export LIVEKIT_NODE_IP="$RESOLVED_IP"
     echo -e "${GREEN}Resolved $LIVEKIT_TURN_DOMAIN to $RESOLVED_IP${NC}"
 else
+    # Local mode: Placeholder values, will be set after minikube starts
+    export LIVEKIT_TURN_DOMAIN="localhost"
+    export LIVEKIT_TURN_ENABLED="false"
     export LIVEKIT_USE_ICE_LITE="false"
     export LIVEKIT_USE_EXTERNAL_IP="false"
     export LIVEKIT_NODE_IP=""
@@ -400,6 +396,51 @@ minikube addons enable metrics-server 2>/dev/null
 minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
+
+# Set LiveKit URL for local mode (now that minikube is running)
+if [ "$NODE_ENV" != "production" ]; then
+    MINIKUBE_IP=$(minikube ip)
+    export PUBLIC_LIVEKIT_URL="ws://${MINIKUBE_IP}:30880"
+    echo -e "${GREEN}📡 Detected network IP: ${MINIKUBE_IP}${NC}"
+fi
+
+# Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
+# Examples: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
+#           ws://192.168.49.2:30880 → 192.168.49.2
+export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
+
+# Enable TURN only for production (disable for local development)
+# TURN provides NAT traversal for remote clients but is not needed for localhost
+# If LIVEKIT_TURN_ENABLED is already set in .env, respect that value
+if [ "$NODE_ENV" = "production" ]; then
+    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
+else
+    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
+fi
+
+# Configure LiveKit ICE settings based on environment
+# Local: Full ICE negotiation with auto-discovery (works in Kubernetes/minikube)
+# Production: ICE Lite with resolved public IP (optimized for external browsers)
+if [ "$NODE_ENV" = "production" ]; then
+    # Production: Resolve domain to IP for ICE candidates
+    echo -n "Resolving LiveKit domain ${LIVEKIT_TURN_DOMAIN}... "
+    RESOLVED_IP=$(dig +short "$LIVEKIT_TURN_DOMAIN" | head -1)
+
+    if [ -z "$RESOLVED_IP" ]; then
+        echo -e "${RED}✗ Failed to resolve ${LIVEKIT_TURN_DOMAIN}${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}${RESOLVED_IP}${NC}"
+
+    export LIVEKIT_USE_ICE_LITE="true"
+    export LIVEKIT_USE_EXTERNAL_IP="false"
+    export LIVEKIT_NODE_IP="$RESOLVED_IP"
+else
+    export LIVEKIT_USE_ICE_LITE="false"
+    export LIVEKIT_USE_EXTERNAL_IP="false"
+    export LIVEKIT_NODE_IP=""
+fi
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -692,10 +733,13 @@ kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
-# Apply NodePort services in production mode
+# Apply NodePort services based on environment
 if [ "$NODE_ENV" = "production" ]; then
     echo -e "${BLUE}  • Applying NodePort services for production...${NC}"
     kubectl apply -f k8s/production/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
+else
+    echo -e "${BLUE}  • Applying NodePort services for local development...${NC}"
+    kubectl apply -f k8s/local/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
 fi
 
 # Create secrets
@@ -731,8 +775,9 @@ kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev
 
 
 # Start port-forwards
-# Create port-forwards for all services: frontend (8080), backend (3000), livekit (7880), postgres (5432)
+# Create port-forwards for all services: frontend (8080), backend (3000), livekit (7880 - production only), postgres (5432)
 # nginx proxies handle external access, port-forwards enable localhost connectivity
+# Note: In local mode, LiveKit uses NodePort instead of port-forward for UDP support
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
@@ -743,8 +788,11 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
-    PF_LIVEKIT=$!
+    # LiveKit port-forward only for production (local uses NodePort for UDP support)
+    if [ "$NODE_ENV" = "production" ]; then
+        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
+        PF_LIVEKIT=$!
+    fi
 
     # Create postgres port-forward
     # Production: Use port 15432 locally (nginx listens on 5432 for external access)
@@ -772,8 +820,11 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
-    PF_LIVEKIT=$!
+    # LiveKit port-forward only for production (local uses NodePort for UDP support)
+    if [ "$NODE_ENV" = "production" ]; then
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
+        PF_LIVEKIT=$!
+    fi
 
     # Create postgres port-forward
     # Production: Use port 15432 locally (nginx listens on 5432 for external access)
@@ -847,6 +898,15 @@ else
     echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}/${POSTGRES_DB}"
 fi
 echo ""
+
+# Add note about NodePort in local mode
+if [ "$NODE_ENV" != "production" ]; then
+    echo -e "${BLUE}📡 Local Development Notes:${NC}"
+    echo -e "  ${YELLOW}• LiveKit uses NodePort (${MINIKUBE_IP}:30880) for UDP support${NC}"
+    echo -e "  ${YELLOW}• Access LiveKit at: ws://${MINIKUBE_IP}:30880${NC}"
+    echo -e "  ${YELLOW}• Other services use kubectl port-forward (8080, 3000, 5432)${NC}"
+    echo ""
+fi
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Show status and exit
