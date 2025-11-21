@@ -864,6 +864,9 @@ echo -e "${BLUE}📡 Notes:${NC}"
 echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside minikube)${NC}"
 echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -e "  ${YELLOW}• host.minikube.internal resolves to: ${HOST_GATEWAY_IP} (via hostAliases)${NC}"
+fi
 echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
     echo -e "  ${YELLOW}• Caddy proxies HTTPS traffic to localhost ports${NC}"

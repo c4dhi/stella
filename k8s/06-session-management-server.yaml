@@ -79,6 +79,8 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: elevenlabs-api-key
+        - name: HOST_GATEWAY_IP
+          value: "HOST_GATEWAY_IP"  # Replaced by deployment script on Linux
         resources:
           requests:
             memory: "512Mi"
