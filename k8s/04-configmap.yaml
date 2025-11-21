@@ -15,9 +15,11 @@ data:
   # Automatically set by deployment scripts based on environment
   CORS_ORIGIN: "${CORS_ORIGIN}"
 
-  # LiveKit (external server - using hosted LiveKit instead of local K8s)
-  # Values are injected from .env file by deployment script
+  # LiveKit (external server - runs in Docker on host, outside minikube)
+  # LIVEKIT_URL: Internal connection from K8s pods to host LiveKit (no SSL)
+  # PUBLIC_LIVEKIT_URL: Public connection for browsers (with SSL through Caddy)
   LIVEKIT_URL: "${LIVEKIT_URL}"
+  PUBLIC_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
 
   # TURN Server Configuration
   LIVEKIT_TURN_ENABLED: "${LIVEKIT_TURN_ENABLED}"
@@ -51,7 +53,7 @@ data:
   # These are injected into the frontend at container startup
   # Frontend (browser) connects to:
   #   - API for REST endpoints and LiveKit token generation
-  #   - LiveKit for WebSocket/WebRTC connections (uses same URL as backend)
+  #   - LiveKit for WebSocket/WebRTC connections (uses PUBLIC_LIVEKIT_URL)
   # Note: LiveKit credentials are kept secure on the backend only
   VITE_API_URL: "${PUBLIC_API_URL}"
-  VITE_LIVEKIT_URL: "${LIVEKIT_URL}"
+  VITE_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"

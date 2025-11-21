@@ -215,7 +215,9 @@ else
     export CORS_ORIGIN="http://localhost:8080"
 fi
 
-# Note: LIVEKIT_URL is read from .env file and used by all services (backend, frontend, agents)
+# Note: LIVEKIT_URL (internal) and PUBLIC_LIVEKIT_URL (external) are read from .env file
+# - LIVEKIT_URL: Used by K8s pods (backend, Python agents) for internal connection
+# - PUBLIC_LIVEKIT_URL: Used by frontend (browsers) for external connection
 
 # ============================================================================
 # Set Hardcoded Defaults (non-configurable)
@@ -276,7 +278,8 @@ export LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-localhost}"
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:   ${PUBLIC_API_URL}"
-echo -e "  LiveKit:   ${LIVEKIT_URL}"
+echo -e "  LiveKit (Internal):  ${LIVEKIT_URL}"
+echo -e "  LiveKit (Public):    ${PUBLIC_LIVEKIT_URL}"
 echo -e "  Database:  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 if [ "$LIVEKIT_TURN_ENABLED" = "true" ]; then
     echo -e "  TURN:      enabled (domain: ${LIVEKIT_TURN_DOMAIN})"
@@ -305,9 +308,10 @@ if [ -z "$LIVEKIT_API_KEY" ] || [ -z "$LIVEKIT_API_SECRET" ]; then
     LIVEKIT_VALIDATION_FAILED=true
 fi
 
-if [ -z "$LIVEKIT_URL" ]; then
+if [ -z "$LIVEKIT_URL" ] || [ -z "$PUBLIC_LIVEKIT_URL" ]; then
     echo -e "${RED}✗ Missing required LiveKit URL configuration${NC}"
-    echo "  - LIVEKIT_URL (e.g., ws://localhost:7880 or wss://livekit.example.com)"
+    [ -z "$LIVEKIT_URL" ] && echo "  - LIVEKIT_URL (internal, e.g., ws://host.minikube.internal:7880)"
+    [ -z "$PUBLIC_LIVEKIT_URL" ] && echo "  - PUBLIC_LIVEKIT_URL (public, e.g., wss://livekit.example.com)"
     LIVEKIT_VALIDATION_FAILED=true
 fi
 
@@ -490,8 +494,10 @@ minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
-# LiveKit is provided externally - just use the URL from .env
-echo -e "${GREEN}📡 Using LiveKit server: ${LIVEKIT_URL}${NC}"
+# LiveKit is provided externally - using dual URLs for internal/external access
+echo -e "${GREEN}📡 Using LiveKit server:${NC}"
+echo -e "  ${GREEN}Internal (K8s pods):${NC} ${LIVEKIT_URL}"
+echo -e "  ${GREEN}Public (browsers):${NC}   ${PUBLIC_LIVEKIT_URL}"
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -695,8 +701,8 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
 echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
-# LiveKit: Using external server
-echo -e "  • LiveKit: Using external server (${LIVEKIT_URL}) ${GREEN}✓${NC}"
+# LiveKit: Using external server with dual URLs
+echo -e "  • LiveKit: Internal=${LIVEKIT_URL}, Public=${PUBLIC_LIVEKIT_URL} ${GREEN}✓${NC}"
 
 # Restart deployments
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
@@ -790,7 +796,8 @@ echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
 echo -e "  ${GREEN}Frontend:${NC}  ${PUBLIC_FRONTEND_URL}"
 echo -e "  ${GREEN}Backend:${NC}   ${PUBLIC_API_URL}"
-echo -e "  ${GREEN}LiveKit:${NC}   ${LIVEKIT_URL}"
+echo -e "  ${GREEN}LiveKit (Internal):${NC}  ${LIVEKIT_URL}"
+echo -e "  ${GREEN}LiveKit (Public):${NC}    ${PUBLIC_LIVEKIT_URL}"
 echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 echo ""
 echo -e "${BLUE}🔐 Database Credentials:${NC}"
@@ -812,7 +819,9 @@ echo ""
 
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
-echo -e "  ${YELLOW}• LiveKit: ${LIVEKIT_URL} (external)${NC}"
+echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside minikube)${NC}"
+echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
+echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
     echo -e "  ${YELLOW}• Caddy proxies HTTPS traffic to localhost ports${NC}"
