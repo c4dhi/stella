@@ -81,6 +81,13 @@ if [ "$STOP_MODE" = true ]; then
         rm "$PID_DIR/port-forwards.pid"
     fi
 
+    # Stop minikube tunnel
+    if [ -f "$PID_DIR/minikube-tunnel.pid" ]; then
+        TUNNEL_PID=$(cat "$PID_DIR/minikube-tunnel.pid")
+        sudo kill $TUNNEL_PID 2>/dev/null && echo "  ✓ Stopped minikube tunnel (PID: $TUNNEL_PID)" || true
+        rm "$PID_DIR/minikube-tunnel.pid"
+    fi
+
     # Stop minikube
     echo "  • Stopping minikube cluster..."
     minikube stop
@@ -391,6 +398,30 @@ if ! command -v kubectl &> /dev/null; then
     fi
 fi
 
+# Check if setsid is available (required for Docker build output capture)
+SETSID_CMD="setsid"
+if ! command -v setsid &> /dev/null; then
+    # Check for gsetsid (macOS Homebrew version)
+    if command -v gsetsid &> /dev/null; then
+        SETSID_CMD="gsetsid"
+    else
+        echo -e "${YELLOW}⚠️  setsid not found (required for proper build output handling)${NC}"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            echo -e "${YELLOW}Installing util-linux (includes setsid)...${NC}"
+            brew install util-linux
+            echo -e "${GREEN}✓ util-linux installed${NC}"
+            # Homebrew installs it as gsetsid on macOS
+            SETSID_CMD="gsetsid"
+        elif [[ "$OS_TYPE" == "linux" ]]; then
+            # On Linux, setsid should be part of util-linux (core package)
+            echo -e "${RED}✗ setsid not found but should be part of util-linux${NC}"
+            echo -e "${YELLOW}Try: sudo apt-get install util-linux (Debian/Ubuntu)${NC}"
+            echo -e "${YELLOW}     sudo yum install util-linux (RHEL/CentOS)${NC}"
+            exit 1
+        fi
+    fi
+fi
+
 # Start minikube if not running
 echo -e "${GREEN}⚙️  Starting minikube...${NC}"
 
@@ -516,10 +547,11 @@ build_with_progress() {
     echo "  • ${IMAGE_NAME}..."
 
     # Run docker build in background and capture output
+    # Use setsid to detach from controlling terminal, preventing BuildKit from writing to /dev/tty
     if [ "$USE_BUILDKIT" = true ]; then
-        DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     else
-        docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     fi
 
     local BUILD_PID=$!
@@ -722,6 +754,40 @@ echo -e "${GREEN}✓ Port forwards started${NC}"
 # Give port forwards a moment to initialize
 sleep 2
 
+# ============================================================================
+# Setup Minikube Tunnel for Production (NodePort access on localhost)
+# ============================================================================
+if [ "$NODE_ENV" = "production" ]; then
+    echo ""
+    echo -e "${BLUE}🌉 Starting minikube tunnel for NodePort access...${NC}"
+
+    # Check if minikube tunnel is already running
+    if pgrep -f "minikube tunnel" > /dev/null; then
+        echo -e "${YELLOW}⚠️  Minikube tunnel already running${NC}"
+        TUNNEL_PID=$(pgrep -f "minikube tunnel")
+    else
+        if [ "$DAEMON_MODE" = true ]; then
+            # Daemon mode: Use sudo nohup and save PID
+            sudo -b nohup minikube tunnel > "$PID_DIR/minikube-tunnel.log" 2>&1
+            sleep 2
+            TUNNEL_PID=$(pgrep -f "minikube tunnel")
+            echo "$TUNNEL_PID" > "$PID_DIR/minikube-tunnel.pid"
+            echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
+        else
+            # Foreground mode: Background process with sudo
+            sudo -b minikube tunnel > /dev/null 2>&1
+            sleep 2
+            TUNNEL_PID=$(pgrep -f "minikube tunnel")
+            echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
+        fi
+
+        # Wait for tunnel to establish
+        echo -e "${BLUE}Waiting for tunnel to establish...${NC}"
+        sleep 3
+    fi
+    echo ""
+fi
+
 # Cleanup function to stop all services (only for foreground mode)
 if [ "$DAEMON_MODE" = false ]; then
   cleanup() {
@@ -735,6 +801,12 @@ if [ "$DAEMON_MODE" = false ]; then
     [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
+
+    # Stop minikube tunnel if running
+    if [ ! -z "$TUNNEL_PID" ]; then
+        echo -e "${BLUE}Stopping minikube tunnel...${NC}"
+        sudo kill $TUNNEL_PID 2>/dev/null
+    fi
 
     # Stop minikube (stops all services gracefully)
     echo -e "${BLUE}Stopping minikube cluster...${NC}"
@@ -781,7 +853,12 @@ echo ""
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
 echo -e "  ${YELLOW}• LiveKit: ${PUBLIC_LIVEKIT_URL} (external)${NC}"
-echo -e "  ${YELLOW}• Services use kubectl port-forward (8080, 3000, 5432)${NC}"
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "  ${YELLOW}• Services exposed via minikube tunnel (NodePorts: 30080, 30000, 30432)${NC}"
+    echo -e "  ${YELLOW}• Port-forwards for convenience (8080, 3000, 5432/15432)${NC}"
+else
+    echo -e "  ${YELLOW}• Services use kubectl port-forward (8080, 3000, 5432)${NC}"
+fi
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
