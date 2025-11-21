@@ -734,48 +734,75 @@ if [ "$NODE_ENV" = "production" ]; then
         echo -e "${YELLOW}⚠️  Minikube tunnel already running${NC}"
         TUNNEL_PID=$(pgrep -f "minikube tunnel")
     else
+        # Kill any processes using NodePorts before starting tunnel
+        echo -e "${BLUE}Checking for conflicting processes on NodePorts...${NC}"
+        for port in 30080 30000 30432; do
+            PID=$(lsof -ti:$port 2>/dev/null)
+            if [ ! -z "$PID" ]; then
+                echo -e "${YELLOW}  Killing process on port $port (PID: $PID)${NC}"
+                kill $PID 2>/dev/null || true
+                sleep 1
+            fi
+        done
+
+        # Minikube tunnel requires sudo to create localhost routes
+        echo -e "${YELLOW}⚠️  Minikube tunnel requires sudo for network routes${NC}"
+        echo -e "${BLUE}   You may be prompted for your password...${NC}"
+
         if [ "$DAEMON_MODE" = true ]; then
-            # Daemon mode: Use nohup and save PID
+            # Daemon mode: Use sudo with nohup
             echo -e "${BLUE}Starting tunnel in background...${NC}"
-            nohup minikube tunnel > "$PID_DIR/minikube-tunnel.log" 2>&1 &
-            sleep 3
+            sudo -b nohup minikube tunnel > "$PID_DIR/minikube-tunnel.log" 2>&1
+            sleep 5
             TUNNEL_PID=$(pgrep -f "minikube tunnel")
 
             if [ -z "$TUNNEL_PID" ]; then
                 echo -e "${RED}✗ Failed to start minikube tunnel${NC}"
                 echo -e "${YELLOW}Check logs: cat $PID_DIR/minikube-tunnel.log${NC}"
-                echo -e "${YELLOW}💡 Note: Run this script with sudo in production mode${NC}"
                 exit 1
             fi
 
             echo "$TUNNEL_PID" > "$PID_DIR/minikube-tunnel.pid"
             echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
         else
-            # Foreground mode: Background process
-            minikube tunnel > /dev/null 2>&1 &
-            sleep 3
+            # Foreground mode: Use sudo in background
+            sudo -b minikube tunnel > /dev/null 2>&1
+            sleep 5
             TUNNEL_PID=$(pgrep -f "minikube tunnel")
 
             if [ -z "$TUNNEL_PID" ]; then
                 echo -e "${RED}✗ Failed to start minikube tunnel${NC}"
-                echo -e "${YELLOW}💡 Note: Run this script with sudo in production mode${NC}"
                 exit 1
             fi
 
             echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
         fi
 
-        # Wait for tunnel to establish and test connectivity
-        echo -e "${BLUE}Waiting for tunnel to establish...${NC}"
-        sleep 5
+        # Wait for tunnel to establish routes
+        echo -e "${BLUE}Waiting for tunnel routes to establish...${NC}"
+        sleep 8
 
-        # Verify tunnel is working by checking if NodePorts are accessible
+        # Verify tunnel is working by checking BOTH NodePorts
         echo -e "${BLUE}Verifying tunnel connectivity...${NC}"
+        TUNNEL_OK=false
+
         if timeout 2 bash -c "</dev/tcp/localhost/30080" 2>/dev/null; then
-            echo -e "${GREEN}✓ Tunnel is operational (NodePort 30080 accessible)${NC}"
+            echo -e "${GREEN}  ✓ Frontend accessible (localhost:30080)${NC}"
+            TUNNEL_OK=true
         else
-            echo -e "${YELLOW}⚠️  Warning: Could not verify tunnel connectivity${NC}"
-            echo -e "${YELLOW}   Frontend may not be accessible yet (pods still starting)${NC}"
+            echo -e "${YELLOW}  ⚠️  Frontend not accessible on localhost:30080${NC}"
+        fi
+
+        if timeout 2 bash -c "</dev/tcp/localhost/30000" 2>/dev/null; then
+            echo -e "${GREEN}  ✓ Backend accessible (localhost:30000)${NC}"
+            TUNNEL_OK=true
+        else
+            echo -e "${YELLOW}  ⚠️  Backend not accessible on localhost:30000${NC}"
+        fi
+
+        if [ "$TUNNEL_OK" = false ]; then
+            echo -e "${YELLOW}⚠️  Warning: Tunnel may not be fully operational${NC}"
+            echo -e "${YELLOW}   Services accessible via minikube IP: $(minikube ip)${NC}"
         fi
     fi
     echo ""
@@ -798,7 +825,7 @@ if [ "$DAEMON_MODE" = false ]; then
     # Stop minikube tunnel if running
     if [ ! -z "$TUNNEL_PID" ]; then
         echo -e "${BLUE}Stopping minikube tunnel...${NC}"
-        kill $TUNNEL_PID 2>/dev/null
+        sudo kill $TUNNEL_PID 2>/dev/null || true
     fi
 
     # Stop minikube (stops all services gracefully)
