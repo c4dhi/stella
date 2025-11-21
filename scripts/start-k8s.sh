@@ -217,8 +217,61 @@ else
     export CORS_ORIGIN="http://localhost:8080"
 fi
 
-# Set TTS_PROVIDER default if not set (only acceptable default)
+# ============================================================================
+# Set Hardcoded Defaults (non-configurable)
+# ============================================================================
+# These values don't need to be in .env files - they're set automatically
+
+# Backend port (always 3000)
+export PORT=3000
+
+# Kubernetes configuration
+export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+export AGENT_IMAGE="${AGENT_IMAGE:-conversational-ai-server:latest}"
+export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
+
+# Legacy compatibility
+export PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-localhost}"
+export ENABLE_NETWORK_ACCESS="${ENABLE_NETWORK_ACCESS:-false}"
+
+# Frontend configuration
+export VITE_USE_INPAGE_MOCK="${VITE_USE_INPAGE_MOCK:-0}"
+
+# Python Agent - Connection defaults
+export ROOM_NAME="${ROOM_NAME:-voice-ai-room}"
+export IDENTITY="${IDENTITY:-python-listener}"
+
+# Python Agent - STT defaults
+export WHISPER_DEVICE="${WHISPER_DEVICE:-cpu}"
+export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-int8}"
+export WHISPER_BEAM_SIZE="${WHISPER_BEAM_SIZE:-1}"
+export WHISPER_WORD_TIMESTAMPS="${WHISPER_WORD_TIMESTAMPS:-false}"
+export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-250}"
+export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
+export ENABLE_STREAMING_CHUNKS="${ENABLE_STREAMING_CHUNKS:-true}"
+export CHUNK_LENGTH_MS="${CHUNK_LENGTH_MS:-1000}"
+export PARTIAL_TRANSCRIPT_INTERVAL_MS="${PARTIAL_TRANSCRIPT_INTERVAL_MS:-1000}"
+
+# Python Agent - TTS defaults
+export ELEVENLABS_STABILITY="${ELEVENLABS_STABILITY:-0.5}"
+export ELEVENLABS_SIMILARITY_BOOST="${ELEVENLABS_SIMILARITY_BOOST:-0.8}"
+export ELEVENLABS_STYLE="${ELEVENLABS_STYLE:-0.0}"
+export ELEVENLABS_USE_SPEAKER_BOOST="${ELEVENLABS_USE_SPEAKER_BOOST:-true}"
+export KOKORO_MODEL_PATH="${KOKORO_MODEL_PATH:-./kokoro-models/kokoro-v1.0.onnx}"
+export KOKORO_VOICES_PATH="${KOKORO_VOICES_PATH:-./kokoro-models/voices-v1.0.bin}"
+export KOKORO_CACHE_DIR="${KOKORO_CACHE_DIR:-/root/.cache/kokoro}"
+
+# Python Agent - Barge-in defaults
+export MIN_INTERRUPTION_DURATION="${MIN_INTERRUPTION_DURATION:-0.5}"
+export MIN_INTERRUPTION_WORDS="${MIN_INTERRUPTION_WORDS:-1}"
+export FALSE_INTERRUPTION_TIMEOUT="${FALSE_INTERRUPTION_TIMEOUT:-2.0}"
+
+# TTS Provider default
 export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
+
+# TURN defaults
+export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
+export LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-localhost}"
 
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
