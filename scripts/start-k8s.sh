@@ -625,11 +625,9 @@ kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
-# Apply NodePort services based on environment
-if [ "$NODE_ENV" = "production" ]; then
-    echo -e "${BLUE}  • Applying NodePort services for production...${NC}"
-    kubectl apply -f k8s/production/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
-else
+# Apply NodePort services for local development only
+# Production uses ClusterIP services (already created) + port-forward
+if [ "$NODE_ENV" != "production" ]; then
     echo -e "${BLUE}  • Applying NodePort services for local development...${NC}"
     kubectl apply -f k8s/local/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
 fi
@@ -668,9 +666,11 @@ kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev
 
 
 # Start port-forwards
-# Create port-forwards for all services: frontend (8080), backend (3000), livekit (7880 - production only), postgres (5432)
-# nginx proxies handle external access, port-forwards enable localhost connectivity
-# Note: In local mode, LiveKit uses NodePort instead of port-forward for UDP support
+# Create port-forwards for all services:
+#   - Frontend: localhost:8080
+#   - Backend: localhost:3000
+#   - Database: localhost:5432
+# In production, Caddy proxies external HTTPS traffic to these localhost ports
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
@@ -681,14 +681,8 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    # Create postgres port-forward
-    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
-    # Local: Use port 5432 (no nginx conflict)
-    if [ "$NODE_ENV" = "production" ]; then
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    else
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    fi
+    # PostgreSQL port-forward (5432 for both local and production)
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
     PF_POSTGRES=$!
 
     # Save PIDs to file
@@ -706,14 +700,8 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    # Create postgres port-forward
-    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
-    # Local: Use port 5432 (no nginx conflict)
-    if [ "$NODE_ENV" = "production" ]; then
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > /dev/null 2>&1 &
-    else
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
-    fi
+    # PostgreSQL port-forward (5432 for both local and production)
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
     PF_POSTGRES=$!
 fi
 
@@ -721,92 +709,6 @@ echo -e "${GREEN}✓ Port forwards started${NC}"
 
 # Give port forwards a moment to initialize
 sleep 2
-
-# ============================================================================
-# Setup Minikube Tunnel for Production (NodePort access on localhost)
-# ============================================================================
-if [ "$NODE_ENV" = "production" ]; then
-    echo ""
-    echo -e "${BLUE}🌉 Starting minikube tunnel for NodePort access...${NC}"
-
-    # Check if minikube tunnel is already running
-    if pgrep -f "minikube tunnel" > /dev/null; then
-        echo -e "${YELLOW}⚠️  Minikube tunnel already running${NC}"
-        TUNNEL_PID=$(pgrep -f "minikube tunnel")
-    else
-        # Kill any processes using NodePorts before starting tunnel
-        echo -e "${BLUE}Checking for conflicting processes on NodePorts...${NC}"
-        for port in 30080 30000 30432; do
-            PID=$(lsof -ti:$port 2>/dev/null)
-            if [ ! -z "$PID" ]; then
-                echo -e "${YELLOW}  Killing process on port $port (PID: $PID)${NC}"
-                kill $PID 2>/dev/null || true
-                sleep 1
-            fi
-        done
-
-        # Minikube tunnel requires sudo to create localhost routes
-        echo -e "${YELLOW}⚠️  Minikube tunnel requires sudo for network routes${NC}"
-        echo -e "${BLUE}   You may be prompted for your password...${NC}"
-
-        if [ "$DAEMON_MODE" = true ]; then
-            # Daemon mode: Use sudo with nohup
-            echo -e "${BLUE}Starting tunnel in background...${NC}"
-            sudo -b nohup minikube tunnel > "$PID_DIR/minikube-tunnel.log" 2>&1
-            sleep 5
-            TUNNEL_PID=$(pgrep -f "minikube tunnel")
-
-            if [ -z "$TUNNEL_PID" ]; then
-                echo -e "${RED}✗ Failed to start minikube tunnel${NC}"
-                echo -e "${YELLOW}Check logs: cat $PID_DIR/minikube-tunnel.log${NC}"
-                exit 1
-            fi
-
-            echo "$TUNNEL_PID" > "$PID_DIR/minikube-tunnel.pid"
-            echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
-        else
-            # Foreground mode: Use sudo in background
-            sudo -b minikube tunnel > /dev/null 2>&1
-            sleep 5
-            TUNNEL_PID=$(pgrep -f "minikube tunnel")
-
-            if [ -z "$TUNNEL_PID" ]; then
-                echo -e "${RED}✗ Failed to start minikube tunnel${NC}"
-                exit 1
-            fi
-
-            echo -e "${GREEN}✓ Minikube tunnel started (PID: $TUNNEL_PID)${NC}"
-        fi
-
-        # Wait for tunnel to establish routes
-        echo -e "${BLUE}Waiting for tunnel routes to establish...${NC}"
-        sleep 8
-
-        # Verify tunnel is working by checking BOTH NodePorts
-        echo -e "${BLUE}Verifying tunnel connectivity...${NC}"
-        TUNNEL_OK=false
-
-        if timeout 2 bash -c "</dev/tcp/localhost/30080" 2>/dev/null; then
-            echo -e "${GREEN}  ✓ Frontend accessible (localhost:30080)${NC}"
-            TUNNEL_OK=true
-        else
-            echo -e "${YELLOW}  ⚠️  Frontend not accessible on localhost:30080${NC}"
-        fi
-
-        if timeout 2 bash -c "</dev/tcp/localhost/30000" 2>/dev/null; then
-            echo -e "${GREEN}  ✓ Backend accessible (localhost:30000)${NC}"
-            TUNNEL_OK=true
-        else
-            echo -e "${YELLOW}  ⚠️  Backend not accessible on localhost:30000${NC}"
-        fi
-
-        if [ "$TUNNEL_OK" = false ]; then
-            echo -e "${YELLOW}⚠️  Warning: Tunnel may not be fully operational${NC}"
-            echo -e "${YELLOW}   Services accessible via minikube IP: $(minikube ip)${NC}"
-        fi
-    fi
-    echo ""
-fi
 
 # Cleanup function to stop all services (only for foreground mode)
 if [ "$DAEMON_MODE" = false ]; then
@@ -821,12 +723,6 @@ if [ "$DAEMON_MODE" = false ]; then
     [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
-
-    # Stop minikube tunnel if running
-    if [ ! -z "$TUNNEL_PID" ]; then
-        echo -e "${BLUE}Stopping minikube tunnel...${NC}"
-        sudo kill $TUNNEL_PID 2>/dev/null || true
-    fi
 
     # Stop minikube (stops all services gracefully)
     echo -e "${BLUE}Stopping minikube cluster...${NC}"
