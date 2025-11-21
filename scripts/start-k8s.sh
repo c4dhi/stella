@@ -503,7 +503,8 @@ if [[ "$OS_TYPE" == "linux" ]]; then
     echo -e "${BLUE}🔍 Detecting host gateway IP for host.minikube.internal...${NC}"
 
     # Get the gateway IP from inside minikube (this is the host's IP)
-    HOST_GATEWAY_IP=$(minikube ssh "ip route | grep default | awk '{print \$3}'" 2>/dev/null)
+    # tr -d removes all whitespace (including trailing newlines/spaces)
+    HOST_GATEWAY_IP=$(minikube ssh "ip route | grep default | awk '{print \$3}'" 2>/dev/null | tr -d '[:space:]')
 
     if [ -z "$HOST_GATEWAY_IP" ]; then
         # Fallback: Common default gateway IPs
