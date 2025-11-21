@@ -81,13 +81,6 @@ if [ "$STOP_MODE" = true ]; then
         rm "$PID_DIR/port-forwards.pid"
     fi
 
-    # Stop minikube tunnel
-    if [ -f "$PID_DIR/minikube-tunnel.pid" ]; then
-        TUNNEL_PID=$(cat "$PID_DIR/minikube-tunnel.pid")
-        kill $TUNNEL_PID 2>/dev/null && echo "  ✓ Stopped minikube tunnel (PID: $TUNNEL_PID)" || true
-        rm "$PID_DIR/minikube-tunnel.pid"
-    fi
-
     # Stop minikube
     echo "  • Stopping minikube cluster..."
     minikube stop
@@ -125,8 +118,8 @@ fi
 
 # Ensure Docker and other tools are in PATH
 if [[ "$OS_TYPE" == "macos" ]]; then
-    # macOS: Include Homebrew and OrbStack paths
-    export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin:$PATH"
+    # macOS: Include Homebrew, OrbStack, and util-linux paths
+    export PATH="/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/opt/util-linux/bin:$HOME/.orbstack/bin:$PATH"
 else
     # Linux: Use standard paths
     export PATH="/usr/local/bin:/usr/bin:/usr/sbin:$PATH"
@@ -401,24 +394,23 @@ fi
 # Check if setsid is available (required for Docker build output capture)
 SETSID_CMD="setsid"
 if ! command -v setsid &> /dev/null; then
-    # Check for gsetsid (macOS Homebrew version)
-    if command -v gsetsid &> /dev/null; then
-        SETSID_CMD="gsetsid"
-    else
-        echo -e "${YELLOW}⚠️  setsid not found (required for proper build output handling)${NC}"
-        if [[ "$OS_TYPE" == "macos" ]]; then
-            echo -e "${YELLOW}Installing util-linux (includes setsid)...${NC}"
-            brew install util-linux
-            echo -e "${GREEN}✓ util-linux installed${NC}"
-            # Homebrew installs it as gsetsid on macOS
-            SETSID_CMD="gsetsid"
-        elif [[ "$OS_TYPE" == "linux" ]]; then
-            # On Linux, setsid should be part of util-linux (core package)
-            echo -e "${RED}✗ setsid not found but should be part of util-linux${NC}"
-            echo -e "${YELLOW}Try: sudo apt-get install util-linux (Debian/Ubuntu)${NC}"
-            echo -e "${YELLOW}     sudo yum install util-linux (RHEL/CentOS)${NC}"
+    echo -e "${YELLOW}⚠️  setsid not found (required for proper build output handling)${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "${YELLOW}Installing util-linux (includes setsid)...${NC}"
+        brew install util-linux
+        echo -e "${GREEN}✓ util-linux installed${NC}"
+        # After installation, check if setsid is now available
+        if ! command -v setsid &> /dev/null; then
+            echo -e "${RED}✗ setsid still not found after installation${NC}"
+            echo -e "${YELLOW}Try running: export PATH=\"/opt/homebrew/opt/util-linux/bin:\$PATH\"${NC}"
             exit 1
         fi
+    elif [[ "$OS_TYPE" == "linux" ]]; then
+        # On Linux, setsid should be part of util-linux (core package)
+        echo -e "${RED}✗ setsid not found but should be part of util-linux${NC}"
+        echo -e "${YELLOW}Try: sudo apt-get install util-linux (Debian/Ubuntu)${NC}"
+        echo -e "${YELLOW}     sudo yum install util-linux (RHEL/CentOS)${NC}"
+        exit 1
     fi
 fi
 
@@ -432,7 +424,7 @@ if [ "$MINIKUBE_RUNNING" = "no" ]; then
     # Minikube needs to be started (but NOT deleted automatically)
     # Start minikube with standard configuration
     # Note: LiveKit runs in Docker on host (not in K8s cluster)
-    # NodePorts will be exposed via minikube tunnel in production mode
+    # Production uses ClusterIP services with port-forward (no NodePorts needed)
     echo -e "${YELLOW}⚠️  Minikube not running. Starting minikube...${NC}"
     minikube start --driver=docker --cpus=4 --memory=8192
     echo -e "${GREEN}✓ Minikube started${NC}"
@@ -769,11 +761,9 @@ echo ""
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
 echo -e "  ${YELLOW}• LiveKit: ${PUBLIC_LIVEKIT_URL} (external)${NC}"
+echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
-    echo -e "  ${YELLOW}• Services exposed via minikube tunnel (NodePorts: 30080, 30000, 30432)${NC}"
-    echo -e "  ${YELLOW}• Port-forwards for convenience (8080, 3000, 5432/15432)${NC}"
-else
-    echo -e "  ${YELLOW}• Services use kubectl port-forward (8080, 3000, 5432)${NC}"
+    echo -e "  ${YELLOW}• Caddy proxies HTTPS traffic to localhost ports${NC}"
 fi
 echo ""
 
