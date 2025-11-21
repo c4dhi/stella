@@ -27,6 +27,13 @@ spec:
         app: session-management-server
     spec:
       serviceAccountName: session-management-sa
+      # Allow pod to reach host machine (where LiveKit runs in Docker)
+      # On Linux, host.minikube.internal doesn't exist by default, so we map it
+      # to the minikube gateway IP which routes to the host
+      hostAliases:
+      - ip: "HOST_GATEWAY_IP"  # Replaced by deployment script
+        hostnames:
+        - "host.minikube.internal"
       containers:
       - name: server
         image: session-management-server:latest

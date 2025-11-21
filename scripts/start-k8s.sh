@@ -494,10 +494,39 @@ minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
+# ============================================================================
+# Detect Host Gateway IP (for host.minikube.internal on Linux)
+# ============================================================================
+# On macOS, host.minikube.internal works automatically
+# On Linux, we need to add hostAliases to pods to map it to the gateway IP
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -e "${BLUE}🔍 Detecting host gateway IP for host.minikube.internal...${NC}"
+
+    # Get the gateway IP from inside minikube (this is the host's IP)
+    HOST_GATEWAY_IP=$(minikube ssh "ip route | grep default | awk '{print \$3}'" 2>/dev/null)
+
+    if [ -z "$HOST_GATEWAY_IP" ]; then
+        # Fallback: Common default gateway IPs
+        HOST_GATEWAY_IP="192.168.49.1"
+        echo -e "${YELLOW}⚠️  Could not detect gateway IP, using default: ${HOST_GATEWAY_IP}${NC}"
+    else
+        echo -e "${GREEN}✓ Detected host gateway IP: ${HOST_GATEWAY_IP}${NC}"
+    fi
+
+    export HOST_GATEWAY_IP
+else
+    # macOS doesn't need this - host.minikube.internal works natively
+    HOST_GATEWAY_IP="127.0.0.1"  # Not used on macOS, just for consistency
+    export HOST_GATEWAY_IP
+fi
+
 # LiveKit is provided externally - using dual URLs for internal/external access
 echo -e "${GREEN}📡 Using LiveKit server:${NC}"
 echo -e "  ${GREEN}Internal (K8s pods):${NC} ${LIVEKIT_URL}"
 echo -e "  ${GREEN}Public (browsers):${NC}   ${PUBLIC_LIVEKIT_URL}"
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -e "  ${GREEN}Host Gateway IP:${NC}     ${HOST_GATEWAY_IP}"
+fi
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -660,6 +689,18 @@ echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
+# Replace HOST_GATEWAY_IP placeholder in session-management-server deployment
+# This is needed for host.minikube.internal DNS resolution on Linux
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -n "  • Updating session-management-server with host gateway IP... "
+    sed "s/HOST_GATEWAY_IP/${HOST_GATEWAY_IP}/g" k8s/06-session-management-server.yaml > /tmp/06-session-management-server-updated.yaml
+    echo -e "${GREEN}✓${NC}"
+    SESSION_MGMT_YAML="/tmp/06-session-management-server-updated.yaml"
+else
+    # macOS doesn't need HOST_GATEWAY_IP replacement (host.minikube.internal works natively)
+    SESSION_MGMT_YAML="k8s/06-session-management-server.yaml"
+fi
+
 # Note: LiveKit API key verification skipped - using external LiveKit server
 # The external server is pre-configured with its own API keys
 
@@ -672,7 +713,7 @@ kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
 kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
-kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
+kubectl apply -f "$SESSION_MGMT_YAML" > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
 # Apply NodePort services for local development only

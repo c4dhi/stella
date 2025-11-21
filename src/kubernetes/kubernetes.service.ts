@@ -67,6 +67,14 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
+        // Allow pod to reach host machine (where LiveKit runs in Docker)
+        // Maps host.minikube.internal to the host's IP address
+        hostAliases: [
+          {
+            ip: process.env.HOST_GATEWAY_IP || '192.168.49.1',
+            hostnames: ['host.minikube.internal'],
+          },
+        ],
         containers: [
           {
             name: 'agent',
