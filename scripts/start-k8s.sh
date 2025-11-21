@@ -87,6 +87,10 @@ if [ "$STOP_MODE" = true ]; then
 
     echo ""
     echo "✅ All services stopped"
+    echo ""
+    echo "Note: Firewall rules for LiveKit (port 7880) remain active."
+    echo "These rules will persist until reboot or manual removal."
+    echo "To remove: sudo iptables -D INPUT -s 10.244.0.0/16 -p tcp --dport 7880 -j ACCEPT"
     exit 0
 fi
 
@@ -515,6 +519,34 @@ if [[ "$OS_TYPE" == "linux" ]]; then
     fi
 
     export HOST_GATEWAY_IP
+
+    # ============================================================================
+    # Configure firewall for LiveKit connectivity
+    # ============================================================================
+    # Minikube pods need to connect to LiveKit running on the host
+    # By default, iptables may block connections from pod network to host services
+
+    echo -e "${BLUE}🔒 Configuring firewall for LiveKit connectivity...${NC}"
+
+    # Get minikube pod network CIDR (usually 10.244.0.0/16)
+    MINIKUBE_POD_CIDR=$(kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}' 2>/dev/null || echo "10.244.0.0/16")
+
+    # Check if iptables rule already exists
+    if sudo iptables -C INPUT -s "$MINIKUBE_POD_CIDR" -p tcp --dport 7880 -j ACCEPT 2>/dev/null; then
+        echo -e "${GREEN}✓ Firewall rule already exists for LiveKit port 7880${NC}"
+    else
+        echo -e "${YELLOW}  Adding firewall rule to allow pod → host LiveKit connections...${NC}"
+
+        # Add iptables rule to allow connections from minikube pods to LiveKit
+        if sudo iptables -I INPUT -s "$MINIKUBE_POD_CIDR" -p tcp --dport 7880 -j ACCEPT; then
+            echo -e "${GREEN}✓ Firewall rule added: ${MINIKUBE_POD_CIDR} → port 7880${NC}"
+            echo -e "${YELLOW}  Note: Rule will persist until reboot. To make permanent, add to firewall config.${NC}"
+        else
+            echo -e "${RED}✗ Failed to add firewall rule (sudo required)${NC}"
+            echo -e "${YELLOW}  Manual fix: sudo iptables -I INPUT -s ${MINIKUBE_POD_CIDR} -p tcp --dport 7880 -j ACCEPT${NC}"
+            exit 1
+        fi
+    fi
 else
     # macOS doesn't need this - host.minikube.internal works natively
     HOST_GATEWAY_IP="127.0.0.1"  # Not used on macOS, just for consistency
@@ -866,6 +898,7 @@ echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
 if [[ "$OS_TYPE" == "linux" ]]; then
     echo -e "  ${YELLOW}• host.minikube.internal resolves to: ${HOST_GATEWAY_IP} (via hostAliases)${NC}"
+    echo -e "  ${YELLOW}• Firewall configured: ${MINIKUBE_POD_CIDR} → port 7880 (iptables)${NC}"
 fi
 echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
