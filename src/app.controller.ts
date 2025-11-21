@@ -70,7 +70,7 @@ export class AppController {
     if (process.env.PUBLIC_SERVER_URL) {
       // Priority 1: Use explicitly configured URLs
       serverUrl = process.env.PUBLIC_SERVER_URL;
-      livekitUrl = process.env.PUBLIC_LIVEKIT_URL || this.livekit.getPublicServerUrl();
+      livekitUrl = this.livekit.getPublicServerUrl();
       frontendUrl = process.env.PUBLIC_FRONTEND_URL || `http://${localIp}:5173`;
       source = 'configured';
     } else if (isKubernetes) {

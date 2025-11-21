@@ -35,11 +35,10 @@ data:
   # Public URLs for external access (injected by deployment scripts)
   # ============================================================================
   # Local (NODE_ENV=local):
-  #   - Uses localhost with standard ports (8080, 3000, 7880)
+  #   - Uses localhost with standard ports (8080, 3000)
   # Production (NODE_ENV=production):
-  #   - Uses custom domains with SSL (frontend.DOMAIN, backend.DOMAIN, livekit.DOMAIN)
+  #   - Uses custom domains with SSL (frontend.DOMAIN, backend.DOMAIN)
   PUBLIC_API_URL: "${PUBLIC_API_URL}"
-  PUBLIC_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
   PUBLIC_FRONTEND_URL: "${PUBLIC_FRONTEND_URL}"
 
   # Database public access (for external tools)
@@ -52,7 +51,7 @@ data:
   # These are injected into the frontend at container startup
   # Frontend (browser) connects to:
   #   - API for REST endpoints and LiveKit token generation
-  #   - LiveKit for WebSocket/WebRTC connections
+  #   - LiveKit for WebSocket/WebRTC connections (uses same URL as backend)
   # Note: LiveKit credentials are kept secure on the backend only
   VITE_API_URL: "${PUBLIC_API_URL}"
-  VITE_LIVEKIT_URL: "${PUBLIC_LIVEKIT_URL}"
+  VITE_LIVEKIT_URL: "${LIVEKIT_URL}"

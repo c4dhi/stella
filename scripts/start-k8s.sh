@@ -200,7 +200,6 @@ if [ "$NODE_ENV" = "production" ]; then
     # Production URLs (custom domains with SSL)
     export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
     export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
-    # PUBLIC_LIVEKIT_URL: Read from .env file (required)
     export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN}"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN}"
@@ -211,11 +210,12 @@ else
     export NODE_ENV="local"
     export PUBLIC_FRONTEND_URL="http://localhost:8080"
     export PUBLIC_API_URL="http://localhost:3000"
-    # PUBLIC_LIVEKIT_URL: Read from .env file (required)
     export PUBLIC_DB_HOST="localhost"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="http://localhost:8080"
 fi
+
+# Note: LIVEKIT_URL is read from .env file and used by all services (backend, frontend, agents)
 
 # ============================================================================
 # Set Hardcoded Defaults (non-configurable)
@@ -276,7 +276,7 @@ export LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-localhost}"
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:   ${PUBLIC_API_URL}"
-echo -e "  LiveKit:   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  LiveKit:   ${LIVEKIT_URL}"
 echo -e "  Database:  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 if [ "$LIVEKIT_TURN_ENABLED" = "true" ]; then
     echo -e "  TURN:      enabled (domain: ${LIVEKIT_TURN_DOMAIN})"
@@ -305,10 +305,9 @@ if [ -z "$LIVEKIT_API_KEY" ] || [ -z "$LIVEKIT_API_SECRET" ]; then
     LIVEKIT_VALIDATION_FAILED=true
 fi
 
-if [ -z "$LIVEKIT_URL" ] || [ -z "$PUBLIC_LIVEKIT_URL" ]; then
+if [ -z "$LIVEKIT_URL" ]; then
     echo -e "${RED}✗ Missing required LiveKit URL configuration${NC}"
-    [ -z "$LIVEKIT_URL" ] && echo "  - LIVEKIT_URL (e.g., ws://localhost:7880 or wss://livekit.example.com)"
-    [ -z "$PUBLIC_LIVEKIT_URL" ] && echo "  - PUBLIC_LIVEKIT_URL (e.g., ws://localhost:7880 or wss://livekit.example.com)"
+    echo "  - LIVEKIT_URL (e.g., ws://localhost:7880 or wss://livekit.example.com)"
     LIVEKIT_VALIDATION_FAILED=true
 fi
 
@@ -492,7 +491,7 @@ kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
 # LiveKit is provided externally - just use the URL from .env
-echo -e "${GREEN}📡 Using LiveKit server: ${PUBLIC_LIVEKIT_URL}${NC}"
+echo -e "${GREEN}📡 Using LiveKit server: ${LIVEKIT_URL}${NC}"
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -697,7 +696,7 @@ echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 # LiveKit: Using external server
-echo -e "  • LiveKit: Using external server (${PUBLIC_LIVEKIT_URL}) ${GREEN}✓${NC}"
+echo -e "  • LiveKit: Using external server (${LIVEKIT_URL}) ${GREEN}✓${NC}"
 
 # Restart deployments
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
@@ -791,7 +790,7 @@ echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
 echo -e "  ${GREEN}Frontend:${NC}  ${PUBLIC_FRONTEND_URL}"
 echo -e "  ${GREEN}Backend:${NC}   ${PUBLIC_API_URL}"
-echo -e "  ${GREEN}LiveKit:${NC}   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  ${GREEN}LiveKit:${NC}   ${LIVEKIT_URL}"
 echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 echo ""
 echo -e "${BLUE}🔐 Database Credentials:${NC}"
@@ -813,7 +812,7 @@ echo ""
 
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
-echo -e "  ${YELLOW}• LiveKit: ${PUBLIC_LIVEKIT_URL} (external)${NC}"
+echo -e "  ${YELLOW}• LiveKit: ${LIVEKIT_URL} (external)${NC}"
 echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
     echo -e "  ${YELLOW}• Caddy proxies HTTPS traffic to localhost ports${NC}"
