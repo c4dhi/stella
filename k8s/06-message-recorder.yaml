@@ -13,6 +13,19 @@ spec:
       labels:
         app: message-recorder
     spec:
+      # Init container to dynamically discover gateway IP for LiveKit connectivity
+      initContainers:
+      - name: discover-livekit-host
+        image: busybox:1.36
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          GATEWAY=$(ip route show default | awk '{print $3}' | head -1)
+          echo "$GATEWAY" > /shared/gateway-ip
+          echo "Discovered gateway IP: $GATEWAY"
+        volumeMounts:
+        - name: shared-data
+          mountPath: /shared
       containers:
       - name: message-recorder
         image: message-recorder-python:latest
@@ -38,6 +51,26 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: livekit-api-secret
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # Update /etc/hosts with gateway IP only in production mode
+          if [ -f /shared/gateway-ip ]; then
+            GATEWAY_IP=$(cat /shared/gateway-ip)
+
+            # Only update /etc/hosts in production (Linux)
+            if [ "${NODE_ENV}" = "production" ]; then
+              echo "$GATEWAY_IP livekit-host host.minikube.internal" >> /etc/hosts
+              echo "Production: Updated /etc/hosts with gateway IP: $GATEWAY_IP"
+            else
+              echo "Development: Using native host.minikube.internal resolution (gateway: $GATEWAY_IP)"
+            fi
+          fi
+          # Start the Python application (unbuffered output for real-time logs)
+          exec python -u main.py
+        volumeMounts:
+        - name: shared-data
+          mountPath: /shared
         resources:
           requests:
             memory: "128Mi"
@@ -54,3 +87,6 @@ spec:
             - "print('alive')"
           initialDelaySeconds: 30
           periodSeconds: 60
+      volumes:
+      - name: shared-data
+        emptyDir: {}

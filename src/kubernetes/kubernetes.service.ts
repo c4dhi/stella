@@ -67,12 +67,23 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
-        // Allow pod to reach host machine (where LiveKit runs in Docker)
-        // Maps host.minikube.internal to the host's IP address
-        hostAliases: [
+        // Init container to dynamically discover gateway IP for LiveKit connectivity
+        initContainers: [
           {
-            ip: process.env.HOST_GATEWAY_IP || '192.168.49.1',
-            hostnames: ['host.minikube.internal'],
+            name: 'discover-livekit-host',
+            image: 'busybox:1.36',
+            command: ['/bin/sh', '-c'],
+            args: [
+              'GATEWAY=$(ip route show default | awk \'{print $3}\' | head -1)\n' +
+              'echo "$GATEWAY" > /shared/gateway-ip\n' +
+              'echo "Discovered gateway IP: $GATEWAY"',
+            ],
+            volumeMounts: [
+              {
+                name: 'shared-data',
+                mountPath: '/shared',
+              },
+            ],
           },
         ],
         containers: [
@@ -80,6 +91,23 @@ export class KubernetesService {
             name: 'agent',
             image: this.agentImage,
             imagePullPolicy: this.imagePullPolicy as any,
+            command: ['/bin/sh', '-c'],
+            args: [
+              '# Update /etc/hosts with gateway IP only in production mode\n' +
+              'if [ -f /shared/gateway-ip ]; then\n' +
+              '  GATEWAY_IP=$(cat /shared/gateway-ip)\n' +
+              '\n' +
+              '  # Only update /etc/hosts in production (Linux)\n' +
+              '  if [ "${NODE_ENV}" = "production" ]; then\n' +
+              '    echo "$GATEWAY_IP livekit-host host.minikube.internal" >> /etc/hosts\n' +
+              '    echo "Production: Updated /etc/hosts with gateway IP: $GATEWAY_IP"\n' +
+              '  else\n' +
+              '    echo "Development: Using native host.minikube.internal resolution (gateway: $GATEWAY_IP)"\n' +
+              '  fi\n' +
+              'fi\n' +
+              '# Start the Python agent (unbuffered output for real-time logs)\n' +
+              'exec python -u main.py',
+            ],
             envFrom: [
               {
                 secretRef: {
@@ -96,6 +124,11 @@ export class KubernetesService {
               {
                 name: 'AGENT_ICON',
                 value: config.agentIcon,
+              },
+              // Environment mode (for conditional gateway IP setup)
+              {
+                name: 'NODE_ENV',
+                value: process.env.NODE_ENV || 'local',
               },
               // Shared API keys from central grace-ai-secrets
               {
@@ -117,6 +150,12 @@ export class KubernetesService {
                 },
               },
             ],
+            volumeMounts: [
+              {
+                name: 'shared-data',
+                mountPath: '/shared',
+              },
+            ],
             resources: {
               requests: {
                 memory: '512Mi',
@@ -127,6 +166,12 @@ export class KubernetesService {
                 cpu: '1000m',
               },
             },
+          },
+        ],
+        volumes: [
+          {
+            name: 'shared-data',
+            emptyDir: {},
           },
         ],
       },

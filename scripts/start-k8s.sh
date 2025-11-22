@@ -88,9 +88,6 @@ if [ "$STOP_MODE" = true ]; then
     echo ""
     echo "✅ All services stopped"
     echo ""
-    echo "Note: Firewall rules for LiveKit (port 7880) remain active."
-    echo "These rules will persist until reboot or manual removal."
-    echo "To remove: sudo iptables -D INPUT -s 10.244.0.0/16 -p tcp --dport 7880 -j ACCEPT"
     exit 0
 fi
 
@@ -499,67 +496,22 @@ kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
 # ============================================================================
-# Detect Host Gateway IP (for host.minikube.internal on Linux)
+# LiveKit Host Discovery
 # ============================================================================
 # On macOS, host.minikube.internal works automatically
-# On Linux, we need to add hostAliases to pods to map it to the gateway IP
+# On Linux (production), pods use init containers to dynamically discover
+# the gateway IP and update /etc/hosts at runtime
+# No static configuration or firewall rules needed
 if [[ "$OS_TYPE" == "linux" ]]; then
-    echo -e "${BLUE}🔍 Detecting host gateway IP for host.minikube.internal...${NC}"
-
-    # Get the gateway IP from inside minikube (this is the host's IP)
-    # tr -d removes all whitespace (including trailing newlines/spaces)
-    HOST_GATEWAY_IP=$(minikube ssh "ip route | grep default | awk '{print \$3}'" 2>/dev/null | tr -d '[:space:]')
-
-    if [ -z "$HOST_GATEWAY_IP" ]; then
-        # Fallback: Common default gateway IPs
-        HOST_GATEWAY_IP="192.168.49.1"
-        echo -e "${YELLOW}⚠️  Could not detect gateway IP, using default: ${HOST_GATEWAY_IP}${NC}"
-    else
-        echo -e "${GREEN}✓ Detected host gateway IP: ${HOST_GATEWAY_IP}${NC}"
-    fi
-
-    export HOST_GATEWAY_IP
-
-    # ============================================================================
-    # Configure firewall for LiveKit connectivity
-    # ============================================================================
-    # Minikube pods need to connect to LiveKit running on the host
-    # By default, iptables may block connections from pod network to host services
-
-    echo -e "${BLUE}🔒 Configuring firewall for LiveKit connectivity...${NC}"
-
-    # Get minikube pod network CIDR (usually 10.244.0.0/16)
-    MINIKUBE_POD_CIDR=$(kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}' 2>/dev/null || echo "10.244.0.0/16")
-
-    # Check if iptables rule already exists
-    if sudo iptables -C INPUT -s "$MINIKUBE_POD_CIDR" -p tcp --dport 7880 -j ACCEPT 2>/dev/null; then
-        echo -e "${GREEN}✓ Firewall rule already exists for LiveKit port 7880${NC}"
-    else
-        echo -e "${YELLOW}  Adding firewall rule to allow pod → host LiveKit connections...${NC}"
-
-        # Add iptables rule to allow connections from minikube pods to LiveKit
-        if sudo iptables -I INPUT -s "$MINIKUBE_POD_CIDR" -p tcp --dport 7880 -j ACCEPT; then
-            echo -e "${GREEN}✓ Firewall rule added: ${MINIKUBE_POD_CIDR} → port 7880${NC}"
-            echo -e "${YELLOW}  Note: Rule will persist until reboot. To make permanent, add to firewall config.${NC}"
-        else
-            echo -e "${RED}✗ Failed to add firewall rule (sudo required)${NC}"
-            echo -e "${YELLOW}  Manual fix: sudo iptables -I INPUT -s ${MINIKUBE_POD_CIDR} -p tcp --dport 7880 -j ACCEPT${NC}"
-            exit 1
-        fi
-    fi
+    echo -e "${GREEN}✓ Using dynamic host discovery for LiveKit connectivity${NC}"
 else
-    # macOS doesn't need this - host.minikube.internal works natively
-    HOST_GATEWAY_IP="127.0.0.1"  # Not used on macOS, just for consistency
-    export HOST_GATEWAY_IP
+    echo -e "${GREEN}✓ Using native host.minikube.internal (macOS)${NC}"
 fi
 
 # LiveKit is provided externally - using dual URLs for internal/external access
 echo -e "${GREEN}📡 Using LiveKit server:${NC}"
 echo -e "  ${GREEN}Internal (K8s pods):${NC} ${LIVEKIT_URL}"
 echo -e "  ${GREEN}Public (browsers):${NC}   ${PUBLIC_LIVEKIT_URL}"
-if [[ "$OS_TYPE" == "linux" ]]; then
-    echo -e "  ${GREEN}Host Gateway IP:${NC}     ${HOST_GATEWAY_IP}"
-fi
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -722,17 +674,8 @@ echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
-# Replace HOST_GATEWAY_IP placeholder in session-management-server deployment
-# This is needed for host.minikube.internal DNS resolution on Linux
-if [[ "$OS_TYPE" == "linux" ]]; then
-    echo -n "  • Updating session-management-server with host gateway IP... "
-    sed "s/HOST_GATEWAY_IP/${HOST_GATEWAY_IP}/g" k8s/06-session-management-server.yaml > /tmp/06-session-management-server-updated.yaml
-    echo -e "${GREEN}✓${NC}"
-    SESSION_MGMT_YAML="/tmp/06-session-management-server-updated.yaml"
-else
-    # macOS doesn't need HOST_GATEWAY_IP replacement (host.minikube.internal works natively)
-    SESSION_MGMT_YAML="k8s/06-session-management-server.yaml"
-fi
+# Note: Pods use init containers to dynamically discover the gateway IP
+# No static HOST_GATEWAY_IP replacement needed
 
 # Note: LiveKit API key verification skipped - using external LiveKit server
 # The external server is pre-configured with its own API keys
@@ -746,7 +689,7 @@ kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
 kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
-kubectl apply -f "$SESSION_MGMT_YAML" > /dev/null
+kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
 # Apply NodePort services for local development only
@@ -897,8 +840,7 @@ echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside minikube)${NC}"
 echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
 if [[ "$OS_TYPE" == "linux" ]]; then
-    echo -e "  ${YELLOW}• host.minikube.internal resolves to: ${HOST_GATEWAY_IP} (via hostAliases)${NC}"
-    echo -e "  ${YELLOW}• Firewall configured: ${MINIKUBE_POD_CIDR} → port 7880 (iptables)${NC}"
+    echo -e "  ${YELLOW}• Pods use init containers to discover gateway IP dynamically${NC}"
 fi
 echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
 if [ "$NODE_ENV" = "production" ]; then
