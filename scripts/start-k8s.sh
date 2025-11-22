@@ -518,6 +518,78 @@ kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
 
 # ============================================================================
+# Custom DNS Configuration
+# ============================================================================
+# Configure CoreDNS to use custom DNS servers if CUSTOM_DNS_SERVERS is set.
+# This is useful for bypassing network DNS interception (e.g., SSL inspection).
+# Set CUSTOM_DNS_SERVERS in .env files (e.g., "8.8.8.8 8.8.4.4" for Google DNS)
+if [ -n "$CUSTOM_DNS_SERVERS" ] && [ "$CUSTOM_DNS_SERVERS" != '""' ]; then
+    echo -e "${BLUE}🔧 Configuring custom DNS for CoreDNS...${NC}"
+    echo -e "  ${BLUE}DNS Servers: ${CUSTOM_DNS_SERVERS}${NC}"
+
+    # Get current CoreDNS ConfigMap
+    COREDNS_CONFIG=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' 2>/dev/null)
+
+    # Extract first DNS server for checking (e.g., "8.8.8.8" from "8.8.8.8 8.8.4.4")
+    FIRST_DNS=$(echo "$CUSTOM_DNS_SERVERS" | awk '{print $1}')
+
+    # Check if we need to update it (only if not already using the specified DNS)
+    if ! echo "$COREDNS_CONFIG" | grep -q "forward . $FIRST_DNS"; then
+        echo -n "  • Updating CoreDNS configuration... "
+
+        # Create new Corefile with custom DNS servers
+        cat > /tmp/coredns-config.yaml << EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+           lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           fallthrough in-addr.arpa ip6.arpa
+           ttl 30
+        }
+        prometheus :9153
+        forward . ${CUSTOM_DNS_SERVERS} {
+           max_concurrent 1000
+        }
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+EOF
+
+        # Apply the new configuration
+        kubectl apply -f /tmp/coredns-config.yaml > /dev/null 2>&1
+
+        # Restart CoreDNS pods to pick up new config
+        kubectl rollout restart deployment/coredns -n kube-system > /dev/null 2>&1
+
+        # Wait for CoreDNS to be ready
+        kubectl wait --for=condition=available deployment/coredns -n kube-system --timeout=60s > /dev/null 2>&1
+
+        echo -e "${GREEN}✓${NC}"
+        echo -e "  ${GREEN}✓ CoreDNS now using: ${CUSTOM_DNS_SERVERS}${NC}"
+
+        # Clean up temp file
+        rm -f /tmp/coredns-config.yaml
+    else
+        echo -e "  ${GREEN}✓ CoreDNS already configured with custom DNS${NC}"
+    fi
+else
+    echo -e "${BLUE}ℹ️  Using default DNS configuration (CUSTOM_DNS_SERVERS not set)${NC}"
+fi
+
+# ============================================================================
 # LiveKit Host Discovery
 # ============================================================================
 # On macOS, host.minikube.internal works automatically
