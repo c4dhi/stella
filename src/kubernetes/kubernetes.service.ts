@@ -72,23 +72,7 @@ export class KubernetesService {
             name: 'agent',
             image: this.agentImage,
             imagePullPolicy: this.imagePullPolicy as any,
-            command: ['/bin/sh', '-c'],
-            args: [
-              '# Update /etc/hosts with host IP in production mode\n' +
-              'if [ "${NODE_ENV}" = "production" ]; then\n' +
-              '  if [ -n "${HOST_IP}" ]; then\n' +
-              '    echo "${HOST_IP} host.minikube.internal" >> /etc/hosts\n' +
-              '    echo "Production: Updated /etc/hosts with host IP: ${HOST_IP}"\n' +
-              '  else\n' +
-              '    echo "ERROR: Production mode but HOST_IP not set!"\n' +
-              '    exit 1\n' +
-              '  fi\n' +
-              'else\n' +
-              '  echo "Development: Using native host.minikube.internal resolution"\n' +
-              'fi\n' +
-              '# Start the Python agent (unbuffered output for real-time logs)\n' +
-              'exec python -u main.py',
-            ],
+            command: ['python', '-u', 'main.py'],
             envFrom: [
               {
                 secretRef: {
@@ -127,17 +111,6 @@ export class KubernetesService {
                   secretKeyRef: {
                     name: 'grace-ai-secrets',
                     key: 'elevenlabs-api-key',
-                  },
-                },
-              },
-              // Host IP for production mode (only set in production)
-              {
-                name: 'HOST_IP',
-                valueFrom: {
-                  configMapKeyRef: {
-                    name: 'grace-ai-config',
-                    key: 'HOST_IP',
-                    optional: true,
                   },
                 },
               },

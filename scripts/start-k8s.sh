@@ -198,20 +198,6 @@ if [ "$NODE_ENV" = "production" ]; then
     echo -e "${BLUE}🚀 Running in PRODUCTION mode${NC}"
     echo -e "${GREEN}✓ Domain: ${PRODUCTION_DOMAIN}${NC}"
 
-    # Detect host IP for pod-to-host connectivity (Linux only)
-    # Pods need this IP to access services running on the host (e.g., LiveKit)
-    HOST_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $7}' | head -1)
-
-    if [ -z "$HOST_IP" ]; then
-        echo -e "${RED}✗ Error: Failed to detect host IP for production mode${NC}"
-        echo -e "${RED}✗ Required for pods to access host services (LiveKit)${NC}"
-        echo -e "${YELLOW}ℹ️  Attempted: ip route get 8.8.8.8 | awk '{print \$7}'${NC}"
-        exit 1
-    fi
-
-    echo -e "${GREEN}✓ Detected host IP: ${HOST_IP}${NC}"
-    export HOST_IP
-
     # Production URLs (custom domains with SSL)
     export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
     export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
@@ -238,7 +224,7 @@ fi
 # 1. LIVEKIT_URL (Internal - for pods in Kubernetes)
 #    - Used by: session-management-server, conversational-ai-server-python, message-recorder-python
 #    - Development: ws://host.minikube.internal:7880 (pods access host via minikube DNS)
-#    - Production: ws://host.minikube.internal:7880 (/etc/hosts maps to detected HOST_IP)
+#    - Production: ws://<HOST_IP>:7880 (direct IP to host running LiveKit)
 #    - Read from: .env, .env.local, or .env.production
 #
 # 2. PUBLIC_LIVEKIT_URL (External - for browsers)

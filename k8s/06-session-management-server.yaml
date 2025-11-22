@@ -72,23 +72,11 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: elevenlabs-api-key
-        command: ["/bin/sh", "-c"]
+        command: ["sh", "-c"]
         args:
         - |
-          # Update /etc/hosts with host IP in production mode
-          if [ "${NODE_ENV}" = "production" ]; then
-            if [ -n "${HOST_IP}" ]; then
-              echo "${HOST_IP} host.minikube.internal" >> /etc/hosts
-              echo "Production: Updated /etc/hosts with host IP: ${HOST_IP}"
-            else
-              echo "ERROR: Production mode but HOST_IP not set!"
-              exit 1
-            fi
-          else
-            echo "Development: Using native host.minikube.internal resolution"
-          fi
-          # Start the NestJS server (run migrations first)
-          exec sh -c "npx prisma migrate deploy && node dist/main"
+          # Run database migrations and start the NestJS server
+          npx prisma migrate deploy && node dist/main
         resources:
           requests:
             memory: "512Mi"

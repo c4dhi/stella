@@ -38,23 +38,7 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: livekit-api-secret
-        command: ["/bin/sh", "-c"]
-        args:
-        - |
-          # Update /etc/hosts with host IP in production mode
-          if [ "${NODE_ENV}" = "production" ]; then
-            if [ -n "${HOST_IP}" ]; then
-              echo "${HOST_IP} host.minikube.internal" >> /etc/hosts
-              echo "Production: Updated /etc/hosts with host IP: ${HOST_IP}"
-            else
-              echo "ERROR: Production mode but HOST_IP not set!"
-              exit 1
-            fi
-          else
-            echo "Development: Using native host.minikube.internal resolution"
-          fi
-          # Start the Python application (unbuffered output for real-time logs)
-          exec python -u main.py
+        command: ["python", "-u", "main.py"]
         resources:
           requests:
             memory: "128Mi"
