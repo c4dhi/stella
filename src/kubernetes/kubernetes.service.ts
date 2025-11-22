@@ -67,25 +67,6 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
-        // Init container to dynamically discover gateway IP for LiveKit connectivity
-        initContainers: [
-          {
-            name: 'discover-livekit-host',
-            image: 'busybox:1.36',
-            command: ['/bin/sh', '-c'],
-            args: [
-              'GATEWAY=$(ip route show default | awk \'{print $3}\' | head -1)\n' +
-              'echo "$GATEWAY" > /shared/gateway-ip\n' +
-              'echo "Discovered gateway IP: $GATEWAY"',
-            ],
-            volumeMounts: [
-              {
-                name: 'shared-data',
-                mountPath: '/shared',
-              },
-            ],
-          },
-        ],
         containers: [
           {
             name: 'agent',
@@ -93,17 +74,17 @@ export class KubernetesService {
             imagePullPolicy: this.imagePullPolicy as any,
             command: ['/bin/sh', '-c'],
             args: [
-              '# Update /etc/hosts with gateway IP only in production mode\n' +
-              'if [ -f /shared/gateway-ip ]; then\n' +
-              '  GATEWAY_IP=$(cat /shared/gateway-ip)\n' +
-              '\n' +
-              '  # Only update /etc/hosts in production (Linux)\n' +
-              '  if [ "${NODE_ENV}" = "production" ]; then\n' +
-              '    echo "$GATEWAY_IP livekit-host host.minikube.internal" >> /etc/hosts\n' +
-              '    echo "Production: Updated /etc/hosts with gateway IP: $GATEWAY_IP"\n' +
+              '# Update /etc/hosts with host IP in production mode\n' +
+              'if [ "${NODE_ENV}" = "production" ]; then\n' +
+              '  if [ -n "${HOST_IP}" ]; then\n' +
+              '    echo "${HOST_IP} host.minikube.internal" >> /etc/hosts\n' +
+              '    echo "Production: Updated /etc/hosts with host IP: ${HOST_IP}"\n' +
               '  else\n' +
-              '    echo "Development: Using native host.minikube.internal resolution (gateway: $GATEWAY_IP)"\n' +
+              '    echo "ERROR: Production mode but HOST_IP not set!"\n' +
+              '    exit 1\n' +
               '  fi\n' +
+              'else\n' +
+              '  echo "Development: Using native host.minikube.internal resolution"\n' +
               'fi\n' +
               '# Start the Python agent (unbuffered output for real-time logs)\n' +
               'exec python -u main.py',
@@ -149,11 +130,16 @@ export class KubernetesService {
                   },
                 },
               },
-            ],
-            volumeMounts: [
+              // Host IP for production mode (only set in production)
               {
-                name: 'shared-data',
-                mountPath: '/shared',
+                name: 'HOST_IP',
+                valueFrom: {
+                  configMapKeyRef: {
+                    name: 'grace-ai-config',
+                    key: 'HOST_IP',
+                    optional: true,
+                  },
+                },
               },
             ],
             resources: {
@@ -166,12 +152,6 @@ export class KubernetesService {
                 cpu: '1000m',
               },
             },
-          },
-        ],
-        volumes: [
-          {
-            name: 'shared-data',
-            emptyDir: {},
           },
         ],
       },

@@ -198,6 +198,20 @@ if [ "$NODE_ENV" = "production" ]; then
     echo -e "${BLUE}🚀 Running in PRODUCTION mode${NC}"
     echo -e "${GREEN}✓ Domain: ${PRODUCTION_DOMAIN}${NC}"
 
+    # Detect host IP for pod-to-host connectivity (Linux only)
+    # Pods need this IP to access services running on the host (e.g., LiveKit)
+    HOST_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $7}' | head -1)
+
+    if [ -z "$HOST_IP" ]; then
+        echo -e "${RED}✗ Error: Failed to detect host IP for production mode${NC}"
+        echo -e "${RED}✗ Required for pods to access host services (LiveKit)${NC}"
+        echo -e "${YELLOW}ℹ️  Attempted: ip route get 8.8.8.8 | awk '{print \$7}'${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}✓ Detected host IP: ${HOST_IP}${NC}"
+    export HOST_IP
+
     # Production URLs (custom domains with SSL)
     export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
     export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
@@ -216,9 +230,31 @@ else
     export CORS_ORIGIN="http://localhost:8080"
 fi
 
-# Note: LIVEKIT_URL (internal) and PUBLIC_LIVEKIT_URL (external) are read from .env file
-# - LIVEKIT_URL: Used by K8s pods (backend, Python agents) for internal connection
-# - PUBLIC_LIVEKIT_URL: Used by frontend (browsers) for external connection
+# ============================================================================
+# LiveKit URL Configuration
+# ============================================================================
+# Two different URLs for different use cases:
+#
+# 1. LIVEKIT_URL (Internal - for pods in Kubernetes)
+#    - Used by: session-management-server, conversational-ai-server-python, message-recorder-python
+#    - Development: ws://host.minikube.internal:7880 (pods access host via minikube DNS)
+#    - Production: ws://host.minikube.internal:7880 (/etc/hosts maps to detected HOST_IP)
+#    - Read from: .env, .env.local, or .env.production
+#
+# 2. PUBLIC_LIVEKIT_URL (External - for browsers)
+#    - Used by: frontend-ui (browsers/external clients)
+#    - Development: ws://localhost:7880 (browser on host via port-forward)
+#    - Production: wss://livekit-v1.c4dhi.moserfelix.com (public domain with SSL)
+#    - Read from: .env, .env.local, or .env.production
+#    - Mapped to: VITE_LIVEKIT_URL for Vite frontend
+#
+# Both URLs are loaded from .env files above and exported to ConfigMap below
+
+# Map PUBLIC_LIVEKIT_URL to VITE_LIVEKIT_URL for frontend
+export VITE_LIVEKIT_URL="${PUBLIC_LIVEKIT_URL}"
+
+echo -e "${GREEN}✓ Internal LiveKit URL (pods): ${LIVEKIT_URL}${NC}"
+echo -e "${GREEN}✓ External LiveKit URL (frontend): ${PUBLIC_LIVEKIT_URL}${NC}"
 
 # ============================================================================
 # Set Hardcoded Defaults (non-configurable)
