@@ -717,17 +717,18 @@ if [ "$NODE_ENV" = "production" ]; then
             if ! command -v nvidia-container-runtime &> /dev/null; then
                 echo -e "${YELLOW}Installing NVIDIA Container Toolkit...${NC}"
 
-                # Add NVIDIA package repository
-                distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-                curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
-                curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | sudo tee /etc/apt/sources.list.d/libnvidia-container.list
+                # Add NVIDIA package repository (new format)
+                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+                curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+                  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+                  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
                 # Install
-                sudo apt-get update
-                sudo apt-get install -y nvidia-container-toolkit
+                sudo apt-get update > /dev/null 2>&1
+                sudo apt-get install -y nvidia-container-toolkit > /dev/null 2>&1
 
                 # Configure Docker to use NVIDIA runtime
-                sudo nvidia-ctk runtime configure --runtime=docker
+                sudo nvidia-ctk runtime configure --runtime=docker > /dev/null 2>&1
                 sudo systemctl restart docker
 
                 # Restart K3s to pick up new Docker configuration
