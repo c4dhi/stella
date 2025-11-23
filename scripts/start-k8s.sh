@@ -535,10 +535,10 @@ setup_k3s() {
     if ! command -v k3s &> /dev/null; then
         echo -e "${YELLOW}Installing K3s...${NC}"
 
-        # Install K3s with GPU support
-        # --docker: Use Docker instead of containerd (for compatibility with our Docker images)
+        # Install K3s with containerd (default)
+        # Using containerd enables proper device plugin registration for GPU support
         # --disable traefik: We don't need the default ingress controller
-        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker --disable traefik" sh -
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
 
         # Wait for K3s to be ready
         sleep 5
@@ -717,9 +717,8 @@ if [ "$NODE_ENV" = "production" ]; then
         echo -e "  ${GREEN}Detected: ${GPU_NAME} (${GPU_MEMORY})${NC}"
 
         if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
-            # K3s: Native GPU support via NVIDIA Container Runtime
-            echo -e "  ${GREEN}✓ K3s provides native GPU support${NC}"
-            echo -e "  ${GREEN}✓ NVIDIA Container Runtime automatically configured${NC}"
+            # K3s: Native GPU support via NVIDIA Container Runtime with containerd
+            echo -e "  ${GREEN}✓ K3s provides native GPU support with containerd${NC}"
 
             # Install NVIDIA Container Toolkit if not already installed
             if ! command -v nvidia-container-runtime &> /dev/null; then
@@ -746,41 +745,27 @@ if [ "$NODE_ENV" = "production" ]; then
                 sudo apt-get update > /dev/null 2>&1
                 sudo apt-get install -y nvidia-container-toolkit > /dev/null 2>&1
 
-                # Configure Docker to use NVIDIA runtime
-                sudo nvidia-ctk runtime configure --runtime=docker > /dev/null 2>&1
-
                 echo -e "${GREEN}✓ NVIDIA Container Toolkit installed${NC}"
             else
                 echo -e "  ${GREEN}✓ NVIDIA Container Toolkit already installed${NC}"
             fi
 
-            # Ensure NVIDIA is set as default Docker runtime (runs every time, not just on first install)
+            # Configure K3s containerd to use NVIDIA runtime
             # NOTE: This only runs in production mode with K3s - safe for local Minikube development
-            if ! grep -q '"default-runtime".*"nvidia"' /etc/docker/daemon.json 2>/dev/null; then
-                echo -e "  ${YELLOW}Setting NVIDIA as default Docker runtime (K3s production only)...${NC}"
-                # Use jq to safely add default-runtime, or create new config if jq not available
-                if command -v jq &> /dev/null && [ -f /etc/docker/daemon.json ]; then
-                    sudo jq '. + {"default-runtime": "nvidia"}' /etc/docker/daemon.json > /tmp/daemon.json.tmp
-                    sudo mv /tmp/daemon.json.tmp /etc/docker/daemon.json
-                else
-                    # Fallback: create simple config
-                    sudo bash -c 'cat > /etc/docker/daemon.json << DOCKERCFG
-{
-    "default-runtime": "nvidia",
-    "runtimes": {
-        "nvidia": {
-            "path": "nvidia-container-runtime",
-            "runtimeArgs": []
-        }
-    }
-}
-DOCKERCFG'
-                fi
+            CONTAINERD_CONFIG="/var/lib/rancher/k3s/agent/etc/containerd/config.toml"
+            CONTAINERD_TEMPLATE="/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl"
 
-                sudo systemctl restart docker
-                sleep 3
+            # Check if NVIDIA runtime is already configured
+            if ! sudo grep -q "nvidia" "$CONTAINERD_CONFIG" 2>/dev/null; then
+                echo -e "  ${YELLOW}Configuring K3s containerd for NVIDIA runtime...${NC}"
 
-                # Restart K3s to pick up new Docker configuration
+                # Configure containerd for NVIDIA
+                sudo nvidia-ctk runtime configure --runtime=containerd --config="$CONTAINERD_CONFIG" > /dev/null 2>&1
+
+                # Set nvidia as default runtime in containerd
+                sudo sed -i 's/default_runtime_name = "runc"/default_runtime_name = "nvidia"/' "$CONTAINERD_CONFIG" 2>/dev/null || true
+
+                # Restart K3s to pick up new containerd configuration
                 echo -e "  ${YELLOW}Restarting K3s to apply NVIDIA runtime...${NC}"
                 sudo systemctl restart k3s
 
@@ -808,9 +793,9 @@ DOCKERCFG'
                 # Additional wait for kubelet device plugin registration to be ready
                 sleep 5
 
-                echo -e "${GREEN}✓ NVIDIA set as default Docker runtime (production only)${NC}"
+                echo -e "${GREEN}✓ NVIDIA runtime configured for K3s containerd${NC}"
             else
-                echo -e "  ${GREEN}✓ NVIDIA already set as default runtime${NC}"
+                echo -e "  ${GREEN}✓ NVIDIA runtime already configured in containerd${NC}"
             fi
 
             # Install NVIDIA Device Plugin for Kubernetes (required to expose GPU resources)
