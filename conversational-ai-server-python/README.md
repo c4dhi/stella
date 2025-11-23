@@ -13,7 +13,7 @@ A sophisticated Python-based conversational AI server that implements the same m
 - **Real-time Audio Transcription**: sherpa-onnx powered speech-to-text with German support
 - **Step-by-Step Plans**: Execute multi-step conversation flows with deliverable tracking
 - **Persistent Model Storage**: One-time model download with Docker volume persistence
-- **TTS Support**: Multiple text-to-speech providers (ElevenLabs, OpenSource/Edge TTS)
+- **Multi-Provider TTS**: Kokoro (fast local), ElevenLabs (premium quality), Edge TTS (cloud fallback)
 
 ## 🏗️ Architecture
 
@@ -88,6 +88,82 @@ This creates a `sherpa-models/` directory that's mounted into the Docker contain
 
 See [SHERPA_MODEL_SETUP.md](./SHERPA_MODEL_SETUP.md) for detailed setup instructions.
 
+## 🔊 Text-to-Speech (TTS) Providers
+
+The system supports multiple TTS providers with automatic fallback and .env-based configuration. Models are pre-downloaded during Docker build for optimal performance.
+
+### 🏆 Recommended: Kokoro (Local ONNX)
+- **Speed**: 50-100ms per sentence (70% faster than cloud TTS)
+- **Quality**: Natural-sounding voices using ONNX models
+- **Cost**: Free (runs locally)
+- **Latency**: Ultra-low (no network calls)
+- **Model Size**: ~1GB (pre-downloaded during Docker build)
+- **Voices**: Multiple high-quality voice options (af_sky, am_adam, etc.)
+- **Offline**: ✅ Works without internet connection
+
+### 🎙️ Alternative: ElevenLabs (Cloud API)
+- **Speed**: 200-300ms per sentence
+- **Quality**: Best-in-class AI voice synthesis
+- **Cost**: Paid API (requires API key)
+- **Latency**: Network-dependent
+- **Voices**: Extensive voice library with emotion control
+- **Use Case**: When maximum voice quality is more important than speed
+
+### 🌐 Fallback: Edge TTS (Microsoft Cloud)
+- **Speed**: 200-300ms per sentence
+- **Quality**: Good quality for free tier
+- **Cost**: Free
+- **Latency**: Network-dependent
+- **Voices**: Multiple languages and accents
+- **Use Case**: Automatic fallback when Kokoro unavailable
+
+### ⚙️ TTS Provider Configuration
+
+Configure TTS provider in `.env`:
+```env
+# TTS Provider Selection
+TTS_PROVIDER=kokoro  # Options: kokoro, elevenlabs, edge_tts, auto
+
+# ElevenLabs Configuration (only used when TTS_PROVIDER=elevenlabs)
+ELEVENLABS_API_KEY=your-api-key-here
+ELEVENLABS_VOICE_ID=Xb7hH8MSUJpSbSDYk0k2  # Optional: default voice
+ELEVENLABS_MODEL_ID=eleven_turbo_v2_5      # Optional: model selection
+```
+
+### 📊 Provider Comparison
+
+| Provider | Latency | Quality | Cost | Offline | Pre-downloaded |
+|----------|---------|---------|------|---------|----------------|
+| Kokoro   | 50-100ms | High | Free | ✅ | ✅ (~1GB) |
+| ElevenLabs | 200-300ms | Premium | Paid | ❌ | N/A |
+| Edge TTS | 200-300ms | Good | Free | ❌ | N/A |
+
+### 🚀 Auto Mode Behavior
+
+When `TTS_PROVIDER=auto` (default), the system tries providers in order:
+1. **Kokoro** (if models available)
+2. **Edge TTS** (cloud fallback)
+3. **pyttsx3** (local fallback)
+
+### 💾 Kokoro Model Pre-download
+
+Kokoro models (~1GB) are automatically downloaded during Docker build:
+```dockerfile
+# Pre-download Kokoro TTS models during build
+COPY download_kokoro_models.py .
+RUN python download_kokoro_models.py && rm download_kokoro_models.py
+```
+
+This eliminates runtime downloads and ensures consistent performance from first startup.
+
+### 🎯 Performance Optimization
+
+For production deployments with high throughput requirements:
+- **Use Kokoro**: 70% faster than cloud TTS (50-100ms vs 200-300ms)
+- **Pre-downloaded Models**: No startup delay or network dependency
+- **Local Processing**: No external API rate limits
+- **Scalable**: Each pod has its own model instance
+
 ## 📁 Project Structure
 
 ```
@@ -111,11 +187,18 @@ conversational-ai-server-python/
 │   ├── coding.json                # Code analysis expert
 │   └── finance.json               # Financial analysis expert
 ├── plans/                          # Step-by-step plan definitions
-├── sherpa-models/                  # Persistent model storage (git-ignored)
+├── tts/                            # Text-to-speech providers
+│   ├── base.py                    # Abstract TTS provider base class
+│   ├── factory.py                 # TTS provider factory with auto-selection
+│   ├── opensource_provider.py     # Kokoro, Edge TTS, pyttsx3 providers
+│   └── elevenlabs_provider.py     # ElevenLabs streaming TTS
+├── sherpa-models/                  # Persistent STT model storage (git-ignored)
 ├── requirements.txt                # Python dependencies
 ├── Dockerfile                      # Container configuration
 ├── docker-compose.yml             # Docker orchestration with volumes
-├── download_sherpa_model.py       # One-time model download script
+├── download_sherpa_model.py       # Pre-download Sherpa STT models (build-time)
+├── download_whisper_models.py     # Pre-download Whisper models (build-time)
+├── download_kokoro_models.py      # Pre-download Kokoro TTS models (build-time)
 ├── SHERPA_MODEL_SETUP.md          # Model persistence documentation
 ├── .gitignore                     # Excludes large model files
 └── .env                           # Environment variables
@@ -144,10 +227,16 @@ LIVEKIT_API_SECRET=secret
 # OpenAI Configuration
 OPENAI_API_KEY=your-actual-openai-api-key-here
 
-# TTS Configuration (optional)
-TTS_PROVIDER=opensource  # or "elevenlabs"
-ELEVENLABS_API_KEY=your-elevenlabs-key  # if using ElevenLabs
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM  # optional voice selection
+# TTS Configuration
+TTS_PROVIDER=kokoro  # Options: kokoro (recommended), elevenlabs, edge_tts, auto
+ELEVENLABS_API_KEY=your-elevenlabs-key  # Only needed if using ElevenLabs
+ELEVENLABS_VOICE_ID=Xb7hH8MSUJpSbSDYk0k2  # Optional: ElevenLabs voice selection
+ELEVENLABS_MODEL_ID=eleven_turbo_v2_5  # Optional: ElevenLabs model selection
+
+# STT Configuration
+STT_PROVIDER=sherpa  # Speech-to-text provider
+WHISPER_MODEL=base.en  # Whisper model size (if using whisper STT)
+VAD_THRESHOLD=0.5  # Voice activity detection threshold
 ```
 
 ### 2. Download Sherpa Model (One-time setup)

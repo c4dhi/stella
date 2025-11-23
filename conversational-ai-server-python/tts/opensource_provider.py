@@ -87,54 +87,82 @@ class OpenSourceTTSProvider(AbstractTTSProvider):
         try:
             self.state = TTSState.INITIALIZING
 
-            # Try engines in order of preference (Edge TTS first for best quality)
-            if EDGE_TTS_AVAILABLE:
-                try:
-                    print("[OpenSourceTTS] Initializing Edge TTS engine...")
-                    self.tts_engine_type = "edge_tts"
-                    await self.setup_audio_track()
-                    self._start_sentence_processing()
-                    self.state = TTSState.IDLE
-                    print("[OpenSourceTTS] Edge TTS engine initialized successfully")
-                    return True
-                except Exception as e:
-                    print(f"[OpenSourceTTS] Edge TTS failed: {e}")
+            # Get TTS provider preference from environment
+            tts_provider = os.getenv('TTS_PROVIDER', 'auto').lower()
+            print(f"[OpenSourceTTS] TTS_PROVIDER set to: {tts_provider}")
 
-            if KOKORO_AVAILABLE:
-                try:
-                    print("[OpenSourceTTS] Initializing Kokoro TTS engine...")
-                    if await self._initialize_kokoro():
-                        self.tts_engine_type = "kokoro"
+            # Determine engine priority based on TTS_PROVIDER setting
+            engine_priority = []
+
+            if tts_provider == 'kokoro':
+                # Force Kokoro if requested
+                if KOKORO_AVAILABLE:
+                    engine_priority = ['kokoro', 'edge_tts', 'pyttsx3']
+                else:
+                    print("[OpenSourceTTS] WARNING: Kokoro requested but not available, using fallback")
+                    engine_priority = ['edge_tts', 'pyttsx3']
+
+            elif tts_provider == 'edge_tts':
+                # Force Edge TTS if requested
+                if EDGE_TTS_AVAILABLE:
+                    engine_priority = ['edge_tts', 'kokoro', 'pyttsx3']
+                else:
+                    print("[OpenSourceTTS] WARNING: Edge TTS requested but not available, using fallback")
+                    engine_priority = ['kokoro', 'pyttsx3']
+
+            else:
+                # Auto mode: Prefer Kokoro for speed (70% faster than Edge TTS)
+                engine_priority = ['kokoro', 'edge_tts', 'pyttsx3']
+
+            # Try engines in priority order
+            for engine_type in engine_priority:
+                if engine_type == 'kokoro' and KOKORO_AVAILABLE:
+                    try:
+                        print("[OpenSourceTTS] Initializing Kokoro TTS engine...")
+                        if await self._initialize_kokoro():
+                            self.tts_engine_type = "kokoro"
+                            await self.setup_audio_track()
+                            self._start_sentence_processing()
+                            self.state = TTSState.IDLE
+                            print("[OpenSourceTTS] ✅ Kokoro TTS engine initialized successfully (50-100ms latency)")
+                            return True
+                        else:
+                            print("[OpenSourceTTS] Kokoro initialization failed")
+                    except Exception as e:
+                        print(f"[OpenSourceTTS] Kokoro TTS failed: {e}")
+
+                elif engine_type == 'edge_tts' and EDGE_TTS_AVAILABLE:
+                    try:
+                        print("[OpenSourceTTS] Initializing Edge TTS engine...")
+                        self.tts_engine_type = "edge_tts"
                         await self.setup_audio_track()
                         self._start_sentence_processing()
                         self.state = TTSState.IDLE
-                        print("[OpenSourceTTS] Kokoro TTS engine initialized successfully")
+                        print("[OpenSourceTTS] ✅ Edge TTS engine initialized successfully (200-300ms latency)")
                         return True
-                    else:
-                        print("[OpenSourceTTS] Kokoro initialization failed")
-                except Exception as e:
-                    print(f"[OpenSourceTTS] Kokoro TTS failed: {e}")
+                    except Exception as e:
+                        print(f"[OpenSourceTTS] Edge TTS failed: {e}")
 
-            if PYTTSX3_AVAILABLE:
-                try:
-                    print("[OpenSourceTTS] Initializing pyttsx3 TTS engine...")
-                    self.tts_engine = pyttsx3.init()
-                    self.tts_engine_type = "pyttsx3"
+                elif engine_type == 'pyttsx3' and PYTTSX3_AVAILABLE:
+                    try:
+                        print("[OpenSourceTTS] Initializing pyttsx3 TTS engine...")
+                        self.tts_engine = pyttsx3.init()
+                        self.tts_engine_type = "pyttsx3"
 
-                    # Configure pyttsx3 settings
-                    rate = self.tts_engine.getProperty('rate')
-                    self.tts_engine.setProperty('rate', rate - 50)
+                        # Configure pyttsx3 settings
+                        rate = self.tts_engine.getProperty('rate')
+                        self.tts_engine.setProperty('rate', rate - 50)
 
-                    await self.setup_audio_track()
-                    self._start_sentence_processing()
-                    self.state = TTSState.IDLE
-                    print("[OpenSourceTTS] pyttsx3 TTS engine initialized successfully")
-                    return True
-                except Exception as e:
-                    print(f"[OpenSourceTTS] pyttsx3 TTS failed: {e}")
+                        await self.setup_audio_track()
+                        self._start_sentence_processing()
+                        self.state = TTSState.IDLE
+                        print("[OpenSourceTTS] ✅ pyttsx3 TTS engine initialized successfully (fallback)")
+                        return True
+                    except Exception as e:
+                        print(f"[OpenSourceTTS] pyttsx3 TTS failed: {e}")
 
             # All engines failed
-            print("[OpenSourceTTS] All TTS engines failed")
+            print("[OpenSourceTTS] ❌ All TTS engines failed")
             self.state = TTSState.ERROR
             return False
 

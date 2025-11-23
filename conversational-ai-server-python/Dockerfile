@@ -37,6 +37,10 @@ RUN python download_sherpa_model.py && rm download_sherpa_model.py
 COPY download_whisper_models.py .
 RUN python download_whisper_models.py && rm download_whisper_models.py
 
+# Pre-download Kokoro TTS models during build
+COPY download_kokoro_models.py .
+RUN python download_kokoro_models.py && rm download_kokoro_models.py
+
 # Copy the application code
 COPY main.py .
 COPY message_processing/ ./message_processing/

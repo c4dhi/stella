@@ -30,8 +30,19 @@ data:
   AGENT_IMAGE: "conversational-ai-server:latest"
   AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
 
-  # TTS Provider
+  # ============================================================================
+  # AI Agent Configuration (Python conversational-ai-server)
+  # ============================================================================
+  # Speech-to-Text (STT) Provider
+  STT_PROVIDER: "${STT_PROVIDER}"
+  WHISPER_MODEL: "${WHISPER_MODEL}"
+  VAD_THRESHOLD: "${VAD_THRESHOLD}"
+
+  # Text-to-Speech (TTS) Provider
+  # Options: kokoro (fast local), elevenlabs (best quality), edge_tts (free cloud), auto
   TTS_PROVIDER: "${TTS_PROVIDER}"
+  ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID}"
+  ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"
 
   # ============================================================================
   # Public URLs for external access (injected by deployment scripts)

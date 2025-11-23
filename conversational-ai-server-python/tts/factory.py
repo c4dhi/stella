@@ -21,6 +21,15 @@ class TTSProviderFactory:
         "elevenlabs": ElevenLabsTTSProvider
     }
 
+    # Map provider names to their implementation
+    PROVIDER_MAPPING = {
+        "opensource": "opensource",
+        "kokoro": "opensource",      # Kokoro uses OpenSource provider
+        "edge_tts": "opensource",    # Edge TTS uses OpenSource provider
+        "auto": "opensource",         # Auto mode uses OpenSource provider
+        "elevenlabs": "elevenlabs"
+    }
+
     @classmethod
     async def create_provider(
         cls,
@@ -34,7 +43,8 @@ class TTSProviderFactory:
         Create a TTS provider instance.
 
         Args:
-            provider_name: Name of the provider ("opensource" or "elevenlabs")
+            provider_name: Name of the provider
+                          ("kokoro", "edge_tts", "elevenlabs", "auto", or "opensource")
             room: LiveKit room instance
             stream_service: Stream service instance
             on_speaking_state_change: Callback for speaking state changes
@@ -47,14 +57,17 @@ class TTSProviderFactory:
             # Normalize provider name
             provider_name = provider_name.lower().strip()
 
-            # Check if provider is supported
-            if provider_name not in cls.SUPPORTED_PROVIDERS:
+            # Map to actual provider implementation
+            if provider_name in cls.PROVIDER_MAPPING:
+                actual_provider = cls.PROVIDER_MAPPING[provider_name]
+                print(f"[TTSFactory] Mapping '{provider_name}' → '{actual_provider}' provider")
+            else:
                 print(f"[TTSFactory] Unsupported provider: {provider_name}")
-                print(f"[TTSFactory] Supported providers: {list(cls.SUPPORTED_PROVIDERS.keys())}")
+                print(f"[TTSFactory] Supported providers: {list(cls.PROVIDER_MAPPING.keys())}")
                 return None
 
             # Get provider class
-            provider_class = cls.SUPPORTED_PROVIDERS[provider_name]
+            provider_class = cls.SUPPORTED_PROVIDERS[actual_provider]
 
             # Create provider instance
             print(f"[TTSFactory] Creating {provider_name} TTS provider...")
