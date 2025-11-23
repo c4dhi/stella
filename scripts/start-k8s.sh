@@ -81,9 +81,16 @@ if [ "$STOP_MODE" = true ]; then
         rm "$PID_DIR/port-forwards.pid"
     fi
 
-    # Stop minikube
-    echo "  • Stopping minikube cluster..."
-    minikube stop
+    # Detect which Kubernetes distribution is running
+    if command -v k3s &> /dev/null && sudo systemctl is-active --quiet k3s; then
+        echo "  • Stopping K3s cluster..."
+        sudo systemctl stop k3s
+    elif command -v minikube &> /dev/null; then
+        echo "  • Stopping minikube cluster..."
+        minikube stop
+    else
+        echo "  • No Kubernetes cluster found to stop"
+    fi
 
     echo ""
     echo "✅ All services stopped"
@@ -434,22 +441,24 @@ if [ ${#PORTS_IN_USE[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Check if required tools are installed
-if ! command -v minikube &> /dev/null; then
-    echo -e "${YELLOW}Installing minikube...${NC}"
-    if [[ "$OS_TYPE" == "macos" ]]; then
-        brew install minikube
-    elif [[ "$OS_TYPE" == "linux" ]]; then
-        # Download and install minikube for Linux
-        MINIKUBE_VERSION=$(curl -s https://api.github.com/repos/kubernetes/minikube/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-        curl -LO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
-        sudo install minikube-linux-amd64 /usr/local/bin/minikube
-        rm minikube-linux-amd64
-        echo -e "${GREEN}✓ Minikube installed${NC}"
-    else
-        echo -e "${RED}✗ Unable to auto-install minikube on this platform${NC}"
-        echo -e "${YELLOW}Visit: https://minikube.sigs.k8s.io/docs/start/${NC}"
-        exit 1
+# Check if required tools are installed based on distribution
+if [ "$K8S_DISTRIBUTION" = "minikube" ]; then
+    if ! command -v minikube &> /dev/null; then
+        echo -e "${YELLOW}Installing minikube...${NC}"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            brew install minikube
+        elif [[ "$OS_TYPE" == "linux" ]]; then
+            # Download and install minikube for Linux
+            MINIKUBE_VERSION=$(curl -s https://api.github.com/repos/kubernetes/minikube/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+            curl -LO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
+            sudo install minikube-linux-amd64 /usr/local/bin/minikube
+            rm minikube-linux-amd64
+            echo -e "${GREEN}✓ Minikube installed${NC}"
+        else
+            echo -e "${RED}✗ Unable to auto-install minikube on this platform${NC}"
+            echo -e "${YELLOW}Visit: https://minikube.sigs.k8s.io/docs/start/${NC}"
+            exit 1
+        fi
     fi
 fi
 
@@ -468,6 +477,29 @@ if ! command -v kubectl &> /dev/null; then
         echo -e "${YELLOW}Visit: https://kubernetes.io/docs/tasks/tools/${NC}"
         exit 1
     fi
+fi
+
+# ============================================================================
+# Kubernetes Distribution Selection
+# ============================================================================
+# Automatically choose the right Kubernetes distribution based on environment:
+# - K3s: Linux + production (native GPU support, production-ready)
+# - Minikube: macOS + local (development tool, Docker-in-Docker)
+K8S_DISTRIBUTION=""
+
+if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
+    K8S_DISTRIBUTION="k3s"
+    echo -e "${BLUE}🎯 Using K3s (Production on Linux)${NC}"
+    echo -e "  ${GREEN}✓ Native GPU support${NC}"
+    echo -e "  ${GREEN}✓ Production-ready Kubernetes${NC}"
+elif [[ "$OS_TYPE" == "macos" ]] || [ "$NODE_ENV" = "local" ]; then
+    K8S_DISTRIBUTION="minikube"
+    echo -e "${BLUE}🎯 Using Minikube (Development)${NC}"
+    echo -e "  ${GREEN}✓ Easy local development${NC}"
+else
+    # Default to minikube for unknown scenarios
+    K8S_DISTRIBUTION="minikube"
+    echo -e "${YELLOW}⚠️  Unknown configuration, defaulting to Minikube${NC}"
 fi
 
 # Check if setsid is available (required for Docker build output capture)
@@ -493,29 +525,101 @@ if ! command -v setsid &> /dev/null; then
     fi
 fi
 
-# Start minikube if not running
-echo -e "${GREEN}⚙️  Starting minikube...${NC}"
+# ============================================================================
+# K3s Setup Function
+# ============================================================================
+setup_k3s() {
+    echo -e "${GREEN}⚙️  Setting up K3s...${NC}"
 
-# Check if minikube is already running
-MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
+    # Check if K3s is installed
+    if ! command -v k3s &> /dev/null; then
+        echo -e "${YELLOW}Installing K3s...${NC}"
 
-if [ "$MINIKUBE_RUNNING" = "no" ]; then
-    # Minikube needs to be started (but NOT deleted automatically)
-    # Start minikube with standard configuration
-    # Note: LiveKit runs in Docker on host (not in K8s cluster)
-    # Production uses ClusterIP services with port-forward (no NodePorts needed)
-    echo -e "${YELLOW}⚠️  Minikube not running. Starting minikube...${NC}"
-    minikube start --driver=docker --cpus=4 --memory=8192
-    echo -e "${GREEN}✓ Minikube started${NC}"
-else
-    echo -e "${GREEN}✓ Minikube already running${NC}"
+        # Install K3s with GPU support
+        # --docker: Use Docker instead of containerd (for compatibility with our Docker images)
+        # --disable traefik: We don't need the default ingress controller
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker --disable traefik" sh -
+
+        # Wait for K3s to be ready
+        sleep 5
+
+        echo -e "${GREEN}✓ K3s installed${NC}"
+    else
+        echo -e "${GREEN}✓ K3s already installed${NC}"
+    fi
+
+    # Check if K3s is running
+    if ! sudo systemctl is-active --quiet k3s; then
+        echo -e "${YELLOW}Starting K3s service...${NC}"
+        sudo systemctl start k3s
+        sleep 5
+    fi
+
+    # Setup kubectl to use K3s
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+    # Make kubeconfig readable (K3s restricts it by default)
+    if [ ! -r "$KUBECONFIG" ]; then
+        sudo chmod 644 "$KUBECONFIG"
+    fi
+
+    # Verify K3s is running
+    if kubectl get nodes &> /dev/null; then
+        echo -e "${GREEN}✓ K3s is running${NC}"
+
+        # Show node info
+        NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+        echo -e "  ${GREEN}Node: ${NODE_NAME}${NC}"
+    else
+        echo -e "${RED}✗ K3s is not responding${NC}"
+        echo -e "${YELLOW}Try: sudo systemctl status k3s${NC}"
+        exit 1
+    fi
+
+    # Enable metrics-server if not already enabled
+    if ! kubectl get deployment metrics-server -n kube-system &> /dev/null; then
+        echo -e "${YELLOW}Installing metrics-server...${NC}"
+        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml > /dev/null 2>&1
+        # Patch metrics-server to work with K3s
+        kubectl patch deployment metrics-server -n kube-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]' > /dev/null 2>&1
+    fi
+}
+
+# ============================================================================
+# Cluster Startup
+# ============================================================================
+if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+    # Use K3s for production on Linux
+    setup_k3s
+
+    # K3s uses host Docker directly (no eval needed)
+    echo -e "${GREEN}✓ Using host Docker (K3s native)${NC}"
+
+elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
+    # Use Minikube for development
+    echo -e "${GREEN}⚙️  Starting minikube...${NC}"
+
+    # Check if minikube is already running
+    MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
+
+    if [ "$MINIKUBE_RUNNING" = "no" ]; then
+        # Minikube needs to be started (but NOT deleted automatically)
+        # Start minikube with standard configuration
+        # Note: LiveKit runs in Docker on host (not in K8s cluster)
+        # Production uses ClusterIP services with port-forward (no NodePorts needed)
+        echo -e "${YELLOW}⚠️  Minikube not running. Starting minikube...${NC}"
+        minikube start --driver=docker --cpus=4 --memory=8192
+        echo -e "${GREEN}✓ Minikube started${NC}"
+    else
+        echo -e "${GREEN}✓ Minikube already running${NC}"
+    fi
+
+    # Configure environment
+    minikube addons enable metrics-server 2>/dev/null
+    minikube addons enable dashboard 2>/dev/null
+    kubectl config use-context minikube > /dev/null 2>&1
+    eval $(minikube docker-env)
 fi
-
-# Configure environment
-minikube addons enable metrics-server 2>/dev/null
-minikube addons enable dashboard 2>/dev/null
-kubectl config use-context minikube > /dev/null 2>&1
-eval $(minikube docker-env)
 
 # ============================================================================
 # Custom DNS Configuration
@@ -592,8 +696,8 @@ fi
 # ============================================================================
 # NVIDIA GPU Support Configuration (Production Only)
 # ============================================================================
-# In production mode, if nvidia-smi is available on the host, automatically
-# install the NVIDIA device plugin to expose GPU resources to Kubernetes pods
+# K3s: Native GPU support with NVIDIA Container Runtime (automatic)
+# Minikube: Requires NVIDIA device plugin (Docker-in-Docker limitations)
 if [ "$NODE_ENV" = "production" ]; then
     # Check if nvidia-smi is available (indicates GPU hardware present)
     if command -v nvidia-smi &> /dev/null; then
@@ -604,45 +708,94 @@ if [ "$NODE_ENV" = "production" ]; then
         GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)
         echo -e "  ${GREEN}Detected: ${GPU_NAME} (${GPU_MEMORY})${NC}"
 
-        # Check if NVIDIA device plugin is already installed
-        if kubectl get pods -n kube-system 2>/dev/null | grep -q "nvidia-device-plugin.*Running"; then
-            DEVICE_PLUGIN_RUNNING=1
-        else
-            DEVICE_PLUGIN_RUNNING=0
-        fi
+        if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+            # K3s: Native GPU support via NVIDIA Container Runtime
+            echo -e "  ${GREEN}✓ K3s provides native GPU support${NC}"
+            echo -e "  ${GREEN}✓ NVIDIA Container Runtime automatically configured${NC}"
 
-        if [ "$DEVICE_PLUGIN_RUNNING" -eq 0 ]; then
-            echo -n "  • Installing NVIDIA device plugin... "
+            # Install NVIDIA Container Toolkit if not already installed
+            if ! command -v nvidia-container-runtime &> /dev/null; then
+                echo -e "${YELLOW}Installing NVIDIA Container Toolkit...${NC}"
 
-            # Install NVIDIA device plugin
-            if kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1; then
-                # Wait for it to be ready
-                if kubectl wait --for=condition=ready pod -l name=nvidia-device-plugin-ds -n kube-system --timeout=60s > /dev/null 2>&1; then
-                    echo -e "${GREEN}✓${NC}"
+                # Add NVIDIA package repository
+                distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+                curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
+                curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | sudo tee /etc/apt/sources.list.d/libnvidia-container.list
+
+                # Install
+                sudo apt-get update
+                sudo apt-get install -y nvidia-container-toolkit
+
+                # Configure Docker to use NVIDIA runtime
+                sudo nvidia-ctk runtime configure --runtime=docker
+                sudo systemctl restart docker
+
+                # Restart K3s to pick up new Docker configuration
+                sudo systemctl restart k3s
+                sleep 5
+
+                echo -e "${GREEN}✓ NVIDIA Container Toolkit installed${NC}"
+            else
+                echo -e "  ${GREEN}✓ NVIDIA Container Toolkit already installed${NC}"
+            fi
+
+            # Verify GPU resources
+            sleep 2
+            GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
+
+            if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
+                echo -e "  ${GREEN}✓ GPU resources available: ${GPU_ALLOCATABLE} GPU(s)${NC}"
+                echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
+            else
+                echo -e "  ${YELLOW}⚠️  GPU not yet visible to Kubernetes${NC}"
+                echo -e "  ${YELLOW}   Run: kubectl describe nodes | grep -A 10 'Allocatable'${NC}"
+            fi
+
+        elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
+            # Minikube: Requires device plugin (Docker-in-Docker limitations)
+            echo -e "  ${YELLOW}⚠️  Minikube has limited GPU support (Docker-in-Docker)${NC}"
+            echo -e "  ${YELLOW}   For production GPU workloads, use K3s on Linux${NC}"
+
+            # Check if NVIDIA device plugin is already installed
+            if kubectl get pods -n kube-system 2>/dev/null | grep -q "nvidia-device-plugin.*Running"; then
+                DEVICE_PLUGIN_RUNNING=1
+            else
+                DEVICE_PLUGIN_RUNNING=0
+            fi
+
+            if [ "$DEVICE_PLUGIN_RUNNING" -eq 0 ]; then
+                echo -n "  • Installing NVIDIA device plugin... "
+
+                # Install NVIDIA device plugin
+                if kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1; then
+                    # Wait for it to be ready
+                    if kubectl wait --for=condition=ready pod -l name=nvidia-device-plugin-ds -n kube-system --timeout=60s > /dev/null 2>&1; then
+                        echo -e "${GREEN}✓${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️${NC}"
+                        echo -e "  ${YELLOW}Device plugin installed but not ready yet${NC}"
+                    fi
                 else
                     echo -e "${YELLOW}⚠️${NC}"
-                    echo -e "  ${YELLOW}Device plugin installed but not ready yet${NC}"
+                    echo -e "  ${YELLOW}Device plugin may already exist${NC}"
                 fi
             else
-                echo -e "${YELLOW}⚠️${NC}"
-                echo -e "  ${YELLOW}Device plugin may already exist${NC}"
+                echo -e "  ${GREEN}✓ NVIDIA device plugin already running${NC}"
             fi
-        else
-            echo -e "  ${GREEN}✓ NVIDIA device plugin already running${NC}"
-        fi
 
-        # Give device plugin a moment to register GPU resources
-        sleep 2
+            # Give device plugin a moment to register GPU resources
+            sleep 2
 
-        # Verify GPU resources are visible to Kubernetes
-        GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
+            # Verify GPU resources are visible to Kubernetes
+            GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
 
-        if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
-            echo -e "  ${GREEN}✓ GPU resources available: ${GPU_ALLOCATABLE} GPU(s)${NC}"
-            echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
-        else
-            echo -e "  ${YELLOW}⚠️  GPU not yet visible to Kubernetes${NC}"
-            echo -e "  ${YELLOW}   This may take a few moments to propagate${NC}"
+            if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
+                echo -e "  ${GREEN}✓ GPU resources available: ${GPU_ALLOCATABLE} GPU(s)${NC}"
+                echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
+            else
+                echo -e "  ${YELLOW}⚠️  GPU not visible (Minikube Docker-in-Docker limitation)${NC}"
+                echo -e "  ${YELLOW}   Recommendation: Use K3s on Linux for GPU support${NC}"
+            fi
         fi
     else
         echo -e "${YELLOW}⚠️  Production mode but no GPU detected on host${NC}"
@@ -952,9 +1105,14 @@ if [ "$DAEMON_MODE" = false ]; then
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
-    # Stop minikube (stops all services gracefully)
-    echo -e "${BLUE}Stopping minikube cluster...${NC}"
-    minikube stop
+    # Stop Kubernetes cluster based on distribution
+    if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+        echo -e "${BLUE}Stopping K3s cluster...${NC}"
+        sudo systemctl stop k3s
+    elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
+        echo -e "${BLUE}Stopping minikube cluster...${NC}"
+        minikube stop
+    fi
 
     echo ""
     echo -e "${GREEN}✅ All services stopped${NC}"
@@ -997,7 +1155,12 @@ echo ""
 
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
-echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside minikube)${NC}"
+if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+    echo -e "  ${YELLOW}• Kubernetes: K3s (production, native GPU support)${NC}"
+elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
+    echo -e "  ${YELLOW}• Kubernetes: Minikube (development)${NC}"
+fi
+echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside K8s)${NC}"
 echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
 if [[ "$OS_TYPE" == "linux" ]]; then
