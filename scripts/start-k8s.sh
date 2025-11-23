@@ -781,8 +781,32 @@ DOCKERCFG'
                 sleep 3
 
                 # Restart K3s to pick up new Docker configuration
+                echo -e "  ${YELLOW}Restarting K3s to apply NVIDIA runtime...${NC}"
                 sudo systemctl restart k3s
-                sleep 10
+
+                # Wait for K3s to be fully ready (important: kubelet needs time to start)
+                echo -n "  • Waiting for K3s kubelet to be ready... "
+                sleep 10  # Initial wait for services to start
+
+                # Wait for node to be ready
+                WAIT_COUNT=0
+                while [ $WAIT_COUNT -lt 30 ]; do
+                    if kubectl get nodes &> /dev/null && kubectl wait --for=condition=Ready node --all --timeout=5s &> /dev/null; then
+                        echo -e "${GREEN}✓${NC}"
+                        break
+                    fi
+                    sleep 2
+                    WAIT_COUNT=$((WAIT_COUNT + 1))
+                done
+
+                if [ $WAIT_COUNT -ge 30 ]; then
+                    echo -e "${RED}✗ Timeout${NC}"
+                    echo -e "${RED}K3s did not become ready in time${NC}"
+                    exit 1
+                fi
+
+                # Additional wait for kubelet device plugin registration to be ready
+                sleep 5
 
                 echo -e "${GREEN}✓ NVIDIA set as default Docker runtime (production only)${NC}"
             else
@@ -794,10 +818,10 @@ DOCKERCFG'
 
             # Check if device plugin is already installed
             if kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset &> /dev/null; then
-                echo -e "  ${YELLOW}Updating existing device plugin configuration...${NC}"
+                echo -e "  ${YELLOW}Removing old device plugin configuration...${NC}"
                 # Delete old version to apply correct config
                 kubectl delete daemonset nvidia-device-plugin-daemonset -n kube-system > /dev/null 2>&1
-                sleep 2
+                sleep 5
             fi
 
             # K3s uses different kubelet paths than standard Kubernetes
