@@ -72,6 +72,11 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: elevenlabs-api-key
+        command: ["sh", "-c"]
+        args:
+        - |
+          # Run database migrations and start the NestJS server
+          npx prisma migrate deploy && node dist/main
         resources:
           requests:
             memory: "512Mi"

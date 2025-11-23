@@ -14,6 +14,13 @@ declare global {
   }
 }
 
+// Helper to log only in development mode
+const devLog = (...args: any[]) => {
+  if (import.meta.env.DEV) {
+    console.log(...args)
+  }
+}
+
 // Default configuration (fallback for local development)
 const DEFAULT_CONFIG: RuntimeConfig = {
   apiUrl: 'http://localhost:3000',
@@ -35,14 +42,14 @@ function isInternalServiceUrl(url: string): boolean {
  */
 function autoDetectUrls(): RuntimeConfig {
   const hostname = window.location.hostname
-  console.log(`[RuntimeConfig] Auto-detecting URLs for hostname: ${hostname}`)
+  devLog(`[RuntimeConfig] Auto-detecting URLs for hostname: ${hostname}`)
 
   const config = {
     apiUrl: `http://${hostname}:3000`,
     livekitUrl: `ws://${hostname}:7880`,
   }
 
-  console.log(`[RuntimeConfig] Auto-detected config:`, config)
+  devLog(`[RuntimeConfig] Auto-detected config:`, config)
   return config
 }
 
@@ -51,47 +58,47 @@ function autoDetectUrls(): RuntimeConfig {
  * Should be called once at app startup
  */
 export async function initRuntimeConfig(): Promise<RuntimeConfig> {
-  console.log('[RuntimeConfig] Initializing runtime configuration...')
-  console.log('[RuntimeConfig] Current hostname:', window.location.hostname)
-  console.log('[RuntimeConfig] window.__ENV__ exists:', !!window.__ENV__)
+  devLog('[RuntimeConfig] Initializing runtime configuration...')
+  devLog('[RuntimeConfig] Current hostname:', window.location.hostname)
+  devLog('[RuntimeConfig] window.__ENV__ exists:', !!window.__ENV__)
 
   // Try to load from window.__ENV__ (injected by config.js in production)
   if (window.__ENV__ && typeof window.__ENV__ === 'object') {
-    console.log('[RuntimeConfig] Loading from window.__ENV__:', window.__ENV__)
+    devLog('[RuntimeConfig] Loading from window.__ENV__:', window.__ENV__)
     const config = {
       ...DEFAULT_CONFIG,
       ...(window.__ENV__ as Partial<RuntimeConfig>),
     } as RuntimeConfig
 
-    console.log('[RuntimeConfig] Merged config:', config)
+    devLog('[RuntimeConfig] Merged config:', config)
 
     // Check if we need to auto-detect (internal K8s service names won't work from browser)
     if (isInternalServiceUrl(config.apiUrl) || isInternalServiceUrl(config.livekitUrl)) {
-      console.log('[RuntimeConfig] ✓ Detected internal K8s service names')
-      console.log('[RuntimeConfig] ✓ Auto-detecting URLs based on hostname...')
+      devLog('[RuntimeConfig] ✓ Detected internal K8s service names')
+      devLog('[RuntimeConfig] ✓ Auto-detecting URLs based on hostname...')
       runtimeConfig = autoDetectUrls()
-      console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
+      devLog('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
       return runtimeConfig
     }
 
-    console.log('[RuntimeConfig] ✓ Using config as-is (no internal names detected)')
+    devLog('[RuntimeConfig] ✓ Using config as-is (no internal names detected)')
     runtimeConfig = config
     return runtimeConfig
   }
 
   // Try to fetch from /config.js (served by nginx in production)
   // This is a fallback if the script tag didn't load it
-  console.log('[RuntimeConfig] window.__ENV__ not found, trying to fetch /config.js...')
+  devLog('[RuntimeConfig] window.__ENV__ not found, trying to fetch /config.js...')
   try {
     const response = await fetch('/config.js')
     if (response.ok) {
-      console.log('[RuntimeConfig] Successfully fetched /config.js')
+      devLog('[RuntimeConfig] Successfully fetched /config.js')
       // Execute the config script which sets window.__ENV__
       const scriptText = await response.text()
       eval(scriptText)
 
       if (window.__ENV__ && typeof window.__ENV__ === 'object') {
-        console.log('[RuntimeConfig] Loaded from /config.js fetch:', window.__ENV__)
+        devLog('[RuntimeConfig] Loaded from /config.js fetch:', window.__ENV__)
         const config = {
           ...DEFAULT_CONFIG,
           ...(window.__ENV__ as Partial<RuntimeConfig>),
@@ -99,10 +106,10 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
 
         // Check if we need to auto-detect
         if (isInternalServiceUrl(config.apiUrl) || isInternalServiceUrl(config.livekitUrl)) {
-          console.log('[RuntimeConfig] ✓ Detected internal K8s service names from fetch')
-          console.log('[RuntimeConfig] ✓ Auto-detecting URLs...')
+          devLog('[RuntimeConfig] ✓ Detected internal K8s service names from fetch')
+          devLog('[RuntimeConfig] ✓ Auto-detecting URLs...')
           runtimeConfig = autoDetectUrls()
-          console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
+          devLog('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
           return runtimeConfig
         }
 
@@ -110,31 +117,31 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
         return runtimeConfig
       }
     } else {
-      console.warn('[RuntimeConfig] Failed to fetch /config.js, status:', response.status)
+      devLog('[RuntimeConfig] Failed to fetch /config.js, status:', response.status)
     }
   } catch (error) {
-    console.warn('[RuntimeConfig] Failed to fetch /config.js:', error)
+    devLog('[RuntimeConfig] Failed to fetch /config.js:', error)
   }
 
   // Fallback to environment variables (Vite dev mode) or auto-detect
-  console.log('[RuntimeConfig] Falling back to Vite env vars or auto-detection')
+  devLog('[RuntimeConfig] Falling back to Vite env vars or auto-detection')
   const envConfig = {
     apiUrl: import.meta.env.VITE_API_URL || DEFAULT_CONFIG.apiUrl,
     livekitUrl: import.meta.env.VITE_LIVEKIT_URL || DEFAULT_CONFIG.livekitUrl,
   } as RuntimeConfig
 
-  console.log('[RuntimeConfig] Env config:', envConfig)
+  devLog('[RuntimeConfig] Env config:', envConfig)
 
   // Check if we need to auto-detect
   if (isInternalServiceUrl(envConfig.apiUrl) || isInternalServiceUrl(envConfig.livekitUrl)) {
-    console.log('[RuntimeConfig] ✓ Detected internal K8s service names in env config')
-    console.log('[RuntimeConfig] ✓ Auto-detecting URLs...')
+    devLog('[RuntimeConfig] ✓ Detected internal K8s service names in env config')
+    devLog('[RuntimeConfig] ✓ Auto-detecting URLs...')
     runtimeConfig = autoDetectUrls()
-    console.log('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
+    devLog('[RuntimeConfig] ✓ Final config with auto-detected URLs:', runtimeConfig)
     return runtimeConfig
   }
 
-  console.log('[RuntimeConfig] ✓ Using env config as-is')
+  devLog('[RuntimeConfig] ✓ Using env config as-is')
   runtimeConfig = envConfig
   return runtimeConfig
 }
@@ -145,7 +152,7 @@ export async function initRuntimeConfig(): Promise<RuntimeConfig> {
  */
 export function getRuntimeConfig(): RuntimeConfig {
   if (!runtimeConfig) {
-    console.warn('[RuntimeConfig] Configuration not initialized, returning defaults')
+    devLog('[RuntimeConfig] Configuration not initialized, returning defaults')
     return DEFAULT_CONFIG
   }
   return runtimeConfig

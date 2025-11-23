@@ -18,8 +18,12 @@ spec:
         image: message-recorder-python:latest
         imagePullPolicy: Never  # Use local image from minikube
         env:
+        # External LiveKit Server (read from ConfigMap)
         - name: LIVEKIT_URL
-          value: "ws://livekit:7880"
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: LIVEKIT_URL
         - name: SESSION_SERVER_URL
           value: "http://session-management-server:3000"
         - name: POLL_INTERVAL
@@ -34,6 +38,7 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: livekit-api-secret
+        command: ["python", "-u", "main.py"]
         resources:
           requests:
             memory: "128Mi"

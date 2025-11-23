@@ -4,34 +4,70 @@ set -e
 # Parse command line flags
 DAEMON_MODE=false
 STOP_MODE=false
+ENV_FLAG=""
 PID_DIR="/tmp/grace-ai-k8s"
 
+# First pass: check for unknown flags
+for arg in "$@"; do
+    case $arg in
+        --daemon|-d|--stop|--help|-h|--local|--production)
+            # Known flags
+            ;;
+        -*)
+            echo "Error: Unknown flag '$arg'"
+            echo ""
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
+            echo "  --production    Run in production mode (external LiveKit)"
+            echo "  --daemon, -d    Run in background (survives SSH logout)"
+            echo "  --stop          Stop background services"
+            echo "  --help, -h      Show this help message"
+            exit 1
+            ;;
+    esac
+done
+
+# Second pass: process flags
 for arg in "$@"; do
     case $arg in
         --daemon|-d)
             DAEMON_MODE=true
-            shift
             ;;
         --stop)
             STOP_MODE=true
-            shift
+            ;;
+        --local)
+            ENV_FLAG="local"
+            ;;
+        --production)
+            ENV_FLAG="production"
             ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
+            echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
+            echo "  --production    Run in production mode (external LiveKit)"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0              # Run in foreground (Ctrl+C to stop)"
-            echo "  $0 --daemon     # Run in background"
-            echo "  $0 --stop       # Stop background services"
+            echo "  $0                      # Run locally in foreground (default)"
+            echo "  $0 --production         # Run in production mode"
+            echo "  $0 --daemon             # Run locally in background"
+            echo "  $0 --stop               # Stop background services"
             exit 0
             ;;
     esac
 done
+
+# Default to local mode if no environment flag specified
+if [ -z "$ENV_FLAG" ] && [ "$STOP_MODE" = false ]; then
+    ENV_FLAG="local"
+fi
 
 # Handle stop mode
 if [ "$STOP_MODE" = true ]; then
@@ -51,6 +87,7 @@ if [ "$STOP_MODE" = true ]; then
 
     echo ""
     echo "✅ All services stopped"
+    echo ""
     exit 0
 fi
 
@@ -82,8 +119,8 @@ fi
 
 # Ensure Docker and other tools are in PATH
 if [[ "$OS_TYPE" == "macos" ]]; then
-    # macOS: Include Homebrew and OrbStack paths
-    export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin:$PATH"
+    # macOS: Include Homebrew, OrbStack, and util-linux paths
+    export PATH="/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/opt/util-linux/bin:$HOME/.orbstack/bin:$PATH"
 else
     # Linux: Use standard paths
     export PATH="/usr/local/bin:/usr/bin:/usr/sbin:$PATH"
@@ -110,17 +147,51 @@ echo -e "${BLUE}🚀 Grace AI - Kubernetes Deployment${NC}"
 # Change to script directory
 cd "$(dirname "$0")/.."
 
-# Load environment variables from .env file
-if [ -f .env ]; then
-    set -a  # automatically export all variables
-    # Load .env while filtering out comments and blank lines
-    eval "$(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')"
-    set +a
-else
+# ============================================================================
+# Load Environment Variables (12-factor app methodology)
+# ============================================================================
+# Hierarchy: .env (base) -> .env.local (local overrides) -> .env.production (prod overrides)
+# Never mutate .env files - configuration via environment only
+
+# Helper function to load env file
+load_env_file() {
+    local env_file=$1
+    local label=$2
+
+    if [ -f "$env_file" ]; then
+        echo -e "${BLUE}📋 Loading ${label}: ${env_file}${NC}"
+        set -a  # automatically export all variables
+        eval "$(grep -v '^#' "$env_file" | grep -v '^$' | sed 's/\r$//')"
+        set +a
+        return 0
+    fi
+    return 1
+}
+
+# Load base .env (required)
+if ! load_env_file ".env" "base configuration"; then
     echo -e "${RED}✗ Error: .env file not found${NC}"
     echo "  Run: cp .env.example .env && nano .env"
     exit 1
 fi
+
+# Determine which environment-specific override to load
+if [ -n "$ENV_FLAG" ]; then
+    export NODE_ENV="$ENV_FLAG"
+    echo -e "${BLUE}⚙️  Environment mode set to: ${ENV_FLAG}${NC}"
+fi
+
+# Load environment-specific overrides
+if [ "$NODE_ENV" = "production" ]; then
+    # Production mode: load .env.production if it exists
+    load_env_file ".env.production" "production overrides" || true
+else
+    # Local mode (default): load .env.local if it exists
+    export NODE_ENV="local"
+    load_env_file ".env.local" "local overrides" || true
+fi
+
+echo ""
 
 # Set environment-specific URLs based on NODE_ENV
 if [ "$NODE_ENV" = "production" ]; then
@@ -130,73 +201,114 @@ if [ "$NODE_ENV" = "production" ]; then
     # Production URLs (custom domains with SSL)
     export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN}"
     export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN}"
-    export PUBLIC_LIVEKIT_URL="wss://livekit.${PRODUCTION_DOMAIN}"
     export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN}"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN}"
 else
     echo -e "${BLUE}🏠 Running in LOCAL mode${NC}"
 
-    # Local URLs (localhost with port-forwards)
+    # Local URLs
     export NODE_ENV="local"
     export PUBLIC_FRONTEND_URL="http://localhost:8080"
     export PUBLIC_API_URL="http://localhost:3000"
-    export PUBLIC_LIVEKIT_URL="ws://localhost:7880"
     export PUBLIC_DB_HOST="localhost"
     export PUBLIC_DB_PORT="5432"
     export CORS_ORIGIN="http://localhost:8080"
 fi
 
-# Set TTS_PROVIDER default if not set
+# ============================================================================
+# LiveKit URL Configuration
+# ============================================================================
+# Two different URLs for different use cases:
+#
+# 1. LIVEKIT_URL (Internal - for pods in Kubernetes)
+#    - Used by: session-management-server, conversational-ai-server-python, message-recorder-python
+#    - Development: ws://host.minikube.internal:7880 (pods access host via minikube DNS)
+#    - Production: ws://<HOST_IP>:7880 (direct IP to host running LiveKit)
+#    - Read from: .env, .env.local, or .env.production
+#
+# 2. PUBLIC_LIVEKIT_URL (External - for browsers)
+#    - Used by: frontend-ui (browsers/external clients)
+#    - Development: ws://localhost:7880 (browser on host via port-forward)
+#    - Production: wss://livekit-v1.c4dhi.moserfelix.com (public domain with SSL)
+#    - Read from: .env, .env.local, or .env.production
+#    - Mapped to: VITE_LIVEKIT_URL for Vite frontend
+#
+# Both URLs are loaded from .env files above and exported to ConfigMap below
+
+# Map PUBLIC_LIVEKIT_URL to VITE_LIVEKIT_URL for frontend
+export VITE_LIVEKIT_URL="${PUBLIC_LIVEKIT_URL}"
+
+echo -e "${GREEN}✓ Internal LiveKit URL (pods): ${LIVEKIT_URL}${NC}"
+echo -e "${GREEN}✓ External LiveKit URL (frontend): ${PUBLIC_LIVEKIT_URL}${NC}"
+
+# ============================================================================
+# Set Hardcoded Defaults (non-configurable)
+# ============================================================================
+# These values don't need to be in .env files - they're set automatically
+
+# Backend port (always 3000)
+export PORT=3000
+
+# Kubernetes configuration
+export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+export AGENT_IMAGE="${AGENT_IMAGE:-conversational-ai-server:latest}"
+export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
+
+# Legacy compatibility
+export PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-localhost}"
+export ENABLE_NETWORK_ACCESS="${ENABLE_NETWORK_ACCESS:-false}"
+
+# Frontend configuration
+export VITE_USE_INPAGE_MOCK="${VITE_USE_INPAGE_MOCK:-0}"
+
+# Python Agent - Connection defaults
+export ROOM_NAME="${ROOM_NAME:-voice-ai-room}"
+export IDENTITY="${IDENTITY:-python-listener}"
+
+# Python Agent - STT defaults
+export WHISPER_DEVICE="${WHISPER_DEVICE:-cpu}"
+export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-int8}"
+export WHISPER_BEAM_SIZE="${WHISPER_BEAM_SIZE:-1}"
+export WHISPER_WORD_TIMESTAMPS="${WHISPER_WORD_TIMESTAMPS:-false}"
+export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-250}"
+export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
+export ENABLE_STREAMING_CHUNKS="${ENABLE_STREAMING_CHUNKS:-true}"
+export CHUNK_LENGTH_MS="${CHUNK_LENGTH_MS:-1000}"
+export PARTIAL_TRANSCRIPT_INTERVAL_MS="${PARTIAL_TRANSCRIPT_INTERVAL_MS:-1000}"
+
+# Python Agent - TTS defaults
+export ELEVENLABS_STABILITY="${ELEVENLABS_STABILITY:-0.5}"
+export ELEVENLABS_SIMILARITY_BOOST="${ELEVENLABS_SIMILARITY_BOOST:-0.8}"
+export ELEVENLABS_STYLE="${ELEVENLABS_STYLE:-0.0}"
+export ELEVENLABS_USE_SPEAKER_BOOST="${ELEVENLABS_USE_SPEAKER_BOOST:-true}"
+export KOKORO_MODEL_PATH="${KOKORO_MODEL_PATH:-./kokoro-models/kokoro-v1.0.onnx}"
+export KOKORO_VOICES_PATH="${KOKORO_VOICES_PATH:-./kokoro-models/voices-v1.0.bin}"
+export KOKORO_CACHE_DIR="${KOKORO_CACHE_DIR:-/root/.cache/kokoro}"
+
+# Python Agent - Barge-in defaults
+export MIN_INTERRUPTION_DURATION="${MIN_INTERRUPTION_DURATION:-0.5}"
+export MIN_INTERRUPTION_WORDS="${MIN_INTERRUPTION_WORDS:-1}"
+export FALSE_INTERRUPTION_TIMEOUT="${FALSE_INTERRUPTION_TIMEOUT:-2.0}"
+
+# TTS Provider default
 export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
 
-# Extract TURN domain from PUBLIC_LIVEKIT_URL (remove protocol and port)
-# Examples: wss://livekit.c4dhi.moserfelix.com → livekit.c4dhi.moserfelix.com
-#           ws://localhost:7880 → localhost
-export LIVEKIT_TURN_DOMAIN=$(echo "$PUBLIC_LIVEKIT_URL" | sed -E 's#^(ws|wss)://##' | sed -E 's#:[0-9]+(/.*)?$##' | sed -E 's#/.*$##')
-
-# Enable TURN only for production (disable for local development)
-# TURN provides NAT traversal for remote clients but is not needed for localhost
-# If LIVEKIT_TURN_ENABLED is already set in .env, respect that value
-if [ "$NODE_ENV" = "production" ]; then
-    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-true}"
-else
-    export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
-fi
-
-# Configure LiveKit ICE settings based on environment
-# Local: Full ICE negotiation with auto-discovery (works in Kubernetes/minikube)
-# Production: ICE Lite with resolved public IP (optimized for external browsers)
-if [ "$NODE_ENV" = "production" ]; then
-    export LIVEKIT_USE_ICE_LITE="true"
-    export LIVEKIT_USE_EXTERNAL_IP="false"
-
-    # Resolve domain to actual IP address (node_ip requires IP, not domain)
-    echo -e "${YELLOW}Resolving LiveKit domain to IP address...${NC}"
-    RESOLVED_IP=$(dig +short "$LIVEKIT_TURN_DOMAIN" | head -1)
-
-    if [ -z "$RESOLVED_IP" ]; then
-        echo -e "${RED}ERROR: Could not resolve $LIVEKIT_TURN_DOMAIN to IP address${NC}"
-        echo -e "${RED}Please check your DNS configuration or set LIVEKIT_PUBLIC_IP in .env${NC}"
-        exit 1
-    fi
-
-    export LIVEKIT_NODE_IP="$RESOLVED_IP"
-    echo -e "${GREEN}Resolved $LIVEKIT_TURN_DOMAIN to $RESOLVED_IP${NC}"
-else
-    export LIVEKIT_USE_ICE_LITE="false"
-    export LIVEKIT_USE_EXTERNAL_IP="false"
-    export LIVEKIT_NODE_IP=""
-fi
+# TURN defaults
+export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
+export LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-localhost}"
 
 echo -e "${GREEN}Environment Configuration:${NC}"
 echo -e "  Frontend:  ${PUBLIC_FRONTEND_URL}"
 echo -e "  Backend:   ${PUBLIC_API_URL}"
-echo -e "  LiveKit:   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  LiveKit (Internal):  ${LIVEKIT_URL}"
+echo -e "  LiveKit (Public):    ${PUBLIC_LIVEKIT_URL}"
 echo -e "  Database:  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
-echo -e "  TURN:      ${LIVEKIT_TURN_ENABLED} (domain: ${LIVEKIT_TURN_DOMAIN})"
-echo -e "  ICE Lite:  ${LIVEKIT_USE_ICE_LITE}"
-echo -e "  ICE IP:    ${LIVEKIT_NODE_IP:-auto-discover}"
+if [ "$LIVEKIT_TURN_ENABLED" = "true" ]; then
+    echo -e "  TURN:      enabled (domain: ${LIVEKIT_TURN_DOMAIN})"
+else
+    echo -e "  TURN:      disabled"
+fi
 echo ""
 
 # Validate required environment variables
@@ -209,31 +321,44 @@ if [ -z "$OPENAI_API_KEY" ] || [ -z "$POSTGRES_DB" ] || [ -z "$POSTGRES_USER" ] 
     exit 1
 fi
 
-# Validate LiveKit API credentials
+# Validate LiveKit configuration
+LIVEKIT_VALIDATION_FAILED=false
+
 if [ -z "$LIVEKIT_API_KEY" ] || [ -z "$LIVEKIT_API_SECRET" ]; then
-    echo -e "${RED}✗ Missing required LiveKit API credentials in .env${NC}"
+    echo -e "${RED}✗ Missing required LiveKit API credentials${NC}"
     [ -z "$LIVEKIT_API_KEY" ] && echo "  - LIVEKIT_API_KEY"
     [ -z "$LIVEKIT_API_SECRET" ] && echo "  - LIVEKIT_API_SECRET"
-    exit 1
+    LIVEKIT_VALIDATION_FAILED=true
 fi
 
-# Validate LiveKit API key length (must be at least 32 characters)
-KEY_LENGTH=${#LIVEKIT_API_KEY}
-if [ $KEY_LENGTH -lt 32 ]; then
-    echo -e "${RED}✗ LIVEKIT_API_KEY is too short (${KEY_LENGTH} characters)${NC}"
-    echo -e "${RED}  LiveKit requires API keys to be at least 32 characters for security${NC}"
-    echo -e "${YELLOW}  Generate a secure key with:${NC}"
-    echo -e "${YELLOW}    LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
-    exit 1
+if [ -z "$LIVEKIT_URL" ] || [ -z "$PUBLIC_LIVEKIT_URL" ]; then
+    echo -e "${RED}✗ Missing required LiveKit URL configuration${NC}"
+    [ -z "$LIVEKIT_URL" ] && echo "  - LIVEKIT_URL (internal, e.g., ws://host.minikube.internal:7880)"
+    [ -z "$PUBLIC_LIVEKIT_URL" ] && echo "  - PUBLIC_LIVEKIT_URL (public, e.g., wss://livekit.example.com)"
+    LIVEKIT_VALIDATION_FAILED=true
 fi
 
-# Validate LiveKit API secret length (must be at least 32 characters)
-SECRET_LENGTH=${#LIVEKIT_API_SECRET}
-if [ $SECRET_LENGTH -lt 32 ]; then
-    echo -e "${RED}✗ LIVEKIT_API_SECRET is too short (${SECRET_LENGTH} characters)${NC}"
-    echo -e "${RED}  LiveKit requires API secrets to be at least 32 characters for security${NC}"
-    echo -e "${YELLOW}  Generate a secure secret with:${NC}"
-    echo -e "${YELLOW}    LIVEKIT_API_SECRET=\$(openssl rand -base64 48)${NC}"
+if [ -z "$LIVEKIT_TURN_ENABLED" ]; then
+    echo -e "${RED}✗ Missing required LiveKit TURN configuration${NC}"
+    echo "  - LIVEKIT_TURN_ENABLED (true or false)"
+    LIVEKIT_VALIDATION_FAILED=true
+fi
+
+# Validate TURN domain if TURN is enabled
+if [ "$LIVEKIT_TURN_ENABLED" = "true" ] && [ -z "$LIVEKIT_TURN_DOMAIN" ]; then
+    echo -e "${RED}✗ LIVEKIT_TURN_ENABLED is true but LIVEKIT_TURN_DOMAIN is not set${NC}"
+    echo "  - LIVEKIT_TURN_DOMAIN (e.g., livekit-turn.example.com)"
+    LIVEKIT_VALIDATION_FAILED=true
+fi
+
+if [ "$LIVEKIT_VALIDATION_FAILED" = true ]; then
+    echo ""
+    if [ "$NODE_ENV" = "production" ]; then
+        echo -e "${YELLOW}💡 Configure these in .env.production${NC}"
+    else
+        echo -e "${YELLOW}💡 Configure these in .env.local for local development${NC}"
+        echo -e "${YELLOW}   or in .env for production defaults${NC}"
+    fi
     exit 1
 fi
 
@@ -263,9 +388,9 @@ fi
 # In production: postgres uses port 15432 (nginx uses 5432 for external access)
 # In local: postgres uses port 5432 (no nginx conflict)
 if [ "$NODE_ENV" = "production" ]; then
-    REQUIRED_PORTS=(8080 3000 7880 15432)
+    REQUIRED_PORTS=(8080 3000 15432)
 else
-    REQUIRED_PORTS=(8080 3000 7880 5432)
+    REQUIRED_PORTS=(8080 3000 5432)
 fi
 PORTS_IN_USE=()
 
@@ -345,15 +470,142 @@ if ! command -v kubectl &> /dev/null; then
     fi
 fi
 
+# Check if setsid is available (required for Docker build output capture)
+SETSID_CMD="setsid"
+if ! command -v setsid &> /dev/null; then
+    echo -e "${YELLOW}⚠️  setsid not found (required for proper build output handling)${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "${YELLOW}Installing util-linux (includes setsid)...${NC}"
+        brew install util-linux
+        echo -e "${GREEN}✓ util-linux installed${NC}"
+        # After installation, check if setsid is now available
+        if ! command -v setsid &> /dev/null; then
+            echo -e "${RED}✗ setsid still not found after installation${NC}"
+            echo -e "${YELLOW}Try running: export PATH=\"/opt/homebrew/opt/util-linux/bin:\$PATH\"${NC}"
+            exit 1
+        fi
+    elif [[ "$OS_TYPE" == "linux" ]]; then
+        # On Linux, setsid should be part of util-linux (core package)
+        echo -e "${RED}✗ setsid not found but should be part of util-linux${NC}"
+        echo -e "${YELLOW}Try: sudo apt-get install util-linux (Debian/Ubuntu)${NC}"
+        echo -e "${YELLOW}     sudo yum install util-linux (RHEL/CentOS)${NC}"
+        exit 1
+    fi
+fi
+
 # Start minikube if not running
 echo -e "${GREEN}⚙️  Starting minikube...${NC}"
-minikube status | grep -q "Running" || minikube start --driver=docker --cpus=4 --memory=8192
+
+# Check if minikube is already running
+MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
+
+if [ "$MINIKUBE_RUNNING" = "no" ]; then
+    # Minikube needs to be started (but NOT deleted automatically)
+    # Start minikube with standard configuration
+    # Note: LiveKit runs in Docker on host (not in K8s cluster)
+    # Production uses ClusterIP services with port-forward (no NodePorts needed)
+    echo -e "${YELLOW}⚠️  Minikube not running. Starting minikube...${NC}"
+    minikube start --driver=docker --cpus=4 --memory=8192
+    echo -e "${GREEN}✓ Minikube started${NC}"
+else
+    echo -e "${GREEN}✓ Minikube already running${NC}"
+fi
 
 # Configure environment
 minikube addons enable metrics-server 2>/dev/null
 minikube addons enable dashboard 2>/dev/null
 kubectl config use-context minikube > /dev/null 2>&1
 eval $(minikube docker-env)
+
+# ============================================================================
+# Custom DNS Configuration
+# ============================================================================
+# Configure CoreDNS to use custom DNS servers if CUSTOM_DNS_SERVERS is set.
+# This is useful for bypassing network DNS interception (e.g., SSL inspection).
+# Set CUSTOM_DNS_SERVERS in .env files (e.g., "8.8.8.8 8.8.4.4" for Google DNS)
+if [ -n "$CUSTOM_DNS_SERVERS" ] && [ "$CUSTOM_DNS_SERVERS" != '""' ]; then
+    echo -e "${BLUE}🔧 Configuring custom DNS for CoreDNS...${NC}"
+    echo -e "  ${BLUE}DNS Servers: ${CUSTOM_DNS_SERVERS}${NC}"
+
+    # Get current CoreDNS ConfigMap
+    COREDNS_CONFIG=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' 2>/dev/null)
+
+    # Extract first DNS server for checking (e.g., "8.8.8.8" from "8.8.8.8 8.8.4.4")
+    FIRST_DNS=$(echo "$CUSTOM_DNS_SERVERS" | awk '{print $1}')
+
+    # Check if we need to update it (only if not already using the specified DNS)
+    if ! echo "$COREDNS_CONFIG" | grep -q "forward . $FIRST_DNS"; then
+        echo -n "  • Updating CoreDNS configuration... "
+
+        # Create new Corefile with custom DNS servers
+        cat > /tmp/coredns-config.yaml << EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+           lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           fallthrough in-addr.arpa ip6.arpa
+           ttl 30
+        }
+        prometheus :9153
+        forward . ${CUSTOM_DNS_SERVERS} {
+           max_concurrent 1000
+        }
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+EOF
+
+        # Apply the new configuration
+        kubectl apply -f /tmp/coredns-config.yaml > /dev/null 2>&1
+
+        # Restart CoreDNS pods to pick up new config
+        kubectl rollout restart deployment/coredns -n kube-system > /dev/null 2>&1
+
+        # Wait for CoreDNS to be ready
+        kubectl wait --for=condition=available deployment/coredns -n kube-system --timeout=60s > /dev/null 2>&1
+
+        echo -e "${GREEN}✓${NC}"
+        echo -e "  ${GREEN}✓ CoreDNS now using: ${CUSTOM_DNS_SERVERS}${NC}"
+
+        # Clean up temp file
+        rm -f /tmp/coredns-config.yaml
+    else
+        echo -e "  ${GREEN}✓ CoreDNS already configured with custom DNS${NC}"
+    fi
+else
+    echo -e "${BLUE}ℹ️  Using default DNS configuration (CUSTOM_DNS_SERVERS not set)${NC}"
+fi
+
+# ============================================================================
+# LiveKit Host Discovery
+# ============================================================================
+# On macOS, host.minikube.internal works automatically
+# On Linux (production), pods use init containers to dynamically discover
+# the gateway IP and update /etc/hosts at runtime
+# No static configuration or firewall rules needed
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -e "${GREEN}✓ Using dynamic host discovery for LiveKit connectivity${NC}"
+else
+    echo -e "${GREEN}✓ Using native host.minikube.internal (macOS)${NC}"
+fi
+
+# LiveKit is provided externally - using dual URLs for internal/external access
+echo -e "${GREEN}📡 Using LiveKit server:${NC}"
+echo -e "  ${GREEN}Internal (K8s pods):${NC} ${LIVEKIT_URL}"
+echo -e "  ${GREEN}Public (browsers):${NC}   ${PUBLIC_LIVEKIT_URL}"
 
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
@@ -421,33 +673,42 @@ build_with_progress() {
     echo "  • ${IMAGE_NAME}..."
 
     # Run docker build in background and capture output
+    # Use setsid to detach from controlling terminal, preventing BuildKit from writing to /dev/tty
     if [ "$USE_BUILDKIT" = true ]; then
-        DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     else
-        docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     fi
 
     local BUILD_PID=$!
 
-    # Show last 4 lines of build output, updating in place
+    # Show last 6 lines of build output, updating in place
     local LINE_COUNT=0
     local LAST_LINES=""
 
+    # Wait a moment for log file to be created and have content
+    sleep 1
+
     while kill -0 $BUILD_PID 2>/dev/null; do
         if [ -f "${LOG_FILE}" ]; then
-            # Get last 4 non-empty lines
-            LAST_LINES=$(tail -n 4 "${LOG_FILE}" 2>/dev/null | grep -v "^$" | sed 's/^/    /')
+            # Get last 6 non-empty lines
+            LAST_LINES=$(tail -n 6 "${LOG_FILE}" 2>/dev/null | grep -v "^$" | sed 's/^/    /')
 
-            # Clear previous lines if we had any
-            if [ $LINE_COUNT -gt 0 ]; then
-                for i in $(seq 1 $LINE_COUNT); do
-                    echo -ne "\033[1A\033[2K"  # Move up and clear line
-                done
+            # Only update display if we have content
+            if [ -n "$LAST_LINES" ]; then
+                # Clear previous lines if we had any
+                if [ $LINE_COUNT -gt 0 ]; then
+                    for i in $(seq 1 $LINE_COUNT); do
+                        echo -ne "\033[1A\033[2K"  # Move up and clear line
+                    done
+                fi
+
+                # Print new lines using printf to avoid extra newline
+                printf "%s\n" "$LAST_LINES"
+
+                # Count actual lines (not newlines)
+                LINE_COUNT=$(printf "%s\n" "$LAST_LINES" | wc -l | tr -d ' ')
             fi
-
-            # Print new lines
-            echo "$LAST_LINES"
-            LINE_COUNT=$(echo "$LAST_LINES" | wc -l)
         fi
         sleep 0.5
     done
@@ -474,99 +735,6 @@ build_with_progress() {
     if [ $EXIT_CODE -eq 0 ]; then
         rm -f "${LOG_FILE}"
     fi
-
-    return $EXIT_CODE
-}
-
-# Function to wait for LiveKit with live log preview
-wait_for_livekit_with_logs() {
-    local LOG_FILE="/tmp/livekit-wait.log"
-
-    echo "  • Waiting for LiveKit..."
-
-    # Start kubectl wait in background
-    kubectl wait --for=condition=ready pod -l app=livekit -n ai-agents --timeout=120s > /dev/null 2>&1 &
-    local WAIT_PID=$!
-
-    # Show last 4 lines of LiveKit logs, updating in place
-    local LINE_COUNT=0
-    local LAST_LINES=""
-    local PREV_LINES=""
-
-    while kill -0 $WAIT_PID 2>/dev/null; do
-        # Get LiveKit pod name (select the newest pod by creation timestamp)
-        local POD_NAME=$(kubectl get pods -n ai-agents -l app=livekit --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)
-
-        # Determine what to display
-        if [ ! -z "$POD_NAME" ]; then
-            # Get last 4 non-empty lines from pod logs
-            local LOGS_OUTPUT=$(kubectl logs -n ai-agents "$POD_NAME" --tail=4 2>/dev/null | grep -v "^$" | sed 's/^/    /')
-            if [ -z "$LOGS_OUTPUT" ]; then
-                LAST_LINES="    [Waiting for logs...]"
-            else
-                LAST_LINES="$LOGS_OUTPUT"
-            fi
-        else
-            # Pod not found yet
-            LAST_LINES="    [Waiting for pod to start...]"
-        fi
-
-        # Only update display if content has changed
-        if [ "$LAST_LINES" != "$PREV_LINES" ]; then
-            # Clear previous lines if we had any
-            if [ $LINE_COUNT -gt 0 ]; then
-                for i in $(seq 1 $LINE_COUNT); do
-                    echo -ne "\033[1A\033[2K"  # Move up and clear line
-                done
-            fi
-
-            # Print new lines only if there's content
-            if [ ! -z "$LAST_LINES" ]; then
-                echo "$LAST_LINES"
-                # Count actual lines with content (not empty strings)
-                LINE_COUNT=$(echo "$LAST_LINES" | grep -c "." || echo "0")
-            else
-                LINE_COUNT=0
-            fi
-
-            PREV_LINES="$LAST_LINES"
-        fi
-
-        sleep 0.5
-    done
-
-    # Wait for kubectl wait to complete and get exit code
-    wait $WAIT_PID
-    local EXIT_CODE=$?
-
-    # Clear progress lines AND the service name line (LINE_COUNT + 1 total lines)
-    local TOTAL_LINES=$((LINE_COUNT + 1))
-    for i in $(seq 1 $TOTAL_LINES); do
-        echo -ne "\033[1A\033[2K"
-    done
-
-    # Show final status (replaces the original service name line)
-    if [ $EXIT_CODE -eq 0 ]; then
-        echo -e "  • Waiting for LiveKit... ${GREEN}✓${NC}"
-    else
-        echo -e "  • Waiting for LiveKit... ${RED}✗${NC}"
-
-        # On failure, show more context from the newest pod
-        local POD_NAME=$(kubectl get pods -n ai-agents -l app=livekit --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)
-        if [ ! -z "$POD_NAME" ]; then
-            echo -e "${RED}Last 10 lines of LiveKit logs:${NC}"
-            kubectl logs -n ai-agents "$POD_NAME" --tail=10 2>/dev/null | sed 's/^/    /'
-            echo ""
-            echo -e "${RED}Pod status:${NC}"
-            kubectl describe pod -n ai-agents "$POD_NAME" | grep -A 10 "Events:" | sed 's/^/    /'
-        else
-            echo -e "${RED}LiveKit pod not found. Check deployment:${NC}"
-            echo -e "${YELLOW}  kubectl get pods -n ai-agents -l app=livekit${NC}"
-        fi
-    fi
-
-    # Clean up log file
-    rm -f "${LOG_FILE}"
 
     return $EXIT_CODE
 }
@@ -598,35 +766,19 @@ echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
 # Inject environment variables into ConfigMaps using envsubst
 echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
-envsubst < k8s/livekit-config.yaml > /tmp/livekit-config-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
-# Verify LiveKit API keys were substituted
-echo -n "  • Verifying LiveKit API key configuration... "
-KEYS_LINE=$(grep -A 1 "^  keys:" /tmp/livekit-config-updated.yaml | tail -1 | sed 's/^[[:space:]]*//')
-if echo "$KEYS_LINE" | grep -q '${LIVEKIT_API_KEY}'; then
-    echo -e "${RED}✗${NC}"
-    echo -e "${RED}    Error: Environment variables not substituted in LiveKit config${NC}"
-    echo -e "${YELLOW}    Found: $KEYS_LINE${NC}"
-    echo -e "${YELLOW}    Expected: <api-key>: <api-secret>${NC}"
-    exit 1
-elif [ "$LIVEKIT_API_KEY" = "devkey" ] || [ "$LIVEKIT_API_SECRET" = "secret" ]; then
-    echo -e "${YELLOW}⚠${NC}"
-    echo -e "${YELLOW}    Warning: Using development placeholder keys (devkey/secret)${NC}"
-    echo -e "${YELLOW}    For production, generate secure keys:${NC}"
-    echo -e "${YELLOW}      LIVEKIT_API_KEY=\$(openssl rand -hex 16)${NC}"
-    echo -e "${YELLOW}      LIVEKIT_API_SECRET=\$(openssl rand -hex 32)${NC}"
-else
-    echo -e "${GREEN}✓${NC}"
-fi
+# Note: Pods use init containers to dynamically discover the gateway IP
+# No static HOST_GATEWAY_IP replacement needed
+
+# Note: LiveKit API key verification skipped - using external LiveKit server
+# The external server is pre-configured with its own API keys
 
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
 kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
 kubectl apply -f k8s/01-postgres.yaml > /dev/null
-kubectl apply -f /tmp/livekit-config-updated.yaml > /dev/null
-kubectl apply -f k8s/02-livekit.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
@@ -634,10 +786,11 @@ kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
-# Apply NodePort services in production mode
-if [ "$NODE_ENV" = "production" ]; then
-    echo -e "${BLUE}  • Applying NodePort services for production...${NC}"
-    kubectl apply -f k8s/production/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
+# Apply NodePort services for local development only
+# Production uses ClusterIP services (already created) + port-forward
+if [ "$NODE_ENV" != "production" ]; then
+    echo -e "${BLUE}  • Applying NodePort services for local development...${NC}"
+    kubectl apply -f k8s/local/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
 fi
 
 # Create secrets
@@ -659,7 +812,8 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
 echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
-wait_for_livekit_with_logs
+# LiveKit: Using external server with dual URLs
+echo -e "  • LiveKit: Internal=${LIVEKIT_URL}, Public=${PUBLIC_LIVEKIT_URL} ${GREEN}✓${NC}"
 
 # Restart deployments
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
@@ -673,8 +827,11 @@ kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev
 
 
 # Start port-forwards
-# Create port-forwards for all services: frontend (8080), backend (3000), livekit (7880), postgres (5432)
-# nginx proxies handle external access, port-forwards enable localhost connectivity
+# Create port-forwards for all services:
+#   - Frontend: localhost:8080
+#   - Backend: localhost:3000
+#   - Database: localhost:5432
+# In production, Caddy proxies external HTTPS traffic to these localhost ports
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
@@ -685,23 +842,13 @@ if [ "$DAEMON_MODE" = true ]; then
     nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > "$PID_DIR/pf-livekit.log" 2>&1 &
-    PF_LIVEKIT=$!
-
-    # Create postgres port-forward
-    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
-    # Local: Use port 5432 (no nginx conflict)
-    if [ "$NODE_ENV" = "production" ]; then
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    else
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    fi
+    # PostgreSQL port-forward (5432 for both local and production)
+    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
     PF_POSTGRES=$!
 
     # Save PIDs to file
     echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
     echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
-    echo "$PF_LIVEKIT" >> "$PID_DIR/port-forwards.pid"
     echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
 
     # Detach from session
@@ -714,17 +861,8 @@ else
     kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
     PF_BACKEND=$!
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/livekit 7880:7880 > /dev/null 2>&1 &
-    PF_LIVEKIT=$!
-
-    # Create postgres port-forward
-    # Production: Use port 15432 locally (nginx listens on 5432 for external access)
-    # Local: Use port 5432 (no nginx conflict)
-    if [ "$NODE_ENV" = "production" ]; then
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > /dev/null 2>&1 &
-    else
-        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
-    fi
+    # PostgreSQL port-forward (5432 for both local and production)
+    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
     PF_POSTGRES=$!
 fi
 
@@ -745,7 +883,6 @@ if [ "$DAEMON_MODE" = false ]; then
     echo -e "${BLUE}Stopping port forwards...${NC}"
     [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
-    [ ! -z "$PF_LIVEKIT" ] && kill $PF_LIVEKIT 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
     # Stop minikube (stops all services gracefully)
@@ -770,7 +907,8 @@ echo -e "${BLUE}🌐 Services accessible at:${NC}"
 echo ""
 echo -e "  ${GREEN}Frontend:${NC}  ${PUBLIC_FRONTEND_URL}"
 echo -e "  ${GREEN}Backend:${NC}   ${PUBLIC_API_URL}"
-echo -e "  ${GREEN}LiveKit:${NC}   ${PUBLIC_LIVEKIT_URL}"
+echo -e "  ${GREEN}LiveKit (Internal):${NC}  ${LIVEKIT_URL}"
+echo -e "  ${GREEN}LiveKit (Public):${NC}    ${PUBLIC_LIVEKIT_URL}"
 echo -e "  ${GREEN}Database:${NC}  ${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}"
 echo ""
 echo -e "${BLUE}🔐 Database Credentials:${NC}"
@@ -787,6 +925,20 @@ if [ "$NODE_ENV" = "production" ]; then
 else
     echo -e "  ${YELLOW}External (via port-forward):${NC}"
     echo -e "    postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${PUBLIC_DB_HOST}:${PUBLIC_DB_PORT}/${POSTGRES_DB}"
+fi
+echo ""
+
+# Add note about external LiveKit
+echo -e "${BLUE}📡 Notes:${NC}"
+echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside minikube)${NC}"
+echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
+echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo -e "  ${YELLOW}• Pods use init containers to discover gateway IP dynamically${NC}"
+fi
+echo -e "  ${YELLOW}• Services exposed via port-forward (8080, 3000, 5432)${NC}"
+if [ "$NODE_ENV" = "production" ]; then
+    echo -e "  ${YELLOW}• Caddy proxies HTTPS traffic to localhost ports${NC}"
 fi
 echo ""
 

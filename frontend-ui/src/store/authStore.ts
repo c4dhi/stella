@@ -84,16 +84,11 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
   },
 
   checkAuth: async () => {
-    console.log('[Auth] Checking authentication...')
     const user = authService.getStoredUser()
     const tokens = authService.getStoredTokens()
 
-    console.log('[Auth] Stored user:', user ? user.email : 'none')
-    console.log('[Auth] Stored token:', tokens ? 'exists' : 'none')
-
     if (user && tokens) {
       // First, optimistically set user from localStorage
-      console.log('[Auth] Restoring session from localStorage')
       set({
         user,
         tokens,
@@ -103,9 +98,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
 
       // Then verify token is still valid by calling /auth/me
       try {
-        console.log('[Auth] Verifying token with backend...')
         const currentUser = await authService.getMe()
-        console.log('[Auth] Token valid, user verified:', currentUser.email)
         set({
           user: currentUser,
           tokens,
@@ -113,8 +106,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
           isLoading: false,
         })
       } catch (error) {
-        // Token is invalid or expired
-        console.error('[Auth] Token validation failed:', error)
+        // Token is invalid or expired - silently logout
         authService.logout()
         set({
           user: null,
@@ -124,7 +116,6 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
         })
       }
     } else {
-      console.log('[Auth] No stored credentials found')
       set({
         user: null,
         tokens: null,
