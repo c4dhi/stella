@@ -1115,6 +1115,26 @@ build_with_progress "conversational-ai-server" "conversational-ai-server:latest"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
 build_with_progress "message-recorder" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
+# Import Docker images into K3s containerd (K3s only)
+if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+    echo -e "${GREEN}📦 Importing images into K3s containerd...${NC}"
+
+    # Save Docker images to tar files
+    echo -n "  • Exporting Docker images... "
+    docker save session-management-server:latest conversational-ai-server:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/dev/null
+    echo -e "${GREEN}✓${NC}"
+
+    # Import into K3s containerd
+    echo -n "  • Importing into K3s containerd... "
+    sudo k3s ctr images import /tmp/k3s-images.tar > /dev/null 2>&1
+    echo -e "${GREEN}✓${NC}"
+
+    # Clean up tar file
+    rm -f /tmp/k3s-images.tar
+
+    echo -e "${GREEN}✓ Images available to K3s${NC}"
+fi
+
 # Detect network IP for public URLs
 if [[ "$OS_TYPE" == "macos" ]]; then
     # macOS: Use ifconfig
