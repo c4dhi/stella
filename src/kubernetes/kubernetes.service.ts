@@ -67,6 +67,29 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
+        // Production-only: Override DNS configuration to avoid UZH search domain issues
+        // UZH has a wildcard DNS record (*.cloud.science-it.uzh.ch) that intercepts external domains
+        // By excluding this search domain and lowering ndots, we ensure external APIs resolve correctly
+        ...(process.env.NODE_ENV === 'production' && {
+          dnsPolicy: 'None',
+          dnsConfig: {
+            nameservers: [
+              this.configService.get<string>('KUBERNETES_DNS_NAMESERVER', '10.96.0.10'),
+            ],
+            searches: [
+              `${this.namespace}.svc.cluster.local`,
+              'svc.cluster.local',
+              'cluster.local',
+              // Note: cloud.science-it.uzh.ch is intentionally excluded
+            ],
+            options: [
+              {
+                name: 'ndots',
+                value: '2', // Try absolute resolution for names with 2+ dots (like api.openai.com)
+              },
+            ],
+          },
+        }),
         containers: [
           {
             name: 'agent',
