@@ -748,15 +748,45 @@ if [ "$NODE_ENV" = "production" ]; then
 
                 # Configure Docker to use NVIDIA runtime
                 sudo nvidia-ctk runtime configure --runtime=docker > /dev/null 2>&1
-                sudo systemctl restart docker
-
-                # Restart K3s to pick up new Docker configuration
-                sudo systemctl restart k3s
-                sleep 5
 
                 echo -e "${GREEN}✓ NVIDIA Container Toolkit installed${NC}"
             else
                 echo -e "  ${GREEN}✓ NVIDIA Container Toolkit already installed${NC}"
+            fi
+
+            # Ensure NVIDIA is set as default Docker runtime (runs every time, not just on first install)
+            # NOTE: This only runs in production mode with K3s - safe for local Minikube development
+            if ! grep -q '"default-runtime".*"nvidia"' /etc/docker/daemon.json 2>/dev/null; then
+                echo -e "  ${YELLOW}Setting NVIDIA as default Docker runtime (K3s production only)...${NC}"
+                # Use jq to safely add default-runtime, or create new config if jq not available
+                if command -v jq &> /dev/null && [ -f /etc/docker/daemon.json ]; then
+                    sudo jq '. + {"default-runtime": "nvidia"}' /etc/docker/daemon.json > /tmp/daemon.json.tmp
+                    sudo mv /tmp/daemon.json.tmp /etc/docker/daemon.json
+                else
+                    # Fallback: create simple config
+                    sudo bash -c 'cat > /etc/docker/daemon.json << DOCKERCFG
+{
+    "default-runtime": "nvidia",
+    "runtimes": {
+        "nvidia": {
+            "path": "nvidia-container-runtime",
+            "runtimeArgs": []
+        }
+    }
+}
+DOCKERCFG'
+                fi
+
+                sudo systemctl restart docker
+                sleep 3
+
+                # Restart K3s to pick up new Docker configuration
+                sudo systemctl restart k3s
+                sleep 10
+
+                echo -e "${GREEN}✓ NVIDIA set as default Docker runtime (production only)${NC}"
+            else
+                echo -e "  ${GREEN}✓ NVIDIA already set as default runtime${NC}"
             fi
 
             # Install NVIDIA Device Plugin for Kubernetes (required to expose GPU resources)
@@ -805,8 +835,6 @@ spec:
           value: "all"
         - name: NVIDIA_DRIVER_CAPABILITIES
           value: "all"
-        - name: LD_LIBRARY_PATH
-          value: "/usr/local/nvidia"
         securityContext:
           privileged: true
         volumeMounts:
@@ -814,9 +842,6 @@ spec:
           mountPath: /var/lib/kubelet/device-plugins
         - name: dev
           mountPath: /dev
-        - name: nvidia-driver
-          mountPath: /usr/local/nvidia
-          readOnly: true
       volumes:
       - name: device-plugin
         hostPath:
@@ -824,10 +849,6 @@ spec:
       - name: dev
         hostPath:
           path: /dev
-      - name: nvidia-driver
-        hostPath:
-          path: /usr/lib/x86_64-linux-gnu
-          type: Directory
 DEVICEPLUGIN
 
             # Set correct path based on K8s distribution
@@ -869,8 +890,10 @@ DEVICEPLUGIN
 
         elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
             # Minikube: Requires device plugin (Docker-in-Docker limitations)
+            # NOTE: Does NOT set NVIDIA as default Docker runtime - safe for local development
             echo -e "  ${YELLOW}⚠️  Minikube has limited GPU support (Docker-in-Docker)${NC}"
             echo -e "  ${YELLOW}   For production GPU workloads, use K3s on Linux${NC}"
+            echo -e "  ${BLUE}   Local mode: Docker default runtime unchanged${NC}"
 
             # Check if NVIDIA device plugin is already installed
             if kubectl get pods -n kube-system 2>/dev/null | grep -q "nvidia-device-plugin.*Running"; then
