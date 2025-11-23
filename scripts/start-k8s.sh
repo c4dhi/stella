@@ -538,8 +538,8 @@ setup_k3s() {
         # Install K3s with containerd and device plugin support
         # Using containerd enables proper device plugin registration for GPU support
         # --disable traefik: We don't need the default ingress controller
-        # --kubelet-arg: Enable device plugin registration
-        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --kubelet-arg='feature-gates=DevicePlugins=true'" sh -
+        # Note: DevicePlugins feature gate is enabled by default since K8s 1.10
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
 
         # Wait for K3s to be ready
         sleep 5
