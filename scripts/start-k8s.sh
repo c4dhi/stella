@@ -805,6 +805,8 @@ spec:
           value: "all"
         - name: NVIDIA_DRIVER_CAPABILITIES
           value: "all"
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia"
         securityContext:
           privileged: true
         volumeMounts:
