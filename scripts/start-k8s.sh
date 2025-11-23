@@ -759,8 +759,26 @@ if [ "$NODE_ENV" = "production" ]; then
                 echo -e "  ${GREEN}✓ NVIDIA Container Toolkit already installed${NC}"
             fi
 
+            # Install NVIDIA Device Plugin for Kubernetes (required to expose GPU resources)
+            echo -e "${YELLOW}Installing NVIDIA Device Plugin for Kubernetes...${NC}"
+
+            # Check if device plugin is already installed
+            if kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset &> /dev/null; then
+                echo -e "  ${GREEN}✓ NVIDIA Device Plugin already installed${NC}"
+            else
+                # Install the device plugin
+                kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1
+                echo -e "  ${GREEN}✓ NVIDIA Device Plugin installed${NC}"
+            fi
+
+            # Wait for device plugin to be ready
+            echo -n "  • Waiting for device plugin to start... "
+            kubectl wait --for=condition=ready pod -l name=nvidia-device-plugin-ds -n kube-system --timeout=60s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${YELLOW}(still starting)${NC}"
+
+            # Give device plugin a moment to register GPU resources
+            sleep 5
+
             # Verify GPU resources
-            sleep 2
             GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
 
             if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
@@ -768,7 +786,8 @@ if [ "$NODE_ENV" = "production" ]; then
                 echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
             else
                 echo -e "  ${YELLOW}⚠️  GPU not yet visible to Kubernetes${NC}"
-                echo -e "  ${YELLOW}   Run: kubectl describe nodes | grep -A 10 'Allocatable'${NC}"
+                echo -e "  ${YELLOW}   This may take a few moments to propagate${NC}"
+                echo -e "  ${YELLOW}   Check status: kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds${NC}"
             fi
 
         elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
