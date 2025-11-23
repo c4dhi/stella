@@ -556,12 +556,12 @@ setup_k3s() {
     fi
 
     # Setup kubectl to use K3s
-    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-
-    # Make kubeconfig readable (K3s restricts it by default)
-    if [ ! -r "$KUBECONFIG" ]; then
-        sudo chmod 644 "$KUBECONFIG"
-    fi
+    # Copy kubeconfig to user's home directory (K3s restricts /etc/rancher/k3s/k3s.yaml to root)
+    mkdir -p ~/.kube
+    sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+    sudo chown $(id -u):$(id -g) ~/.kube/config
+    chmod 600 ~/.kube/config
+    export KUBECONFIG=~/.kube/config
 
     # Verify K3s is running
     if kubectl get nodes &> /dev/null; then
@@ -717,11 +717,22 @@ if [ "$NODE_ENV" = "production" ]; then
             if ! command -v nvidia-container-runtime &> /dev/null; then
                 echo -e "${YELLOW}Installing NVIDIA Container Toolkit...${NC}"
 
+                # Clean up any corrupted repository files from previous failed installations
+                if [ -f /etc/apt/sources.list.d/libnvidia-container.list ]; then
+                    echo -e "  ${YELLOW}Removing corrupted repository from previous installation...${NC}"
+                    sudo rm /etc/apt/sources.list.d/libnvidia-container.list
+                fi
+
+                # Remove old deprecated keyring if it exists
+                if [ -f /etc/apt/trusted.gpg.d/nvidia-container-toolkit-keyring.gpg ]; then
+                    sudo rm /etc/apt/trusted.gpg.d/nvidia-container-toolkit-keyring.gpg
+                fi
+
                 # Add NVIDIA package repository (new format)
-                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
                 curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
                   sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-                  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+                  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
 
                 # Install
                 sudo apt-get update > /dev/null 2>&1
