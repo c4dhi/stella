@@ -576,6 +576,14 @@ setup_k3s() {
         exit 1
     fi
 
+    # Install socat if not present (required for K3s port forwarding)
+    if ! command -v socat &> /dev/null; then
+        echo -e "${YELLOW}Installing socat (required for port forwarding)...${NC}"
+        sudo apt-get update > /dev/null 2>&1
+        sudo apt-get install -y socat > /dev/null 2>&1
+        echo -e "${GREEN}✓ socat installed${NC}"
+    fi
+
     # Enable metrics-server if not already enabled
     if ! kubectl get deployment metrics-server -n kube-system &> /dev/null; then
         echo -e "${YELLOW}Installing metrics-server...${NC}"
@@ -1068,14 +1076,21 @@ echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Use nohup and save PIDs
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+    # Important: Explicitly set KUBECONFIG for nohup processes (needed for K3s)
+    KUBECONFIG_PATH="$KUBECONFIG"
+    if [ -z "$KUBECONFIG_PATH" ]; then
+        # Default kubeconfig location
+        KUBECONFIG_PATH="$HOME/.kube/config"
+    fi
+
+    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
     PF_FRONTEND=$!
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
     PF_BACKEND=$!
 
     # PostgreSQL port-forward (5432 for both local and production)
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
     PF_POSTGRES=$!
 
     # Save PIDs to file
