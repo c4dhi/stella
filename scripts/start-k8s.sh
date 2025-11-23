@@ -631,6 +631,23 @@ elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
 fi
 
 # ============================================================================
+# Auto-Detect Kubernetes DNS IP (if enabled)
+# ============================================================================
+if [ "${AUTO_DETECT_K8S_DNS}" = "true" ]; then
+    echo -n "${BLUE}🔍 Auto-detecting Kubernetes DNS IP... ${NC}"
+    DETECTED_DNS_IP=$(kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+
+    if [ -n "$DETECTED_DNS_IP" ]; then
+        export KUBERNETES_DNS_NAMESERVER="$DETECTED_DNS_IP"
+        echo -e "${GREEN}✓ ${DETECTED_DNS_IP}${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Failed, using .env value: ${KUBERNETES_DNS_NAMESERVER}${NC}"
+    fi
+else
+    echo -e "${BLUE}ℹ️  Using DNS IP from .env: ${KUBERNETES_DNS_NAMESERVER}${NC}"
+fi
+
+# ============================================================================
 # Custom DNS Configuration
 # ============================================================================
 # Configure CoreDNS to use custom DNS servers if CUSTOM_DNS_SERVERS is set.
