@@ -605,7 +605,11 @@ if [ "$NODE_ENV" = "production" ]; then
         echo -e "  ${GREEN}Detected: ${GPU_NAME} (${GPU_MEMORY})${NC}"
 
         # Check if NVIDIA device plugin is already installed
-        DEVICE_PLUGIN_RUNNING=$(kubectl get pods -n kube-system 2>/dev/null | grep nvidia-device-plugin | grep -c Running || echo "0")
+        if kubectl get pods -n kube-system 2>/dev/null | grep -q "nvidia-device-plugin.*Running"; then
+            DEVICE_PLUGIN_RUNNING=1
+        else
+            DEVICE_PLUGIN_RUNNING=0
+        fi
 
         if [ "$DEVICE_PLUGIN_RUNNING" -eq 0 ]; then
             echo -n "  • Installing NVIDIA device plugin... "
