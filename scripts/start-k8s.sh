@@ -590,6 +590,69 @@ else
 fi
 
 # ============================================================================
+# NVIDIA GPU Support Configuration (Production Only)
+# ============================================================================
+# In production mode, if nvidia-smi is available on the host, automatically
+# install the NVIDIA device plugin to expose GPU resources to Kubernetes pods
+if [ "$NODE_ENV" = "production" ]; then
+    # Check if nvidia-smi is available (indicates GPU hardware present)
+    if command -v nvidia-smi &> /dev/null; then
+        echo -e "${BLUE}🎮 GPU Support Configuration${NC}"
+
+        # Show GPU information
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+        GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)
+        echo -e "  ${GREEN}Detected: ${GPU_NAME} (${GPU_MEMORY})${NC}"
+
+        # Check if NVIDIA device plugin is already installed
+        DEVICE_PLUGIN_RUNNING=$(kubectl get pods -n kube-system 2>/dev/null | grep nvidia-device-plugin | grep -c Running || echo "0")
+
+        if [ "$DEVICE_PLUGIN_RUNNING" -eq 0 ]; then
+            echo -n "  • Installing NVIDIA device plugin... "
+
+            # Install NVIDIA device plugin
+            if kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1; then
+                # Wait for it to be ready
+                if kubectl wait --for=condition=ready pod -l name=nvidia-device-plugin-ds -n kube-system --timeout=60s > /dev/null 2>&1; then
+                    echo -e "${GREEN}✓${NC}"
+                else
+                    echo -e "${YELLOW}⚠️${NC}"
+                    echo -e "  ${YELLOW}Device plugin installed but not ready yet${NC}"
+                fi
+            else
+                echo -e "${YELLOW}⚠️${NC}"
+                echo -e "  ${YELLOW}Device plugin may already exist${NC}"
+            fi
+        else
+            echo -e "  ${GREEN}✓ NVIDIA device plugin already running${NC}"
+        fi
+
+        # Give device plugin a moment to register GPU resources
+        sleep 2
+
+        # Verify GPU resources are visible to Kubernetes
+        GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
+
+        if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
+            echo -e "  ${GREEN}✓ GPU resources available: ${GPU_ALLOCATABLE} GPU(s)${NC}"
+            echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
+        else
+            echo -e "  ${YELLOW}⚠️  GPU not yet visible to Kubernetes${NC}"
+            echo -e "  ${YELLOW}   This may take a few moments to propagate${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Production mode but no GPU detected on host${NC}"
+        echo -e "${YELLOW}   nvidia-smi command not found${NC}"
+        echo -e "${YELLOW}   Pods requesting nvidia.com/gpu will remain in Pending state${NC}"
+        echo -e "${YELLOW}   Install NVIDIA drivers if GPU hardware is available${NC}"
+    fi
+else
+    # Local mode - skip GPU setup
+    echo -e "${BLUE}ℹ️  GPU support disabled in local mode (NODE_ENV=$NODE_ENV)${NC}"
+    echo -e "${BLUE}   GPU resources only allocated in production mode${NC}"
+fi
+
+# ============================================================================
 # LiveKit Host Discovery
 # ============================================================================
 # On macOS, host.minikube.internal works automatically
