@@ -824,9 +824,9 @@ RUNTIMECLASS
                 sleep 5
             fi
 
-            # K3s uses different kubelet paths than standard Kubernetes
-            # K3s: /var/lib/rancher/k3s/agent/kubelet/device-plugins
-            # Standard: /var/lib/kubelet/device-plugins
+            # Device plugin DaemonSet configuration
+            # Note: K3s kubelet uses standard Kubernetes paths (/var/lib/kubelet/device-plugins)
+            # even though other K3s components use /var/lib/rancher/k3s paths
             cat > /tmp/nvidia-device-plugin.yaml << 'DEVICEPLUGIN'
 apiVersion: apps/v1
 kind: DaemonSet
@@ -876,16 +876,11 @@ spec:
           path: /dev
 DEVICEPLUGIN
 
-            # Set correct path based on K8s distribution
-            if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
-                KUBELET_PATH="/var/lib/rancher/k3s/agent/kubelet/device-plugins"
-                sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
-                echo -e "  ${GREEN}✓ Using K3s paths${NC}"
-            else
-                KUBELET_PATH="/var/lib/kubelet/device-plugins"
-                sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
-                echo -e "  ${GREEN}✓ Using standard Kubernetes paths${NC}"
-            fi
+            # K3s kubelet actually uses standard Kubernetes paths (not K3s-specific paths)
+            # This is where kubelet.sock is located for device plugin registration
+            KUBELET_PATH="/var/lib/kubelet/device-plugins"
+            sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
+            echo -e "  ${GREEN}✓ Using standard kubelet path: ${KUBELET_PATH}${NC}"
 
             # Apply the device plugin
             kubectl apply -f /tmp/nvidia-device-plugin.yaml > /dev/null 2>&1
