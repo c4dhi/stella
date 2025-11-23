@@ -801,15 +801,20 @@ spec:
         env:
         - name: FAIL_ON_INIT_ERROR
           value: "false"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "all"
         securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
+          privileged: true
         volumeMounts:
         - name: device-plugin
           mountPath: /var/lib/kubelet/device-plugins
         - name: dev
           mountPath: /dev
+        - name: nvidia-driver
+          mountPath: /usr/local/nvidia
+          readOnly: true
       volumes:
       - name: device-plugin
         hostPath:
@@ -817,6 +822,10 @@ spec:
       - name: dev
         hostPath:
           path: /dev
+      - name: nvidia-driver
+        hostPath:
+          path: /usr/lib/x86_64-linux-gnu
+          type: Directory
 DEVICEPLUGIN
 
             # Set correct path based on K8s distribution
