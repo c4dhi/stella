@@ -764,12 +764,75 @@ if [ "$NODE_ENV" = "production" ]; then
 
             # Check if device plugin is already installed
             if kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset &> /dev/null; then
-                echo -e "  ${GREEN}✓ NVIDIA Device Plugin already installed${NC}"
-            else
-                # Install the device plugin
-                kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1
-                echo -e "  ${GREEN}✓ NVIDIA Device Plugin installed${NC}"
+                echo -e "  ${YELLOW}Updating existing device plugin configuration...${NC}"
+                # Delete old version to apply correct config
+                kubectl delete daemonset nvidia-device-plugin-daemonset -n kube-system > /dev/null 2>&1
+                sleep 2
             fi
+
+            # K3s uses different kubelet paths than standard Kubernetes
+            # K3s: /var/lib/rancher/k3s/agent/kubelet/device-plugins
+            # Standard: /var/lib/kubelet/device-plugins
+            cat > /tmp/nvidia-device-plugin.yaml << 'DEVICEPLUGIN'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: "system-node-critical"
+      containers:
+      - image: nvcr.io/nvidia/k8s-device-plugin:v0.14.0
+        name: nvidia-device-plugin-ctr
+        env:
+        - name: FAIL_ON_INIT_ERROR
+          value: "false"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+        - name: dev
+          mountPath: /dev
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: KUBELET_DEVICE_PLUGINS_PATH
+      - name: dev
+        hostPath:
+          path: /dev
+DEVICEPLUGIN
+
+            # Set correct path based on K8s distribution
+            if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+                KUBELET_PATH="/var/lib/rancher/k3s/agent/kubelet/device-plugins"
+                sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
+                echo -e "  ${GREEN}✓ Using K3s paths${NC}"
+            else
+                KUBELET_PATH="/var/lib/kubelet/device-plugins"
+                sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
+                echo -e "  ${GREEN}✓ Using standard Kubernetes paths${NC}"
+            fi
+
+            # Apply the device plugin
+            kubectl apply -f /tmp/nvidia-device-plugin.yaml > /dev/null 2>&1
+            echo -e "  ${GREEN}✓ NVIDIA Device Plugin installed${NC}"
 
             # Wait for device plugin to be ready
             echo -n "  • Waiting for device plugin to start... "
@@ -777,6 +840,9 @@ if [ "$NODE_ENV" = "production" ]; then
 
             # Give device plugin a moment to register GPU resources
             sleep 5
+
+            # Clean up temp file
+            rm -f /tmp/nvidia-device-plugin.yaml
 
             # Verify GPU resources
             GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
