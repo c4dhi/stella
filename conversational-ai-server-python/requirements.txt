@@ -37,7 +37,9 @@ pydub>=0.25.1
 # Kokoro TTS dependencies
 kokoro-onnx>=0.4.9
 soundfile>=0.12.1
-onnxruntime>=1.16.0
+# Note: onnxruntime is installed conditionally in Dockerfile based on GPU support
+#   - Mac builds: onnxruntime (CPU-only)
+#   - Linux GPU builds: onnxruntime-gpu (CUDA-enabled with CPU fallback)
 scipy>=1.11.0
 
 # ElevenLabs TTS dependencies (optional - install only if using ElevenLabs)
