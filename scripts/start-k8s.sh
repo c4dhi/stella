@@ -798,6 +798,20 @@ if [ "$NODE_ENV" = "production" ]; then
                 echo -e "  ${GREEN}✓ NVIDIA runtime already configured in containerd${NC}"
             fi
 
+            # Create NVIDIA RuntimeClass for K3s containerd
+            echo -e "${YELLOW}Creating NVIDIA RuntimeClass...${NC}"
+            cat > /tmp/nvidia-runtimeclass.yaml << 'RUNTIMECLASS'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
+RUNTIMECLASS
+
+            kubectl apply -f /tmp/nvidia-runtimeclass.yaml > /dev/null 2>&1
+            rm -f /tmp/nvidia-runtimeclass.yaml
+            echo -e "  ${GREEN}✓ RuntimeClass created${NC}"
+
             # Install NVIDIA Device Plugin for Kubernetes (required to expose GPU resources)
             echo -e "${YELLOW}Installing NVIDIA Device Plugin for Kubernetes...${NC}"
 
@@ -834,6 +848,7 @@ spec:
         operator: Exists
         effect: NoSchedule
       priorityClassName: "system-node-critical"
+      runtimeClassName: nvidia
       containers:
       - image: nvcr.io/nvidia/k8s-device-plugin:v0.14.0
         name: nvidia-device-plugin-ctr
