@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""
+Script to pre-download the Sherpa-ONNX model during Docker build.
+This avoids downloading the model on every container startup.
+"""
+
+import os
+import urllib.request
+import tarfile
+import shutil
+
+def download_sherpa_model():
+    """Download and extract the Sherpa-ONNX model."""
+
+    # Model configuration
+    model_name = "sherpa-onnx-streaming-zipformer-en-2023-06-21"
+    model_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
+
+    # Setup directories - use same cache directory as runtime code
+    cache_dir = os.path.expanduser("~/.cache/sherpa-onnx")
+    os.makedirs(cache_dir, exist_ok=True)
+    model_dir = os.path.join(cache_dir, model_name)
+
+    # Check if model already exists
+    if os.path.exists(model_dir):
+        required_files = ["encoder-epoch-99-avg-1.onnx",
+                         "decoder-epoch-99-avg-1.onnx",
+                         "joiner-epoch-99-avg-1.onnx",
+                         "tokens.txt"]
+
+        # Verify all required files exist
+        files_exist = all(os.path.exists(os.path.join(model_dir, f)) for f in required_files)
+
+        if files_exist:
+            print(f"Model already downloaded at: {model_dir}")
+            return model_dir
+        else:
+            print(f"Model directory exists but incomplete, re-downloading...")
+            shutil.rmtree(model_dir)
+
+    print(f"Downloading Sherpa-ONNX model: {model_name}")
+    print(f"From: {model_url}")
+
+    # Download model
+    archive_path = os.path.join(cache_dir, f"{model_name}.tar.bz2")
+    urllib.request.urlretrieve(model_url, archive_path)
+    print("Download completed!")
+
+    print("Extracting model...")
+    # Extract model
+    with tarfile.open(archive_path, 'r:bz2') as tar:
+        tar.extractall(cache_dir)
+
+    # Clean up archive
+    os.remove(archive_path)
+    print(f"Model installed at: {model_dir}")
+
+    return model_dir
+
+if __name__ == "__main__":
+    try:
+        model_path = download_sherpa_model()
+        print(f"Setup complete! Model at: {model_path}")
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        raise

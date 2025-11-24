@@ -30,6 +30,9 @@ data:
   AGENT_IMAGE: "conversational-ai-server:latest"
   AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
 
+  # STT Service (microservices architecture)
+  STT_SERVICE_URL: "stt-service:50051"
+
   # Kubernetes DNS Configuration (production only)
   # Auto-detected at deployment time or from .env
   # K3s: 10.43.0.10, Minikube: 10.96.0.10

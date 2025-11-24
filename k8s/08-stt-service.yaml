@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-service
+  namespace: ai-agents
+spec:
+  selector:
+    app: stt-service
+  ports:
+    - port: 50051
+      targetPort: 50051
+      name: grpc
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-service
+  namespace: ai-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-service
+  template:
+    metadata:
+      labels:
+        app: stt-service
+    spec:
+      containers:
+      - name: stt-service
+        image: stt-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50051
+          name: grpc
+        env:
+        - name: GRPC_PORT
+          value: "50051"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; print('ready')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; print('alive')"
+          initialDelaySeconds: 60
+          periodSeconds: 60

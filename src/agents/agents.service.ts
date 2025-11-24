@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { KubernetesService } from '../kubernetes/kubernetes.service';
+import { RoomAgentService } from '../room-agent/room-agent.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { AgentStatus } from '@prisma/client';
 
@@ -13,6 +14,7 @@ export class AgentsService {
     private prisma: PrismaService,
     private k8s: KubernetesService,
     private configService: ConfigService,
+    private roomAgentService: RoomAgentService,
   ) {
     // Validate OpenAI API key on startup
     this.validateOpenAIKey();
@@ -162,60 +164,34 @@ export class AgentsService {
       },
     });
 
-    // Create Kubernetes pod
+    // Join LiveKit room using RoomAgentService (microservices architecture)
     try {
       if (!session.room) {
         throw new Error('Session does not have an associated room');
       }
 
-      const livekitApiKey = this.configService.get<string>('LIVEKIT_API_KEY');
-      const livekitApiSecret = this.configService.get<string>('LIVEKIT_API_SECRET');
-
-      if (!livekitApiKey || !livekitApiSecret) {
-        const missing: string[] = [];
-        if (!livekitApiKey) missing.push('LIVEKIT_API_KEY');
-        if (!livekitApiSecret) missing.push('LIVEKIT_API_SECRET');
-        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
-      }
-
-      // Note: OpenAI API key is now read directly by agent from grace-ai-secrets
-
-      // Use current LIVEKIT_URL from environment, not the stored serverUrl
-      // This ensures agents always connect to the correct LiveKit server
-      // regardless of when the session was created
-      const livekitUrl = this.configService.get<string>('LIVEKIT_URL', session.room.serverUrl);
-
       // Log room connection details for verification
       this.logger.log(
-        `🔗 Agent ${agent.id} connecting to LiveKit room: "${session.room.livekitRoomName}" at ${livekitUrl}`
+        `🔗 Agent ${agent.id} joining LiveKit room: "${session.room.livekitRoomName}"`,
       );
 
-      const { podName, secretName } = await this.k8s.createAgentPod({
-        agentId: agent.id,
-        sessionId: session.id,
-        projectId: session.projectId,
-        agentName: createAgentDto.name,
-        agentIcon: createAgentDto.icon || '🤖',
-        roomName: session.room.livekitRoomName,
-        livekitUrl,
-        livekitApiKey,
-        livekitApiSecret,
-        // openaiApiKey removed - now from grace-ai-secrets
-        ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
-        planId: createAgentDto.planId,
-      });
+      // Join room using RoomAgentService (handles STT streaming internally)
+      await this.roomAgentService.joinRoom(
+        session.room.livekitRoomName,
+        session.id,
+        createAgentDto.name,
+      );
 
-      // Update agent with pod info
+      // Update agent status to RUNNING
       const updatedAgent = await this.prisma.agentInstance.update({
         where: { id: agent.id },
         data: {
-          podName,
-          secretName,
           status: AgentStatus.RUNNING,
+          // No podName/secretName - using in-process room agent
         },
       });
 
-      this.logger.log(`Agent ${agent.id} started with pod ${podName}`);
+      this.logger.log(`Agent ${agent.id} joined room ${session.room.livekitRoomName}`);
       return updatedAgent;
     } catch (error) {
       // Update agent status to FAILED
@@ -228,14 +204,7 @@ export class AgentsService {
       });
 
       this.logger.error(`Failed to start agent ${agent.id}: ${error.message}`);
-
-      // Provide helpful error message for common issues
-      let errorMessage = error.message;
-      if (error.message.includes('OPENAI_API_KEY') || error.message.includes('API key')) {
-        errorMessage = `Failed to start agent: Invalid or missing OpenAI API key. Please update OPENAI_API_KEY in .env and restart the server.`;
-      }
-
-      throw new BadRequestException(errorMessage);
+      throw new BadRequestException(`Failed to start agent: ${error.message}`);
     }
   }
 
@@ -306,7 +275,7 @@ export class AgentsService {
 
   /**
    * Stop an agent - core logic used by remove(), session close, etc.
-   * Handles K8s pod/secret deletion and DB status update.
+   * Handles room disconnection and DB status update.
    * @returns The updated agent instance
    */
   async stopAgent(id: string): Promise<any> {
@@ -326,7 +295,14 @@ export class AgentsService {
       },
     });
 
-    // Delete Kubernetes resources (pod + secret)
+    // Leave LiveKit room (microservices architecture)
+    try {
+      await this.roomAgentService.leaveRoom(agent.sessionId);
+    } catch (error) {
+      this.logger.error(`Room leave failed for agent ${id}: ${error.message}`);
+    }
+
+    // Legacy: Clean up K8s resources if they exist (for backwards compatibility)
     try {
       if (agent.podName) {
         await this.k8s.deletePod(agent.podName);
@@ -335,7 +311,8 @@ export class AgentsService {
         await this.k8s.deleteSecret(agent.secretName);
       }
     } catch (error) {
-      this.logger.error(`K8s cleanup failed for agent ${id}: ${error.message}`);
+      // Ignore K8s errors - these resources may not exist in new architecture
+      this.logger.debug(`K8s cleanup (legacy): ${error.message}`);
     }
 
     // Update final status to STOPPED

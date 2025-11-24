@@ -41,6 +41,9 @@ RUN npm ci --only=production
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy proto files for gRPC client (STT service)
+COPY --from=builder /app/proto ./proto
+
 # Generate Prisma Client
 RUN npx prisma generate
 

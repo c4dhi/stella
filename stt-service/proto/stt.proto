@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package stt;
+
+// Speech-to-Text gRPC Service
+// Provides real-time streaming transcription using Sherpa-ONNX
+service SpeechToText {
+  // Bidirectional streaming: audio chunks in, transcript events out
+  rpc StreamTranscribe(stream AudioChunk) returns (stream TranscriptEvent);
+
+  // Health check endpoint
+  rpc HealthCheck(Empty) returns (HealthResponse);
+}
+
+message Empty {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string model_status = 2;
+  string version = 3;
+}
+
+// Audio data sent from client to STT service
+message AudioChunk {
+  bytes audio_data = 1;        // Raw PCM audio (16-bit, 16kHz, mono)
+  string session_id = 2;       // Session identifier for logging
+  string participant_id = 3;   // Who is speaking (for transcript attribution)
+  int64 timestamp_ms = 4;      // Client timestamp for latency tracking
+}
+
+// Transcript events sent from STT service to client
+message TranscriptEvent {
+  string text = 1;             // Transcribed text
+  bool is_final = 2;           // True if this is the final transcript for an utterance
+  string transcript_id = 3;    // Unique ID for this transcript sequence
+  string participant_id = 4;   // Who was speaking
+  float confidence = 5;        // Confidence score (0.0-1.0)
+  int64 timestamp_ms = 6;      // Server timestamp
+}
