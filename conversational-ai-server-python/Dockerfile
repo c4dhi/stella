@@ -28,9 +28,11 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
     echo "Installing CUDA runtime libraries for GPU acceleration..." && \
     apt-get update && apt-get install -y --no-install-recommends \
         gnupg2 \
-        ca-certificates && \
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | apt-key add - && \
-    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
+        ca-certificates \
+        curl && \
+    mkdir -p /usr/share/keyrings && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
     apt-get update && apt-get install -y --no-install-recommends \
         cuda-cudart-12-4 \
         libcublas-12-4 \
