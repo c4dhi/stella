@@ -81,15 +81,16 @@ if [ "$STOP_MODE" = true ]; then
         rm "$PID_DIR/port-forwards.pid"
     fi
 
-    # Detect which Kubernetes distribution is running
-    if command -v k3s &> /dev/null && sudo systemctl is-active --quiet k3s; then
-        echo "  • Stopping K3s cluster..."
-        sudo systemctl stop k3s
-    elif command -v minikube &> /dev/null; then
-        echo "  • Stopping minikube cluster..."
-        minikube stop
+    # Stop K3s cluster (Linux only - macOS K3s managed by Rancher Desktop/Colima)
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        if command -v k3s &> /dev/null && sudo systemctl is-active --quiet k3s; then
+            echo "  • Stopping K3s cluster..."
+            sudo systemctl stop k3s
+        else
+            echo "  • No K3s cluster found to stop"
+        fi
     else
-        echo "  • No Kubernetes cluster found to stop"
+        echo "  • K3s managed by Rancher Desktop/Colima (not stopped)"
     fi
 
     echo ""
@@ -230,7 +231,7 @@ fi
 #
 # 1. LIVEKIT_URL (Internal - for pods in Kubernetes)
 #    - Used by: session-management-server, conversational-ai-server-python, message-recorder-python
-#    - Development: ws://host.minikube.internal:7880 (pods access host via minikube DNS)
+#    - Development: ws://host.docker.internal:7880 (pods access host via dynamic discovery)
 #    - Production: ws://<HOST_IP>:7880 (direct IP to host running LiveKit)
 #    - Read from: .env, .env.local, or .env.production
 #
@@ -340,7 +341,7 @@ fi
 
 if [ -z "$LIVEKIT_URL" ] || [ -z "$PUBLIC_LIVEKIT_URL" ]; then
     echo -e "${RED}✗ Missing required LiveKit URL configuration${NC}"
-    [ -z "$LIVEKIT_URL" ] && echo "  - LIVEKIT_URL (internal, e.g., ws://host.minikube.internal:7880)"
+    [ -z "$LIVEKIT_URL" ] && echo "  - LIVEKIT_URL (internal, e.g., ws://host.docker.internal:7880)"
     [ -z "$PUBLIC_LIVEKIT_URL" ] && echo "  - PUBLIC_LIVEKIT_URL (public, e.g., wss://livekit.example.com)"
     LIVEKIT_VALIDATION_FAILED=true
 fi
@@ -441,27 +442,7 @@ if [ ${#PORTS_IN_USE[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Check if required tools are installed based on distribution
-if [ "$K8S_DISTRIBUTION" = "minikube" ]; then
-    if ! command -v minikube &> /dev/null; then
-        echo -e "${YELLOW}Installing minikube...${NC}"
-        if [[ "$OS_TYPE" == "macos" ]]; then
-            brew install minikube
-        elif [[ "$OS_TYPE" == "linux" ]]; then
-            # Download and install minikube for Linux
-            MINIKUBE_VERSION=$(curl -s https://api.github.com/repos/kubernetes/minikube/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-            curl -LO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
-            sudo install minikube-linux-amd64 /usr/local/bin/minikube
-            rm minikube-linux-amd64
-            echo -e "${GREEN}✓ Minikube installed${NC}"
-        else
-            echo -e "${RED}✗ Unable to auto-install minikube on this platform${NC}"
-            echo -e "${YELLOW}Visit: https://minikube.sigs.k8s.io/docs/start/${NC}"
-            exit 1
-        fi
-    fi
-fi
-
+# Check if required tools are installed
 if ! command -v kubectl &> /dev/null; then
     echo -e "${YELLOW}Installing kubectl...${NC}"
     if [[ "$OS_TYPE" == "macos" ]]; then
@@ -482,25 +463,16 @@ fi
 # ============================================================================
 # Kubernetes Distribution Selection
 # ============================================================================
-# Automatically choose the right Kubernetes distribution based on environment:
-# - K3s: Linux + production (native GPU support, production-ready)
-# - Minikube: macOS + local (development tool, Docker-in-Docker)
-K8S_DISTRIBUTION=""
+# Kubernetes Distribution: K3s (Unified for local and production)
+# - Lightweight, production-ready Kubernetes
+# - Native GPU support (when hardware available)
+# - Works on macOS (via Rancher Desktop/Colima) and Linux (native)
+K8S_DISTRIBUTION="k3s"
 
-if [[ "$OS_TYPE" == "linux" ]] && [ "$NODE_ENV" = "production" ]; then
-    K8S_DISTRIBUTION="k3s"
-    echo -e "${BLUE}🎯 Using K3s (Production on Linux)${NC}"
-    echo -e "  ${GREEN}✓ Native GPU support${NC}"
-    echo -e "  ${GREEN}✓ Production-ready Kubernetes${NC}"
-elif [[ "$OS_TYPE" == "macos" ]] || [ "$NODE_ENV" = "local" ]; then
-    K8S_DISTRIBUTION="minikube"
-    echo -e "${BLUE}🎯 Using Minikube (Development)${NC}"
-    echo -e "  ${GREEN}✓ Easy local development${NC}"
-else
-    # Default to minikube for unknown scenarios
-    K8S_DISTRIBUTION="minikube"
-    echo -e "${YELLOW}⚠️  Unknown configuration, defaulting to Minikube${NC}"
-fi
+echo -e "${BLUE}🎯 Using K3s (Unified Kubernetes)${NC}"
+echo -e "  ${GREEN}✓ Works on all platforms (macOS + Linux)${NC}"
+echo -e "  ${GREEN}✓ Production-ready${NC}"
+echo -e "  ${GREEN}✓ Native GPU support${NC}"
 
 # Check if setsid is available (required for Docker build output capture)
 SETSID_CMD="setsid"
@@ -531,61 +503,119 @@ fi
 setup_k3s() {
     echo -e "${GREEN}⚙️  Setting up K3s...${NC}"
 
-    # Check if K3s is installed
-    if ! command -v k3s &> /dev/null; then
-        echo -e "${YELLOW}Installing K3s...${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        # =====================================================================
+        # macOS: K3s runs inside Rancher Desktop or Colima
+        # =====================================================================
+        echo -e "${BLUE}ℹ️  macOS detected - checking for K3s runtime...${NC}"
 
-        # Install K3s with containerd and device plugin support
-        # Using containerd enables proper device plugin registration for GPU support
-        # --disable traefik: We don't need the default ingress controller
-        # Note: DevicePlugins feature gate is enabled by default since K8s 1.10
-        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
+        # Check if kubectl is available and can connect to a cluster
+        if kubectl cluster-info &> /dev/null; then
+            # Get current context
+            CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null)
 
-        # Wait for K3s to be ready
-        sleep 5
+            if [[ "$CURRENT_CONTEXT" == "rancher-desktop" ]] || [[ "$CURRENT_CONTEXT" == *"colima"* ]] || [[ "$CURRENT_CONTEXT" == "orbstack" ]]; then
+                echo -e "${GREEN}✓ K3s runtime detected: ${CURRENT_CONTEXT}${NC}"
 
-        echo -e "${GREEN}✓ K3s installed${NC}"
+                # Verify node is ready
+                if kubectl get nodes &> /dev/null; then
+                    NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+                    NODE_STATUS=$(kubectl get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}')
+
+                    if [ "$NODE_STATUS" = "True" ]; then
+                        echo -e "${GREEN}✓ K3s node ready: ${NODE_NAME}${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️  K3s node not ready yet, waiting...${NC}"
+                        kubectl wait --for=condition=Ready node --all --timeout=60s
+                    fi
+                fi
+            else
+                echo -e "${RED}✗ Unsupported Kubernetes context: ${CURRENT_CONTEXT}${NC}"
+                echo -e "${RED}Please use Rancher Desktop, Colima, or OrbStack for K3s on macOS${NC}"
+                exit 1
+            fi
+        else
+            # No cluster detected - provide installation instructions
+            echo -e "${RED}✗ No K3s runtime detected${NC}"
+            echo ""
+            echo -e "${YELLOW}Please install a K3s runtime for macOS:${NC}"
+            echo ""
+            echo -e "${BLUE}Option 1: OrbStack (Recommended - Fast & Lightweight)${NC}"
+            echo -e "  ${GREEN}brew install --cask orbstack${NC}"
+            echo -e "  Then: Open OrbStack → Settings → Kubernetes → Enable"
+            echo ""
+            echo -e "${BLUE}Option 2: Rancher Desktop (GUI with more features)${NC}"
+            echo -e "  ${GREEN}brew install --cask rancher${NC}"
+            echo -e "  Then: Open Rancher Desktop → Preferences → Kubernetes → Enable"
+            echo ""
+            echo -e "${BLUE}Option 3: Colima (CLI only)${NC}"
+            echo -e "  ${GREEN}brew install colima${NC}"
+            echo -e "  ${GREEN}colima start --kubernetes --cpu 4 --memory 8${NC}"
+            echo ""
+            echo -e "${YELLOW}After installation, run this script again${NC}"
+            exit 1
+        fi
+
     else
-        echo -e "${GREEN}✓ K3s already installed${NC}"
+        # =====================================================================
+        # Linux: Native K3s installation
+        # =====================================================================
+        # Check if K3s is installed
+        if ! command -v k3s &> /dev/null; then
+            echo -e "${YELLOW}Installing K3s...${NC}"
+
+            # Install K3s with containerd and device plugin support
+            # Using containerd enables proper device plugin registration for GPU support
+            # --disable traefik: We don't need the default ingress controller
+            # Note: DevicePlugins feature gate is enabled by default since K8s 1.10
+            curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
+
+            # Wait for K3s to be ready
+            sleep 5
+
+            echo -e "${GREEN}✓ K3s installed${NC}"
+        else
+            echo -e "${GREEN}✓ K3s already installed${NC}"
+        fi
+
+        # Check if K3s is running
+        if ! sudo systemctl is-active --quiet k3s; then
+            echo -e "${YELLOW}Starting K3s service...${NC}"
+            sudo systemctl start k3s
+            sleep 5
+        fi
+
+        # Setup kubectl to use K3s
+        # Copy kubeconfig to user's home directory (K3s restricts /etc/rancher/k3s/k3s.yaml to root)
+        mkdir -p ~/.kube
+        sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+        sudo chown $(id -u):$(id -g) ~/.kube/config
+        chmod 600 ~/.kube/config
+        export KUBECONFIG=~/.kube/config
+
+        # Verify K3s is running
+        if kubectl get nodes &> /dev/null; then
+            echo -e "${GREEN}✓ K3s is running${NC}"
+
+            # Show node info
+            NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+            echo -e "  ${GREEN}Node: ${NODE_NAME}${NC}"
+        else
+            echo -e "${RED}✗ K3s is not responding${NC}"
+            echo -e "${YELLOW}Try: sudo systemctl status k3s${NC}"
+            exit 1
+        fi
+
+        # Install socat if not present (required for K3s port forwarding)
+        if ! command -v socat &> /dev/null; then
+            echo -e "${YELLOW}Installing socat (required for port forwarding)...${NC}"
+            sudo apt-get update > /dev/null 2>&1
+            sudo apt-get install -y socat > /dev/null 2>&1
+            echo -e "${GREEN}✓ socat installed${NC}"
+        fi
     fi
 
-    # Check if K3s is running
-    if ! sudo systemctl is-active --quiet k3s; then
-        echo -e "${YELLOW}Starting K3s service...${NC}"
-        sudo systemctl start k3s
-        sleep 5
-    fi
-
-    # Setup kubectl to use K3s
-    # Copy kubeconfig to user's home directory (K3s restricts /etc/rancher/k3s/k3s.yaml to root)
-    mkdir -p ~/.kube
-    sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-    sudo chown $(id -u):$(id -g) ~/.kube/config
-    chmod 600 ~/.kube/config
-    export KUBECONFIG=~/.kube/config
-
-    # Verify K3s is running
-    if kubectl get nodes &> /dev/null; then
-        echo -e "${GREEN}✓ K3s is running${NC}"
-
-        # Show node info
-        NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
-        echo -e "  ${GREEN}Node: ${NODE_NAME}${NC}"
-    else
-        echo -e "${RED}✗ K3s is not responding${NC}"
-        echo -e "${YELLOW}Try: sudo systemctl status k3s${NC}"
-        exit 1
-    fi
-
-    # Install socat if not present (required for K3s port forwarding)
-    if ! command -v socat &> /dev/null; then
-        echo -e "${YELLOW}Installing socat (required for port forwarding)...${NC}"
-        sudo apt-get update > /dev/null 2>&1
-        sudo apt-get install -y socat > /dev/null 2>&1
-        echo -e "${GREEN}✓ socat installed${NC}"
-    fi
-
-    # Enable metrics-server if not already enabled
+    # Enable metrics-server if not already enabled (both platforms)
     if ! kubectl get deployment metrics-server -n kube-system &> /dev/null; then
         echo -e "${YELLOW}Installing metrics-server...${NC}"
         kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml > /dev/null 2>&1
@@ -597,38 +627,11 @@ setup_k3s() {
 # ============================================================================
 # Cluster Startup
 # ============================================================================
-if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
-    # Use K3s for production on Linux
-    setup_k3s
+# Setup K3s cluster
+setup_k3s
 
-    # K3s uses host Docker directly (no eval needed)
-    echo -e "${GREEN}✓ Using host Docker (K3s native)${NC}"
-
-elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
-    # Use Minikube for development
-    echo -e "${GREEN}⚙️  Starting minikube...${NC}"
-
-    # Check if minikube is already running
-    MINIKUBE_RUNNING=$(minikube status 2>/dev/null | grep -q "Running" && echo "yes" || echo "no")
-
-    if [ "$MINIKUBE_RUNNING" = "no" ]; then
-        # Minikube needs to be started (but NOT deleted automatically)
-        # Start minikube with standard configuration
-        # Note: LiveKit runs in Docker on host (not in K8s cluster)
-        # Production uses ClusterIP services with port-forward (no NodePorts needed)
-        echo -e "${YELLOW}⚠️  Minikube not running. Starting minikube...${NC}"
-        minikube start --driver=docker --cpus=4 --memory=8192
-        echo -e "${GREEN}✓ Minikube started${NC}"
-    else
-        echo -e "${GREEN}✓ Minikube already running${NC}"
-    fi
-
-    # Configure environment
-    minikube addons enable metrics-server 2>/dev/null
-    minikube addons enable dashboard 2>/dev/null
-    kubectl config use-context minikube > /dev/null 2>&1
-    eval $(minikube docker-env)
-fi
+# K3s uses host Docker directly (no eval needed)
+echo -e "${GREEN}✓ Using host Docker (K3s native)${NC}"
 
 # ============================================================================
 # Auto-Detect Kubernetes DNS IP (if enabled)
@@ -722,8 +725,7 @@ fi
 # ============================================================================
 # NVIDIA GPU Support Configuration (Production Only)
 # ============================================================================
-# K3s: Native GPU support with NVIDIA Container Runtime (automatic)
-# Minikube: Requires NVIDIA device plugin (Docker-in-Docker limitations)
+# K3s provides native GPU support with NVIDIA Container Runtime (automatic)
 if [ "$NODE_ENV" = "production" ]; then
     # Check if nvidia-smi is available (indicates GPU hardware present)
     if command -v nvidia-smi &> /dev/null; then
@@ -734,12 +736,11 @@ if [ "$NODE_ENV" = "production" ]; then
         GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)
         echo -e "  ${GREEN}Detected: ${GPU_NAME} (${GPU_MEMORY})${NC}"
 
-        if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
-            # K3s: Native GPU support via NVIDIA Container Runtime with containerd
-            echo -e "  ${GREEN}✓ K3s provides native GPU support with containerd${NC}"
+        # K3s: Native GPU support via NVIDIA Container Runtime with containerd
+        echo -e "  ${GREEN}✓ K3s provides native GPU support with containerd${NC}"
 
-            # Install NVIDIA Container Toolkit if not already installed
-            if ! command -v nvidia-container-runtime &> /dev/null; then
+        # Install NVIDIA Container Toolkit if not already installed
+        if ! command -v nvidia-container-runtime &> /dev/null; then
                 echo -e "${YELLOW}Installing NVIDIA Container Toolkit...${NC}"
 
                 # Clean up any corrupted repository files from previous failed installations
@@ -769,7 +770,7 @@ if [ "$NODE_ENV" = "production" ]; then
             fi
 
             # Configure K3s containerd to use NVIDIA runtime
-            # NOTE: This only runs in production mode with K3s - safe for local Minikube development
+            # NOTE: This only runs in production mode (NODE_ENV=production)
             CONTAINERD_CONFIG="/var/lib/rancher/k3s/agent/etc/containerd/config.toml"
             CONTAINERD_TEMPLATE="/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl"
 
@@ -924,55 +925,6 @@ DEVICEPLUGIN
                 echo -e "  ${YELLOW}   This may take a few moments to propagate${NC}"
                 echo -e "  ${YELLOW}   Check status: kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds${NC}"
             fi
-
-        elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
-            # Minikube: Requires device plugin (Docker-in-Docker limitations)
-            # NOTE: Does NOT set NVIDIA as default Docker runtime - safe for local development
-            echo -e "  ${YELLOW}⚠️  Minikube has limited GPU support (Docker-in-Docker)${NC}"
-            echo -e "  ${YELLOW}   For production GPU workloads, use K3s on Linux${NC}"
-            echo -e "  ${BLUE}   Local mode: Docker default runtime unchanged${NC}"
-
-            # Check if NVIDIA device plugin is already installed
-            if kubectl get pods -n kube-system 2>/dev/null | grep -q "nvidia-device-plugin.*Running"; then
-                DEVICE_PLUGIN_RUNNING=1
-            else
-                DEVICE_PLUGIN_RUNNING=0
-            fi
-
-            if [ "$DEVICE_PLUGIN_RUNNING" -eq 0 ]; then
-                echo -n "  • Installing NVIDIA device plugin... "
-
-                # Install NVIDIA device plugin
-                if kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.0/nvidia-device-plugin.yml > /dev/null 2>&1; then
-                    # Wait for it to be ready
-                    if kubectl wait --for=condition=ready pod -l name=nvidia-device-plugin-ds -n kube-system --timeout=60s > /dev/null 2>&1; then
-                        echo -e "${GREEN}✓${NC}"
-                    else
-                        echo -e "${YELLOW}⚠️${NC}"
-                        echo -e "  ${YELLOW}Device plugin installed but not ready yet${NC}"
-                    fi
-                else
-                    echo -e "${YELLOW}⚠️${NC}"
-                    echo -e "  ${YELLOW}Device plugin may already exist${NC}"
-                fi
-            else
-                echo -e "  ${GREEN}✓ NVIDIA device plugin already running${NC}"
-            fi
-
-            # Give device plugin a moment to register GPU resources
-            sleep 2
-
-            # Verify GPU resources are visible to Kubernetes
-            GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
-
-            if [ -n "$GPU_ALLOCATABLE" ] && [ "$GPU_ALLOCATABLE" != "0" ]; then
-                echo -e "  ${GREEN}✓ GPU resources available: ${GPU_ALLOCATABLE} GPU(s)${NC}"
-                echo -e "  ${GREEN}✓ Pods can now request nvidia.com/gpu resources${NC}"
-            else
-                echo -e "  ${YELLOW}⚠️  GPU not visible (Minikube Docker-in-Docker limitation)${NC}"
-                echo -e "  ${YELLOW}   Recommendation: Use K3s on Linux for GPU support${NC}"
-            fi
-        fi
     else
         echo -e "${YELLOW}⚠️  Production mode but no GPU detected on host${NC}"
         echo -e "${YELLOW}   nvidia-smi command not found${NC}"
@@ -988,15 +940,10 @@ fi
 # ============================================================================
 # LiveKit Host Discovery
 # ============================================================================
-# On macOS, host.minikube.internal works automatically
-# On Linux (production), pods use init containers to dynamically discover
-# the gateway IP and update /etc/hosts at runtime
+# Pods use init containers to dynamically discover the gateway IP
+# and update /etc/hosts at runtime for host.docker.internal
 # No static configuration or firewall rules needed
-if [[ "$OS_TYPE" == "linux" ]]; then
-    echo -e "${GREEN}✓ Using dynamic host discovery for LiveKit connectivity${NC}"
-else
-    echo -e "${GREEN}✓ Using native host.minikube.internal (macOS)${NC}"
-fi
+echo -e "${GREEN}✓ Using dynamic host discovery for LiveKit connectivity${NC}"
 
 # LiveKit is provided externally - using dual URLs for internal/external access
 echo -e "${GREEN}📡 Using LiveKit server:${NC}"
@@ -1153,22 +1100,44 @@ build_with_progress "conversational-ai-server" "conversational-ai-server:latest"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
 build_with_progress "message-recorder" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
-# Import Docker images into K3s containerd (K3s only)
-if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+# Import Docker images into K3s containerd
+if [[ "$OS_TYPE" == "macos" ]]; then
+    # macOS: OrbStack/Rancher Desktop/Colima share the same Docker daemon with K3s
+    # Images built with `docker build` are automatically available to K3s - no import needed
+    echo -e "${GREEN}📦 Images available to K3s (shared Docker daemon)${NC}"
+else
+    # Linux: K3s has separate containerd, need to import images
     echo -e "${GREEN}📦 Importing images into K3s containerd...${NC}"
 
     # Save Docker images to tar files
     echo -n "  • Exporting Docker images... "
-    docker save session-management-server:latest conversational-ai-server:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/dev/null
-    echo -e "${GREEN}✓${NC}"
+    if docker save session-management-server:latest conversational-ai-server:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+        echo -e "${RED}Error exporting Docker images:${NC}"
+        cat /tmp/docker-save-error.log
+        exit 1
+    fi
 
     # Import into K3s containerd
     echo -n "  • Importing into K3s containerd... "
-    sudo k3s ctr images import /tmp/k3s-images.tar > /dev/null 2>&1
-    echo -e "${GREEN}✓${NC}"
+    if sudo k3s ctr images import /tmp/k3s-images.tar > /tmp/k3s-import.log 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+        echo -e "${RED}Error importing images into K3s:${NC}"
+        cat /tmp/k3s-import.log
+        echo ""
+        echo -e "${YELLOW}Troubleshooting:${NC}"
+        echo -e "  1. Check K3s is running: ${BLUE}sudo systemctl status k3s${NC}"
+        echo -e "  2. Check containerd socket: ${BLUE}sudo ls -la /run/k3s/containerd/containerd.sock${NC}"
+        echo -e "  3. Check disk space: ${BLUE}df -h /var/lib/rancher/k3s${NC}"
+        exit 1
+    fi
 
     # Clean up tar file
-    rm -f /tmp/k3s-images.tar
+    rm -f /tmp/k3s-images.tar /tmp/docker-save-error.log /tmp/k3s-import.log
 
     echo -e "${GREEN}✓ Images available to K3s${NC}"
 fi
@@ -1194,8 +1163,30 @@ echo -n "  • Updating ConfigMaps with environment variables... "
 envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
-# Note: Pods use init containers to dynamically discover the gateway IP
-# No static HOST_GATEWAY_IP replacement needed
+# Detect K8s gateway IP for host.docker.internal (macOS only)
+if [[ "$OS_TYPE" == "macos" ]]; then
+    # Get the first pod's gateway IP to detect OrbStack/Rancher Desktop gateway
+    echo -n "  • Detecting Kubernetes gateway IP for host access... "
+
+    # Create a temporary pod to detect gateway
+    kubectl run gateway-detector --image=busybox:latest --restart=Never -n ai-agents --command -- sh -c "ip route | awk '/default/ {print \$3}'" > /dev/null 2>&1 || true
+    sleep 2
+
+    HOST_GATEWAY_IP=$(kubectl logs gateway-detector -n ai-agents 2>/dev/null | tr -d '\r\n' || echo "192.168.194.1")
+    kubectl delete pod gateway-detector -n ai-agents > /dev/null 2>&1 || true
+
+    if [ -z "$HOST_GATEWAY_IP" ]; then
+        HOST_GATEWAY_IP="192.168.194.1"  # Default for OrbStack
+    fi
+
+    echo -e "${GREEN}✓ ${HOST_GATEWAY_IP}${NC}"
+
+    # Update message-recorder.yaml with detected gateway IP
+    sed "s/192.168.194.1/${HOST_GATEWAY_IP}/g" k8s/06-message-recorder.yaml > /tmp/06-message-recorder-updated.yaml
+else
+    # Linux: Use message-recorder.yaml as-is (hostAliases not needed on Linux)
+    cp k8s/06-message-recorder.yaml /tmp/06-message-recorder-updated.yaml
+fi
 
 # Note: LiveKit API key verification skipped - using external LiveKit server
 # The external server is pre-configured with its own API keys
@@ -1208,7 +1199,7 @@ kubectl apply -f k8s/01-postgres.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
-kubectl apply -f k8s/06-message-recorder.yaml > /dev/null
+kubectl apply -f /tmp/06-message-recorder-updated.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 
@@ -1318,13 +1309,12 @@ if [ "$DAEMON_MODE" = false ]; then
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
-    # Stop Kubernetes cluster based on distribution
-    if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
+    # Stop K3s cluster (Linux only)
+    if [[ "$OS_TYPE" == "linux" ]]; then
         echo -e "${BLUE}Stopping K3s cluster...${NC}"
         sudo systemctl stop k3s
-    elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
-        echo -e "${BLUE}Stopping minikube cluster...${NC}"
-        minikube stop
+    else
+        echo -e "${BLUE}K3s managed by Rancher Desktop/Colima (not stopped)${NC}"
     fi
 
     echo ""
@@ -1368,11 +1358,7 @@ echo ""
 
 # Add note about external LiveKit
 echo -e "${BLUE}📡 Notes:${NC}"
-if [ "$K8S_DISTRIBUTION" = "k3s" ]; then
-    echo -e "  ${YELLOW}• Kubernetes: K3s (production, native GPU support)${NC}"
-elif [ "$K8S_DISTRIBUTION" = "minikube" ]; then
-    echo -e "  ${YELLOW}• Kubernetes: Minikube (development)${NC}"
-fi
+echo -e "  ${YELLOW}• Kubernetes: K3s (unified development & production)${NC}"
 echo -e "  ${YELLOW}• LiveKit runs in Docker on host (outside K8s)${NC}"
 echo -e "  ${YELLOW}• K8s pods use internal URL: ${LIVEKIT_URL}${NC}"
 echo -e "  ${YELLOW}• Browsers use public URL: ${PUBLIC_LIVEKIT_URL}${NC}"
@@ -1400,7 +1386,7 @@ else
     # Foreground mode: Keep script running
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}✨ Services are running${NC}"
-    echo -e "${RED}⚠️  Press Ctrl+C to stop all services and shutdown minikube${NC}"
+    echo -e "${RED}⚠️  Press Ctrl+C to stop all services and shutdown K3s${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 

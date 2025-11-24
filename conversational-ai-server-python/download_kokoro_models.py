@@ -14,8 +14,9 @@ import sys
 import urllib.request
 
 
-def download_with_progress(url, destination, description):
-    """Download a file with progress reporting."""
+def download_with_progress(url, destination, description, max_retries=5):
+    """Download a file with progress reporting and retry logic for transient failures."""
+    import time
 
     def reporthook(block_num, block_size, total_size):
         """Report download progress."""
@@ -26,25 +27,66 @@ def download_with_progress(url, destination, description):
             mb_total = total_size / (1024 * 1024)
             print(f"\r  Progress: {percent:3d}% ({mb_downloaded:6.1f}/{mb_total:.1f} MB)", end='', flush=True)
 
-    try:
-        print(f"\n{description}")
-        print(f"  URL: {url}")
-        print(f"  Destination: {destination}")
-        urllib.request.urlretrieve(url, destination, reporthook)
-        print()  # New line after progress
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                print(f"\n🔄 Retry attempt {attempt}/{max_retries}")
 
-        # Verify download
-        if os.path.exists(destination):
-            file_size = os.path.getsize(destination) / (1024 * 1024)
-            print(f"  ✅ Downloaded successfully: {file_size:.1f} MB")
-            return True
-        else:
-            print(f"  ❌ File not found after download")
-            return False
+            print(f"\n{description}")
+            print(f"  URL: {url}")
+            print(f"  Destination: {destination}")
 
-    except Exception as e:
-        print(f"\n  ❌ Download failed: {e}")
-        return False
+            # Set socket timeout to 10 minutes for large downloads
+            import socket
+            socket.setdefaulttimeout(600)
+
+            urllib.request.urlretrieve(url, destination, reporthook)
+            print()  # New line after progress
+
+            # Verify download
+            if os.path.exists(destination):
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                print(f"  ✅ Downloaded successfully: {file_size:.1f} MB")
+                return True
+            else:
+                print(f"  ❌ File not found after download")
+                if attempt < max_retries:
+                    wait_time = 5 * attempt  # Exponential backoff: 5s, 10s, 15s...
+                    print(f"  ⏳ Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                continue
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"\n  ❌ Download failed (attempt {attempt}/{max_retries}): {error_msg}")
+
+            # Clean up partial download
+            if os.path.exists(destination):
+                try:
+                    os.remove(destination)
+                    print(f"  🗑️  Removed partial download")
+                except Exception as cleanup_error:
+                    print(f"  ⚠️  Could not remove partial file: {cleanup_error}")
+
+            if attempt < max_retries:
+                # Check if it's a transient error (503, timeout, connection issues)
+                is_retryable = any(x in error_msg.lower() for x in [
+                    '503', 'service unavailable', 'timeout', 'connection',
+                    'temporarily', 'network', 'unreachable'
+                ])
+
+                if is_retryable:
+                    wait_time = 10 * attempt  # Exponential backoff: 10s, 20s, 30s...
+                    print(f"  🔄 Transient error detected - retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"  ❌ Non-retryable error - failing immediately")
+                    return False
+            else:
+                print(f"  ❌ All {max_retries} attempts failed")
+                return False
+
+    return False
 
 
 def download_kokoro_models():
