@@ -22,7 +22,7 @@ spec:
       containers:
       - name: message-recorder
         image: message-recorder-python:latest
-        imagePullPolicy: Never  # Use local image from minikube
+        imagePullPolicy: IfNotPresent  # Use local image from K3s
         env:
         # External LiveKit Server (read from ConfigMap)
         - name: LIVEKIT_URL

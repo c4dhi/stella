@@ -69,6 +69,17 @@ if [ -z "$ENV_FLAG" ] && [ "$STOP_MODE" = false ]; then
     ENV_FLAG="local"
 fi
 
+# Detect operating system (must be done early for stop mode)
+OS_TYPE=""
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS_TYPE="macos"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS_TYPE="linux"
+else
+    echo "Warning: Unknown OS type: $OSTYPE. Assuming Linux."
+    OS_TYPE="linux"
+fi
+
 # Handle stop mode
 if [ "$STOP_MODE" = true ]; then
     echo "🛑 Stopping Grace AI Kubernetes services..."
@@ -112,17 +123,6 @@ if [ "$DAEMON_MODE" = true ]; then
     exec 1> >(tee -a "$LOG_FILE")
     exec 2>&1
     echo "=== Grace AI K8s Deployment - $(date) ==="
-fi
-
-# Detect operating system
-OS_TYPE=""
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    OS_TYPE="macos"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS_TYPE="linux"
-else
-    echo "Warning: Unknown OS type: $OSTYPE. Assuming Linux."
-    OS_TYPE="linux"
 fi
 
 # Ensure Docker and other tools are in PATH
@@ -260,7 +260,7 @@ export PORT=3000
 
 # Kubernetes configuration
 export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
-export AGENT_IMAGE="${AGENT_IMAGE:-conversational-ai-server:latest}"
+export AGENT_IMAGE="${AGENT_IMAGE:-conversational-ai-server-python:latest}"
 export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
 
 # Legacy compatibility
@@ -1095,10 +1095,22 @@ else
     echo -e "${BLUE}  💻 Building conversational-ai-server with CPU support${NC}"
 fi
 
+# Validate build directories exist
+echo -n "  • Validating build directories... "
+BUILD_DIRS=("./conversational-ai-server-python" "./frontend-ui" "./message-recorder-python")
+for dir in "${BUILD_DIRS[@]}"; do
+    if [ ! -d "$dir" ]; then
+        echo -e "${RED}✗${NC}"
+        echo -e "${RED}Error: Build directory not found: $dir${NC}"
+        exit 1
+    fi
+done
+echo -e "${GREEN}✓${NC}"
+
 build_with_progress "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT"
-build_with_progress "conversational-ai-server" "conversational-ai-server:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
+build_with_progress "conversational-ai-server-python" "conversational-ai-server-python:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
-build_with_progress "message-recorder" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
+build_with_progress "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
 # Import Docker images into K3s containerd
 if [[ "$OS_TYPE" == "macos" ]]; then
@@ -1111,7 +1123,7 @@ else
 
     # Save Docker images to tar files
     echo -n "  • Exporting Docker images... "
-    if docker save session-management-server:latest conversational-ai-server:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
+    if docker save session-management-server:latest conversational-ai-server-python:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
         echo -e "${GREEN}✓${NC}"
     else
         echo -e "${RED}✗${NC}"
@@ -1156,7 +1168,26 @@ else
     fi
 fi
 
-echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
+# Validate NETWORK_IP was detected
+if [ -z "$NETWORK_IP" ]; then
+    echo -e "${YELLOW}⚠️  Could not detect network IP, using 127.0.0.1${NC}"
+    NETWORK_IP="127.0.0.1"
+else
+    echo -e "${GREEN}📡 Detected network IP: ${NETWORK_IP}${NC}"
+fi
+
+# Validate envsubst is available
+if ! command -v envsubst &> /dev/null; then
+    echo -e "${RED}✗ envsubst not found${NC}"
+    echo -e "${YELLOW}Install gettext package:${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "  ${BLUE}brew install gettext${NC}"
+        echo -e "  ${BLUE}brew link --force gettext${NC}"
+    else
+        echo -e "  ${BLUE}sudo apt-get install gettext-base${NC}"
+    fi
+    exit 1
+fi
 
 # Inject environment variables into ConfigMaps using envsubst
 echo -n "  • Updating ConfigMaps with environment variables... "
@@ -1172,14 +1203,15 @@ if [[ "$OS_TYPE" == "macos" ]]; then
     kubectl run gateway-detector --image=busybox:latest --restart=Never -n ai-agents --command -- sh -c "ip route | awk '/default/ {print \$3}'" > /dev/null 2>&1 || true
     sleep 2
 
-    HOST_GATEWAY_IP=$(kubectl logs gateway-detector -n ai-agents 2>/dev/null | tr -d '\r\n' || echo "192.168.194.1")
+    HOST_GATEWAY_IP=$(kubectl logs gateway-detector -n ai-agents 2>/dev/null | tr -d '\r\n' || echo "")
     kubectl delete pod gateway-detector -n ai-agents > /dev/null 2>&1 || true
 
     if [ -z "$HOST_GATEWAY_IP" ]; then
         HOST_GATEWAY_IP="192.168.194.1"  # Default for OrbStack
+        echo -e "${YELLOW}⚠️  Using default OrbStack gateway: ${HOST_GATEWAY_IP}${NC}"
+    else
+        echo -e "${GREEN}✓ ${HOST_GATEWAY_IP}${NC}"
     fi
-
-    echo -e "${GREEN}✓ ${HOST_GATEWAY_IP}${NC}"
 
     # Update message-recorder.yaml with detected gateway IP
     sed "s/192.168.194.1/${HOST_GATEWAY_IP}/g" k8s/06-message-recorder.yaml > /tmp/06-message-recorder-updated.yaml
@@ -1309,6 +1341,14 @@ if [ "$DAEMON_MODE" = false ]; then
     [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
     [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
 
+    # Clean up temporary files
+    echo -e "${BLUE}Cleaning up temporary files...${NC}"
+    rm -f /tmp/04-configmap-updated.yaml
+    rm -f /tmp/06-message-recorder-updated.yaml
+    rm -f /tmp/k3s-images.tar
+    rm -f /tmp/docker-save-error.log
+    rm -f /tmp/k3s-import.log
+
     # Stop K3s cluster (Linux only)
     if [[ "$OS_TYPE" == "linux" ]]; then
         echo -e "${BLUE}Stopping K3s cluster...${NC}"
@@ -1372,7 +1412,13 @@ fi
 echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
-    # Daemon mode: Show status and exit
+    # Daemon mode: Clean up temporary files and show status
+    rm -f /tmp/04-configmap-updated.yaml
+    rm -f /tmp/06-message-recorder-updated.yaml
+    rm -f /tmp/k3s-images.tar
+    rm -f /tmp/docker-save-error.log
+    rm -f /tmp/k3s-import.log
+
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}✨ Services running in background${NC}"
     echo -e "${YELLOW}📝 Logs: $LOG_FILE${NC}"
