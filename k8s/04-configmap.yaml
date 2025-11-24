@@ -30,6 +30,11 @@ data:
   AGENT_IMAGE: "conversational-ai-server:latest"
   AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
 
+  # Kubernetes DNS Configuration (production only)
+  # Auto-detected at deployment time or from .env
+  # K3s: 10.43.0.10, Minikube: 10.96.0.10
+  KUBERNETES_DNS_NAMESERVER: "${KUBERNETES_DNS_NAMESERVER}"
+
   # ============================================================================
   # AI Agent Configuration (Python conversational-ai-server)
   # ============================================================================
