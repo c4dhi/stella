@@ -193,14 +193,37 @@ class OpenSourceTTSProvider(AbstractTTSProvider):
                 print(f"[OpenSourceTTS] Kokoro model files not found: {model_path}, {voices_path}")
                 return False
 
-            # Initialize Kokoro engine
+            # Parse ONNX providers from environment
+            onnx_providers = self._parse_onnx_providers()
+
+            # Initialize Kokoro engine with providers
             print(f"[OpenSourceTTS] Loading Kokoro model from: {model_path}")
-            self.kokoro_model = kokoro_onnx.Kokoro(model_path, voices_path)
+            print(f"[OpenSourceTTS] ONNX providers: {onnx_providers}")
+            self.kokoro_model = kokoro_onnx.Kokoro(model_path, voices_path, providers=onnx_providers)
             return True
 
         except Exception as e:
             print(f"[OpenSourceTTS] Failed to initialize Kokoro: {e}")
+            import traceback
+            traceback.print_exc()
             return False
+
+    def _parse_onnx_providers(self) -> list:
+        """Parse ONNX_PROVIDER environment variable into a list of providers."""
+        try:
+            onnx_provider_str = os.getenv('ONNX_PROVIDER', 'CPUExecutionProvider')
+
+            # Parse comma-separated string into list
+            if ',' in onnx_provider_str:
+                providers = [p.strip() for p in onnx_provider_str.split(',')]
+            else:
+                providers = [onnx_provider_str.strip()]
+
+            print(f"[OpenSourceTTS] Parsed ONNX providers from env: {providers}")
+            return providers
+        except Exception as e:
+            print(f"[OpenSourceTTS] Error parsing ONNX providers: {e}, falling back to CPU")
+            return ['CPUExecutionProvider']
 
     async def _download_kokoro_models(self) -> bool:
         """Download Kokoro models if they don't exist."""

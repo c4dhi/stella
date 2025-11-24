@@ -1063,6 +1063,7 @@ build_with_progress() {
     local TAG=$2
     local CONTEXT=$3
     local USE_BUILDKIT=$4
+    local BUILD_ARGS="${5:-}"  # Optional build arguments
 
     local LOG_FILE="/tmp/docker-build-${IMAGE_NAME}.log"
 
@@ -1071,9 +1072,9 @@ build_with_progress() {
     # Run docker build in background and capture output
     # Use setsid to detach from controlling terminal, preventing BuildKit from writing to /dev/tty
     if [ "$USE_BUILDKIT" = true ]; then
-        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     else
-        $SETSID_CMD docker build --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD docker build ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     fi
 
     local BUILD_PID=$!
@@ -1138,8 +1139,17 @@ build_with_progress() {
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 
+# Determine if GPU support should be enabled for conversational-ai-server
+AI_SERVER_BUILD_ARGS=""
+if [ "$NODE_ENV" = "production" ] && command -v nvidia-smi &> /dev/null; then
+    AI_SERVER_BUILD_ARGS="--build-arg ENABLE_GPU=true"
+    echo -e "${BLUE}  🎮 Building conversational-ai-server with GPU support${NC}"
+else
+    echo -e "${BLUE}  💻 Building conversational-ai-server with CPU support${NC}"
+fi
+
 build_with_progress "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT"
-build_with_progress "conversational-ai-server" "conversational-ai-server:latest" "./conversational-ai-server-python" "$USE_BUILDKIT"
+build_with_progress "conversational-ai-server" "conversational-ai-server:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
 build_with_progress "message-recorder" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
