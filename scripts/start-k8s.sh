@@ -1279,20 +1279,21 @@ if [ "$ENABLE_GPU" = "true" ]; then
     echo -e "${BLUE}⚙️  Generating GPU-enabled K8s manifests...${NC}"
 
     # Generate GPU-enabled STT manifest
-    # - Uncomment runtimeClassName: nvidia
-    # - Uncomment nvidia.com/gpu: "1" resource requests
+    # - Uncomment runtimeClassName: nvidia (for CUDA access)
+    # - Do NOT request nvidia.com/gpu resource - allows GPU sharing between services
+    # - Both STT and TTS share the single GPU via CUDA without exclusive allocation
     sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        -e 's/# GPU: nvidia.com\/gpu: "1"/nvidia.com\/gpu: "1"/g' \
         k8s/08-stt-service.yaml > /tmp/08-stt-service-gpu.yaml
     STT_MANIFEST="/tmp/08-stt-service-gpu.yaml"
-    echo -e "  ${GREEN}✓ STT service manifest (GPU enabled)${NC}"
+    echo -e "  ${GREEN}✓ STT service manifest (GPU shared mode)${NC}"
 
     # Generate GPU-enabled TTS manifest
     sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        -e 's/# GPU: nvidia.com\/gpu: "1"/nvidia.com\/gpu: "1"/g' \
         k8s/09-tts-service.yaml > /tmp/09-tts-service-gpu.yaml
     TTS_MANIFEST="/tmp/09-tts-service-gpu.yaml"
-    echo -e "  ${GREEN}✓ TTS service manifest (GPU enabled)${NC}"
+    echo -e "  ${GREEN}✓ TTS service manifest (GPU shared mode)${NC}"
+
+    echo -e "  ${CYAN}ℹ️  GPU sharing: STT and TTS share single GPU via CUDA${NC}"
 fi
 
 # Deploy to Kubernetes
