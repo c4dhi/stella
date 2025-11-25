@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -12,6 +13,11 @@ import {
   RemoteTrackPublication,
   TrackKind,
   AudioStream,
+  AudioSource,
+  AudioFrame,
+  LocalAudioTrack,
+  TrackPublishOptions,
+  TrackSource,
 } from '@livekit/rtc-node';
 import { LiveKitService } from '../livekit/livekit.service';
 import {
@@ -19,12 +25,18 @@ import {
   STTStream,
   TranscriptEvent,
 } from '../stt-client/stt-client.service';
+import { TTSClientService } from '../tts-client/tts-client.service';
+import type { TranscriptProcessor } from '../transcript-processor/transcript-processor.interface';
+import { TRANSCRIPT_PROCESSOR } from '../transcript-processor/transcript-processor.interface';
 import * as crypto from 'crypto';
 
 interface ActiveSession {
   room: Room;
   sttStreams: Map<string, STTStream>; // participantIdentity -> STTStream
   audioStreams: Map<string, AudioStream>; // participantIdentity -> AudioStream
+  audioSource?: AudioSource; // For TTS audio output
+  audioTrack?: LocalAudioTrack; // Published audio track
+  isSpeaking: boolean; // Track if agent is currently speaking
 }
 
 @Injectable()
@@ -35,6 +47,9 @@ export class RoomAgentService implements OnModuleDestroy {
   constructor(
     private livekitService: LiveKitService,
     private sttClient: STTClientService,
+    private ttsClient: TTSClientService,
+    @Inject(TRANSCRIPT_PROCESSOR)
+    private transcriptProcessor: TranscriptProcessor,
     private configService: ConfigService,
   ) {}
 
@@ -73,6 +88,7 @@ export class RoomAgentService implements OnModuleDestroy {
       room,
       sttStreams: new Map(),
       audioStreams: new Map(),
+      isSpeaking: false,
     };
 
     // Set up event handlers
@@ -80,6 +96,8 @@ export class RoomAgentService implements OnModuleDestroy {
       this.logger.log(
         `Agent connected to room ${roomName} for session ${sessionId}`,
       );
+      // Note: setupAudioPublishing is called directly after room.connect()
+      // to ensure it runs reliably (event handler async issues)
     });
 
     room.on(RoomEvent.Disconnected, () => {
@@ -140,6 +158,58 @@ export class RoomAgentService implements OnModuleDestroy {
       },
     );
 
+    // Handle text messages from participants
+    room.on(
+      RoomEvent.DataReceived,
+      (
+        payload: Uint8Array,
+        participant?: RemoteParticipant,
+      ) => {
+        // Ignore messages from agents
+        if (participant?.identity?.startsWith('agent-')) {
+          return;
+        }
+
+        try {
+          const decoder = new TextDecoder();
+          const messageText = decoder.decode(payload);
+          const envelope = JSON.parse(messageText);
+
+          if (envelope.type === 'user_text' && envelope.data) {
+            const text =
+              typeof envelope.data === 'string'
+                ? envelope.data
+                : envelope.data.text;
+
+            if (text && text.trim().length > 0) {
+              const participantId =
+                participant?.name || participant?.identity || 'user';
+              this.logger.log(
+                `Received text message from ${participantId}: "${text}"`,
+              );
+
+              // Echo the text as a transcript for frontend display
+              this.publishTextAsTranscript(
+                session.room,
+                text,
+                participantId,
+                sessionId,
+              );
+
+              // Process through TTS pipeline (same as final transcripts)
+              this.handleFinalTranscript(session, sessionId, text, participantId).catch(
+                (err) =>
+                  this.logger.error(`Text message TTS error: ${err.message}`),
+              );
+            }
+          }
+        } catch (error) {
+          // Non-JSON data or parse error - ignore silently
+          this.logger.debug(`Non-JSON data received, ignoring`);
+        }
+      },
+    );
+
     // Store session before connecting
     this.activeSessions.set(sessionId, session);
 
@@ -152,6 +222,10 @@ export class RoomAgentService implements OnModuleDestroy {
       this.logger.log(
         `Agent successfully joined room ${roomName} as ${agentIdentity}`,
       );
+
+      // Set up audio publishing immediately after connection
+      // (don't rely on RoomEvent.Connected event which may not fire reliably with async handlers)
+      await this.setupAudioPublishing(session, sessionId);
     } catch (error) {
       this.activeSessions.delete(sessionId);
       throw error;
@@ -180,7 +254,7 @@ export class RoomAgentService implements OnModuleDestroy {
 
       // Handle incoming transcripts
       sttStream.on('data', (event: TranscriptEvent) => {
-        this.publishTranscript(session.room, event, participantId);
+        this.publishTranscript(session.room, event, participantId, sessionId);
       });
 
       sttStream.on('error', (err: Error) => {
@@ -244,11 +318,13 @@ export class RoomAgentService implements OnModuleDestroy {
 
   /**
    * Publish a transcript event to the room via data channel.
+   * If it's a final transcript, also triggers TTS processing.
    */
   private async publishTranscript(
     room: Room,
     event: TranscriptEvent,
     participantName: string,
+    sessionId: string,
   ): Promise<void> {
     // Format message as expected by frontend
     const message = {
@@ -282,9 +358,72 @@ export class RoomAgentService implements OnModuleDestroy {
         this.logger.log(
           `Published final transcript: "${event.text}" from ${participantName}`,
         );
+
+        // Trigger TTS processing for final transcripts
+        const session = this.activeSessions.get(sessionId);
+        if (session && event.text.trim().length > 0) {
+          // Process TTS in background (don't await to avoid blocking data channel)
+          this.handleFinalTranscript(
+            session,
+            sessionId,
+            event.text,
+            participantName,
+          ).catch((err) => {
+            this.logger.error(`TTS background processing error: ${err.message}`);
+          });
+        }
       }
     } catch (error) {
       this.logger.error(`Failed to publish transcript: ${error.message}`);
+    }
+  }
+
+  /**
+   * Publish a text message as a final transcript (for echoing user text input).
+   */
+  private async publishTextAsTranscript(
+    room: Room,
+    text: string,
+    participantName: string,
+    sessionId: string,
+  ): Promise<void> {
+    const transcriptId = `txt_${crypto.randomBytes(4).toString('hex')}`;
+
+    const message = {
+      type: 'transcript_chunk',
+      data: {
+        text: text,
+        is_final: true,
+        transcript_id: transcriptId,
+        participant_id: participantName,
+        confidence: 1.0, // Text input has 100% confidence
+        timestamp: new Date().toISOString(),
+        chunk_id: `ts_${crypto.randomBytes(4).toString('hex')}`,
+        source: 'text', // Indicate this came from text input
+      },
+    };
+
+    try {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(JSON.stringify(message));
+
+      if (!room.localParticipant) {
+        this.logger.warn(
+          'Cannot publish text transcript: localParticipant not available',
+        );
+        return;
+      }
+
+      await room.localParticipant.publishData(data, {
+        reliable: true,
+        topic: 'transcript',
+      });
+
+      this.logger.log(
+        `Published text as transcript: "${text}" from ${participantName}`,
+      );
+    } catch (error) {
+      this.logger.error(`Failed to publish text transcript: ${error.message}`);
     }
   }
 
@@ -343,5 +482,179 @@ export class RoomAgentService implements OnModuleDestroy {
    */
   isInRoom(sessionId: string): boolean {
     return this.activeSessions.has(sessionId);
+  }
+
+  /**
+   * Set up audio publishing for TTS output.
+   */
+  private async setupAudioPublishing(
+    session: ActiveSession,
+    sessionId: string,
+  ): Promise<void> {
+    try {
+      // Create audio source (16kHz mono for TTS output)
+      session.audioSource = new AudioSource(16000, 1);
+
+      // Create local audio track
+      session.audioTrack = LocalAudioTrack.createAudioTrack(
+        'agent-speech',
+        session.audioSource,
+      );
+
+      // Publish the track with proper source type
+      if (session.room.localParticipant) {
+        const options = new TrackPublishOptions();
+        options.source = TrackSource.SOURCE_MICROPHONE;
+        await session.room.localParticipant.publishTrack(session.audioTrack, options);
+        this.logger.log(`Published agent audio track for session ${sessionId} (source: microphone)`);
+      } else {
+        this.logger.warn(
+          `Cannot publish audio track: localParticipant not available`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Failed to set up audio publishing: ${error.message}`);
+    }
+  }
+
+  /**
+   * Play audio buffer through the agent's audio track.
+   * Audio buffer should be 16-bit PCM, 16kHz mono.
+   */
+  private async playAudio(
+    session: ActiveSession,
+    sessionId: string,
+    audioBuffer: Buffer,
+  ): Promise<void> {
+    if (!session.audioSource) {
+      this.logger.warn('Cannot play audio: audioSource not initialized');
+      return;
+    }
+
+    try {
+      session.isSpeaking = true;
+
+      // Convert Buffer to Int16Array
+      const samples = new Int16Array(
+        audioBuffer.buffer,
+        audioBuffer.byteOffset,
+        audioBuffer.length / 2,
+      );
+
+      // Debug: Log audio buffer info
+      const maxSample = Math.max(...Array.from(samples).map(Math.abs));
+      const durationSec = samples.length / 16000;
+      this.logger.debug(
+        `[AUDIO] Buffer: ${audioBuffer.length} bytes, ${samples.length} samples, ` +
+          `${durationSec.toFixed(2)}s duration, max amplitude: ${maxSample}`,
+      );
+
+      // Stream in chunks for smooth playback
+      // 480 samples = 30ms at 16kHz
+      const chunkSize = 480;
+      const totalChunks = Math.ceil(samples.length / chunkSize);
+
+      this.logger.debug(
+        `[AUDIO] Publishing ${totalChunks} frames via LiveKit AudioSource`,
+      );
+
+      for (let i = 0; i < samples.length; i += chunkSize) {
+        // Check if session is still active
+        if (!this.activeSessions.has(sessionId)) {
+          this.logger.warn('[AUDIO] Session ended, stopping playback');
+          break;
+        }
+
+        const end = Math.min(i + chunkSize, samples.length);
+        const chunkSamples = samples.slice(i, end);
+
+        // Pad the last chunk if needed
+        let frameData: Int16Array;
+        if (chunkSamples.length < chunkSize) {
+          frameData = new Int16Array(chunkSize);
+          frameData.set(chunkSamples);
+        } else {
+          frameData = chunkSamples;
+        }
+
+        // Create and send audio frame
+        const frame = new AudioFrame(
+          frameData,
+          16000, // sampleRate
+          1, // channels
+          frameData.length, // samplesPerChannel
+        );
+
+        // Log first frame details
+        const chunkIndex = Math.floor(i / chunkSize);
+        if (chunkIndex === 0) {
+          const frameMax = Math.max(...Array.from(frameData).map(Math.abs));
+          this.logger.debug(
+            `[AUDIO] First frame: ${frameData.length} samples, max amplitude: ${frameMax}`,
+          );
+        }
+
+        await session.audioSource.captureFrame(frame);
+
+        // Small delay to maintain real-time playback
+        // 30ms per chunk, but leave some margin for processing
+        await this.sleep(28);
+      }
+
+      this.logger.log(`[AUDIO] Finished publishing ${totalChunks} audio frames`);
+    } catch (error) {
+      this.logger.error(`Error playing audio: ${error.message}`);
+    } finally {
+      session.isSpeaking = false;
+    }
+  }
+
+  /**
+   * Handle a final transcript by processing through the pipeline and TTS.
+   */
+  private async handleFinalTranscript(
+    session: ActiveSession,
+    sessionId: string,
+    transcript: string,
+    participantId: string,
+  ): Promise<void> {
+    try {
+      this.logger.log(`Processing final transcript: "${transcript}"`);
+
+      // Step 1: Process through transcript processor pipeline
+      const result = await this.transcriptProcessor.process(
+        transcript,
+        sessionId,
+        participantId,
+      );
+
+      if (!result.shouldSpeak) {
+        this.logger.debug('Processor indicated no speech needed');
+        return;
+      }
+
+      // Step 2: Synthesize speech via TTS
+      this.logger.log(`Synthesizing: "${result.text}"`);
+      const ttsResponse = await this.ttsClient.synthesize(
+        result.text,
+        sessionId,
+      );
+
+      // Step 3: Play audio through agent's audio track
+      await this.playAudio(session, sessionId, ttsResponse.audioData);
+
+      this.logger.log(
+        `TTS playback complete (${ttsResponse.durationMs}ms): "${result.text}"`,
+      );
+    } catch (error) {
+      this.logger.error(`TTS processing failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Helper to sleep for a specified duration.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

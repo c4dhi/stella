@@ -77,6 +77,13 @@ export class PeerTransport implements Transport {
           const audioTrack = track as RemoteAudioTrack
           const audioEl = audioTrack.attach()
           audioEl.autoplay = true
+          audioEl.volume = 1.0
+          audioEl.muted = false
+
+          // Add to DOM - required by some browsers for audio playback
+          audioEl.style.display = 'none'
+          document.body.appendChild(audioEl)
+
           this.remoteAudio = audioEl
           this.remoteAudioTrack = audioTrack
           this.setupAudioEventListeners(audioEl)
@@ -87,6 +94,24 @@ export class PeerTransport implements Transport {
 
           // Start monitoring audio levels for face animation
           this.startAudioLevelMonitoring()
+
+          // Debug: Log audio element state
+          console.log('🔊 [AUDIO] Remote audio track attached:', {
+            inDOM: audioEl.parentNode !== null,
+            autoplay: audioEl.autoplay,
+            volume: audioEl.volume,
+            muted: audioEl.muted,
+            paused: audioEl.paused,
+            readyState: audioEl.readyState,
+            srcObject: audioEl.srcObject ? 'MediaStream' : 'null',
+          })
+
+          // Explicitly try to play
+          audioEl.play().then(() => {
+            console.log('🔊 [AUDIO] play() succeeded')
+          }).catch((err) => {
+            console.error('🔊 [AUDIO] play() failed:', err.message)
+          })
         }
       })
 
@@ -225,6 +250,10 @@ export class PeerTransport implements Transport {
       const config = getRuntimeConfig()
       await room.connect(config.livekitUrl, token, connectOptions)
 
+      // Enable audio playback (required for browser autoplay policy)
+      // Must be called after user interaction (connect button click satisfies this)
+      await room.startAudio()
+
       console.log(`👤 [USER] Connected as: ${room.localParticipant.identity}`)
 
       // Publish microphone if available
@@ -259,7 +288,14 @@ export class PeerTransport implements Transport {
       await this.room.disconnect()
       this.room = undefined
     }
-    this.remoteAudio?.pause()
+
+    // Clean up audio element from DOM
+    if (this.remoteAudio) {
+      this.remoteAudio.pause()
+      if (this.remoteAudio.parentNode) {
+        this.remoteAudio.parentNode.removeChild(this.remoteAudio)
+      }
+    }
     this.remoteAudio = undefined
     this.remoteAudioTrack = undefined
     this.publishedAudioTrack = undefined

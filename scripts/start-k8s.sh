@@ -1098,7 +1098,7 @@ fi
 # Validate build directories exist
 echo -n "  • Validating build directories... "
 # Note: conversational-ai-server-python removed - replaced by microservices architecture
-BUILD_DIRS=("./frontend-ui" "./message-recorder-python" "./stt-service")
+BUILD_DIRS=("./frontend-ui" "./message-recorder-python" "./stt-service" "./tts-service")
 for dir in "${BUILD_DIRS[@]}"; do
     if [ ! -d "$dir" ]; then
         echo -e "${RED}✗${NC}"
@@ -1112,6 +1112,7 @@ build_with_progress "session-management-server" "session-management-server:lates
 # DISABLED: Monolith replaced by STT microservice
 # build_with_progress "conversational-ai-server-python" "conversational-ai-server-python:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
 build_with_progress "stt-service" "stt-service:latest" "./stt-service" "$USE_BUILDKIT"
+build_with_progress "tts-service" "tts-service:latest" "./tts-service" "$USE_BUILDKIT"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
 build_with_progress "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
@@ -1126,7 +1127,7 @@ else
 
     # Save Docker images to tar files
     echo -n "  • Exporting Docker images... "
-    if docker save session-management-server:latest stt-service:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
+    if docker save session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
         echo -e "${GREEN}✓${NC}"
     else
         echo -e "${RED}✗${NC}"
@@ -1238,6 +1239,7 @@ kubectl apply -f /tmp/06-message-recorder-updated.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 kubectl apply -f k8s/08-stt-service.yaml > /dev/null
+kubectl apply -f k8s/09-tts-service.yaml > /dev/null
 
 # Apply NodePort services for local development only
 # Production uses ClusterIP services (already created) + port-forward
@@ -1268,15 +1270,24 @@ kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=12
 # LiveKit: Using external server with dual URLs
 echo -e "  • LiveKit: Internal=${LIVEKIT_URL}, Public=${PUBLIC_LIVEKIT_URL} ${GREEN}✓${NC}"
 
-# Restart deployments
+# Restart deployments (all services to pick up new images)
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
 kubectl rollout restart deployment frontend-ui -n ai-agents > /dev/null 2>&1
+kubectl rollout restart deployment stt-service -n ai-agents > /dev/null 2>&1
+kubectl rollout restart deployment tts-service -n ai-agents > /dev/null 2>&1
+kubectl rollout restart deployment message-recorder -n ai-agents > /dev/null 2>&1
 
 echo -n "  • Waiting for backend... "
 kubectl rollout status deployment/session-management-server -n ai-agents --timeout=180s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 echo -n "  • Waiting for frontend... "
 kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+echo -n "  • Waiting for STT service... "
+kubectl rollout status deployment/stt-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+echo -n "  • Waiting for TTS service... "
+kubectl rollout status deployment/tts-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 
 # Start port-forwards
