@@ -1134,9 +1134,12 @@ if [ "$REBUILD_MODE" = true ]; then
         echo -e "${GREEN}✓${NC}"
     fi
 
-    # Clean up error/failed pods
-    echo -n "  • Cleaning up failed/error pods... "
+    # Clean up error/failed/unknown pods
+    echo -n "  • Cleaning up failed/error/stuck pods... "
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
+    kubectl delete pods -n ai-agents --field-selector=status.phase=Unknown 2>/dev/null || true
+    # Force delete any pods stuck in ContainerStatusUnknown or other weird states
+    kubectl get pods -n ai-agents --no-headers 2>/dev/null | grep -E "Unknown|Error|ContainerStatusUnknown" | awk '{print $1}' | xargs -r kubectl delete pod -n ai-agents --force --grace-period=0 2>/dev/null || true
     echo -e "${GREEN}✓${NC}"
 
     # Remove old Docker images
@@ -1160,8 +1163,26 @@ if [ "$REBUILD_MODE" = true ]; then
     docker builder prune -f 2>/dev/null || true
     echo -e "${GREEN}✓${NC}"
 
+    # Clean up any leftover temp files from previous runs
+    echo -n "  • Cleaning up temp files... "
+    rm -f /tmp/k3s-images.tar /tmp/docker-save-error.log /tmp/k3s-import.log 2>/dev/null || true
+    rm -f /tmp/04-configmap-updated.yaml /tmp/06-message-recorder-updated.yaml 2>/dev/null || true
+    rm -f /tmp/08-stt-service-gpu.yaml /tmp/09-tts-service-gpu.yaml 2>/dev/null || true
+    rm -f /tmp/docker-build-*.log 2>/dev/null || true
+    rm -f /tmp/nvidia-*.yaml /tmp/coredns-config.yaml 2>/dev/null || true
+    echo -e "${GREEN}✓${NC}"
+
     echo -e "${GREEN}  ✓ Cleanup complete${NC}"
     echo ""
+fi
+
+# Check disk space before building (K8s gets cranky below 15% free)
+DISK_USAGE=$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')
+DISK_FREE=$((100 - DISK_USAGE))
+if [ "$DISK_FREE" -lt 15 ]; then
+    echo -e "${YELLOW}⚠️  Warning: Low disk space (${DISK_FREE}% free)${NC}"
+    echo -e "${YELLOW}   K8s may experience disk pressure issues.${NC}"
+    echo -e "${YELLOW}   Consider running: docker system prune -af${NC}"
 fi
 
 # Build Docker images
