@@ -4,13 +4,14 @@ set -e
 # Parse command line flags
 DAEMON_MODE=false
 STOP_MODE=false
+REBUILD_MODE=false
 ENV_FLAG=""
 PID_DIR="/tmp/grace-ai-k8s"
 
 # First pass: check for unknown flags
 for arg in "$@"; do
     case $arg in
-        --daemon|-d|--stop|--help|-h|--local|--production)
+        --daemon|-d|--stop|--help|-h|--local|--production|--rebuild)
             # Known flags
             ;;
         -*)
@@ -21,6 +22,7 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
             echo "  --production    Run in production mode (external LiveKit)"
+            echo "  --rebuild       Force rebuild Docker images without cache"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
@@ -38,6 +40,9 @@ for arg in "$@"; do
         --stop)
             STOP_MODE=true
             ;;
+        --rebuild)
+            REBUILD_MODE=true
+            ;;
         --local)
             ENV_FLAG="local"
             ;;
@@ -50,6 +55,7 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
             echo "  --production    Run in production mode (external LiveKit)"
+            echo "  --rebuild       Force rebuild Docker images without cache"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
@@ -57,6 +63,7 @@ for arg in "$@"; do
             echo "Examples:"
             echo "  $0                      # Run locally in foreground (default)"
             echo "  $0 --production         # Run in production mode"
+            echo "  $0 --rebuild            # Rebuild images from scratch"
             echo "  $0 --daemon             # Run locally in background"
             echo "  $0 --stop               # Stop background services"
             exit 0
@@ -1030,12 +1037,18 @@ build_with_progress() {
 
     echo "  • ${IMAGE_NAME}..."
 
+    # Determine if --no-cache should be used
+    local NO_CACHE_FLAG=""
+    if [ "$REBUILD_MODE" = true ]; then
+        NO_CACHE_FLAG="--no-cache"
+    fi
+
     # Run docker build in background and capture output
     # Use setsid to detach from controlling terminal, preventing BuildKit from writing to /dev/tty
     if [ "$USE_BUILDKIT" = true ]; then
-        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD env DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILDKIT_STEP_TIMEOUT=3600 ${NO_CACHE_FLAG} ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     else
-        $SETSID_CMD docker build ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
+        $SETSID_CMD docker build ${NO_CACHE_FLAG} ${BUILD_ARGS} --network=host -t "${TAG}" "${CONTEXT}" > "${LOG_FILE}" 2>&1 &
     fi
 
     local BUILD_PID=$!
@@ -1099,6 +1112,9 @@ build_with_progress() {
 
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
+if [ "$REBUILD_MODE" = true ]; then
+    echo -e "${BLUE}  🔄 Rebuild mode: forcing clean builds (--no-cache)${NC}"
+fi
 
 # Determine if GPU support should be enabled
 # GPU builds create larger images (~2GB) with CUDA libraries
