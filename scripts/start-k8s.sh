@@ -5,13 +5,14 @@ set -e
 DAEMON_MODE=false
 STOP_MODE=false
 REBUILD_MODE=false
+RESET_DB_MODE=false
 ENV_FLAG=""
 PID_DIR="/tmp/grace-ai-k8s"
 
 # First pass: check for unknown flags
 for arg in "$@"; do
     case $arg in
-        --daemon|-d|--stop|--help|-h|--local|--production|--rebuild)
+        --daemon|-d|--stop|--help|-h|--local|--production|--rebuild|--reset-db)
             # Known flags
             ;;
         -*)
@@ -22,7 +23,8 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
             echo "  --production    Run in production mode (external LiveKit)"
-            echo "  --rebuild       Force rebuild Docker images without cache"
+            echo "  --rebuild       Force clean rebuild (deletes pods, images, rebuilds without cache)"
+            echo "  --reset-db      Reset database (use with --rebuild to also reset postgres)"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
@@ -43,6 +45,9 @@ for arg in "$@"; do
         --rebuild)
             REBUILD_MODE=true
             ;;
+        --reset-db)
+            RESET_DB_MODE=true
+            ;;
         --local)
             ENV_FLAG="local"
             ;;
@@ -55,7 +60,8 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --local         Run in local development mode (LiveKit in K8s) [default]"
             echo "  --production    Run in production mode (external LiveKit)"
-            echo "  --rebuild       Force rebuild Docker images without cache"
+            echo "  --rebuild       Force clean rebuild (deletes pods, images, rebuilds without cache)"
+            echo "  --reset-db      Reset database (use with --rebuild to also reset postgres)"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
@@ -63,7 +69,8 @@ for arg in "$@"; do
             echo "Examples:"
             echo "  $0                      # Run locally in foreground (default)"
             echo "  $0 --production         # Run in production mode"
-            echo "  $0 --rebuild            # Rebuild images from scratch"
+            echo "  $0 --rebuild            # Clean rebuild (keeps database)"
+            echo "  $0 --rebuild --reset-db # Clean rebuild including database"
             echo "  $0 --daemon             # Run locally in background"
             echo "  $0 --stop               # Stop background services"
             exit 0
@@ -1110,10 +1117,57 @@ build_with_progress() {
     return $EXIT_CODE
 }
 
+# Clean up for rebuild mode
+if [ "$REBUILD_MODE" = true ]; then
+    echo -e "${GREEN}🧹 Rebuild mode: cleaning up existing resources...${NC}"
+
+    # Delete all deployments except postgres (unless --reset-db is specified)
+    if [ "$RESET_DB_MODE" = true ]; then
+        echo -e "${YELLOW}  ⚠️  --reset-db: Database will be reset!${NC}"
+        echo -n "  • Deleting all pods (including postgres)... "
+        kubectl delete pods -n ai-agents --all --grace-period=5 2>/dev/null || true
+        kubectl delete pvc -n ai-agents --all 2>/dev/null || true
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -n "  • Deleting application pods (keeping postgres)... "
+        kubectl delete pods -n ai-agents -l app!=postgres --grace-period=5 2>/dev/null || true
+        echo -e "${GREEN}✓${NC}"
+    fi
+
+    # Clean up error/failed pods
+    echo -n "  • Cleaning up failed/error pods... "
+    kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
+    echo -e "${GREEN}✓${NC}"
+
+    # Remove old Docker images
+    echo -n "  • Removing old Docker images... "
+    docker rmi session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest 2>/dev/null || true
+    echo -e "${GREEN}✓${NC}"
+
+    # Clean up k3s containerd images (Linux only)
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        echo -n "  • Cleaning k3s containerd images... "
+        sudo k3s ctr images rm docker.io/library/session-management-server:latest 2>/dev/null || true
+        sudo k3s ctr images rm docker.io/library/stt-service:latest 2>/dev/null || true
+        sudo k3s ctr images rm docker.io/library/tts-service:latest 2>/dev/null || true
+        sudo k3s ctr images rm docker.io/library/frontend-ui:latest 2>/dev/null || true
+        sudo k3s ctr images rm docker.io/library/message-recorder-python:latest 2>/dev/null || true
+        echo -e "${GREEN}✓${NC}"
+    fi
+
+    # Clean up Docker build cache to free disk space
+    echo -n "  • Pruning Docker build cache... "
+    docker builder prune -f 2>/dev/null || true
+    echo -e "${GREEN}✓${NC}"
+
+    echo -e "${GREEN}  ✓ Cleanup complete${NC}"
+    echo ""
+fi
+
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 if [ "$REBUILD_MODE" = true ]; then
-    echo -e "${BLUE}  🔄 Rebuild mode: forcing clean builds (--no-cache)${NC}"
+    echo -e "${BLUE}  🔄 Forcing clean builds (--no-cache)${NC}"
 fi
 
 # Determine if GPU support should be enabled
