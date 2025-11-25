@@ -97,9 +97,13 @@ class KokoroProvider(TTSProvider):
             # Get ONNX providers
             providers = self._parse_onnx_providers()
 
+            # Set ONNX_PROVIDER to primary provider only
+            # kokoro-onnx reads ONNX_PROVIDER directly and can't handle comma-separated lists
+            primary_provider = providers[0] if providers else 'CPUExecutionProvider'
+            os.environ['ONNX_PROVIDER'] = primary_provider
+            print(f"[Kokoro] Using ONNX provider: {primary_provider}")
+
             # Initialize Kokoro model
-            # Note: kokoro-onnx no longer accepts 'providers' parameter
-            # ONNX provider selection is handled internally by the library
             print(f"[Kokoro] Loading model from: {self._model_path}")
             self._model = kokoro_onnx.Kokoro(
                 self._model_path,
