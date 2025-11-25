@@ -152,7 +152,7 @@ class KokoroProvider(TTSProvider):
 
                 if audio_data is not None:
                     print(f"[Kokoro] Synthesized {len(audio_data)} samples using voice: {voice_id}")
-                    return (audio_data, 16000)  # Always return 16kHz
+                    return (audio_data, 24000)  # Always return 24kHz
 
             except Exception as e:
                 print(f"[Kokoro] Voice '{voice_id}' failed: {e}")
@@ -168,7 +168,7 @@ class KokoroProvider(TTSProvider):
             audio_data, sample_rate = await self._process_audio(result)
             if audio_data is not None:
                 print(f"[Kokoro] Synthesized {len(audio_data)} samples using default voice")
-                return (audio_data, 16000)
+                return (audio_data, 24000)
         except Exception as e:
             print(f"[Kokoro] Default voice synthesis failed: {e}")
 
@@ -176,7 +176,7 @@ class KokoroProvider(TTSProvider):
         return None
 
     async def _process_audio(self, result) -> Tuple[Optional[np.ndarray], int]:
-        """Process Kokoro audio output to 16kHz mono float32."""
+        """Process Kokoro audio output to 24kHz mono float32."""
         try:
             if isinstance(result, tuple):
                 raw_audio, sample_rate = result
@@ -206,10 +206,10 @@ class KokoroProvider(TTSProvider):
             if len(audio_data.shape) > 1:
                 audio_data = np.mean(audio_data, axis=1)
 
-            # Resample to 16kHz if needed
-            if sample_rate != 16000:
-                audio_data = self._resample(audio_data, sample_rate, 16000)
-                sample_rate = 16000
+            # Resample to 24kHz for higher quality output
+            if sample_rate != 24000:
+                audio_data = self._resample(audio_data, sample_rate, 24000)
+                sample_rate = 24000
 
             # Normalize audio
             audio_data = self._normalize_audio(audio_data)
@@ -235,16 +235,15 @@ class KokoroProvider(TTSProvider):
             return np.interp(indices, np.arange(len(audio)), audio)
 
     def _normalize_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Normalize audio to reasonable levels."""
+        """Normalize audio to -3dB peak for optimal quality."""
         # Remove DC offset
         audio = audio - np.mean(audio)
 
-        # Gentle normalization
+        # Normalize to -3dB peak (0.707 amplitude) for headroom
         max_val = np.max(np.abs(audio))
-        if max_val > 0.98:
-            audio = audio * (0.85 / max_val)
-        elif max_val < 0.1 and max_val > 0:
-            audio = audio * (0.3 / max_val)
+        if max_val > 0:
+            target_peak = 0.707  # -3dB
+            audio = audio * (target_peak / max_val)
 
         return audio
 

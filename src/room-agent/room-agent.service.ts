@@ -492,8 +492,8 @@ export class RoomAgentService implements OnModuleDestroy {
     sessionId: string,
   ): Promise<void> {
     try {
-      // Create audio source (16kHz mono for TTS output)
-      session.audioSource = new AudioSource(16000, 1);
+      // Create audio source (24kHz mono for high-quality TTS output)
+      session.audioSource = new AudioSource(24000, 1);
 
       // Create local audio track
       session.audioTrack = LocalAudioTrack.createAudioTrack(
@@ -501,12 +501,13 @@ export class RoomAgentService implements OnModuleDestroy {
         session.audioSource,
       );
 
-      // Publish the track with proper source type
+      // Publish the track with proper source type and DTX disabled for continuous audio
       if (session.room.localParticipant) {
         const options = new TrackPublishOptions();
         options.source = TrackSource.SOURCE_MICROPHONE;
+        options.dtx = false; // Disable discontinuous transmission for smoother audio
         await session.room.localParticipant.publishTrack(session.audioTrack, options);
-        this.logger.log(`Published agent audio track for session ${sessionId} (source: microphone)`);
+        this.logger.log(`Published agent audio track for session ${sessionId} (24kHz, DTX disabled)`);
       } else {
         this.logger.warn(
           `Cannot publish audio track: localParticipant not available`,
@@ -519,7 +520,7 @@ export class RoomAgentService implements OnModuleDestroy {
 
   /**
    * Play audio buffer through the agent's audio track.
-   * Audio buffer should be 16-bit PCM, 16kHz mono.
+   * Audio buffer should be 16-bit PCM, 24kHz mono.
    */
   private async playAudio(
     session: ActiveSession,
@@ -543,20 +544,25 @@ export class RoomAgentService implements OnModuleDestroy {
 
       // Debug: Log audio buffer info
       const maxSample = Math.max(...Array.from(samples).map(Math.abs));
-      const durationSec = samples.length / 16000;
+      const sampleRate = 24000;
+      const durationSec = samples.length / sampleRate;
       this.logger.debug(
         `[AUDIO] Buffer: ${audioBuffer.length} bytes, ${samples.length} samples, ` +
           `${durationSec.toFixed(2)}s duration, max amplitude: ${maxSample}`,
       );
 
       // Stream in chunks for smooth playback
-      // 480 samples = 30ms at 16kHz
-      const chunkSize = 480;
+      // 720 samples = 30ms at 24kHz (higher quality than 480 @ 16kHz)
+      const chunkSize = 720;
+      const frameDurationMs = 30;
       const totalChunks = Math.ceil(samples.length / chunkSize);
 
       this.logger.debug(
-        `[AUDIO] Publishing ${totalChunks} frames via LiveKit AudioSource`,
+        `[AUDIO] Publishing ${totalChunks} frames via LiveKit AudioSource (24kHz, 30ms frames)`,
       );
+
+      // Use real-time pacing based on actual elapsed time
+      const playbackStartTime = Date.now();
 
       for (let i = 0; i < samples.length; i += chunkSize) {
         // Check if session is still active
@@ -565,14 +571,35 @@ export class RoomAgentService implements OnModuleDestroy {
           break;
         }
 
+        const chunkIndex = Math.floor(i / chunkSize);
         const end = Math.min(i + chunkSize, samples.length);
         const chunkSamples = samples.slice(i, end);
+        const isLastChunk = end >= samples.length;
 
-        // Pad the last chunk if needed
+        // Handle frame data - pad last chunk with fade-out to avoid clicks
         let frameData: Int16Array;
         if (chunkSamples.length < chunkSize) {
           frameData = new Int16Array(chunkSize);
           frameData.set(chunkSamples);
+
+          // Apply fade-out on the last frame to avoid audio clicks
+          const fadeLength = Math.min(chunkSamples.length, 240); // ~10ms fade at 24kHz
+          for (let j = 0; j < fadeLength; j++) {
+            const fadeMultiplier = 1 - (j / fadeLength);
+            const sampleIndex = chunkSamples.length - fadeLength + j;
+            if (sampleIndex >= 0 && sampleIndex < chunkSamples.length) {
+              frameData[sampleIndex] = Math.round(frameData[sampleIndex] * fadeMultiplier);
+            }
+          }
+        } else if (isLastChunk) {
+          // Apply fade-out to last full chunk as well
+          frameData = new Int16Array(chunkSamples);
+          const fadeLength = 240; // ~10ms fade at 24kHz
+          for (let j = 0; j < fadeLength; j++) {
+            const fadeMultiplier = 1 - (j / fadeLength);
+            const sampleIndex = frameData.length - fadeLength + j;
+            frameData[sampleIndex] = Math.round(frameData[sampleIndex] * fadeMultiplier);
+          }
         } else {
           frameData = chunkSamples;
         }
@@ -580,13 +607,12 @@ export class RoomAgentService implements OnModuleDestroy {
         // Create and send audio frame
         const frame = new AudioFrame(
           frameData,
-          16000, // sampleRate
+          sampleRate, // 24kHz
           1, // channels
           frameData.length, // samplesPerChannel
         );
 
         // Log first frame details
-        const chunkIndex = Math.floor(i / chunkSize);
         if (chunkIndex === 0) {
           const frameMax = Math.max(...Array.from(frameData).map(Math.abs));
           this.logger.debug(
@@ -596,9 +622,15 @@ export class RoomAgentService implements OnModuleDestroy {
 
         await session.audioSource.captureFrame(frame);
 
-        // Small delay to maintain real-time playback
-        // 30ms per chunk, but leave some margin for processing
-        await this.sleep(28);
+        // Real-time pacing: calculate how long we should have elapsed by now
+        // and sleep only the remaining time
+        const expectedElapsedMs = (chunkIndex + 1) * frameDurationMs;
+        const actualElapsedMs = Date.now() - playbackStartTime;
+        const sleepTime = expectedElapsedMs - actualElapsedMs;
+
+        if (sleepTime > 0) {
+          await this.sleep(sleepTime);
+        }
       }
 
       this.logger.log(`[AUDIO] Finished publishing ${totalChunks} audio frames`);

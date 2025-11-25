@@ -28,6 +28,11 @@ export class PeerTransport implements Transport {
   private audioLevelInterval?: number
   private remoteAudioTrack?: RemoteAudioTrack
 
+  // Connection state tracking to prevent duplicate connections
+  private connectionState: 'idle' | 'connecting' | 'connected' | 'disconnecting' = 'idle'
+  private connectionPromise?: Promise<void>
+  private currentRoomName?: string
+
   // Web Audio API for accurate speech detection
   private audioContext?: AudioContext
   private audioAnalyser?: AnalyserNode
@@ -58,6 +63,53 @@ export class PeerTransport implements Transport {
   onRemoteSpeaking = (_speaking: boolean) => {}
 
   async connect(roomName?: string) {
+    console.log(`[PeerTransport] connect() called - state=${this.connectionState}, room=${roomName}`)
+
+    // Guard: If already connecting, wait for that connection to complete
+    if (this.connectionState === 'connecting' && this.connectionPromise) {
+      console.log('[PeerTransport] Already connecting, waiting for existing connection')
+      return this.connectionPromise
+    }
+
+    // Guard: If already connected to the same room, skip
+    if (this.connectionState === 'connected' && this.currentRoomName === roomName) {
+      console.log('[PeerTransport] Already connected to room:', roomName)
+      return
+    }
+
+    // Guard: If connected to a different room, disconnect first
+    if (this.connectionState === 'connected') {
+      console.log('[PeerTransport] Disconnecting from previous room before connecting to:', roomName)
+      await this.disconnect()
+    }
+
+    // Guard: If currently disconnecting, wait for it to complete
+    if (this.connectionState === 'disconnecting') {
+      console.log('[PeerTransport] Waiting for disconnect to complete before connecting')
+      // Wait a bit for disconnect to complete
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    // Set state and create connection promise
+    this.connectionState = 'connecting'
+    this.currentRoomName = roomName
+
+    this.connectionPromise = this._doConnect(roomName)
+
+    try {
+      await this.connectionPromise
+      this.connectionState = 'connected'
+      console.log(`[PeerTransport] Successfully connected to room: ${roomName}`)
+    } catch (error) {
+      this.connectionState = 'idle'
+      this.currentRoomName = undefined
+      throw error
+    } finally {
+      this.connectionPromise = undefined
+    }
+  }
+
+  private async _doConnect(roomName?: string) {
     try {
       // Create LiveKit room
       const room = new Room()
@@ -265,12 +317,27 @@ export class PeerTransport implements Transport {
       }
 
     } catch (error) {
-      console.error('Failed to connect to LiveKit:', error)
+      console.error('[PeerTransport] Failed to connect to LiveKit:', error)
       this.onError(error as Error)
+      throw error  // Re-throw so the outer connect() can catch it
     }
   }
 
   async disconnect() {
+    console.log(`[PeerTransport] disconnect() called - state=${this.connectionState}`)
+
+    // Guard: If already disconnecting or idle, skip
+    if (this.connectionState === 'disconnecting') {
+      console.log('[PeerTransport] Already disconnecting')
+      return
+    }
+
+    if (this.connectionState === 'idle') {
+      console.log('[PeerTransport] Already disconnected')
+      return
+    }
+
+    this.connectionState = 'disconnecting'
     // Stop audio level monitoring
     this.stopAudioLevelMonitoring()
 
@@ -299,6 +366,12 @@ export class PeerTransport implements Transport {
     this.remoteAudio = undefined
     this.remoteAudioTrack = undefined
     this.publishedAudioTrack = undefined
+
+    // Reset connection state
+    this.connectionState = 'idle'
+    this.currentRoomName = undefined
+
+    console.log('[PeerTransport] Disconnected successfully')
     this.onDisconnected('client disconnect')
   }
 
