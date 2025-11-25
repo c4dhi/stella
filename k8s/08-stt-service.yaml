@@ -27,6 +27,7 @@ spec:
       labels:
         app: stt-service
     spec:
+      # GPU: runtimeClassName: nvidia
       containers:
       - name: stt-service
         image: stt-service:latest
@@ -41,13 +42,21 @@ spec:
           value: "INFO"
         - name: PYTHONUNBUFFERED
           value: "1"
+        - name: ONNX_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: ONNX_PROVIDER
+              optional: true
         resources:
           requests:
             memory: "512Mi"
             cpu: "250m"
+            # GPU: nvidia.com/gpu: "1"
           limits:
             memory: "2Gi"
             cpu: "1000m"
+            # GPU: nvidia.com/gpu: "1"
         readinessProbe:
           exec:
             command:

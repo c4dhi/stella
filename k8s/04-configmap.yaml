@@ -56,9 +56,10 @@ data:
   ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"
 
   # ONNX Runtime Provider Configuration
-  # Auto-detects GPU (CUDA) and falls back to CPU if unavailable
-  # GPU-enabled builds will use CUDAExecutionProvider, CPU builds will use CPUExecutionProvider
-  ONNX_PROVIDER: "CUDAExecutionProvider,CPUExecutionProvider"
+  # Set by start-k8s.sh based on ENABLE_GPU setting
+  # GPU mode: CUDAExecutionProvider,CPUExecutionProvider
+  # CPU mode: CPUExecutionProvider
+  ONNX_PROVIDER: "${ONNX_PROVIDER}"
 
   # ============================================================================
   # Public URLs for external access (injected by deployment scripts)

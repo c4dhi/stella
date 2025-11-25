@@ -31,6 +31,7 @@ spec:
       labels:
         app: tts-service
     spec:
+      # GPU: runtimeClassName: nvidia
       containers:
       - name: tts-service
         image: tts-service:latest
@@ -59,9 +60,11 @@ spec:
           requests:
             memory: "512Mi"
             cpu: "250m"
+            # GPU: nvidia.com/gpu: "1"
           limits:
             memory: "2Gi"
             cpu: "2000m"
+            # GPU: nvidia.com/gpu: "1"
         readinessProbe:
           exec:
             command:

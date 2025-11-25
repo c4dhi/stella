@@ -79,6 +79,18 @@ class SherpaSTTEngine:
                     print(f"[STT Service] Missing model file: {path}")
                     return None
 
+            # Determine ONNX provider from environment
+            # Maps ONNX Runtime provider names to sherpa-onnx provider names
+            onnx_provider_str = os.getenv('ONNX_PROVIDER', 'CPUExecutionProvider')
+            provider_map = {
+                'CUDAExecutionProvider': 'cuda',
+                'CPUExecutionProvider': 'cpu',
+                'cuda': 'cuda',
+                'cpu': 'cpu',
+            }
+            sherpa_provider = provider_map.get(onnx_provider_str.split(',')[0].strip(), 'cpu')
+            print(f"[STT Service] Using ONNX provider: {sherpa_provider}")
+
             # Create streaming recognizer with VAD settings for natural speech
             # More lenient settings to avoid cutting off speech too early
             recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
@@ -93,10 +105,11 @@ class SherpaSTTEngine:
                 rule2_min_trailing_silence=2.0,   # Allow longer breathing pauses (was 1.2)
                 rule3_min_utterance_length=300,   # Detect shorter utterances (was 400)
                 decoding_method="greedy_search",
-                max_active_paths=4
+                max_active_paths=4,
+                provider=sherpa_provider,  # GPU/CPU selection
             )
 
-            print("[STT Service] Created sherpa-onnx recognizer successfully")
+            print(f"[STT Service] Created sherpa-onnx recognizer successfully (provider={sherpa_provider})")
             return recognizer
 
         except Exception as e:

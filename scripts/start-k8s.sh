@@ -300,7 +300,21 @@ export MIN_INTERRUPTION_WORDS="${MIN_INTERRUPTION_WORDS:-1}"
 export FALSE_INTERRUPTION_TIMEOUT="${FALSE_INTERRUPTION_TIMEOUT:-2.0}"
 
 # TTS Provider default
-export TTS_PROVIDER="${TTS_PROVIDER:-opensource}"
+export TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
+
+# GPU Support Configuration
+# Set ENABLE_GPU=true in .env to enable GPU acceleration for STT/TTS services
+export ENABLE_GPU="${ENABLE_GPU:-false}"
+
+# ONNX Provider Configuration
+# Auto-set based on ENABLE_GPU if not explicitly set
+if [ -z "$ONNX_PROVIDER" ]; then
+    if [ "$ENABLE_GPU" = "true" ]; then
+        export ONNX_PROVIDER="CUDAExecutionProvider,CPUExecutionProvider"
+    else
+        export ONNX_PROVIDER="CPUExecutionProvider"
+    fi
+fi
 
 # TURN defaults
 export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
@@ -1086,13 +1100,42 @@ build_with_progress() {
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
 
-# Determine if GPU support should be enabled for conversational-ai-server
-AI_SERVER_BUILD_ARGS=""
-if [ "$NODE_ENV" = "production" ] && command -v nvidia-smi &> /dev/null; then
-    AI_SERVER_BUILD_ARGS="--build-arg ENABLE_GPU=true"
-    echo -e "${BLUE}  🎮 Building conversational-ai-server with GPU support${NC}"
+# Determine if GPU support should be enabled
+# GPU builds create larger images (~2GB) with CUDA libraries
+# CPU builds are lightweight (~500MB)
+STT_BUILD_ARGS=""
+TTS_BUILD_ARGS=""
+
+if [ "$ENABLE_GPU" = "true" ]; then
+    # Check if GPU hardware is available
+    # GPU support only on Linux with NVIDIA GPU
+    if [[ "$OS_TYPE" == "linux" ]] && command -v nvidia-smi &> /dev/null; then
+        STT_BUILD_ARGS="--build-arg ENABLE_GPU=true"
+        TTS_BUILD_ARGS="--build-arg ENABLE_GPU=true"
+        echo -e "${BLUE}  🎮 GPU mode enabled (ENABLE_GPU=true)${NC}"
+        echo -e "${BLUE}     Building STT service with CUDA support${NC}"
+        echo -e "${BLUE}     Building TTS service with CUDA support${NC}"
+
+        # Auto-select kokoro as TTS provider for GPU (fastest local inference)
+        if [ "$TTS_PROVIDER" = "edge_tts" ]; then
+            echo -e "${BLUE}     Auto-selecting Kokoro TTS for GPU acceleration${NC}"
+            export TTS_PROVIDER="kokoro"
+        fi
+    elif [[ "$OS_TYPE" == "macos" ]]; then
+        # macOS doesn't support NVIDIA GPU, gracefully fall back to CPU
+        echo -e "${YELLOW}  ⚠️  ENABLE_GPU=true but macOS doesn't support NVIDIA CUDA${NC}"
+        echo -e "${YELLOW}     Falling back to CPU mode (TTS will use Edge TTS or Kokoro CPU)${NC}"
+        export ENABLE_GPU="false"
+        export ONNX_PROVIDER="CPUExecutionProvider"
+    else
+        echo -e "${YELLOW}  ⚠️  ENABLE_GPU=true but no GPU detected (nvidia-smi not found)${NC}"
+        echo -e "${YELLOW}     Falling back to CPU mode${NC}"
+        export ENABLE_GPU="false"
+        export ONNX_PROVIDER="CPUExecutionProvider"
+    fi
 else
-    echo -e "${BLUE}  💻 Building conversational-ai-server with CPU support${NC}"
+    echo -e "${BLUE}  💻 CPU mode (ENABLE_GPU=false or not set)${NC}"
+    echo -e "${BLUE}     Building lightweight CPU-only images${NC}"
 fi
 
 # Validate build directories exist
@@ -1111,8 +1154,8 @@ echo -e "${GREEN}✓${NC}"
 build_with_progress "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT"
 # DISABLED: Monolith replaced by STT microservice
 # build_with_progress "conversational-ai-server-python" "conversational-ai-server-python:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
-build_with_progress "stt-service" "stt-service:latest" "./stt-service" "$USE_BUILDKIT"
-build_with_progress "tts-service" "tts-service:latest" "./tts-service" "$USE_BUILDKIT"
+build_with_progress "stt-service" "stt-service:latest" "./stt-service" "$USE_BUILDKIT" "$STT_BUILD_ARGS"
+build_with_progress "tts-service" "tts-service:latest" "./tts-service" "$USE_BUILDKIT" "$TTS_BUILD_ARGS"
 build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
 build_with_progress "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
 
@@ -1227,6 +1270,31 @@ fi
 # Note: LiveKit API key verification skipped - using external LiveKit server
 # The external server is pre-configured with its own API keys
 
+# Generate GPU-enabled manifests if GPU is enabled
+# This uses sed to uncomment GPU resource requests in the K8s manifests
+STT_MANIFEST="k8s/08-stt-service.yaml"
+TTS_MANIFEST="k8s/09-tts-service.yaml"
+
+if [ "$ENABLE_GPU" = "true" ]; then
+    echo -e "${BLUE}⚙️  Generating GPU-enabled K8s manifests...${NC}"
+
+    # Generate GPU-enabled STT manifest
+    # - Uncomment runtimeClassName: nvidia
+    # - Uncomment nvidia.com/gpu: "1" resource requests
+    sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+        -e 's/# GPU: nvidia.com\/gpu: "1"/nvidia.com\/gpu: "1"/g' \
+        k8s/08-stt-service.yaml > /tmp/08-stt-service-gpu.yaml
+    STT_MANIFEST="/tmp/08-stt-service-gpu.yaml"
+    echo -e "  ${GREEN}✓ STT service manifest (GPU enabled)${NC}"
+
+    # Generate GPU-enabled TTS manifest
+    sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+        -e 's/# GPU: nvidia.com\/gpu: "1"/nvidia.com\/gpu: "1"/g' \
+        k8s/09-tts-service.yaml > /tmp/09-tts-service-gpu.yaml
+    TTS_MANIFEST="/tmp/09-tts-service-gpu.yaml"
+    echo -e "  ${GREEN}✓ TTS service manifest (GPU enabled)${NC}"
+fi
+
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
@@ -1238,8 +1306,8 @@ kubectl apply -f k8s/05-rbac.yaml > /dev/null
 kubectl apply -f /tmp/06-message-recorder-updated.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
-kubectl apply -f k8s/08-stt-service.yaml > /dev/null
-kubectl apply -f k8s/09-tts-service.yaml > /dev/null
+kubectl apply -f "$STT_MANIFEST" > /dev/null
+kubectl apply -f "$TTS_MANIFEST" > /dev/null
 
 # Apply NodePort services for local development only
 # Production uses ClusterIP services (already created) + port-forward
@@ -1360,6 +1428,8 @@ if [ "$DAEMON_MODE" = false ]; then
     echo -e "${BLUE}Cleaning up temporary files...${NC}"
     rm -f /tmp/04-configmap-updated.yaml
     rm -f /tmp/06-message-recorder-updated.yaml
+    rm -f /tmp/08-stt-service-gpu.yaml
+    rm -f /tmp/09-tts-service-gpu.yaml
     rm -f /tmp/k3s-images.tar
     rm -f /tmp/docker-save-error.log
     rm -f /tmp/k3s-import.log
@@ -1430,6 +1500,8 @@ if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Clean up temporary files and show status
     rm -f /tmp/04-configmap-updated.yaml
     rm -f /tmp/06-message-recorder-updated.yaml
+    rm -f /tmp/08-stt-service-gpu.yaml
+    rm -f /tmp/09-tts-service-gpu.yaml
     rm -f /tmp/k3s-images.tar
     rm -f /tmp/docker-save-error.log
     rm -f /tmp/k3s-import.log
