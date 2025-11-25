@@ -1430,6 +1430,30 @@ kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=12
 # LiveKit: Using external server with dual URLs
 echo -e "  • LiveKit: Internal=${LIVEKIT_URL}, Public=${PUBLIC_LIVEKIT_URL} ${GREEN}✓${NC}"
 
+# If GPU is enabled, patch deployments to add NVIDIA_VISIBLE_DEVICES env var
+# This is required for nvidia-container-runtime to inject GPU devices
+if [ "$ENABLE_GPU" = "true" ]; then
+    echo -e "${BLUE}⚙️  Patching GPU services with NVIDIA_VISIBLE_DEVICES...${NC}"
+
+    # Check if NVIDIA_VISIBLE_DEVICES already exists in STT deployment
+    if ! kubectl get deployment -n ai-agents stt-service -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null | grep -q "NVIDIA_VISIBLE_DEVICES"; then
+        kubectl patch deployment -n ai-agents stt-service --type='json' \
+            -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"}}]' > /dev/null 2>&1
+        echo -e "  ${GREEN}✓ STT service patched with NVIDIA_VISIBLE_DEVICES=all${NC}"
+    else
+        echo -e "  ${CYAN}ℹ️  STT service already has NVIDIA_VISIBLE_DEVICES${NC}"
+    fi
+
+    # Check if NVIDIA_VISIBLE_DEVICES already exists in TTS deployment
+    if ! kubectl get deployment -n ai-agents tts-service -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null | grep -q "NVIDIA_VISIBLE_DEVICES"; then
+        kubectl patch deployment -n ai-agents tts-service --type='json' \
+            -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"}}]' > /dev/null 2>&1
+        echo -e "  ${GREEN}✓ TTS service patched with NVIDIA_VISIBLE_DEVICES=all${NC}"
+    else
+        echo -e "  ${CYAN}ℹ️  TTS service already has NVIDIA_VISIBLE_DEVICES${NC}"
+    fi
+fi
+
 # Restart deployments (all services to pick up new images)
 kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
 kubectl rollout restart deployment frontend-ui -n ai-agents > /dev/null 2>&1
