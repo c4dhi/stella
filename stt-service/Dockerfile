@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         apt-get install -y --no-install-recommends \
             cuda-cudart-12-4 \
             libcublas-12-4 \
+            libcurand-12-4 \
+            libcufft-12-4 \
             libcudnn9-cuda-12 \
         && echo "[STT] CUDA libraries installed successfully"; \
     else \
