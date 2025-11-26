@@ -27,7 +27,8 @@ spec:
       labels:
         app: stt-service
     spec:
-      # GPU: runtimeClassName: nvidia
+      # Uncomment for GPU deployments (production):
+      # runtimeClassName: nvidia
       containers:
       - name: stt-service
         image: stt-service:latest
@@ -42,21 +43,92 @@ spec:
           value: "INFO"
         - name: PYTHONUNBUFFERED
           value: "1"
+        # ====================================================================
+        # Provider Selection
+        # ====================================================================
+        - name: STT_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: STT_PROVIDER
+              optional: true
+        # ====================================================================
+        # Sherpa-ONNX Configuration (when STT_PROVIDER=sherpa)
+        # ====================================================================
         - name: ONNX_PROVIDER
           valueFrom:
             configMapKeyRef:
               name: grace-ai-config
               key: ONNX_PROVIDER
               optional: true
+        # ====================================================================
+        # faster-whisper Configuration (when STT_PROVIDER=whisper)
+        # ====================================================================
+        - name: WHISPER_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: WHISPER_MODEL
+              optional: true
+        - name: WHISPER_DEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: WHISPER_DEVICE
+              optional: true
+        - name: WHISPER_COMPUTE_TYPE
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: WHISPER_COMPUTE_TYPE
+              optional: true
+        - name: WHISPER_LANGUAGE
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: WHISPER_LANGUAGE
+              optional: true
+        - name: WHISPER_BEAM_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: WHISPER_BEAM_SIZE
+              optional: true
+        # ====================================================================
+        # VAD Configuration
+        # ====================================================================
+        - name: VAD_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: VAD_THRESHOLD
+              optional: true
+        - name: VAD_MIN_SILENCE_MS
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: VAD_MIN_SILENCE_MS
+              optional: true
+        - name: PARTIAL_INTERVAL_MS
+          valueFrom:
+            configMapKeyRef:
+              name: grace-ai-config
+              key: PARTIAL_INTERVAL_MS
+              optional: true
         resources:
           requests:
             memory: "512Mi"
             cpu: "250m"
-            # GPU: nvidia.com/gpu: "1"
+            # Uncomment for GPU (production with large-v3):
+            # nvidia.com/gpu: "1"
           limits:
             memory: "2Gi"
             cpu: "1000m"
-            # GPU: nvidia.com/gpu: "1"
+            # Uncomment for GPU (production with large-v3):
+            # nvidia.com/gpu: "1"
+        # Note: For production GPU mode with large-v3, increase to:
+        #   requests: memory: "6Gi"
+        #   limits: memory: "10Gi"
         readinessProbe:
           exec:
             command:
@@ -65,6 +137,7 @@ spec:
             - "import grpc; print('ready')"
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
         livenessProbe:
           exec:
             command:
@@ -73,3 +146,4 @@ spec:
             - "import grpc; print('alive')"
           initialDelaySeconds: 60
           periodSeconds: 60
+          timeoutSeconds: 5

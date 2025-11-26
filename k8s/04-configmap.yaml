@@ -45,9 +45,20 @@ data:
   # AI Agent Configuration (Python conversational-ai-server)
   # ============================================================================
   # Speech-to-Text (STT) Provider
+  # Options: sherpa (lightweight CPU), whisper (GPU-accelerated)
   STT_PROVIDER: "${STT_PROVIDER}"
-  WHISPER_MODEL: "${WHISPER_MODEL}"
-  VAD_THRESHOLD: "${VAD_THRESHOLD}"
+
+  # faster-whisper Configuration (when STT_PROVIDER=whisper)
+  WHISPER_MODEL: "${WHISPER_MODEL}"          # tiny.en, small.en, medium.en, large-v3
+  WHISPER_DEVICE: "${WHISPER_DEVICE}"        # cpu or cuda
+  WHISPER_COMPUTE_TYPE: "${WHISPER_COMPUTE_TYPE}"  # int8 (CPU) or float16 (GPU)
+  WHISPER_LANGUAGE: "${WHISPER_LANGUAGE}"    # en, de, etc. or empty for auto-detect
+  WHISPER_BEAM_SIZE: "${WHISPER_BEAM_SIZE}"  # 1=greedy (fastest), 5=beam search (more accurate)
+
+  # VAD Configuration (Silero VAD for whisper provider)
+  VAD_THRESHOLD: "${VAD_THRESHOLD}"          # Speech detection sensitivity (0.0-1.0, default 0.5)
+  VAD_MIN_SILENCE_MS: "${VAD_MIN_SILENCE_MS}"  # End-of-speech silence threshold (default 500ms)
+  PARTIAL_INTERVAL_MS: "${PARTIAL_INTERVAL_MS}"  # Partial transcript interval (default 1000ms)
 
   # Text-to-Speech (TTS) Provider
   # Options: kokoro (fast local), elevenlabs (best quality), edge_tts (free cloud), auto

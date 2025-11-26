@@ -1,6 +1,11 @@
 # STT Service Dockerfile
-# Supports Sherpa-ONNX for real-time streaming transcription
-# Build arg ENABLE_GPU=true for CUDA support
+# Supports multiple providers:
+# - Sherpa-ONNX: Lightweight streaming model (~180MB) - default
+# - faster-whisper: GPU-accelerated model (~3GB for large-v3) - requires ENABLE_GPU=true
+#
+# Build args:
+#   ENABLE_GPU=true - Install CUDA libs and GPU dependencies
+#   WHISPER_MODEL=large-v3 - Whisper model to pre-download (only when ENABLE_GPU=true)
 
 ARG ENABLE_GPU=false
 
@@ -16,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
     ca-certificates \
+    libgomp1 \
+    git \
     && if [ "$ENABLE_GPU" = "true" ]; then \
         echo "[STT] Installing CUDA libraries for GPU support..." && \
         curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
@@ -37,21 +44,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CUDA 12.4 installs libs to targets/x86_64-linux/lib/ not lib64/
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.4/targets/x86_64-linux/lib:/usr/local/cuda-12.4/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
 
-# Copy and install requirements
+# ============================================================================
+# Base requirements (always installed - for Sherpa-ONNX)
+# ============================================================================
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install ONNX Runtime (GPU or CPU based on build arg)
+# ============================================================================
+# GPU requirements (only when ENABLE_GPU=true - for faster-whisper)
+# ============================================================================
 ARG ENABLE_GPU
+COPY requirements-gpu.txt .
 RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[STT] Installing onnxruntime-gpu..." && \
-        pip install --no-cache-dir onnxruntime-gpu>=1.16.0; \
+        echo "[STT] Installing GPU dependencies (faster-whisper, torch)..." && \
+        pip install --no-cache-dir -r requirements-gpu.txt && \
+        pip install --no-cache-dir onnxruntime-gpu>=1.16.0 && \
+        echo "[STT] GPU dependencies installed successfully"; \
     else \
         echo "[STT] Installing onnxruntime (CPU)..." && \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
-# Copy proto and generate Python code
+# ============================================================================
+# Proto compilation
+# ============================================================================
 COPY proto/ ./proto/
 RUN python -m grpc_tools.protoc \
     -I./proto \
@@ -59,19 +75,67 @@ RUN python -m grpc_tools.protoc \
     --grpc_python_out=. \
     proto/stt.proto
 
-# Copy model download script and pre-download model
-COPY download_sherpa_model.py .
+# ============================================================================
+# Model pre-download
+# ============================================================================
+
+# Copy all download scripts
+COPY download_sherpa_model.py download_whisper_model.py download_silero_vad.py ./
+
+# Always download Sherpa model (lightweight, ~180MB)
 RUN python download_sherpa_model.py
 
-# Copy application code
+# Download Whisper + Silero models for GPU builds (~3GB+ for large-v3)
+ARG ENABLE_GPU
+ARG WHISPER_MODEL=large-v3
+ENV WHISPER_MODEL=${WHISPER_MODEL}
+ENV WHISPER_CACHE_DIR=/root/.cache/whisper
+ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
+
+RUN if [ "$ENABLE_GPU" = "true" ]; then \
+        echo "[STT] Pre-downloading faster-whisper model: ${WHISPER_MODEL}..." && \
+        python download_whisper_model.py && \
+        echo "[STT] Pre-downloading Silero VAD model to ${SILERO_VAD_CACHE_DIR}..." && \
+        python download_silero_vad.py && \
+        echo "[STT] All GPU models downloaded successfully"; \
+    else \
+        echo "[STT] Skipping GPU model downloads (ENABLE_GPU=false)"; \
+    fi
+
+# ============================================================================
+# Application code
+# ============================================================================
 COPY src/ ./src/
 
-# Environment
+# ============================================================================
+# Environment defaults
+# ============================================================================
 ENV PYTHONUNBUFFERED=1
 ENV GRPC_PORT=50051
+
+# STT Provider selection
+# - 'sherpa' (default): Lightweight CPU model
+# - 'whisper': GPU-accelerated model (requires ENABLE_GPU=true build)
+ENV STT_PROVIDER=sherpa
+
+# Sherpa-ONNX configuration
 ENV SHERPA_ONNX_CACHE_DIR=/root/.cache/sherpa-onnx
-# Default to CPU provider - override with CUDAExecutionProvider for GPU
 ENV ONNX_PROVIDER=CPUExecutionProvider
+
+# faster-whisper configuration (only used when STT_PROVIDER=whisper)
+ENV WHISPER_CACHE_DIR=/root/.cache/whisper
+ENV WHISPER_DEVICE=cpu
+ENV WHISPER_COMPUTE_TYPE=int8
+ENV WHISPER_BEAM_SIZE=5
+ENV WHISPER_LANGUAGE=
+
+# Silero VAD configuration (for whisper provider)
+ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
+
+# VAD configuration
+ENV VAD_THRESHOLD=0.5
+ENV VAD_MIN_SILENCE_MS=500
+ENV PARTIAL_INTERVAL_MS=1000
 
 # Expose gRPC port
 EXPOSE 50051

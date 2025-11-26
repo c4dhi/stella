@@ -288,13 +288,25 @@ export VITE_USE_INPAGE_MOCK="${VITE_USE_INPAGE_MOCK:-0}"
 export ROOM_NAME="${ROOM_NAME:-voice-ai-room}"
 export IDENTITY="${IDENTITY:-python-listener}"
 
-# Python Agent - STT defaults
+# STT Microservice Provider Selection
+# sherpa = lightweight CPU (dev), whisper = GPU-accelerated (prod)
+export STT_PROVIDER="${STT_PROVIDER:-sherpa}"
+
+# faster-whisper Configuration (when STT_PROVIDER=whisper)
+export WHISPER_MODEL="${WHISPER_MODEL:-large-v3}"
 export WHISPER_DEVICE="${WHISPER_DEVICE:-cpu}"
 export WHISPER_COMPUTE_TYPE="${WHISPER_COMPUTE_TYPE:-int8}"
-export WHISPER_BEAM_SIZE="${WHISPER_BEAM_SIZE:-1}"
-export WHISPER_WORD_TIMESTAMPS="${WHISPER_WORD_TIMESTAMPS:-false}"
+export WHISPER_BEAM_SIZE="${WHISPER_BEAM_SIZE:-5}"
+export WHISPER_LANGUAGE="${WHISPER_LANGUAGE:-}"  # Empty for auto-detect, 'de' for German
+
+# VAD Configuration (Silero VAD for whisper provider)
+export VAD_THRESHOLD="${VAD_THRESHOLD:-0.5}"
 export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-250}"
 export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
+export PARTIAL_INTERVAL_MS="${PARTIAL_INTERVAL_MS:-1000}"
+
+# Legacy Python Agent STT defaults (for backward compatibility)
+export WHISPER_WORD_TIMESTAMPS="${WHISPER_WORD_TIMESTAMPS:-false}"
 export ENABLE_STREAMING_CHUNKS="${ENABLE_STREAMING_CHUNKS:-true}"
 export CHUNK_LENGTH_MS="${CHUNK_LENGTH_MS:-1000}"
 export PARTIAL_TRANSCRIPT_INTERVAL_MS="${PARTIAL_TRANSCRIPT_INTERVAL_MS:-1000}"
@@ -1201,11 +1213,19 @@ if [ "$ENABLE_GPU" = "true" ]; then
     # Check if GPU hardware is available
     # GPU support only on Linux with NVIDIA GPU
     if [[ "$OS_TYPE" == "linux" ]] && command -v nvidia-smi &> /dev/null; then
-        STT_BUILD_ARGS="--build-arg ENABLE_GPU=true"
+        STT_BUILD_ARGS="--build-arg ENABLE_GPU=true --build-arg WHISPER_MODEL=${WHISPER_MODEL}"
         TTS_BUILD_ARGS="--build-arg ENABLE_GPU=true"
         echo -e "${BLUE}  🎮 GPU mode enabled (ENABLE_GPU=true)${NC}"
-        echo -e "${BLUE}     Building STT service with CUDA support${NC}"
+        echo -e "${BLUE}     Building STT service with CUDA support (model: ${WHISPER_MODEL})${NC}"
         echo -e "${BLUE}     Building TTS service with CUDA support${NC}"
+
+        # Auto-select whisper as STT provider for GPU (best quality)
+        if [ "$STT_PROVIDER" = "sherpa" ]; then
+            echo -e "${BLUE}     Auto-selecting Whisper STT for GPU acceleration${NC}"
+            export STT_PROVIDER="whisper"
+            export WHISPER_DEVICE="cuda"
+            export WHISPER_COMPUTE_TYPE="float16"
+        fi
 
         # Auto-select kokoro as TTS provider for GPU (fastest local inference)
         if [ "$TTS_PROVIDER" = "edge_tts" ]; then
