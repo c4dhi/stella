@@ -38,10 +38,10 @@ class KokoroProvider(TTSProvider):
     DEFAULT_VOICES = ['af_sarah', 'af_bella', 'af_nicole', 'af_sky', 'af']
 
     # Kokoro has a 510 token limit (512 context - 2 pad tokens)
-    # Conservative estimate: ~4 chars per token, so ~200 chars per chunk is safe
-    # We use sentences as natural break points
-    MAX_CHARS_PER_CHUNK = 200
-    MAX_WORDS_PER_CHUNK = 40  # ~40 words is safely under 510 tokens
+    # Text-to-phoneme conversion typically expands by ~1.5x
+    # So 300 chars ≈ 450 tokens, safely under 510
+    # If text exceeds this, split into sentences first
+    MAX_CHARS_PER_CHUNK = 300
 
     def __init__(self):
         self._initialized = False
@@ -132,35 +132,39 @@ class KokoroProvider(TTSProvider):
         """Split text into chunks that fit within Kokoro's 510 token limit.
 
         Strategy:
-        1. Split by sentences first (natural break points)
-        2. If a sentence is too long, split by clauses (commas, semicolons)
-        3. If still too long, split by word count
+        1. If text <= 300 chars, return as single chunk (300 chars ≈ 450 tokens)
+        2. If text > 300 chars, split into sentences
+        3. Combine sentences into chunks up to 300 chars each
+        4. If a sentence > 300 chars, split at punctuation (comma, semicolon, colon)
+        5. If still > 300 chars, split by words as last resort
         """
         text = text.strip()
         if not text:
             return []
 
-        # Check if text is short enough
-        word_count = len(text.split())
-        if word_count <= self.MAX_WORDS_PER_CHUNK and len(text) <= self.MAX_CHARS_PER_CHUNK:
+        print(f"[Kokoro] Input text: {len(text)} chars, {len(text.split())} words")
+
+        # If text is short enough, return as single chunk
+        if len(text) <= self.MAX_CHARS_PER_CHUNK:
+            print(f"[Kokoro] Text under {self.MAX_CHARS_PER_CHUNK} chars, no chunking needed")
             return [text]
 
+        print(f"[Kokoro] Text exceeds {self.MAX_CHARS_PER_CHUNK} chars, splitting into sentences...")
+
+        # Split into sentences
+        sentences = self._split_into_sentences(text)
+        print(f"[Kokoro] Found {len(sentences)} sentences")
+
+        # Process each sentence and build chunks
         chunks = []
-
-        # Split by sentence boundaries
-        # Match sentences ending with . ! ? or followed by newlines
-        sentence_pattern = r'(?<=[.!?])\s+|(?<=\n)'
-        sentences = re.split(sentence_pattern, text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-
         current_chunk = ""
 
         for sentence in sentences:
-            # Check if adding this sentence would exceed limits
+            # Check if adding this sentence keeps chunk under limit
             potential_chunk = f"{current_chunk} {sentence}".strip() if current_chunk else sentence
-            potential_words = len(potential_chunk.split())
 
-            if potential_words <= self.MAX_WORDS_PER_CHUNK and len(potential_chunk) <= self.MAX_CHARS_PER_CHUNK:
+            if len(potential_chunk) <= self.MAX_CHARS_PER_CHUNK:
+                # Safe to add sentence to current chunk
                 current_chunk = potential_chunk
             else:
                 # Save current chunk if not empty
@@ -168,16 +172,16 @@ class KokoroProvider(TTSProvider):
                     chunks.append(current_chunk)
                     current_chunk = ""
 
-                # Check if this sentence alone is too long
-                sentence_words = len(sentence.split())
-                if sentence_words <= self.MAX_WORDS_PER_CHUNK and len(sentence) <= self.MAX_CHARS_PER_CHUNK:
+                # Check if this sentence alone fits
+                if len(sentence) <= self.MAX_CHARS_PER_CHUNK:
                     current_chunk = sentence
                 else:
-                    # Split long sentence by clauses or words
+                    # Sentence too long - split at punctuation
+                    print(f"[Kokoro] Sentence too long ({len(sentence)} chars), splitting at punctuation...")
                     sub_chunks = self._split_long_sentence(sentence)
+                    # Add all but last to chunks, keep last as current
                     for sub in sub_chunks[:-1]:
                         chunks.append(sub)
-                    # Keep the last sub-chunk as current
                     if sub_chunks:
                         current_chunk = sub_chunks[-1]
 
@@ -185,38 +189,76 @@ class KokoroProvider(TTSProvider):
         if current_chunk:
             chunks.append(current_chunk)
 
-        print(f"[Kokoro] Split text into {len(chunks)} chunks: {[len(c.split()) for c in chunks]} words each")
+        print(f"[Kokoro] Split text into {len(chunks)} chunks: {[len(c) for c in chunks]} chars each")
         return chunks
 
-    def _split_long_sentence(self, sentence: str) -> List[str]:
-        """Split a long sentence into smaller chunks by clauses or words."""
-        # Try splitting by common clause separators
-        clause_pattern = r'(?<=[,;:])\s+'
-        clauses = re.split(clause_pattern, sentence)
-        clauses = [c.strip() for c in clauses if c.strip()]
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """Split text into sentences at sentence-ending punctuation."""
+        # Split at . ! ? followed by space or end of string
+        # Use lookbehind to keep the punctuation with the sentence
+        sentence_pattern = r'(?<=[.!?])\s+'
+        sentences = re.split(sentence_pattern, text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        return sentences
 
-        if len(clauses) > 1:
-            # Recombine clauses into chunks under the limit
+    def _split_long_sentence(self, sentence: str) -> List[str]:
+        """Split a long sentence into smaller chunks.
+
+        Strategy:
+        1. Try splitting at punctuation (comma, semicolon, colon)
+        2. If still too long, split by words
+        """
+        # Try splitting at punctuation marks
+        punct_pattern = r'(?<=[,;:])\s+'
+        parts = re.split(punct_pattern, sentence)
+        parts = [p.strip() for p in parts if p.strip()]
+
+        if len(parts) > 1:
+            # Recombine parts into chunks under the limit
             chunks = []
             current = ""
-            for clause in clauses:
-                potential = f"{current}, {clause}".strip(', ') if current else clause
-                if len(potential.split()) <= self.MAX_WORDS_PER_CHUNK:
+            for part in parts:
+                potential = f"{current}, {part}".strip(', ') if current else part
+                if len(potential) <= self.MAX_CHARS_PER_CHUNK:
                     current = potential
                 else:
                     if current:
                         chunks.append(current)
-                    current = clause
+                    # Check if this part alone is too long
+                    if len(part) <= self.MAX_CHARS_PER_CHUNK:
+                        current = part
+                    else:
+                        # Part still too long, split by words
+                        word_chunks = self._split_by_words(part)
+                        for wc in word_chunks[:-1]:
+                            chunks.append(wc)
+                        current = word_chunks[-1] if word_chunks else ""
             if current:
                 chunks.append(current)
             return chunks
 
-        # Last resort: split by words
-        words = sentence.split()
+        # No punctuation found, split by words
+        return self._split_by_words(sentence)
+
+    def _split_by_words(self, text: str) -> List[str]:
+        """Split text by words to fit under MAX_CHARS_PER_CHUNK."""
+        words = text.split()
         chunks = []
-        for i in range(0, len(words), self.MAX_WORDS_PER_CHUNK):
-            chunk = ' '.join(words[i:i + self.MAX_WORDS_PER_CHUNK])
-            chunks.append(chunk)
+        current = ""
+
+        for word in words:
+            potential = f"{current} {word}".strip() if current else word
+            if len(potential) <= self.MAX_CHARS_PER_CHUNK:
+                current = potential
+            else:
+                if current:
+                    chunks.append(current)
+                current = word
+
+        if current:
+            chunks.append(current)
+
+        print(f"[Kokoro] Split by words into {len(chunks)} chunks")
         return chunks
 
     async def _synthesize_single_chunk(
@@ -244,8 +286,10 @@ class KokoroProvider(TTSProvider):
     ) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize text using Kokoro TTS.
 
-        Handles long text by splitting into chunks and concatenating audio.
-        Kokoro has a 510 token limit (~40 words per chunk).
+        Handles long text (>300 chars) by:
+        1. Splitting into sentences
+        2. Combining sentences into chunks up to 300 chars
+        3. Synthesizing each chunk and concatenating audio
         """
         if not self._initialized or not self._model:
             print("[Kokoro] Not initialized")
