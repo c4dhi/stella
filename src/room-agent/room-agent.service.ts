@@ -543,7 +543,12 @@ export class RoomAgentService implements OnModuleDestroy {
       );
 
       // Debug: Log audio buffer info
-      const maxSample = Math.max(...Array.from(samples).map(Math.abs));
+      // Use reduce instead of spread to avoid stack overflow with large arrays
+      let maxSample = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const abs = Math.abs(samples[i]);
+        if (abs > maxSample) maxSample = abs;
+      }
       const sampleRate = 24000;
       const durationSec = samples.length / sampleRate;
       this.logger.debug(
