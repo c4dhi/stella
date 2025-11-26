@@ -339,17 +339,28 @@ class KokoroProvider(TTSProvider):
             print(f"[Kokoro] Synthesized {len(first_chunk_audio)} samples (single chunk) using voice: {working_voice}")
             return (first_chunk_audio, sample_rate)
 
-        # Multiple chunks - start with first chunk result, then synthesize rest
+        # Multiple chunks - synthesize remaining chunks in PARALLEL for lower latency
         audio_segments = [first_chunk_audio]
 
-        for i, chunk in enumerate(chunks[1:], start=2):
-            print(f"[Kokoro] Synthesizing chunk {i}/{len(chunks)}: '{chunk[:50]}...'")
-            audio_data, _ = await self._synthesize_single_chunk(chunk, working_voice)
+        print(f"[Kokoro] Synthesizing {len(chunks) - 1} remaining chunks in parallel...")
 
-            if audio_data is not None:
-                audio_segments.append(audio_data)
+        # Create tasks for all remaining chunks
+        tasks = [
+            self._synthesize_single_chunk(chunk, working_voice)
+            for chunk in chunks[1:]
+        ]
+
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Collect successful results in order
+        for i, result in enumerate(results, start=2):
+            if isinstance(result, Exception):
+                print(f"[Kokoro] Warning: Chunk {i}/{len(chunks)} failed: {result}")
+            elif result[0] is not None:
+                audio_segments.append(result[0])
             else:
-                print(f"[Kokoro] Warning: Chunk {i+1} failed to synthesize")
+                print(f"[Kokoro] Warning: Chunk {i}/{len(chunks)} returned None")
 
         if not audio_segments:
             print("[Kokoro] All chunks failed")
