@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import ConnectPanel from '../components/ConnectPanel'
@@ -20,6 +20,8 @@ import { useAuthStore } from '../store/authStore'
 import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
+import type { TranscriptChunk, ProcessingMessage, ParticipantEvent } from '../lib/types'
+import { generateUUID } from '../lib/uuid'
 
 export default function SessionView() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -77,6 +79,29 @@ export default function SessionView() {
   const audioLevel = useStore(s => s.audioLevel)
   const isRemoteSpeaking = useStore(s => s.isRemoteSpeaking)
 
+  // Handlers from ConnectPanel - now consolidated here
+  const upsertChunk = useStore(s => s.upsertChunk)
+  const addProcessingMessage = useStore(s => s.addProcessingMessage)
+  const addParticipantEvent = useStore(s => s.addParticipantEvent)
+  const setTTSPlaying = useStore(s => s.setTTSPlaying)
+  const setTTSPaused = useStore(s => s.setTTSPaused)
+  const setLLMConfig = useStore(s => s.setLLMConfig)
+  const setAudioLevel = useStore(s => s.setAudioLevel)
+  const setIsRemoteSpeaking = useStore(s => s.setIsRemoteSpeaking)
+
+  // Connection tracking ref to prevent duplicate connections
+  const connectionRef = useRef<{
+    isConnecting: boolean
+    isDisconnecting: boolean
+    connectedRoom: string | null
+    connectionId: number
+  }>({
+    isConnecting: false,
+    isDisconnecting: false,
+    connectedRoom: null,
+    connectionId: 0
+  })
+
   // Load session details
   useEffect(() => {
     const loadSession = async () => {
@@ -105,8 +130,72 @@ export default function SessionView() {
     }
   }, [user, transport])
 
-  // Connect transport callbacks for task updates - MUST happen BEFORE auto-connect
+  // CONSOLIDATED: All transport callbacks in one place - MUST happen BEFORE auto-connect
+  // This consolidates handlers that were previously split between SessionView and ConnectPanel
   useEffect(() => {
+    console.log('[SessionView] Setting up ALL transport callbacks (consolidated)')
+
+    // === Connection handlers (from ConnectPanel) ===
+    transport.onConnected = () => {
+      console.log('[SessionView] Transport connected')
+      setStatus('connected')
+    }
+    transport.onDisconnected = () => {
+      console.log('[SessionView] Transport disconnected')
+      setStatus('idle')
+    }
+    transport.onError = (e) => {
+      console.error('[SessionView] Transport error:', e)
+      setStatus('error')
+    }
+
+    // === Transcript handlers (from ConnectPanel) ===
+    transport.onTranscript = (c: TranscriptChunk) => upsertChunk(c)
+    transport.onProcessingMessage = (m: ProcessingMessage) => addProcessingMessage(m)
+
+    // === TTS handlers (from ConnectPanel) ===
+    transport.onTTSStart = () => {
+      setTTSPlaying(true)
+      setTTSPaused(false)
+    }
+    transport.onTTSStop = () => {
+      setTTSPlaying(false)
+      setTTSPaused(false)
+    }
+
+    // === Participant handlers (from ConnectPanel) ===
+    transport.onParticipantJoined = (participantId: string, participantName?: string) => {
+      const event: ParticipantEvent = {
+        id: generateUUID(),
+        type: 'joined',
+        participantId,
+        participantName,
+        startedAt: Date.now(),
+        messageType: 'participant'
+      }
+      addParticipantEvent(event)
+    }
+    transport.onParticipantLeft = (participantId: string, participantName?: string) => {
+      const event: ParticipantEvent = {
+        id: generateUUID(),
+        type: 'left',
+        participantId,
+        participantName,
+        startedAt: Date.now(),
+        messageType: 'participant'
+      }
+      addParticipantEvent(event)
+    }
+
+    // === Audio handlers (from ConnectPanel) ===
+    transport.onAudioLevel = (level: number) => setAudioLevel(level)
+    transport.onRemoteSpeaking = (speaking: boolean) => setIsRemoteSpeaking(speaking)
+    transport.onLLMConfig = (config: any) => {
+      console.log('[SessionView] Received LLM config:', config)
+      setLLMConfig(config)
+    }
+
+    // === Task handlers (original SessionView handlers) ===
     const handleTodoListUpdate = (data: any) => {
       try {
         // Validate required fields for state machine
@@ -213,63 +302,116 @@ export default function SessionView() {
       handleStateChange(data)
     }
 
-    // Wire up the callbacks IMMEDIATELY when component mounts
-    console.log('[SessionView] Setting up transport callbacks')
     transport.onTodoListUpdate = handleTodoListUpdate
     transport.onPlanProgress = handlePlanProgress
     transport.onDeliverableUpdate = handleDeliverableUpdate
     transport.onStateChange = handleStateMachineStateChange
 
     return () => {
-      // Cleanup callbacks
+      // Cleanup ALL callbacks
+      console.log('[SessionView] Cleaning up transport callbacks')
+      transport.onConnected = () => {}
+      transport.onDisconnected = () => {}
+      transport.onError = () => {}
+      transport.onTranscript = () => {}
+      transport.onProcessingMessage = () => {}
+      transport.onTTSStart = () => {}
+      transport.onTTSStop = () => {}
+      transport.onParticipantJoined = () => {}
+      transport.onParticipantLeft = () => {}
+      transport.onAudioLevel = () => {}
+      transport.onRemoteSpeaking = () => {}
+      transport.onLLMConfig = () => {}
       transport.onTodoListUpdate = () => {}
       transport.onPlanProgress = () => {}
       transport.onDeliverableUpdate = () => {}
       transport.onStateChange = () => {}
     }
-  }, [
-    transport,
-    session,
-    addLiveTaskUpdate,
-    setTodoList,
-    updateDeliverable,
-    setProgress,
-    handleStateChange,
-    setAllDeliverableStates,
-    setProcessingMode,
-    addNotification,
-  ])
+  }, [transport, session])
 
   // Auto-connect to LiveKit room on mount, disconnect on unmount
   // This runs AFTER callbacks are set up (effect order matters)
+  // Uses connectionRef to prevent duplicate connections across React re-renders
   useEffect(() => {
+    const roomName = session?.room?.livekitRoomName
+    if (!roomName) return
+
+    // Generate a unique ID for this connection attempt
+    const currentConnectionId = ++connectionRef.current.connectionId
+
     const autoConnect = async () => {
-      if (!session?.room?.livekitRoomName) return
+      // Guard 1: Already connected to this room (check ref)
+      if (connectionRef.current.connectedRoom === roomName) {
+        console.log('[SessionView] Already connected to room (ref):', roomName)
+        return
+      }
+
+      // Guard 2: Already connected to this room (check transport)
+      if (transport.isConnectedToRoom(roomName)) {
+        console.log('[SessionView] Already connected to room (transport):', roomName)
+        connectionRef.current.connectedRoom = roomName
+        return
+      }
+
+      // Guard 3: Connection already in progress
+      if (connectionRef.current.isConnecting) {
+        console.log('[SessionView] Connection already in progress, skipping')
+        return
+      }
+
+      // Guard 4: Wait for any pending disconnect to complete
+      if (connectionRef.current.isDisconnecting) {
+        console.log('[SessionView] Waiting for disconnect to complete...')
+        // Wait up to 500ms for disconnect to complete
+        let waited = 0
+        while (connectionRef.current.isDisconnecting && waited < 500) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+          waited += 50
+        }
+      }
+
+      // Mark as connecting
+      connectionRef.current.isConnecting = true
+      setStatus('connecting')
 
       try {
-        // Only auto-connect if we're in idle or error state
-        // Don't interfere if already connecting or connected
-        if (status === 'idle' || status === 'error') {
-          console.log('[SessionView] Auto-connecting to LiveKit room:', session.room.livekitRoomName)
-          setStatus('connecting')
-          await transport.connect(session.room.livekitRoomName)
+        console.log('[SessionView] Auto-connecting to LiveKit room:', roomName)
+        await transport.connect(roomName)
+
+        // Only update state if this is still the current connection attempt
+        if (connectionRef.current.connectionId === currentConnectionId) {
+          connectionRef.current.connectedRoom = roomName
+          console.log('[SessionView] Successfully connected to room:', roomName)
+        } else {
+          console.log('[SessionView] Connection completed but superseded by newer attempt')
         }
       } catch (error) {
         console.error('[SessionView] Auto-connect failed:', error)
-        setStatus('error')
+        // Only update error state if this is still the current connection attempt
+        if (connectionRef.current.connectionId === currentConnectionId) {
+          setStatus('error')
+        }
+      } finally {
+        // Only clear connecting flag if this is still the current connection attempt
+        if (connectionRef.current.connectionId === currentConnectionId) {
+          connectionRef.current.isConnecting = false
+        }
       }
     }
 
     autoConnect()
 
-    // Disconnect when component unmounts or session changes
+    // Cleanup: Disconnect when component unmounts or room changes
     return () => {
-      // Disconnect regardless of status to ensure cleanup
       console.log('[SessionView] Auto-disconnecting from LiveKit room')
-      transport.disconnect()
+      connectionRef.current.isDisconnecting = true
+      connectionRef.current.connectedRoom = null
+
+      transport.disconnect().finally(() => {
+        connectionRef.current.isDisconnecting = false
+      })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.room?.livekitRoomName])
+  }, [session?.room?.livekitRoomName, transport, setStatus])
 
   // Handle session name update
   const handleUpdateSessionName = async (name: string | null) => {

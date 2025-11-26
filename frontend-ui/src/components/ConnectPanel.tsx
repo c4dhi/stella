@@ -1,78 +1,22 @@
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useStore } from '../store'
-import type { TranscriptChunk, ProcessingMessage, ParticipantEvent } from '../lib/types'
-import { generateUUID } from '../lib/uuid'
 
 interface ConnectPanelProps {
   roomName?: string
 }
 
+// NOTE: Transport event handlers are now consolidated in SessionView.tsx
+// This component only handles UI display and user actions (reconnect, voice toggle)
+
 export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   const status = useStore(s => s.status)
   const setStatus = useStore(s => s.setStatus)
   const vu = useStore(s => s.vu)
-  const vadEnabled = useStore(s => s.vadEnabled)
-  const setVadEnabled = useStore(s => s.setVadEnabled)
-  const upsertChunk = useStore(s => s.upsertChunk)
-  const addProcessingMessage = useStore(s => s.addProcessingMessage)
-  const addParticipantEvent = useStore(s => s.addParticipantEvent)
-  const setTTSPlaying = useStore(s => s.setTTSPlaying)
-  const setTTSPaused = useStore(s => s.setTTSPaused)
-  const setLLMConfig = useStore(s => s.setLLMConfig)
-  const setAudioLevel = useStore(s => s.setAudioLevel)
-  const setIsRemoteSpeaking = useStore(s => s.setIsRemoteSpeaking)
 
   // Get transport from store (already initialized during store creation)
   const transport = useStore(s => s.transport)
   const [voiceNarrationEnabled, setVoiceNarrationEnabled] = useState(true)
-
-  useEffect(() => {
-    // Set up transport event handlers
-
-    transport.onConnected = () => setStatus('connected')
-    transport.onDisconnected = () => setStatus('idle')
-    transport.onError = (e) => { console.error(e); setStatus('error') }
-    transport.onTranscript = (c: TranscriptChunk) => upsertChunk(c)
-    transport.onProcessingMessage = (m: ProcessingMessage) => addProcessingMessage(m)
-    transport.onTTSStart = () => {
-      setTTSPlaying(true)
-      setTTSPaused(false)
-    }
-    transport.onTTSStop = () => {
-      setTTSPlaying(false)
-      setTTSPaused(false)
-    }
-    transport.onParticipantJoined = (participantId: string, participantName?: string) => {
-      const event: ParticipantEvent = {
-        id: generateUUID(),
-        type: 'joined',
-        participantId,
-        participantName,
-        startedAt: Date.now(), // Use local timestamp for consistency with server message parsing
-        messageType: 'participant'
-      }
-      addParticipantEvent(event)
-    }
-    transport.onParticipantLeft = (participantId: string, participantName?: string) => {
-      const event: ParticipantEvent = {
-        id: generateUUID(),
-        type: 'left',
-        participantId,
-        participantName,
-        startedAt: Date.now(), // Use local timestamp for consistency with server message parsing
-        messageType: 'participant'
-      }
-      addParticipantEvent(event)
-    }
-    transport.onLLMConfig = (config: any) => {
-      console.log('[ConnectPanel] Received LLM config:', config)
-      setLLMConfig(config)
-    }
-    transport.onAudioLevel = (level: number) => setAudioLevel(level)
-    transport.onRemoteSpeaking = (speaking: boolean) => setIsRemoteSpeaking(speaking)
-
-  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused, setLLMConfig, setAudioLevel, setIsRemoteSpeaking])
 
   const connect = async () => {
     try {

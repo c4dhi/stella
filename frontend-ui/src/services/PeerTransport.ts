@@ -43,6 +43,21 @@ export class PeerTransport implements Transport {
     this.userName = name
   }
 
+  // Check if connected to a specific room
+  isConnectedToRoom(roomName: string): boolean {
+    return this.connectionState === 'connected' && this.currentRoomName === roomName
+  }
+
+  // Get current connection state
+  getConnectionState(): 'idle' | 'connecting' | 'connected' | 'disconnecting' {
+    return this.connectionState
+  }
+
+  // Get current room name
+  getCurrentRoomName(): string | undefined {
+    return this.currentRoomName
+  }
+
   onConnected = () => {}
   onDisconnected = (_reason?: string) => {}
   onError = (_err: Error) => {}
@@ -83,11 +98,20 @@ export class PeerTransport implements Transport {
       await this.disconnect()
     }
 
-    // Guard: If currently disconnecting, wait for it to complete
+    // Guard: If currently disconnecting, wait for it to complete with polling
     if (this.connectionState === 'disconnecting') {
       console.log('[PeerTransport] Waiting for disconnect to complete before connecting')
-      // Wait a bit for disconnect to complete
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait with exponential backoff, max 500ms total
+      let waitTime = 50
+      let totalWaited = 0
+      while (this.connectionState === 'disconnecting' && totalWaited < 500) {
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+        totalWaited += waitTime
+        waitTime = Math.min(waitTime * 2, 200)
+      }
+      if (this.connectionState === 'disconnecting') {
+        console.warn('[PeerTransport] Disconnect still in progress after 500ms, proceeding anyway')
+      }
     }
 
     // Set state and create connection promise

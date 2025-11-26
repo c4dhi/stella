@@ -138,6 +138,10 @@ export interface Transport extends TransportEvents {
   publishAudioTrack: (stream: MediaStream) => Promise<boolean>
   unpublishAudioTrack: () => Promise<void>
   setUserName: (name: string) => void
+  // Connection state helpers
+  isConnectedToRoom: (roomName: string) => boolean
+  getConnectionState: () => 'idle' | 'connecting' | 'connected' | 'disconnecting'
+  getCurrentRoomName: () => string | undefined
 }
 
 export type EnvelopeType =

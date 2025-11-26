@@ -29,17 +29,55 @@ ENV_FLAG=""
 # This is useful when root filesystem has limited space
 # Pre-load GRACE_AI_TEMP_DIR from env files before setting up logging
 # This ensures logs and temp files go to the correct volume from the start
+# Hierarchy: .env (base) -> .env.local or .env.production (overrides)
 SCRIPT_DIR_FOR_ENV="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR_FOR_ENV="$(dirname "$SCRIPT_DIR_FOR_ENV")"
+
+# Detect OS early for temp directory validation
+EARLY_OS_TYPE=""
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    EARLY_OS_TYPE="macos"
+else
+    EARLY_OS_TYPE="linux"
+fi
+
+# Load base .env first
 if [ -f "$PROJECT_DIR_FOR_ENV/.env" ]; then
     GRACE_AI_TEMP_DIR_FROM_ENV=$(grep -E "^GRACE_AI_TEMP_DIR=" "$PROJECT_DIR_FOR_ENV/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
     [ -n "$GRACE_AI_TEMP_DIR_FROM_ENV" ] && export GRACE_AI_TEMP_DIR="$GRACE_AI_TEMP_DIR_FROM_ENV"
 fi
-if [ -f "$PROJECT_DIR_FOR_ENV/.env.production" ]; then
+
+# Check for --production flag to determine which override file to use
+EARLY_ENV_FLAG=""
+for arg in "$@"; do
+    case $arg in
+        --production) EARLY_ENV_FLAG="production" ;;
+        --local) EARLY_ENV_FLAG="local" ;;
+    esac
+done
+
+# Load override: .env.production if --production, otherwise .env.local
+if [ "$EARLY_ENV_FLAG" = "production" ] && [ -f "$PROJECT_DIR_FOR_ENV/.env.production" ]; then
     GRACE_AI_TEMP_DIR_FROM_ENV=$(grep -E "^GRACE_AI_TEMP_DIR=" "$PROJECT_DIR_FOR_ENV/.env.production" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
     [ -n "$GRACE_AI_TEMP_DIR_FROM_ENV" ] && export GRACE_AI_TEMP_DIR="$GRACE_AI_TEMP_DIR_FROM_ENV"
+elif [ -f "$PROJECT_DIR_FOR_ENV/.env.local" ]; then
+    GRACE_AI_TEMP_DIR_FROM_ENV=$(grep -E "^GRACE_AI_TEMP_DIR=" "$PROJECT_DIR_FOR_ENV/.env.local" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    [ -n "$GRACE_AI_TEMP_DIR_FROM_ENV" ] && export GRACE_AI_TEMP_DIR="$GRACE_AI_TEMP_DIR_FROM_ENV"
 fi
+
+# Set TEMP_DIR with fallback to /tmp
 TEMP_DIR="${GRACE_AI_TEMP_DIR:-/tmp}"
+
+# Validate temp directory is accessible (macOS doesn't have /mnt)
+if [ -n "$GRACE_AI_TEMP_DIR" ] && [ "$GRACE_AI_TEMP_DIR" != "/tmp" ]; then
+    # Check if parent directory exists and is writable
+    TEMP_PARENT_DIR=$(dirname "$GRACE_AI_TEMP_DIR")
+    if [ ! -d "$TEMP_PARENT_DIR" ] || [ ! -w "$TEMP_PARENT_DIR" ]; then
+        echo "Note: GRACE_AI_TEMP_DIR=$GRACE_AI_TEMP_DIR not accessible, using /tmp"
+        TEMP_DIR="/tmp"
+        unset GRACE_AI_TEMP_DIR
+    fi
+fi
 PID_DIR="${TEMP_DIR}/grace-ai-k8s"
 
 # First pass: check for unknown flags
