@@ -27,6 +27,18 @@ ENV_FLAG=""
 # Configurable temp directory for build artifacts and logs
 # Set GRACE_AI_TEMP_DIR in .env to use a different volume (e.g., /mnt/grace-ai-temp)
 # This is useful when root filesystem has limited space
+# Pre-load GRACE_AI_TEMP_DIR from env files before setting up logging
+# This ensures logs and temp files go to the correct volume from the start
+SCRIPT_DIR_FOR_ENV="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR_FOR_ENV="$(dirname "$SCRIPT_DIR_FOR_ENV")"
+if [ -f "$PROJECT_DIR_FOR_ENV/.env" ]; then
+    GRACE_AI_TEMP_DIR_FROM_ENV=$(grep -E "^GRACE_AI_TEMP_DIR=" "$PROJECT_DIR_FOR_ENV/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    [ -n "$GRACE_AI_TEMP_DIR_FROM_ENV" ] && export GRACE_AI_TEMP_DIR="$GRACE_AI_TEMP_DIR_FROM_ENV"
+fi
+if [ -f "$PROJECT_DIR_FOR_ENV/.env.production" ]; then
+    GRACE_AI_TEMP_DIR_FROM_ENV=$(grep -E "^GRACE_AI_TEMP_DIR=" "$PROJECT_DIR_FOR_ENV/.env.production" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    [ -n "$GRACE_AI_TEMP_DIR_FROM_ENV" ] && export GRACE_AI_TEMP_DIR="$GRACE_AI_TEMP_DIR_FROM_ENV"
+fi
 TEMP_DIR="${GRACE_AI_TEMP_DIR:-/tmp}"
 PID_DIR="${TEMP_DIR}/grace-ai-k8s"
 
