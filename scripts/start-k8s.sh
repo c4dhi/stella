@@ -1,13 +1,34 @@
 #!/bin/bash
 set -e
 
+# ============================================================================
+# Fix permissions on project files (handles issues after moving/copying)
+# ============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Ensure all scripts are executable
+chmod +x "$SCRIPT_DIR"/*.sh 2>/dev/null || true
+
+# Ensure Python scripts are executable
+find "$PROJECT_DIR" -name "*.py" -path "*/scripts/*" -exec chmod +x {} \; 2>/dev/null || true
+
+# Ensure download scripts in services are executable
+chmod +x "$PROJECT_DIR"/stt-service/*.py 2>/dev/null || true
+chmod +x "$PROJECT_DIR"/tts-service/*.py 2>/dev/null || true
+
 # Parse command line flags
 DAEMON_MODE=false
 STOP_MODE=false
 REBUILD_MODE=false
 RESET_DB_MODE=false
 ENV_FLAG=""
-PID_DIR="/tmp/grace-ai-k8s"
+
+# Configurable temp directory for build artifacts and logs
+# Set GRACE_AI_TEMP_DIR in .env to use a different volume (e.g., /mnt/grace-ai-temp)
+# This is useful when root filesystem has limited space
+TEMP_DIR="${GRACE_AI_TEMP_DIR:-/tmp}"
+PID_DIR="${TEMP_DIR}/grace-ai-k8s"
 
 # First pass: check for unknown flags
 for arg in "$@"; do
@@ -212,6 +233,18 @@ else
     export NODE_ENV="local"
     load_env_file ".env.local" "local overrides" || true
 fi
+
+# Update TEMP_DIR after loading env files (GRACE_AI_TEMP_DIR may be set in .env)
+# This allows using a separate volume for build artifacts when disk space is limited
+TEMP_DIR="${GRACE_AI_TEMP_DIR:-/tmp}"
+PID_DIR="${TEMP_DIR}/grace-ai-k8s"
+
+# Create temp directory if it doesn't exist
+if [ ! -d "$TEMP_DIR" ]; then
+    echo -e "${YELLOW}Creating temp directory: ${TEMP_DIR}${NC}"
+    mkdir -p "$TEMP_DIR" || { echo -e "${RED}Failed to create temp directory: ${TEMP_DIR}${NC}"; exit 1; }
+fi
+mkdir -p "$PID_DIR"
 
 echo ""
 
@@ -711,7 +744,7 @@ if [ -n "$CUSTOM_DNS_SERVERS" ] && [ "$CUSTOM_DNS_SERVERS" != '""' ]; then
         echo -n "  • Updating CoreDNS configuration... "
 
         # Create new Corefile with custom DNS servers
-        cat > /tmp/coredns-config.yaml << EOF
+        cat > ${TEMP_DIR}/coredns-config.yaml << EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -742,7 +775,7 @@ data:
 EOF
 
         # Apply the new configuration
-        kubectl apply -f /tmp/coredns-config.yaml > /dev/null 2>&1
+        kubectl apply -f ${TEMP_DIR}/coredns-config.yaml > /dev/null 2>&1
 
         # Restart CoreDNS pods to pick up new config
         kubectl rollout restart deployment/coredns -n kube-system > /dev/null 2>&1
@@ -754,7 +787,7 @@ EOF
         echo -e "  ${GREEN}✓ CoreDNS now using: ${CUSTOM_DNS_SERVERS}${NC}"
 
         # Clean up temp file
-        rm -f /tmp/coredns-config.yaml
+        rm -f ${TEMP_DIR}/coredns-config.yaml
     else
         echo -e "  ${GREEN}✓ CoreDNS already configured with custom DNS${NC}"
     fi
@@ -859,7 +892,7 @@ if [ "$NODE_ENV" = "production" ]; then
 
             # Create NVIDIA RuntimeClass for K3s containerd
             echo -e "${YELLOW}Creating NVIDIA RuntimeClass...${NC}"
-            cat > /tmp/nvidia-runtimeclass.yaml << 'RUNTIMECLASS'
+            cat > ${TEMP_DIR}/nvidia-runtimeclass.yaml << 'RUNTIMECLASS'
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -867,8 +900,8 @@ metadata:
 handler: nvidia
 RUNTIMECLASS
 
-            kubectl apply -f /tmp/nvidia-runtimeclass.yaml > /dev/null 2>&1
-            rm -f /tmp/nvidia-runtimeclass.yaml
+            kubectl apply -f ${TEMP_DIR}/nvidia-runtimeclass.yaml > /dev/null 2>&1
+            rm -f ${TEMP_DIR}/nvidia-runtimeclass.yaml
             echo -e "  ${GREEN}✓ RuntimeClass created${NC}"
 
             # Install NVIDIA Device Plugin for Kubernetes (required to expose GPU resources)
@@ -885,7 +918,7 @@ RUNTIMECLASS
             # Device plugin DaemonSet configuration
             # Note: K3s kubelet uses standard Kubernetes paths (/var/lib/kubelet/device-plugins)
             # even though other K3s components use /var/lib/rancher/k3s paths
-            cat > /tmp/nvidia-device-plugin.yaml << 'DEVICEPLUGIN'
+            cat > ${TEMP_DIR}/nvidia-device-plugin.yaml << 'DEVICEPLUGIN'
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -937,11 +970,11 @@ DEVICEPLUGIN
             # K3s kubelet actually uses standard Kubernetes paths (not K3s-specific paths)
             # This is where kubelet.sock is located for device plugin registration
             KUBELET_PATH="/var/lib/kubelet/device-plugins"
-            sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" /tmp/nvidia-device-plugin.yaml
+            sed -i "s|KUBELET_DEVICE_PLUGINS_PATH|$KUBELET_PATH|g" ${TEMP_DIR}/nvidia-device-plugin.yaml
             echo -e "  ${GREEN}✓ Using standard kubelet path: ${KUBELET_PATH}${NC}"
 
             # Apply the device plugin
-            kubectl apply -f /tmp/nvidia-device-plugin.yaml > /dev/null 2>&1
+            kubectl apply -f ${TEMP_DIR}/nvidia-device-plugin.yaml > /dev/null 2>&1
             echo -e "  ${GREEN}✓ NVIDIA Device Plugin installed${NC}"
 
             # Wait for device plugin to be ready
@@ -952,7 +985,7 @@ DEVICEPLUGIN
             sleep 5
 
             # Clean up temp file
-            rm -f /tmp/nvidia-device-plugin.yaml
+            rm -f ${TEMP_DIR}/nvidia-device-plugin.yaml
 
             # Verify GPU resources
             GPU_ALLOCATABLE=$(kubectl describe nodes 2>/dev/null | grep -A 5 "Allocatable:" | grep "nvidia.com/gpu" | awk '{print $2}' | head -1)
@@ -1052,7 +1085,7 @@ build_with_progress() {
     local USE_BUILDKIT=$4
     local BUILD_ARGS="${5:-}"  # Optional build arguments
 
-    local LOG_FILE="/tmp/docker-build-${IMAGE_NAME}.log"
+    local LOG_FILE="${TEMP_DIR}/docker-build-${IMAGE_NAME}.log"
 
     echo "  • ${IMAGE_NAME}..."
 
@@ -1177,11 +1210,11 @@ if [ "$REBUILD_MODE" = true ]; then
 
     # Clean up any leftover temp files from previous runs
     echo -n "  • Cleaning up temp files... "
-    rm -f /tmp/k3s-images.tar /tmp/docker-save-error.log /tmp/k3s-import.log 2>/dev/null || true
-    rm -f /tmp/04-configmap-updated.yaml /tmp/06-message-recorder-updated.yaml 2>/dev/null || true
-    rm -f /tmp/08-stt-service-gpu.yaml /tmp/09-tts-service-gpu.yaml 2>/dev/null || true
-    rm -f /tmp/docker-build-*.log 2>/dev/null || true
-    rm -f /tmp/nvidia-*.yaml /tmp/coredns-config.yaml 2>/dev/null || true
+    rm -f ${TEMP_DIR}/k3s-images.tar ${TEMP_DIR}/docker-save-error.log ${TEMP_DIR}/k3s-import.log 2>/dev/null || true
+    rm -f ${TEMP_DIR}/04-configmap-updated.yaml ${TEMP_DIR}/06-message-recorder-updated.yaml 2>/dev/null || true
+    rm -f ${TEMP_DIR}/08-stt-service-gpu.yaml ${TEMP_DIR}/09-tts-service-gpu.yaml 2>/dev/null || true
+    rm -f ${TEMP_DIR}/docker-build-*.log 2>/dev/null || true
+    rm -f ${TEMP_DIR}/nvidia-*.yaml ${TEMP_DIR}/coredns-config.yaml 2>/dev/null || true
     echo -e "${GREEN}✓${NC}"
 
     echo -e "${GREEN}  ✓ Cleanup complete${NC}"
@@ -1281,23 +1314,23 @@ else
 
     # Save Docker images to tar files
     echo -n "  • Exporting Docker images... "
-    if docker save session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest -o /tmp/k3s-images.tar 2>/tmp/docker-save-error.log; then
+    if docker save session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest -o ${TEMP_DIR}/k3s-images.tar 2>${TEMP_DIR}/docker-save-error.log; then
         echo -e "${GREEN}✓${NC}"
     else
         echo -e "${RED}✗${NC}"
         echo -e "${RED}Error exporting Docker images:${NC}"
-        cat /tmp/docker-save-error.log
+        cat ${TEMP_DIR}/docker-save-error.log
         exit 1
     fi
 
     # Import into K3s containerd
     echo -n "  • Importing into K3s containerd... "
-    if sudo k3s ctr images import /tmp/k3s-images.tar > /tmp/k3s-import.log 2>&1; then
+    if sudo k3s ctr images import ${TEMP_DIR}/k3s-images.tar > ${TEMP_DIR}/k3s-import.log 2>&1; then
         echo -e "${GREEN}✓${NC}"
     else
         echo -e "${RED}✗${NC}"
         echo -e "${RED}Error importing images into K3s:${NC}"
-        cat /tmp/k3s-import.log
+        cat ${TEMP_DIR}/k3s-import.log
         echo ""
         echo -e "${YELLOW}Troubleshooting:${NC}"
         echo -e "  1. Check K3s is running: ${BLUE}sudo systemctl status k3s${NC}"
@@ -1307,7 +1340,7 @@ else
     fi
 
     # Clean up tar file
-    rm -f /tmp/k3s-images.tar /tmp/docker-save-error.log /tmp/k3s-import.log
+    rm -f ${TEMP_DIR}/k3s-images.tar ${TEMP_DIR}/docker-save-error.log ${TEMP_DIR}/k3s-import.log
 
     echo -e "${GREEN}✓ Images available to K3s${NC}"
 fi
@@ -1349,7 +1382,7 @@ fi
 
 # Inject environment variables into ConfigMaps using envsubst
 echo -n "  • Updating ConfigMaps with environment variables... "
-envsubst < k8s/04-configmap.yaml > /tmp/04-configmap-updated.yaml
+envsubst < k8s/04-configmap.yaml > ${TEMP_DIR}/04-configmap-updated.yaml
 echo -e "${GREEN}✓${NC}"
 
 # Detect K8s gateway IP for host.docker.internal (macOS only)
@@ -1372,10 +1405,10 @@ if [[ "$OS_TYPE" == "macos" ]]; then
     fi
 
     # Update message-recorder.yaml with detected gateway IP
-    sed "s/192.168.194.1/${HOST_GATEWAY_IP}/g" k8s/06-message-recorder.yaml > /tmp/06-message-recorder-updated.yaml
+    sed "s/192.168.194.1/${HOST_GATEWAY_IP}/g" k8s/06-message-recorder.yaml > ${TEMP_DIR}/06-message-recorder-updated.yaml
 else
     # Linux: Use message-recorder.yaml as-is (hostAliases not needed on Linux)
-    cp k8s/06-message-recorder.yaml /tmp/06-message-recorder-updated.yaml
+    cp k8s/06-message-recorder.yaml ${TEMP_DIR}/06-message-recorder-updated.yaml
 fi
 
 # Note: LiveKit API key verification skipped - using external LiveKit server
@@ -1394,14 +1427,14 @@ if [ "$ENABLE_GPU" = "true" ]; then
     # - Do NOT request nvidia.com/gpu resource - allows GPU sharing between services
     # - Both STT and TTS share the single GPU via CUDA without exclusive allocation
     sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        k8s/08-stt-service.yaml > /tmp/08-stt-service-gpu.yaml
-    STT_MANIFEST="/tmp/08-stt-service-gpu.yaml"
+        k8s/08-stt-service.yaml > ${TEMP_DIR}/08-stt-service-gpu.yaml
+    STT_MANIFEST="${TEMP_DIR}/08-stt-service-gpu.yaml"
     echo -e "  ${GREEN}✓ STT service manifest (GPU shared mode)${NC}"
 
     # Generate GPU-enabled TTS manifest
     sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        k8s/09-tts-service.yaml > /tmp/09-tts-service-gpu.yaml
-    TTS_MANIFEST="/tmp/09-tts-service-gpu.yaml"
+        k8s/09-tts-service.yaml > ${TEMP_DIR}/09-tts-service-gpu.yaml
+    TTS_MANIFEST="${TEMP_DIR}/09-tts-service-gpu.yaml"
     echo -e "  ${GREEN}✓ TTS service manifest (GPU shared mode)${NC}"
 
     echo -e "  ${CYAN}ℹ️  GPU sharing: STT and TTS share single GPU via CUDA${NC}"
@@ -1413,9 +1446,9 @@ kubectl apply -f k8s/00-namespace.yaml > /dev/null
 kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
 kubectl apply -f k8s/01-postgres.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
-kubectl apply -f /tmp/04-configmap-updated.yaml > /dev/null
+kubectl apply -f ${TEMP_DIR}/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
-kubectl apply -f /tmp/06-message-recorder-updated.yaml > /dev/null
+kubectl apply -f ${TEMP_DIR}/06-message-recorder-updated.yaml > /dev/null
 kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 kubectl apply -f "$STT_MANIFEST" > /dev/null
@@ -1562,13 +1595,13 @@ if [ "$DAEMON_MODE" = false ]; then
 
     # Clean up temporary files
     echo -e "${BLUE}Cleaning up temporary files...${NC}"
-    rm -f /tmp/04-configmap-updated.yaml
-    rm -f /tmp/06-message-recorder-updated.yaml
-    rm -f /tmp/08-stt-service-gpu.yaml
-    rm -f /tmp/09-tts-service-gpu.yaml
-    rm -f /tmp/k3s-images.tar
-    rm -f /tmp/docker-save-error.log
-    rm -f /tmp/k3s-import.log
+    rm -f ${TEMP_DIR}/04-configmap-updated.yaml
+    rm -f ${TEMP_DIR}/06-message-recorder-updated.yaml
+    rm -f ${TEMP_DIR}/08-stt-service-gpu.yaml
+    rm -f ${TEMP_DIR}/09-tts-service-gpu.yaml
+    rm -f ${TEMP_DIR}/k3s-images.tar
+    rm -f ${TEMP_DIR}/docker-save-error.log
+    rm -f ${TEMP_DIR}/k3s-import.log
 
     # Stop K3s cluster (Linux only)
     if [[ "$OS_TYPE" == "linux" ]]; then
@@ -1634,13 +1667,13 @@ echo ""
 
 if [ "$DAEMON_MODE" = true ]; then
     # Daemon mode: Clean up temporary files and show status
-    rm -f /tmp/04-configmap-updated.yaml
-    rm -f /tmp/06-message-recorder-updated.yaml
-    rm -f /tmp/08-stt-service-gpu.yaml
-    rm -f /tmp/09-tts-service-gpu.yaml
-    rm -f /tmp/k3s-images.tar
-    rm -f /tmp/docker-save-error.log
-    rm -f /tmp/k3s-import.log
+    rm -f ${TEMP_DIR}/04-configmap-updated.yaml
+    rm -f ${TEMP_DIR}/06-message-recorder-updated.yaml
+    rm -f ${TEMP_DIR}/08-stt-service-gpu.yaml
+    rm -f ${TEMP_DIR}/09-tts-service-gpu.yaml
+    rm -f ${TEMP_DIR}/k3s-images.tar
+    rm -f ${TEMP_DIR}/docker-save-error.log
+    rm -f ${TEMP_DIR}/k3s-import.log
 
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}✨ Services running in background${NC}"
