@@ -33,6 +33,10 @@ export class PeerTransport implements Transport {
   private connectionPromise?: Promise<void>
   private currentRoomName?: string
 
+  // Audio track state tracking to prevent duplicate audio tracks
+  private isPublishingAudio: boolean = false
+  private isUnpublishingAudio: boolean = false
+
   // Web Audio API for accurate speech detection
   private audioContext?: AudioContext
   private audioAnalyser?: AnalyserNode
@@ -391,6 +395,10 @@ export class PeerTransport implements Transport {
     this.remoteAudioTrack = undefined
     this.publishedAudioTrack = undefined
 
+    // Reset audio publishing state
+    this.isPublishingAudio = false
+    this.isUnpublishingAudio = false
+
     // Reset connection state
     this.connectionState = 'idle'
     this.currentRoomName = undefined
@@ -578,17 +586,47 @@ export class PeerTransport implements Transport {
       return false
     }
 
+    // Guard: Prevent multiple simultaneous publish operations
+    if (this.isPublishingAudio) {
+      console.warn('[AUDIO] Already publishing audio track, ignoring duplicate request')
+      return false
+    }
+
+    // Guard: Wait for any pending unpublish to complete
+    if (this.isUnpublishingAudio) {
+      console.log('[AUDIO] Waiting for unpublish to complete before publishing')
+      let waitTime = 0
+      while (this.isUnpublishingAudio && waitTime < 500) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        waitTime += 50
+      }
+      if (this.isUnpublishingAudio) {
+        console.warn('[AUDIO] Unpublish still in progress after 500ms, proceeding anyway')
+      }
+    }
+
+    // Guard: If there's already a published track, unpublish it first
+    if (this.publishedAudioTrack) {
+      console.log('[AUDIO] Existing track found, unpublishing before new publish')
+      await this.unpublishAudioTrack()
+    }
+
+    this.isPublishingAudio = true
+
     try {
       const audioTrack = stream.getAudioTracks()[0]
       if (audioTrack) {
         console.log('🔊 [AUDIO] Publishing audio track')
         this.publishedAudioTrack = await this.room.localParticipant.publishTrack(audioTrack)
         this.micStream = stream
+        console.log('✓ [AUDIO] Audio track published successfully')
         return true
       }
     } catch (error) {
       console.error('Error publishing audio track:', error)
       return false
+    } finally {
+      this.isPublishingAudio = false
     }
     return false
   }
@@ -599,26 +637,45 @@ export class PeerTransport implements Transport {
       return
     }
 
+    // Guard: Prevent multiple simultaneous unpublish operations
+    if (this.isUnpublishingAudio) {
+      console.warn('[AUDIO] Already unpublishing audio track, ignoring duplicate request')
+      return
+    }
+
+    // Guard: Nothing to unpublish
+    if (!this.publishedAudioTrack) {
+      console.log('[AUDIO] No audio track to unpublish')
+      return
+    }
+
+    this.isUnpublishingAudio = true
+
     try {
-      if (this.publishedAudioTrack) {
-        console.log('🔇 [AUDIO] Unpublishing audio track')
+      console.log('🔇 [AUDIO] Unpublishing audio track')
 
-        // Send mute signal to trigger VAD endpoint
-        this.sendMuteSignal()
+      // Send mute signal to trigger VAD endpoint
+      this.sendMuteSignal()
 
-        // Unpublish the track from LiveKit
-        await this.room.localParticipant.unpublishTrack(this.publishedAudioTrack.track!)
-
-        // Stop the media track
-        if (this.micStream) {
-          this.micStream.getTracks().forEach(track => track.stop())
-          this.micStream = undefined
-        }
-
-        this.publishedAudioTrack = undefined
+      // Unpublish the track from LiveKit
+      if (this.publishedAudioTrack.track) {
+        await this.room.localParticipant.unpublishTrack(this.publishedAudioTrack.track)
       }
+
+      // Stop the media track
+      if (this.micStream) {
+        this.micStream.getTracks().forEach(track => track.stop())
+        this.micStream = undefined
+      }
+
+      this.publishedAudioTrack = undefined
+      console.log('✓ [AUDIO] Audio track unpublished successfully')
     } catch (error) {
       console.error('Error unpublishing audio track:', error)
+      // Reset state even on error to prevent deadlock
+      this.publishedAudioTrack = undefined
+    } finally {
+      this.isUnpublishingAudio = false
     }
   }
 
