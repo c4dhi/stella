@@ -80,8 +80,13 @@ class WhisperSession(STTSession):
         self.processing_endpoint = False
         self.chunk_count = 0
 
-    def process_audio(self, audio_data: bytes) -> List[stt_pb2.TranscriptEvent]:
-        """Process audio chunk through VAD and return transcript events."""
+    def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
+        """Process audio chunk through VAD and return transcript events.
+
+        Args:
+            audio_data: Raw PCM audio bytes (16-bit signed)
+            sample_rate: Sample rate of the input audio (default 16000)
+        """
         events = []
         current_time = time.time()
         self.chunk_count += 1
@@ -91,6 +96,17 @@ class WhisperSession(STTSession):
             audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
             if len(audio_int16) == 0:
                 return events
+
+            # Resample if needed (Whisper expects 16kHz)
+            target_rate = 16000
+            if sample_rate != target_rate and sample_rate > 0:
+                # Log resampling on first chunk
+                if self.chunk_count == 1:
+                    print(f"[WhisperSession] Resampling from {sample_rate}Hz to {target_rate}Hz")
+                # Use scipy for high-quality resampling
+                from scipy import signal
+                num_samples = int(len(audio_int16) * target_rate / sample_rate)
+                audio_int16 = signal.resample(audio_int16, num_samples).astype(np.int16)
 
             # Add to audio buffer
             self.audio_buffer.extend(audio_int16.tolist())
@@ -151,6 +167,17 @@ class WhisperSession(STTSession):
                     self.transcript_id = f"whisper_{uuid.uuid4().hex[:8]}"
                     self.speech_buffer = []
                     self.accumulated_text = ""
+
+                    # Emit speech_started event for barge-in detection
+                    events.append(stt_pb2.TranscriptEvent(
+                        text="",
+                        is_final=False,
+                        transcript_id=self.transcript_id,
+                        participant_id=self.participant_id,
+                        confidence=0.0,
+                        timestamp_ms=int(current_time * 1000),
+                        speech_started=True
+                    ))
 
                 # Accumulate speech audio
                 self.speech_buffer.extend(audio_int16.tolist())

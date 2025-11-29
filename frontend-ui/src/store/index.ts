@@ -42,6 +42,8 @@ type MediaState = {
   isFaceModalOpen: boolean
   audioLevel: number
   isRemoteSpeaking: boolean
+  // Agent readiness state - controls audio processing
+  agentReady: boolean
 }
 type MediaActions = {
   setMicGranted: (v: boolean) => void
@@ -57,6 +59,8 @@ type MediaActions = {
   setFaceModalOpen: (v: boolean) => void
   setAudioLevel: (v: number) => void
   setIsRemoteSpeaking: (v: boolean) => void
+  // Agent readiness action
+  setAgentReady: (v: boolean) => void
 }
 
 type LLMConfigState = {
@@ -235,6 +239,7 @@ export const useStore = create<
   isFaceModalOpen: false,
   audioLevel: 0,
   isRemoteSpeaking: false,
+  agentReady: false, // Audio disabled until agent is ready
   setMicGranted: (v) => set({ micGranted: v }),
   setVu: (v) => set({ vu: v }),
   setVadEnabled: (v) => set({ vadEnabled: v }),
@@ -247,6 +252,7 @@ export const useStore = create<
   setFaceModalOpen: (v) => set({ isFaceModalOpen: v }),
   setAudioLevel: (v) => set({ audioLevel: v }),
   setIsRemoteSpeaking: (v) => set({ isRemoteSpeaking: v }),
+  setAgentReady: (v) => set({ agentReady: v }),
 
   // llm config
   llmConfig: null,

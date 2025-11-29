@@ -39,6 +39,9 @@ class SherpaSession(STTSession):
         self.last_speech_activity = time.time()
         self.silence_start_time = None
 
+        # Speech detection state
+        self.speech_active = False  # Track if we're currently in a speech segment
+
         # Thresholds
         self.silence_threshold = 1.5  # seconds
         self.speech_timeout = 10.0    # force endpoint after 10s
@@ -48,8 +51,13 @@ class SherpaSession(STTSession):
         self.last_final_text = ""
         self.last_final_time = 0
 
-    def process_audio(self, audio_data: bytes) -> List[stt_pb2.TranscriptEvent]:
-        """Process audio chunk and return any transcript events."""
+    def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
+        """Process audio chunk and return any transcript events.
+
+        Args:
+            audio_data: Raw PCM audio bytes (16-bit signed)
+            sample_rate: Sample rate of the input audio (default 16000)
+        """
         events = []
 
         if not self.stream or not self.recognizer:
@@ -66,12 +74,27 @@ class SherpaSession(STTSession):
             if len(audio_int16) == 0:
                 return events
 
+            # Resample if needed (STT model expects 16kHz)
+            target_rate = 16000
+            if sample_rate != target_rate and sample_rate > 0:
+                # Log resampling on first chunk
+                if self.chunk_count == 1:
+                    print(f"[SherpaSession] Resampling from {sample_rate}Hz to {target_rate}Hz")
+                # Use scipy for high-quality resampling
+                from scipy import signal
+                num_samples = int(len(audio_int16) * target_rate / sample_rate)
+                audio_int16 = signal.resample(audio_int16, num_samples).astype(np.int16)
+
             # Convert to float32 normalized
             audio_float = audio_int16.astype(np.float32) / 32768.0
 
             # Calculate RMS for speech detection
             audio_rms = np.sqrt(np.mean(audio_float**2))
             is_speech = audio_rms > 0.001
+
+            # Debug logging every 50 chunks
+            if self.chunk_count % 50 == 1:
+                print(f"[SherpaSession] Chunk {self.chunk_count}: samples={len(audio_float)}, rms={audio_rms:.6f}, is_speech={is_speech}")
 
             # Apply gain normalization for quiet speech
             if is_speech and audio_rms > 0.005 and audio_rms < 0.05:
@@ -87,10 +110,16 @@ class SherpaSession(STTSession):
 
             # Get current result
             result = self.recognizer.get_result(self.stream)
+
+            # Debug: log when we get text
+            if result and result.strip() and self.chunk_count % 10 == 0:
+                print(f"[SherpaSession] Got result: '{result.strip()}'")
+
             if result and result.strip():
                 current_text = result.strip().capitalize()
                 if current_text != self.accumulated_text:
                     self.accumulated_text = current_text
+                    print(f"[SherpaSession] Partial transcript: '{current_text}'")
 
                     # Yield partial transcript
                     events.append(stt_pb2.TranscriptEvent(
@@ -104,6 +133,19 @@ class SherpaSession(STTSession):
 
             # Track speech/silence
             if is_speech:
+                # Emit speech_started event on speech onset
+                if not self.speech_active:
+                    self.speech_active = True
+                    events.append(stt_pb2.TranscriptEvent(
+                        text="",
+                        is_final=False,
+                        transcript_id=self.transcript_id,
+                        participant_id=self.participant_id,
+                        confidence=0.0,
+                        timestamp_ms=int(current_time * 1000),
+                        speech_started=True
+                    ))
+
                 self.silence_start_time = None
                 self.last_speech_activity = current_time
             else:
@@ -205,6 +247,7 @@ class SherpaSession(STTSession):
         self.accumulated_text = ''
         self.transcript_id = f"transcript_{uuid.uuid4().hex[:8]}"
         self.silence_start_time = None
+        self.speech_active = False
 
         # Create fresh stream
         if self.recognizer and self.create_stream_fn:

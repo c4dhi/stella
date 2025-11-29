@@ -140,7 +140,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           finalizedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          source: 'db' as const,
+          // Include attribution fields from stored envelope
+          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          agent_name: messageData?.agent_name,
+          source: messageData?.source,  // Message source: user_speech, user_text, agent_response
+          dataSource: 'db' as const,    // Data source: db or live
         }
       } else if (['decision_stream', 'expert_status', 'expert_results', 'prompt_execution', 'safety_check'].includes(messageType)) {
         // Processing messages
@@ -155,7 +159,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           streamId: messageData.stream_id || 'db-stream',
           data: messageData,
           messageType: 'processing' as const,
-          source: 'db' as const,
+          dataSource: 'db' as const,
         }
       } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'].includes(messageType)) {
         // Task update messages - don't display in chat (handled by task panel)
@@ -176,17 +180,20 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          source: 'db' as const,
+          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          agent_name: messageData?.agent_name,
+          source: messageData?.source,
+          dataSource: 'db' as const,
         }
       }
     }).filter((msg): msg is NonNullable<typeof msg> => msg !== null) // Remove nulls with type guard
 
     // Combine with live messages
-    const liveTranscripts = turns.map(t => ({ ...t, messageType: 'transcript' as const, source: 'live' as const }))
+    const liveTranscripts = turns.map(t => ({ ...t, messageType: 'transcript' as const, dataSource: 'live' as const }))
     const processing = showProcessingMessages
-      ? processingMessages.map(p => ({ ...p, messageType: 'processing' as const, source: 'live' as const }))
+      ? processingMessages.map(p => ({ ...p, messageType: 'processing' as const, dataSource: 'live' as const }))
       : []
-    const events = participantEvents.map(e => ({ ...e, source: 'live' as const }))
+    const events = participantEvents.map(e => ({ ...e, dataSource: 'live' as const }))
 
     const combined = [...historical, ...liveTranscripts, ...processing, ...events]
 
@@ -419,7 +426,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                       animate={{ opacity: 0.6 }}
                       transition={{ delay: 0.1, duration: 0.3 }}
                     >
-                      <span>{message.participant_id || message.role}</span>
+                      <span>
+                        {message.source === 'agent_response'
+                          ? (message.agent_name || 'Agent')
+                          : (message.speaker_name || message.participant_id || message.role)}
+                      </span>
                       <span className="opacity-50">•</span>
                       <span>
                         {new Date(message.startedAt).toLocaleTimeString([], {

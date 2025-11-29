@@ -206,6 +206,23 @@ export interface CreateAgentDto {
   name: string // max 255 characters, required
   icon?: string // max 10 characters (emoji), optional
   planId?: string // max 255 characters, optional
+  agentType?: string // agent type id (e.g., 'grace-agent', 'echo-agent')
+}
+
+export interface AgentType {
+  id: string
+  name: string
+  description: string
+}
+
+export interface SessionEvent {
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+  sessionId: string
+  agentId?: string
+  agentName?: string
+  agentType?: string
+  error?: string
+  timestamp: string
 }
 
 // ============================================================================

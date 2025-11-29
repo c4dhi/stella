@@ -3,6 +3,8 @@ export type TurnId = string
 export type Role = 'user' | 'assistant' | 'system'
 export type TurnStatus = 'partial' | 'final'
 
+export type MessageSource = 'user_speech' | 'user_text' | 'agent_response'
+
 export interface TranscriptChunk {
   id: TurnId
   role: Role
@@ -10,7 +12,13 @@ export interface TranscriptChunk {
   status: TurnStatus
   startedAt: number
   finalizedAt?: number
-  participant_id?: string  // Agent name or participant identifier
+  // Attribution fields
+  participant_id?: string    // Backwards compat - sender identity
+  speaker_id?: string        // Who spoke (for user_speech/user_text)
+  speaker_name?: string      // Display name of speaker
+  agent_id?: string          // Agent ID (for agent_response)
+  agent_name?: string        // Agent display name
+  source?: MessageSource     // Message origin: user_speech, user_text, agent_response
 }
 
 // New message processing stream types
@@ -150,6 +158,7 @@ export type EnvelopeType =
   | 'heartbeat'
   | 'transcript'
   | 'transcript_chunk'
+  | 'agent_text'
   | 'system'
   | 'audio_data'
   | 'audio_stream_start'

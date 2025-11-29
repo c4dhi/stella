@@ -22,6 +22,7 @@ DAEMON_MODE=false
 STOP_MODE=false
 REBUILD_MODE=false
 RESET_DB_MODE=false
+SKIP_BUILD_MODE=false
 ENV_FLAG=""
 
 # Configurable temp directory for build artifacts and logs
@@ -83,7 +84,7 @@ PID_DIR="${TEMP_DIR}/grace-ai-k8s"
 # First pass: check for unknown flags
 for arg in "$@"; do
     case $arg in
-        --daemon|-d|--stop|--help|-h|--local|--production|--rebuild|--reset-db)
+        --daemon|-d|--stop|--help|-h|--local|--production|--rebuild|--reset-db|--skip-build)
             # Known flags
             ;;
         -*)
@@ -96,6 +97,7 @@ for arg in "$@"; do
             echo "  --production    Run in production mode (external LiveKit)"
             echo "  --rebuild       Force clean rebuild (deletes pods, images, rebuilds without cache)"
             echo "  --reset-db      Reset database (use with --rebuild to also reset postgres)"
+            echo "  --skip-build    Skip building images (just restart pods with existing images)"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
@@ -119,6 +121,9 @@ for arg in "$@"; do
         --reset-db)
             RESET_DB_MODE=true
             ;;
+        --skip-build)
+            SKIP_BUILD_MODE=true
+            ;;
         --local)
             ENV_FLAG="local"
             ;;
@@ -133,15 +138,17 @@ for arg in "$@"; do
             echo "  --production    Run in production mode (external LiveKit)"
             echo "  --rebuild       Force clean rebuild (deletes pods, images, rebuilds without cache)"
             echo "  --reset-db      Reset database (use with --rebuild to also reset postgres)"
+            echo "  --skip-build    Skip building images (just restart pods with existing images)"
             echo "  --daemon, -d    Run in background (survives SSH logout)"
             echo "  --stop          Stop background services"
             echo "  --help, -h      Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                      # Run locally in foreground (default)"
+            echo "  $0                      # Run locally, auto-detect changed services"
             echo "  $0 --production         # Run in production mode"
-            echo "  $0 --rebuild            # Clean rebuild (keeps database)"
+            echo "  $0 --rebuild            # Clean rebuild all services (keeps database)"
             echo "  $0 --rebuild --reset-db # Clean rebuild including database"
+            echo "  $0 --skip-build         # Restart pods without rebuilding (fast restart)"
             echo "  $0 --daemon             # Run locally in background"
             echo "  $0 --stop               # Stop background services"
             exit 0
@@ -357,7 +364,9 @@ export PORT=3000
 
 # Kubernetes configuration
 export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
-export AGENT_IMAGE="${AGENT_IMAGE:-conversational-ai-server-python:latest}"
+# Agent images are now built on-demand when first assigned to a session
+# See: AgentImageService in session-management-server
+export DEFAULT_AGENT_TYPE="${DEFAULT_AGENT_TYPE:-grace-agent}"
 export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
 
 # Legacy compatibility
@@ -1073,6 +1082,161 @@ echo -e "${GREEN}📡 Using LiveKit server:${NC}"
 echo -e "  ${GREEN}Internal (K8s pods):${NC} ${LIVEKIT_URL}"
 echo -e "  ${GREEN}Public (browsers):${NC}   ${PUBLIC_LIVEKIT_URL}"
 
+# ============================================================================
+# Smart Incremental Build System
+# ============================================================================
+# Tracks file checksums to detect changes and only rebuild modified services
+# Checksums stored in $PID_DIR/checksums/ directory
+CHECKSUM_DIR="${PID_DIR}/checksums"
+mkdir -p "$CHECKSUM_DIR"
+
+# Calculate checksum for a service directory
+# Uses find + md5 to create a hash of all source files
+calculate_service_checksum() {
+    local service_name=$1
+    local service_dir=$2
+    local dockerfile=$3
+
+    # Get list of relevant files (exclude node_modules, __pycache__, .git, etc.)
+    # Includes: source code, configs, scripts, styles, and build files
+    local checksum=""
+
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        # macOS: Use md5 command
+        checksum=$(find "$service_dir" -type f \
+            \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+            -o -name "*.py" -o -name "*.json" -o -name "*.yaml" -o -name "*.yml" \
+            -o -name "Dockerfile*" -o -name "*.toml" -o -name "*.cfg" \
+            -o -name "requirements*.txt" -o -name "package*.json" \
+            -o -name "*.css" -o -name "*.html" -o -name "*.conf" -o -name "*.sh" \
+            -o -name "*.prisma" -o -name "*.env.example" \) \
+            ! -path "*/node_modules/*" ! -path "*/__pycache__/*" ! -path "*/.git/*" \
+            ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/.next/*" \
+            -exec md5 -q {} \; 2>/dev/null | sort | md5 -q)
+    else
+        # Linux: Use md5sum command
+        checksum=$(find "$service_dir" -type f \
+            \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+            -o -name "*.py" -o -name "*.json" -o -name "*.yaml" -o -name "*.yml" \
+            -o -name "Dockerfile*" -o -name "*.toml" -o -name "*.cfg" \
+            -o -name "requirements*.txt" -o -name "package*.json" \
+            -o -name "*.css" -o -name "*.html" -o -name "*.conf" -o -name "*.sh" \
+            -o -name "*.prisma" -o -name "*.env.example" \) \
+            ! -path "*/node_modules/*" ! -path "*/__pycache__/*" ! -path "*/.git/*" \
+            ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/.next/*" \
+            -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+    fi
+
+    # Also include the Dockerfile in the checksum
+    if [ -f "$dockerfile" ]; then
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            local dockerfile_hash=$(md5 -q "$dockerfile")
+        else
+            local dockerfile_hash=$(md5sum "$dockerfile" | cut -d' ' -f1)
+        fi
+        checksum="${checksum}${dockerfile_hash}"
+
+        # Rehash combined
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            checksum=$(echo "$checksum" | md5 -q)
+        else
+            checksum=$(echo "$checksum" | md5sum | cut -d' ' -f1)
+        fi
+    fi
+
+    echo "$checksum"
+}
+
+# Check if a service needs to be rebuilt
+# Returns 0 (true) if rebuild needed, 1 (false) if unchanged
+service_needs_rebuild() {
+    local service_name=$1
+    local service_dir=$2
+    local dockerfile=$3
+
+    local current_checksum=$(calculate_service_checksum "$service_name" "$service_dir" "$dockerfile")
+    local cached_checksum_file="${CHECKSUM_DIR}/${service_name}.checksum"
+
+    # If no cached checksum, needs rebuild
+    if [ ! -f "$cached_checksum_file" ]; then
+        echo "$current_checksum" > "$cached_checksum_file"
+        return 0  # Needs rebuild
+    fi
+
+    local cached_checksum=$(cat "$cached_checksum_file")
+
+    if [ "$current_checksum" != "$cached_checksum" ]; then
+        echo "$current_checksum" > "$cached_checksum_file"
+        return 0  # Needs rebuild
+    fi
+
+    return 1  # No rebuild needed
+}
+
+# Update cached checksum after successful build
+update_service_checksum() {
+    local service_name=$1
+    local service_dir=$2
+    local dockerfile=$3
+
+    local current_checksum=$(calculate_service_checksum "$service_name" "$service_dir" "$dockerfile")
+    echo "$current_checksum" > "${CHECKSUM_DIR}/${service_name}.checksum"
+}
+
+# Clear all cached checksums (used with --rebuild)
+clear_all_checksums() {
+    rm -f "${CHECKSUM_DIR}"/*.checksum 2>/dev/null || true
+}
+
+# Smart build wrapper - only builds if service has changed
+# Usage: smart_build "service-name" "tag" "context" "$USE_BUILDKIT" "build_args" "dockerfile"
+# Returns: 0 if built, 1 if skipped (unchanged)
+smart_build() {
+    local IMAGE_NAME=$1
+    local TAG=$2
+    local CONTEXT=$3
+    local USE_BUILDKIT=$4
+    local BUILD_ARGS="${5:-}"
+    local DOCKERFILE="${6:-Dockerfile}"  # Default to Dockerfile in context
+
+    # In skip-build mode, skip everything
+    if [ "$SKIP_BUILD_MODE" = true ]; then
+        echo -e "  • ${IMAGE_NAME}... ${YELLOW}skipped (--skip-build)${NC}"
+        return 1
+    fi
+
+    # Determine the service directory (context path or current dir)
+    local SERVICE_DIR="$CONTEXT"
+    if [ "$SERVICE_DIR" = "." ]; then
+        SERVICE_DIR="."
+    fi
+
+    # Determine dockerfile path
+    local DOCKERFILE_PATH="${CONTEXT}/${DOCKERFILE}"
+    if [ "$CONTEXT" = "." ]; then
+        DOCKERFILE_PATH="./${DOCKERFILE}"
+    fi
+
+    # In rebuild mode, always build
+    if [ "$REBUILD_MODE" = true ]; then
+        build_with_progress "$IMAGE_NAME" "$TAG" "$CONTEXT" "$USE_BUILDKIT" "$BUILD_ARGS"
+        update_service_checksum "$IMAGE_NAME" "$SERVICE_DIR" "$DOCKERFILE_PATH"
+        REBUILT_SERVICES+=("$IMAGE_NAME")
+        return 0
+    fi
+
+    # Smart mode: check if rebuild is needed
+    if service_needs_rebuild "$IMAGE_NAME" "$SERVICE_DIR" "$DOCKERFILE_PATH"; then
+        build_with_progress "$IMAGE_NAME" "$TAG" "$CONTEXT" "$USE_BUILDKIT" "$BUILD_ARGS"
+        update_service_checksum "$IMAGE_NAME" "$SERVICE_DIR" "$DOCKERFILE_PATH"
+        REBUILT_SERVICES+=("$IMAGE_NAME")
+        return 0
+    else
+        echo -e "  • ${IMAGE_NAME}... ${GREEN}unchanged ✓${NC}"
+        return 1
+    fi
+}
+
 # Detect if BuildKit/buildx is available
 USE_BUILDKIT=false
 if docker buildx version > /dev/null 2>&1; then
@@ -1237,9 +1401,11 @@ if [ "$REBUILD_MODE" = true ]; then
     kubectl get pods -n ai-agents --no-headers 2>/dev/null | grep -E "Unknown|Error|ContainerStatusUnknown" | awk '{print $1}' | xargs -r kubectl delete pod -n ai-agents --force --grace-period=0 2>/dev/null || true
     echo -e "${GREEN}✓${NC}"
 
-    # Remove old Docker images
+    # Remove old Docker images (core services only, agent images are built on-demand)
     echo -n "  • Removing old Docker images... "
     docker rmi session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest 2>/dev/null || true
+    # Also clean up any cached agent images
+    docker rmi grace-agent:latest 2>/dev/null || true
     echo -e "${GREEN}✓${NC}"
 
     # Clean up k3s containerd images (Linux only)
@@ -1250,6 +1416,8 @@ if [ "$REBUILD_MODE" = true ]; then
         sudo k3s ctr images rm docker.io/library/tts-service:latest 2>/dev/null || true
         sudo k3s ctr images rm docker.io/library/frontend-ui:latest 2>/dev/null || true
         sudo k3s ctr images rm docker.io/library/message-recorder-python:latest 2>/dev/null || true
+        # Also clean up any cached agent images
+        sudo k3s ctr images rm docker.io/library/grace-agent:latest 2>/dev/null || true
         echo -e "${GREEN}✓${NC}"
     fi
 
@@ -1282,8 +1450,17 @@ fi
 
 # Build Docker images
 echo -e "${GREEN}🔨 Building Docker images...${NC}"
+
+# Track which services were actually rebuilt
+REBUILT_SERVICES=()
+
 if [ "$REBUILD_MODE" = true ]; then
-    echo -e "${BLUE}  🔄 Forcing clean builds (--no-cache)${NC}"
+    echo -e "${BLUE}  🔄 Forcing clean rebuild of all services (--no-cache)${NC}"
+    clear_all_checksums
+elif [ "$SKIP_BUILD_MODE" = true ]; then
+    echo -e "${BLUE}  ⏭️  Skipping builds (--skip-build), using existing images${NC}"
+else
+    echo -e "${BLUE}  🔍 Smart build: checking for changes...${NC}"
 fi
 
 # Determine if GPU support should be enabled
@@ -1334,7 +1511,8 @@ fi
 
 # Validate build directories exist
 echo -n "  • Validating build directories... "
-# Note: conversational-ai-server-python removed - replaced by microservices architecture
+# Core services built at startup. Agent images (grace-agent, etc.) are built on-demand
+# when first assigned to a session. See AgentImageService for on-demand building.
 BUILD_DIRS=("./frontend-ui" "./message-recorder-python" "./stt-service" "./tts-service")
 for dir in "${BUILD_DIRS[@]}"; do
     if [ ! -d "$dir" ]; then
@@ -1345,13 +1523,30 @@ for dir in "${BUILD_DIRS[@]}"; do
 done
 echo -e "${GREEN}✓${NC}"
 
-build_with_progress "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT"
+# Compute Prisma schema checksum for cache busting
+# This ensures the Prisma client is regenerated when the schema changes
+PRISMA_SCHEMA_CHECKSUM=$(md5sum ./prisma/schema.prisma 2>/dev/null | cut -d' ' -f1 || md5 -q ./prisma/schema.prisma 2>/dev/null || echo "default")
+# Construct DATABASE_URL for Prisma generate during build (uses postgres service name for K8s)
+BUILD_DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
+SESSION_SERVER_BUILD_ARGS="--build-arg PRISMA_SCHEMA_CHECKSUM=${PRISMA_SCHEMA_CHECKSUM} --build-arg DATABASE_URL=${BUILD_DATABASE_URL}"
+echo "  📋 Prisma schema checksum: ${PRISMA_SCHEMA_CHECKSUM:0:8}..."
+
+# Use smart_build for incremental builds - only rebuilds changed services
+# Note: || true prevents set -e from exiting when service is unchanged (returns 1)
+smart_build "session-management-server" "session-management-server:latest" "." "$USE_BUILDKIT" "$SESSION_SERVER_BUILD_ARGS" || true
 # DISABLED: Monolith replaced by STT microservice
-# build_with_progress "conversational-ai-server-python" "conversational-ai-server-python:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS"
-build_with_progress "stt-service" "stt-service:latest" "./stt-service" "$USE_BUILDKIT" "$STT_BUILD_ARGS"
-build_with_progress "tts-service" "tts-service:latest" "./tts-service" "$USE_BUILDKIT" "$TTS_BUILD_ARGS"
-build_with_progress "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT"
-build_with_progress "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT"
+# smart_build "conversational-ai-server-python" "conversational-ai-server-python:latest" "./conversational-ai-server-python" "$USE_BUILDKIT" "$AI_SERVER_BUILD_ARGS" || true
+smart_build "stt-service" "stt-service:latest" "./stt-service" "$USE_BUILDKIT" "$STT_BUILD_ARGS" || true
+smart_build "tts-service" "tts-service:latest" "./tts-service" "$USE_BUILDKIT" "$TTS_BUILD_ARGS" || true
+smart_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$USE_BUILDKIT" "" || true
+smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" "$USE_BUILDKIT" "" || true
+
+# Print build summary
+if [ ${#REBUILT_SERVICES[@]} -eq 0 ]; then
+    echo -e "${GREEN}✅ All services up to date - no builds needed${NC}"
+else
+    echo -e "${GREEN}✅ Built ${#REBUILT_SERVICES[@]} service(s): ${REBUILT_SERVICES[*]}${NC}"
+fi
 
 # Import Docker images into K3s containerd
 if [[ "$OS_TYPE" == "macos" ]]; then
@@ -1360,39 +1555,50 @@ if [[ "$OS_TYPE" == "macos" ]]; then
     echo -e "${GREEN}📦 Images available to K3s (shared Docker daemon)${NC}"
 else
     # Linux: K3s has separate containerd, need to import images
-    echo -e "${GREEN}📦 Importing images into K3s containerd...${NC}"
-
-    # Save Docker images to tar files
-    echo -n "  • Exporting Docker images... "
-    if docker save session-management-server:latest stt-service:latest tts-service:latest frontend-ui:latest message-recorder-python:latest -o ${TEMP_DIR}/k3s-images.tar 2>${TEMP_DIR}/docker-save-error.log; then
-        echo -e "${GREEN}✓${NC}"
+    # Only import images that were actually rebuilt (optimization)
+    if [ ${#REBUILT_SERVICES[@]} -eq 0 ]; then
+        echo -e "${GREEN}📦 No images to import (all services unchanged)${NC}"
     else
-        echo -e "${RED}✗${NC}"
-        echo -e "${RED}Error exporting Docker images:${NC}"
-        cat ${TEMP_DIR}/docker-save-error.log
-        exit 1
+        echo -e "${GREEN}📦 Importing rebuilt images into K3s containerd...${NC}"
+
+        # Build list of image tags to export
+        IMAGES_TO_EXPORT=""
+        for service in "${REBUILT_SERVICES[@]}"; do
+            IMAGES_TO_EXPORT="${IMAGES_TO_EXPORT} ${service}:latest"
+        done
+
+        # Save Docker images to tar files
+        echo -n "  • Exporting ${#REBUILT_SERVICES[@]} image(s)... "
+        if docker save ${IMAGES_TO_EXPORT} -o ${TEMP_DIR}/k3s-images.tar 2>${TEMP_DIR}/docker-save-error.log; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${RED}✗${NC}"
+            echo -e "${RED}Error exporting Docker images:${NC}"
+            cat ${TEMP_DIR}/docker-save-error.log
+            exit 1
+        fi
+
+        # Import into K3s containerd
+        echo -n "  • Importing into K3s containerd... "
+        if sudo k3s ctr images import ${TEMP_DIR}/k3s-images.tar > ${TEMP_DIR}/k3s-import.log 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${RED}✗${NC}"
+            echo -e "${RED}Error importing images into K3s:${NC}"
+            cat ${TEMP_DIR}/k3s-import.log
+            echo ""
+            echo -e "${YELLOW}Troubleshooting:${NC}"
+            echo -e "  1. Check K3s is running: ${BLUE}sudo systemctl status k3s${NC}"
+            echo -e "  2. Check containerd socket: ${BLUE}sudo ls -la /run/k3s/containerd/containerd.sock${NC}"
+            echo -e "  3. Check disk space: ${BLUE}df -h /var/lib/rancher/k3s${NC}"
+            exit 1
+        fi
+
+        # Clean up tar file
+        rm -f ${TEMP_DIR}/k3s-images.tar ${TEMP_DIR}/docker-save-error.log ${TEMP_DIR}/k3s-import.log
+
+        echo -e "${GREEN}✓ ${#REBUILT_SERVICES[@]} image(s) imported to K3s${NC}"
     fi
-
-    # Import into K3s containerd
-    echo -n "  • Importing into K3s containerd... "
-    if sudo k3s ctr images import ${TEMP_DIR}/k3s-images.tar > ${TEMP_DIR}/k3s-import.log 2>&1; then
-        echo -e "${GREEN}✓${NC}"
-    else
-        echo -e "${RED}✗${NC}"
-        echo -e "${RED}Error importing images into K3s:${NC}"
-        cat ${TEMP_DIR}/k3s-import.log
-        echo ""
-        echo -e "${YELLOW}Troubleshooting:${NC}"
-        echo -e "  1. Check K3s is running: ${BLUE}sudo systemctl status k3s${NC}"
-        echo -e "  2. Check containerd socket: ${BLUE}sudo ls -la /run/k3s/containerd/containerd.sock${NC}"
-        echo -e "  3. Check disk space: ${BLUE}df -h /var/lib/rancher/k3s${NC}"
-        exit 1
-    fi
-
-    # Clean up tar file
-    rm -f ${TEMP_DIR}/k3s-images.tar ${TEMP_DIR}/docker-save-error.log ${TEMP_DIR}/k3s-import.log
-
-    echo -e "${GREEN}✓ Images available to K3s${NC}"
 fi
 
 # Detect network IP for public URLs
@@ -1492,26 +1698,14 @@ fi
 
 # Deploy to Kubernetes
 echo -e "${GREEN}☸️  Deploying to Kubernetes...${NC}"
+
+# Phase 1: Deploy namespace, secrets, and database first
 kubectl apply -f k8s/00-namespace.yaml > /dev/null
-kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
-kubectl apply -f k8s/01-postgres.yaml > /dev/null
 kubectl apply -f k8s/03-secrets.yaml > /dev/null
 kubectl apply -f ${TEMP_DIR}/04-configmap-updated.yaml > /dev/null
 kubectl apply -f k8s/05-rbac.yaml > /dev/null
-kubectl apply -f ${TEMP_DIR}/06-message-recorder-updated.yaml > /dev/null
-kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
-kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
-kubectl apply -f "$STT_MANIFEST" > /dev/null
-kubectl apply -f "$TTS_MANIFEST" > /dev/null
 
-# Apply NodePort services for local development only
-# Production uses ClusterIP services (already created) + port-forward
-if [ "$NODE_ENV" != "production" ]; then
-    echo -e "${BLUE}  • Applying NodePort services for local development...${NC}"
-    kubectl apply -f k8s/local/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
-fi
-
-# Create secrets
+# Create secrets (needed by all services)
 DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 kubectl create secret generic grace-ai-secrets -n ai-agents \
   --from-literal=postgres-db="$POSTGRES_DB" \
@@ -1526,9 +1720,25 @@ kubectl create secret generic grace-ai-secrets -n ai-agents \
   --from-literal=elevenlabs-api-key="${ELEVENLABS_API_KEY:-}" \
   --dry-run=client -o yaml | kubectl apply -f - > /dev/null
 
-# Wait for services
+# Phase 2: Deploy and wait for PostgreSQL
+kubectl apply -f k8s/01-postgres-config.yaml > /dev/null 2>&1 || true
+kubectl apply -f k8s/01-postgres.yaml > /dev/null
 echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+
+# Phase 3: Deploy services that depend on PostgreSQL (session-management-server runs migrations)
+kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
+kubectl apply -f ${TEMP_DIR}/06-message-recorder-updated.yaml > /dev/null
+kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
+kubectl apply -f "$STT_MANIFEST" > /dev/null
+kubectl apply -f "$TTS_MANIFEST" > /dev/null
+
+# Apply NodePort services for local development only
+# Production uses ClusterIP services (already created) + port-forward
+if [ "$NODE_ENV" != "production" ]; then
+    echo -e "${BLUE}  • Applying NodePort services for local development...${NC}"
+    kubectl apply -f k8s/local/ > /dev/null 2>&1 || echo -e "${YELLOW}    (NodePort services may already exist)${NC}"
+fi
 
 # LiveKit: Using external server with dual URLs
 echo -e "  • LiveKit: Internal=${LIVEKIT_URL}, Public=${PUBLIC_LIVEKIT_URL} ${GREEN}✓${NC}"
@@ -1557,24 +1767,100 @@ if [ "$ENABLE_GPU" = "true" ]; then
     fi
 fi
 
-# Restart deployments (all services to pick up new images)
-kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
-kubectl rollout restart deployment frontend-ui -n ai-agents > /dev/null 2>&1
-kubectl rollout restart deployment stt-service -n ai-agents > /dev/null 2>&1
-kubectl rollout restart deployment tts-service -n ai-agents > /dev/null 2>&1
-kubectl rollout restart deployment message-recorder -n ai-agents > /dev/null 2>&1
+# Restart deployments (only services that were rebuilt)
+# Helper function to check if a service was rebuilt
+service_was_rebuilt() {
+    local service=$1
+    for rebuilt in "${REBUILT_SERVICES[@]}"; do
+        if [ "$rebuilt" = "$service" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
-echo -n "  • Waiting for backend... "
-kubectl rollout status deployment/session-management-server -n ai-agents --timeout=180s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+# Map image names to deployment names
+# session-management-server -> session-management-server
+# frontend-ui -> frontend-ui
+# stt-service -> stt-service
+# tts-service -> tts-service
+# message-recorder-python -> message-recorder
 
-echo -n "  • Waiting for frontend... "
-kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+if [ ${#REBUILT_SERVICES[@]} -eq 0 ] && [ "$SKIP_BUILD_MODE" != true ]; then
+    echo -e "${GREEN}🔄 No services rebuilt - skipping pod restarts${NC}"
+else
+    echo -e "${GREEN}🔄 Restarting rebuilt services...${NC}"
 
-echo -n "  • Waiting for STT service... "
-kubectl rollout status deployment/stt-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+    # Always restart in rebuild mode or skip-build mode (for skip-build, user wants fresh pods)
+    if [ "$REBUILD_MODE" = true ] || [ "$SKIP_BUILD_MODE" = true ]; then
+        kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
+        kubectl rollout restart deployment frontend-ui -n ai-agents > /dev/null 2>&1
+        kubectl rollout restart deployment stt-service -n ai-agents > /dev/null 2>&1
+        kubectl rollout restart deployment tts-service -n ai-agents > /dev/null 2>&1
+        kubectl rollout restart deployment message-recorder -n ai-agents > /dev/null 2>&1
+    else
+        # Smart mode: only restart rebuilt services
+        if service_was_rebuilt "session-management-server"; then
+            kubectl rollout restart deployment session-management-server -n ai-agents > /dev/null 2>&1
+            echo -e "  ${BLUE}↻ session-management-server${NC}"
+        fi
+        if service_was_rebuilt "frontend-ui"; then
+            kubectl rollout restart deployment frontend-ui -n ai-agents > /dev/null 2>&1
+            echo -e "  ${BLUE}↻ frontend-ui${NC}"
+        fi
+        if service_was_rebuilt "stt-service"; then
+            kubectl rollout restart deployment stt-service -n ai-agents > /dev/null 2>&1
+            echo -e "  ${BLUE}↻ stt-service${NC}"
+        fi
+        if service_was_rebuilt "tts-service"; then
+            kubectl rollout restart deployment tts-service -n ai-agents > /dev/null 2>&1
+            echo -e "  ${BLUE}↻ tts-service${NC}"
+        fi
+        if service_was_rebuilt "message-recorder-python"; then
+            kubectl rollout restart deployment message-recorder -n ai-agents > /dev/null 2>&1
+            echo -e "  ${BLUE}↻ message-recorder${NC}"
+        fi
+    fi
+fi
 
-echo -n "  • Waiting for TTS service... "
-kubectl rollout status deployment/tts-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+# Wait for deployments that were restarted (or all if rebuild/skip-build mode)
+WAIT_BACKEND=false
+WAIT_FRONTEND=false
+WAIT_STT=false
+WAIT_TTS=false
+
+if [ "$REBUILD_MODE" = true ] || [ "$SKIP_BUILD_MODE" = true ] || service_was_rebuilt "session-management-server"; then
+    WAIT_BACKEND=true
+fi
+if [ "$REBUILD_MODE" = true ] || [ "$SKIP_BUILD_MODE" = true ] || service_was_rebuilt "frontend-ui"; then
+    WAIT_FRONTEND=true
+fi
+if [ "$REBUILD_MODE" = true ] || [ "$SKIP_BUILD_MODE" = true ] || service_was_rebuilt "stt-service"; then
+    WAIT_STT=true
+fi
+if [ "$REBUILD_MODE" = true ] || [ "$SKIP_BUILD_MODE" = true ] || service_was_rebuilt "tts-service"; then
+    WAIT_TTS=true
+fi
+
+if [ "$WAIT_BACKEND" = true ]; then
+    echo -n "  • Waiting for backend... "
+    kubectl rollout status deployment/session-management-server -n ai-agents --timeout=180s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
+
+if [ "$WAIT_FRONTEND" = true ]; then
+    echo -n "  • Waiting for frontend... "
+    kubectl rollout status deployment/frontend-ui -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
+
+if [ "$WAIT_STT" = true ]; then
+    echo -n "  • Waiting for STT service... "
+    kubectl rollout status deployment/stt-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
+
+if [ "$WAIT_TTS" = true ]; then
+    echo -n "  • Waiting for TTS service... "
+    kubectl rollout status deployment/tts-service -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+fi
 
 
 # Start port-forwards

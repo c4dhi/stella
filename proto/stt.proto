@@ -36,4 +36,5 @@ message TranscriptEvent {
   string participant_id = 4;   // Who was speaking
   float confidence = 5;        // Confidence score (0.0-1.0)
   int64 timestamp_ms = 6;      // Server timestamp
+  bool speech_started = 7;     // VAD detected speech start (for barge-in)
 }

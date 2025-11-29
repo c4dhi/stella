@@ -202,12 +202,13 @@ export default function Composer() {
           <motion.button
             onClick={toggleMute}
             disabled={status !== 'connected'}
-            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-300 ${status !== 'connected'
-              ? 'bg-neutral-100/60 text-neutral-400 cursor-not-allowed'
-              : isMuted
-                ? 'bg-red-100/80 text-red-600 hover:bg-red-200/80 border border-red-300/60'
-                : 'bg-green-100/80 text-green-600 hover:bg-green-200/80 border border-green-300/60'
-              }`}
+            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-300 ${
+              status !== 'connected'
+                ? 'bg-neutral-100/60 text-neutral-400 cursor-not-allowed'
+                : isMuted
+                  ? 'bg-red-100/80 text-red-600 hover:bg-red-200/80 border border-red-300/60'
+                  : 'bg-green-100/80 text-green-600 hover:bg-green-200/80 border border-green-300/60'
+            }`}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}

@@ -19,6 +19,8 @@ import type {
   AgentInstance,
   AgentWithPodStatus,
   CreateAgentDto,
+  AgentType,
+  SessionEvent,
   DeleteResponse,
   ApiError,
   Participant,
@@ -247,6 +249,10 @@ class SessionManagementClient {
   // Agents API
   // ============================================================================
 
+  async getAgentTypes(): Promise<AgentType[]> {
+    return this.get<AgentType[]>('/agent-types')
+  }
+
   async createAgent(
     sessionId: string,
     data: CreateAgentDto
@@ -390,6 +396,51 @@ class SessionManagementClient {
 
   async getNetworkInfo(): Promise<NetworkInfoResponse> {
     return this.get<NetworkInfoResponse>('/network-info')
+  }
+
+  // ============================================================================
+  // SSE Session Events API
+  // ============================================================================
+
+  /**
+   * Subscribe to real-time session events (agent ready, failed, etc.)
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToSessionEvents(
+    sessionId: string,
+    onEvent: (event: SessionEvent) => void,
+    onError?: (error: Event) => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/sessions/${sessionId}/events`
+
+    // Get auth token
+    const token = localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: SessionEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] SSE connection error:', e)
+      if (onError) {
+        onError(e)
+      }
+    }
+
+    // Return cleanup function
+    return () => {
+      eventSource.close()
+    }
   }
 }
 

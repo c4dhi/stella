@@ -22,10 +22,11 @@ message HealthResponse {
 
 // Audio data sent from client to STT service
 message AudioChunk {
-  bytes audio_data = 1;        // Raw PCM audio (16-bit, 16kHz, mono)
+  bytes audio_data = 1;        // Raw PCM audio (16-bit, mono)
   string session_id = 2;       // Session identifier for logging
   string participant_id = 3;   // Who is speaking (for transcript attribution)
   int64 timestamp_ms = 4;      // Client timestamp for latency tracking
+  int32 sample_rate = 5;       // Sample rate of audio_data (e.g., 48000, 16000)
 }
 
 // Transcript events sent from STT service to client
@@ -36,4 +37,5 @@ message TranscriptEvent {
   string participant_id = 4;   // Who was speaking
   float confidence = 5;        // Confidence score (0.0-1.0)
   int64 timestamp_ms = 6;      // Server timestamp
+  bool speech_started = 7;     // VAD detected speech start (for barge-in)
 }

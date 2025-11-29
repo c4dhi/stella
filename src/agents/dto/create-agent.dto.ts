@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, MaxLength, IsBoolean } from 'class-validator';
 
 export class CreateAgentDto {
   @IsString()
@@ -15,4 +15,13 @@ export class CreateAgentDto {
   @IsOptional()
   @MaxLength(255)
   planId?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  agentType?: string;  // Agent type identifier (e.g., "grace-agent") for gRPC orchestrator
+
+  @IsBoolean()
+  @IsOptional()
+  forceRebuild?: boolean;  // Force rebuild the agent image (useful after SDK updates)
 }

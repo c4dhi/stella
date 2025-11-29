@@ -104,8 +104,16 @@ model AgentInstance {
   secretName    String?
   configMapName String?
   planId        String?
+  agentType     String?      @default("grace-agent")  // Agent type identifier for image selection
   createdAt     DateTime     @default(now())
   stoppedAt     DateTime?
+
+  // Health tracking (Phase 3.2)
+  healthState       String?   @default("unknown")  // Agent state: initializing, ready, processing, error, etc.
+  lastHealthCheck   DateTime?                      // Last time health check was performed
+  lastError         String?                        // Last error message from agent
+  messagesProcessed Int       @default(0)          // Number of messages processed by agent
+  grpcAddress       String?                        // gRPC address for agent connection (e.g., "agent-pod:50051")
 
   @@index([sessionId])
   @@index([status])

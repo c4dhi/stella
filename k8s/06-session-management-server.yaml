@@ -7,8 +7,12 @@ spec:
   selector:
     app: session-management-server
   ports:
-    - port: 3000
+    - name: http
+      port: 3000
       targetPort: 3000
+    - name: grpc
+      port: 50051
+      targetPort: 50051
   type: ClusterIP
 ---
 apiVersion: apps/v1
@@ -27,12 +31,28 @@ spec:
         app: session-management-server
     spec:
       serviceAccountName: session-management-sa
+      initContainers:
+      # Wait for PostgreSQL to be ready before starting the main container
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for PostgreSQL to be ready..."
+          until nc -z postgres 5432; do
+            echo "PostgreSQL is unavailable - sleeping 2s"
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
       containers:
       - name: server
         image: session-management-server:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
+          name: http
+        - containerPort: 50051
+          name: grpc
         envFrom:
         - configMapRef:
             name: grace-ai-config
@@ -72,11 +92,25 @@ spec:
             secretKeyRef:
               name: grace-ai-secrets
               key: elevenlabs-api-key
+        # Docker socket for building agent images
+        - name: DOCKER_HOST
+          value: "unix:///var/run/docker.sock"
+        # Workspace path for agent image building
+        - name: AGENT_WORKSPACE_ROOT
+          value: "/workspace"
         command: ["sh", "-c"]
         args:
         - |
           # Run database migrations and start the NestJS server
           npx prisma migrate deploy && node dist/main
+        volumeMounts:
+        # Mount Docker socket for building images
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        # Mount workspace for agent source code
+        - name: workspace
+          mountPath: /workspace
+          readOnly: true
         resources:
           requests:
             memory: "512Mi"
@@ -96,3 +130,14 @@ spec:
             port: 3000
           initialDelaySeconds: 10
           periodSeconds: 5
+      volumes:
+      # Docker socket from host (for building images)
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      # Workspace directory containing agent source code
+      - name: workspace
+        hostPath:
+          path: /Users/felixmoser/Github/grace-ai-workspace
+          type: Directory

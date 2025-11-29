@@ -128,7 +128,9 @@ class SpeechToTextServicer(stt_pb2_grpc.SpeechToTextServicer):
                           f"provider: {self.engine.provider_name}")
 
                 # Process audio and yield events
-                events = session.process_audio(chunk.audio_data)
+                # Pass sample_rate from proto (default to 16000 for backwards compatibility)
+                sample_rate = chunk.sample_rate if chunk.sample_rate > 0 else 16000
+                events = session.process_audio(chunk.audio_data, sample_rate=sample_rate)
                 for event in events:
                     yield event
 

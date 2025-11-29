@@ -78,6 +78,7 @@ export default function SessionView() {
   const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
   const audioLevel = useStore(s => s.audioLevel)
   const isRemoteSpeaking = useStore(s => s.isRemoteSpeaking)
+  const setAgentReady = useStore(s => s.setAgentReady)
 
   // Handlers from ConnectPanel - now consolidated here
   const upsertChunk = useStore(s => s.upsertChunk)
@@ -112,6 +113,12 @@ export default function SessionView() {
         setError(null)
         const data = await apiClient.getSession(sessionId)
         setSession(data)
+
+        // Check if any agent is already running and set agentReady accordingly
+        const hasRunningAgent = data.agents?.some(agent => agent.status === 'RUNNING')
+        if (hasRunningAgent) {
+          setAgentReady(true)
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load session')
       } finally {
@@ -120,7 +127,64 @@ export default function SessionView() {
     }
 
     loadSession()
-  }, [sessionId])
+  }, [sessionId, setAgentReady])
+
+  // Subscribe to session events (agent ready, failed, etc.)
+  useEffect(() => {
+    if (!sessionId) return
+
+    const unsubscribe = apiClient.subscribeToSessionEvents(
+      sessionId,
+      (event) => {
+        console.log('[SessionView] Session event received:', event)
+
+        switch (event.type) {
+          case 'agent.ready':
+            addToast({
+              message: `${event.agentName || 'Agent'} is ready!`,
+              type: 'success'
+            })
+            // Enable audio processing now that agent is ready
+            setAgentReady(true)
+            // Refresh session to get updated agent status
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            break
+          case 'agent.failed':
+            addToast({
+              message: `${event.agentName || 'Agent'} failed: ${event.error}`,
+              type: 'error'
+            })
+            // Refresh session to get updated agent status
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            break
+          case 'agent.starting':
+            addToast({
+              message: `${event.agentName || 'Agent'} is starting...`,
+              type: 'info'
+            })
+            break
+          case 'agent.stopped':
+            addToast({
+              message: `${event.agentName || 'Agent'} has stopped`,
+              type: 'info'
+            })
+            // Disable audio processing when agent stops
+            setAgentReady(false)
+            // Refresh session to get updated agent status
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            break
+        }
+      },
+      (error) => {
+        console.error('[SessionView] SSE error:', error)
+      }
+    )
+
+    return () => {
+      console.log('[SessionView] Closing SSE connection')
+      unsubscribe()
+    }
+  }, [sessionId, addToast, setAgentReady])
 
   // Set user name on transport when available
   useEffect(() => {
@@ -164,7 +228,14 @@ export default function SessionView() {
     }
 
     // === Participant handlers (from ConnectPanel) ===
+    // Filter out agent joins - agents are notified via SSE when they're ready
     transport.onParticipantJoined = (participantId: string, participantName?: string) => {
+      // Skip agent join events - they have identities like "agent-{uuid}"
+      // Agent readiness is handled by SSE events (agent.ready) for better UX
+      if (participantId.startsWith('agent-')) {
+        console.log(`[SessionView] Skipping agent join event for ${participantId}`)
+        return
+      }
       const event: ParticipantEvent = {
         id: generateUUID(),
         type: 'joined',
@@ -176,6 +247,11 @@ export default function SessionView() {
       addParticipantEvent(event)
     }
     transport.onParticipantLeft = (participantId: string, participantName?: string) => {
+      // Skip agent leave events - they have identities like "agent-{uuid}"
+      if (participantId.startsWith('agent-')) {
+        console.log(`[SessionView] Skipping agent leave event for ${participantId}`)
+        return
+      }
       const event: ParticipantEvent = {
         id: generateUUID(),
         type: 'left',
@@ -498,11 +574,11 @@ export default function SessionView() {
   }
 
   // Deploy agent
-  const handleDeployAgent = async (name: string, icon?: string, planId?: string) => {
+  const handleDeployAgent = async (name: string, icon?: string, planId?: string, agentType?: string) => {
     if (!sessionId) return
 
     try {
-      await apiClient.createAgent(sessionId, { name, icon, planId })
+      await apiClient.createAgent(sessionId, { name, icon, planId, agentType })
       addToast({ message: 'Agent deployed successfully', type: 'success' })
 
       // Refresh session to get updated agents list

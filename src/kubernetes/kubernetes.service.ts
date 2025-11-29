@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as k8s from '@kubernetes/client-node';
+import { AgentImageService } from '../agent-image/agent-image.service';
 
 export interface AgentPodConfig {
   agentId: string;
@@ -15,6 +16,8 @@ export interface AgentPodConfig {
   // openaiApiKey removed - now read from grace-ai-secrets
   ttsProvider: string;
   planId?: string;
+  agentType?: string;       // Agent type (e.g., "grace-agent") - determines which image to use
+  forceRebuild?: boolean;   // Force rebuild the agent image
 }
 
 @Injectable()
@@ -23,13 +26,20 @@ export class KubernetesService {
   private readonly kc: k8s.KubeConfig;
   private readonly k8sApi: k8s.CoreV1Api;
   private readonly namespace: string;
-  private readonly agentImage: string;
+  private readonly defaultAgentType: string;
   private readonly imagePullPolicy: string;
+  private readonly grpcServerAddress: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private agentImageService: AgentImageService,
+  ) {
     this.namespace = this.configService.get<string>('KUBERNETES_NAMESPACE', 'default');
-    this.agentImage = this.configService.get<string>('AGENT_IMAGE', 'conversational-ai-server:latest');
+    this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'grace-agent');
     this.imagePullPolicy = this.configService.get<string>('AGENT_IMAGE_PULL_POLICY', 'IfNotPresent');
+    // Configurable gRPC server address for agent connections
+    // Allows agents to connect from anywhere (K8s, external servers, etc.)
+    this.grpcServerAddress = this.configService.get<string>('GRPC_SERVER_ADDRESS', 'session-management-server:50051');
 
     this.kc = new k8s.KubeConfig();
 
@@ -50,19 +60,32 @@ export class KubernetesService {
     const podName = `agent-${config.agentId}`;
     const secretName = `agent-secret-${config.agentId}`;
 
+    // Determine agent type (default to grace-agent)
+    const agentType = config.agentType || this.defaultAgentType;
+
+    // Ensure agent image exists (builds on-demand if needed)
+    this.logger.log(`Ensuring agent image exists for type: ${agentType}`);
+    const agentImage = await this.agentImageService.ensureImageExists(agentType, config.forceRebuild);
+    this.logger.log(`Using agent image: ${agentImage}`);
+
     // Create Secret first
     await this.createSecret(secretName, config);
 
     // Create Pod
+    // Sanitize label values - K8s labels can only contain alphanumeric, '-', '_', '.'
+    const sanitizeLabel = (value: string): string =>
+      value.replace(/[^a-zA-Z0-9\-_.]/g, '-').replace(/^-+|-+$/g, '');
+
     const pod: k8s.V1Pod = {
       metadata: {
         name: podName,
         labels: {
-          app: 'conversational-ai-agent',
+          app: 'grace-ai-agent',
           agentId: config.agentId,
           sessionId: config.sessionId,
           projectId: config.projectId,
-          agentName: config.agentName,
+          agentName: sanitizeLabel(config.agentName),
+          agentType: agentType,
         },
       },
       spec: {
@@ -93,9 +116,11 @@ export class KubernetesService {
         containers: [
           {
             name: 'agent',
-            image: this.agentImage,
+            image: agentImage,
             imagePullPolicy: this.imagePullPolicy as any,
-            command: ['python', '-u', 'main.py'],
+            // Run agent module (config from environment variables)
+            // echo-agent -> echo_agent, grace-agent -> grace_agent
+            command: ['python', '-m', agentType.replace(/-/g, '_')],
             envFrom: [
               {
                 secretRef: {
@@ -104,7 +129,15 @@ export class KubernetesService {
               },
             ],
             env: [
-              // Agent identity
+              // Agent identity for gRPC registration
+              {
+                name: 'AGENT_ID',
+                value: config.agentId,
+              },
+              {
+                name: 'SESSION_ID',
+                value: config.sessionId,
+              },
               {
                 name: 'AGENT_NAME',
                 value: config.agentName,
@@ -112,6 +145,29 @@ export class KubernetesService {
               {
                 name: 'AGENT_ICON',
                 value: config.agentIcon,
+              },
+              {
+                name: 'AGENT_TYPE',
+                value: agentType,
+              },
+              // gRPC server address (configurable via GRPC_SERVER_ADDRESS env var)
+              {
+                name: 'GRPC_SERVER',
+                value: this.grpcServerAddress,
+              },
+              // Agent identity for LiveKit room joining
+              {
+                name: 'AGENT_IDENTITY',
+                value: `agent-${config.agentId}`,
+              },
+              // STT/TTS service addresses for direct agent communication
+              {
+                name: 'STT_SERVICE_ADDRESS',
+                value: this.configService.get<string>('STT_SERVICE_ADDRESS', 'stt-service:50051'),
+              },
+              {
+                name: 'TTS_SERVICE_ADDRESS',
+                value: this.configService.get<string>('TTS_SERVICE_ADDRESS', 'tts-service:50052'),
               },
               // Environment mode (for conditional gateway IP setup)
               {
@@ -234,6 +290,19 @@ export class KubernetesService {
         this.logger.warn(`Secret ${secretName} not found`);
       } else {
         this.logger.error(`Failed to delete secret: ${error.message}`);
+      }
+    }
+  }
+
+  async deleteConfigMap(configMapName: string): Promise<void> {
+    try {
+      await this.k8sApi.deleteNamespacedConfigMap({ name: configMapName, namespace: this.namespace });
+      this.logger.log(`Deleted configmap ${configMapName} from namespace ${this.namespace}`);
+    } catch (error) {
+      if (error.response?.statusCode === 404) {
+        this.logger.warn(`ConfigMap ${configMapName} not found`);
+      } else {
+        this.logger.error(`Failed to delete configmap: ${error.message}`);
       }
     }
   }

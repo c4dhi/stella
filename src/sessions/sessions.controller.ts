@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Sse,
   ValidationPipe,
   UsePipes,
   Logger,
@@ -14,6 +15,7 @@ import {
   BadRequestException,
   Request,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
@@ -22,6 +24,13 @@ import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import type { LogEntry } from '../message-recorder/room-monitor.service';
+
+interface MessageEvent {
+  data: string;
+  id?: string;
+  type?: string;
+  retry?: number;
+}
 
 @Controller()
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -197,6 +206,13 @@ export class SessionsController {
   @Get('sessions/:sessionId/listener-status')
   getListenerStatus(@Param('sessionId') sessionId: string) {
     return this.sessionsService.getListenerStatus(sessionId);
+  }
+
+  // SSE endpoint for real-time session events (agent ready, agent failed, etc.)
+  @Sse('sessions/:sessionId/events')
+  streamSessionEvents(@Param('sessionId') sessionId: string): Observable<MessageEvent> {
+    this.logger.log(`SSE connection opened for session ${sessionId}`);
+    return this.sessionsService.getSessionEventStream(sessionId);
   }
 
   // Get monitoring logs

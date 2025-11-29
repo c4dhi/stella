@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import EmojiPicker from '../EmojiPicker'
+import { apiClient } from '../../services/ApiClient'
+import type { AgentType } from '../../lib/api-types'
 
 interface DeployAgentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string, icon?: string, planId?: string) => Promise<void>
+  onSubmit: (name: string, icon?: string, planId?: string, agentType?: string) => Promise<void>
 }
 
 export default function DeployAgentModal({
@@ -16,8 +18,33 @@ export default function DeployAgentModal({
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤖')
   const [planId, setPlanId] = useState('')
+  const [agentType, setAgentType] = useState('grace-agent')
+  const [agentTypes, setAgentTypes] = useState<AgentType[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isLoadingTypes, setIsLoadingTypes] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Fetch agent types when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setIsLoadingTypes(true)
+      apiClient.getAgentTypes()
+        .then((types) => {
+          setAgentTypes(types)
+          if (types.length > 0 && !types.find(t => t.id === agentType)) {
+            setAgentType(types[0].id)
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to fetch agent types:', err)
+          // Set default agent types if API fails
+          setAgentTypes([
+            { id: 'grace-agent', name: 'Grace Agent', description: 'Full-featured conversational AI' }
+          ])
+        })
+        .finally(() => setIsLoadingTypes(false))
+    }
+  }, [isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -31,7 +58,7 @@ export default function DeployAgentModal({
     setError(null)
 
     try {
-      await onSubmit(name.trim(), icon, planId.trim() || undefined)
+      await onSubmit(name.trim(), icon, planId.trim() || undefined, agentType)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to deploy agent')
@@ -98,6 +125,42 @@ export default function DeployAgentModal({
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Agent Type Selection */}
+              <div>
+                <label className="block text-xs font-light text-neutral-600 tracking-wider uppercase mb-2">
+                  Agent Type
+                </label>
+                {isLoadingTypes ? (
+                  <div className="h-[72px] flex items-center justify-center text-neutral-400 text-sm">
+                    Loading agent types...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {agentTypes.map((type) => (
+                      <button
+                        key={type.id}
+                        type="button"
+                        onClick={() => setAgentType(type.id)}
+                        className={`
+                          p-3 rounded-xl text-left transition-all duration-200
+                          ${agentType === type.id
+                            ? 'bg-neutral-900 text-white ring-2 ring-neutral-900'
+                            : 'bg-neutral-50/50 border border-neutral-200/60 hover:bg-neutral-100/80'
+                          }
+                        `}
+                      >
+                        <div className={`text-sm font-medium ${agentType === type.id ? 'text-white' : 'text-neutral-900'}`}>
+                          {type.name}
+                        </div>
+                        <div className={`text-xs mt-0.5 ${agentType === type.id ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                          {type.description}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Icon & Name Row */}
               <div className="flex gap-3">
                 {/* Icon Picker */}

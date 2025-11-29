@@ -46,10 +46,44 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
     onConfirm: () => {},
   })
 
+  // Track previous agent statuses to detect STARTING -> RUNNING transitions
+  const prevAgentStatusesRef = useRef<Map<string, string>>(new Map())
+
   // Sync agents when initialAgents prop changes (immediate update from parent)
   useEffect(() => {
     setAgents(initialAgents)
   }, [initialAgents])
+
+  // Auto-expand logs when agent transitions to RUNNING
+  useEffect(() => {
+    agents.forEach(agent => {
+      const prevStatus = prevAgentStatusesRef.current.get(agent.id)
+      const currentStatus = agent.status
+
+      // Detect STARTING -> RUNNING transition
+      if (prevStatus === 'STARTING' && currentStatus === 'RUNNING') {
+        console.log(`[AgentSidebar] Agent ${agent.name} is now RUNNING, auto-expanding logs`)
+
+        // Auto-expand logs for this agent
+        if (!expandedLogs.has(agent.id) && agent.podName) {
+          const newExpanded = new Set(expandedLogs)
+          newExpanded.add(agent.id)
+          setExpandedLogs(newExpanded)
+
+          // Enable auto-scroll for this agent
+          const newAutoScroll = new Map(autoScrollEnabled)
+          newAutoScroll.set(agent.id, true)
+          setAutoScrollEnabled(newAutoScroll)
+
+          // Start log stream
+          startLogStream(agent.id)
+        }
+      }
+
+      // Update previous status
+      prevAgentStatusesRef.current.set(agent.id, currentStatus)
+    })
+  }, [agents])
 
   // Poll for agents status with smart merge
   useEffect(() => {
@@ -100,6 +134,14 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   const handleDeployAgent = async (name: string, icon?: string, planId?: string) => {
     const newAgent = await apiClient.createAgent(sessionId, { name, icon, planId })
     setAgents(prev => [...prev, newAgent])
+
+    // Auto-expand console to show deployment progress
+    setExpandedLogs(prev => new Set([...prev, newAgent.id]))
+
+    // Start log stream after a short delay for pod to be created
+    setTimeout(() => {
+      startLogStream(newAgent.id)
+    }, 2000)
   }
 
   // Stop agent
@@ -271,22 +313,37 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
       ? `${apiUrl}/agents/${agentId}/logs/stream?token=${encodeURIComponent(token)}`
       : `${apiUrl}/agents/${agentId}/logs/stream`
 
+    console.log(`[AgentSidebar] Starting log stream for agent ${agentId} at ${url}`)
+
     const eventSource = new EventSource(url)
 
     eventSource.onmessage = (event) => {
-      const newLogsMap = new Map(liveLogsMap)
-      newLogsMap.set(agentId, event.data)
-      setLiveLogsMap(newLogsMap)
+      // Use functional update to avoid stale closure issue
+      setLiveLogsMap(prevMap => {
+        const newMap = new Map(prevMap)
+        newMap.set(agentId, event.data)
+        return newMap
+      })
     }
 
     eventSource.onerror = (error) => {
-      console.error('EventSource error:', error)
+      console.error('[AgentSidebar] EventSource error:', error)
       eventSource.close()
       eventSourcesMap.delete(agentId)
-      addToast({
-        message: 'Lost connection to log stream',
-        type: 'error'
+
+      // Set error message in logs - pod might not exist
+      setLiveLogsMap(prevMap => {
+        const newMap = new Map(prevMap)
+        const existingLogs = prevMap.get(agentId) || ''
+        if (!existingLogs) {
+          newMap.set(agentId, '[Console unavailable - agent pod may have been terminated]\n\nThe agent pod no longer exists in the cluster.\nThis can happen if:\n  - The agent crashed or was stopped\n  - The cluster was restarted\n  - The pod was manually deleted\n\nTry restarting the agent to view logs.')
+        }
+        return newMap
       })
+    }
+
+    eventSource.onopen = () => {
+      console.log(`[AgentSidebar] Log stream connected for agent ${agentId}`)
     }
 
     eventSourcesMap.set(agentId, eventSource)
@@ -478,18 +535,33 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     >
                       Details
                     </button>
-                    {agent.podName && (
+                    {(agent.status === 'RUNNING' || agent.status === 'STARTING') && (
                       <button
                         onClick={() => toggleLiveLogs(agent.id)}
-                        className="
+                        className={`
                           flex-1 py-1.5 px-2 rounded-lg text-xs font-light
-                          bg-white border border-neutral-200/60
-                          text-neutral-600 hover:text-neutral-900 hover:border-neutral-300/60
-                          transition-all duration-200
+                          border transition-all duration-200
                           flex items-center justify-center gap-1
-                        "
+                          ${expandedLogs.has(agent.id)
+                            ? 'bg-neutral-900 border-neutral-800 text-neutral-100'
+                            : 'bg-white border-neutral-200/60 text-neutral-600 hover:text-neutral-900 hover:border-neutral-300/60'
+                          }
+                        `}
                       >
-                        {expandedLogs.has(agent.id) ? '▼' : '▶'} Logs
+                        {expandedLogs.has(agent.id) ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                            Console
+                          </>
+                        ) : (
+                          <>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <polyline points="4 17 10 11 4 5" />
+                              <line x1="12" y1="19" x2="20" y2="19" />
+                            </svg>
+                            Console
+                          </>
+                        )}
                       </button>
                     )}
                     {(agent.status === 'STOPPED' || agent.status === 'FAILED') && (
@@ -578,7 +650,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     )}
                   </div>
 
-                  {/* Live Logs Panel */}
+                  {/* Console Logs Panel */}
                   <AnimatePresence>
                     {expandedLogs.has(agent.id) && (
                       <motion.div
@@ -588,50 +660,60 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                         transition={{ duration: 0.2 }}
                         className="mt-3 overflow-hidden"
                       >
-                        {/* Log Panel Header */}
-                        <div className="flex items-center justify-between mb-2 px-1">
-                          <span className="text-[10px] text-neutral-500 font-light tracking-wider uppercase">
-                            Live Logs
-                          </span>
-                          <button
-                            onClick={() => setMaximizedLogAgent(agent.id)}
-                            className="
-                              p-1 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800
-                              transition-all duration-200
-                            "
-                            title="Maximize logs"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                            >
-                              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-                            </svg>
-                          </button>
-                        </div>
-                        <div
-                          ref={(el) => inlineLogRefs.current.set(agent.id, el)}
-                          onScroll={(e) => handleLogScroll(agent.id, e)}
-                          className="
-                            bg-neutral-900 text-neutral-100 rounded-lg p-3
-                            font-mono text-[10px] leading-relaxed
-                            max-h-64 overflow-y-auto
-                            border border-neutral-700
-                          "
-                        >
-                          {liveLogsMap.get(agent.id) ? (
-                            <pre className="whitespace-pre-wrap break-words">
-                              {liveLogsMap.get(agent.id)}
-                            </pre>
-                          ) : (
-                            <div className="text-neutral-500 italic">
-                              Connecting to log stream...
+                        {/* Console Container with integrated header */}
+                        <div className="relative bg-neutral-900 rounded-lg border border-neutral-700 overflow-hidden">
+                          {/* Console Header */}
+                          <div className="flex items-center justify-between px-3 py-2 bg-neutral-800/50 border-b border-neutral-700">
+                            <div className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                              <span className="text-[10px] text-neutral-400 font-light tracking-wider uppercase">
+                                Console Output
+                              </span>
                             </div>
-                          )}
+                            <button
+                              onClick={() => setMaximizedLogAgent(agent.id)}
+                              className="
+                                p-1.5 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700
+                                transition-all duration-200 flex items-center gap-1
+                              "
+                              title="Open in fullscreen"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              >
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                              </svg>
+                            </button>
+                          </div>
+                          {/* Console Content */}
+                          <div
+                            ref={(el) => inlineLogRefs.current.set(agent.id, el)}
+                            onScroll={(e) => handleLogScroll(agent.id, e)}
+                            className="
+                              text-neutral-100 p-3
+                              font-mono text-[10px] leading-relaxed
+                              h-32 overflow-y-auto
+                            "
+                          >
+                            {liveLogsMap.get(agent.id) ? (
+                              <pre className="whitespace-pre-wrap break-words">
+                                {liveLogsMap.get(agent.id)}
+                              </pre>
+                            ) : (
+                              <div className="text-neutral-500 italic flex items-center gap-2">
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Connecting to log stream...
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </motion.div>
                     )}

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, UnauthorizedException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Observable, Subject, filter, map, finalize } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
@@ -10,11 +11,32 @@ import { CreateTokenDto } from './dto/create-token.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { Prisma } from '@prisma/client';
 
+// Session event types for SSE streaming
+export interface SessionEvent {
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped';
+  sessionId: string;
+  agentId?: string;
+  agentName?: string;
+  agentType?: string;
+  error?: string;
+  timestamp: string;
+}
+
+interface MessageEvent {
+  data: string;
+  id?: string;
+  type?: string;
+}
+
 @Injectable()
 export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
   private connectedSessions: Set<string> = new Set(); // Track Python recorder connections
   private lastStatusUpdate: Date = new Date();
+
+  // Event subjects for SSE streaming per session
+  private sessionEventSubjects: Map<string, Subject<SessionEvent>> = new Map();
+  private subscriberCounts: Map<string, number> = new Map();
 
   constructor(
     private prisma: PrismaService,
@@ -108,57 +130,68 @@ export class SessionsService {
   }
 
   async findOne(id: string) {
-    const session = await this.prisma.session.findUnique({
-      where: { id },
-      include: {
-        room: true,
-        agents: {
-          orderBy: {
-            createdAt: 'desc',
+    this.logger.debug(`findOne: Looking up session ${id}`);
+
+    try {
+      const session = await this.prisma.session.findUnique({
+        where: { id },
+        include: {
+          room: true,
+          agents: {
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
+          participants: {
+            where: {
+              leftAt: null,
+            },
+            orderBy: {
+              joinedAt: 'desc',
+            },
+          },
+          _count: {
+            select: {
+              messages: true,
+              events: true,
+            },
           },
         },
-        participants: {
-          where: {
-            leftAt: null,
-          },
-          orderBy: {
-            joinedAt: 'desc',
-          },
-        },
-        _count: {
-          select: {
-            messages: true,
-            events: true,
-          },
-        },
-      },
-    });
+      });
 
-    if (!session) {
-      throw new NotFoundException(`Session with ID ${id} not found`);
-    }
+      if (!session) {
+        this.logger.warn(`findOne: Session ${id} not found`);
+        throw new NotFoundException(`Session with ID ${id} not found`);
+      }
 
-    // Sync agent statuses from Kubernetes (only when session is actively viewed)
-    if (session.agents && session.agents.length > 0) {
-      this.logger.debug(`Syncing status for ${session.agents.length} agents in session ${id}`);
+      this.logger.debug(`findOne: Found session ${id} with ${session.agents?.length || 0} agents`);
 
-      // Sync all agents in parallel
-      await Promise.all(
-        session.agents.map(async (agent) => {
-          try {
-            const updatedStatus = await this.agentsService.syncAgentStatus(agent.id);
-            if (updatedStatus && updatedStatus !== agent.status) {
-              // Update the in-memory agent object with the synced status
-              agent.status = updatedStatus;
+      // Sync agent statuses from Kubernetes (only when session is actively viewed)
+      if (session.agents && session.agents.length > 0) {
+        this.logger.debug(`Syncing status for ${session.agents.length} agents in session ${id}`);
+
+        // Sync all agents in parallel
+        await Promise.all(
+          session.agents.map(async (agent) => {
+            try {
+              const updatedStatus = await this.agentsService.syncAgentStatus(agent.id);
+              if (updatedStatus && updatedStatus !== agent.status) {
+                // Update the in-memory agent object with the synced status
+                agent.status = updatedStatus;
+              }
+            } catch (error) {
+              this.logger.warn(`Failed to sync agent ${agent.id}: ${error.message}`);
             }
-          } catch (error) {
-            this.logger.warn(`Failed to sync agent ${agent.id}: ${error.message}`);
-          }
-        })
-      );
-    }
+          })
+        );
+      }
 
-    return session;
+      return session;
+    } catch (error) {
+      this.logger.error(`findOne: Error fetching session ${id}: ${error.message}`);
+      this.logger.error(`findOne: Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   async createJoinToken(sessionId: string, createTokenDto: CreateTokenDto) {
@@ -863,5 +896,120 @@ export class SessionsService {
     });
 
     return { success: true, messageId: message.id, messageType };
+  }
+
+  // ============================================================================
+  // SSE Session Events
+  // ============================================================================
+
+  /**
+   * Get an Observable stream of session events for SSE.
+   * Events include agent.ready, agent.failed, agent.stopped, etc.
+   */
+  getSessionEventStream(sessionId: string): Observable<MessageEvent> {
+    // Get or create a subject for this session
+    let subject = this.sessionEventSubjects.get(sessionId);
+    if (!subject) {
+      subject = new Subject<SessionEvent>();
+      this.sessionEventSubjects.set(sessionId, subject);
+      this.subscriberCounts.set(sessionId, 0);
+    }
+
+    // Increment subscriber count
+    const currentCount = this.subscriberCounts.get(sessionId) || 0;
+    this.subscriberCounts.set(sessionId, currentCount + 1);
+    this.logger.log(`SSE subscriber added for session ${sessionId} (total: ${currentCount + 1})`);
+
+    // Return observable that maps SessionEvent to MessageEvent format
+    return subject.asObservable().pipe(
+      filter((event) => event.sessionId === sessionId),
+      map((event) => ({
+        data: JSON.stringify(event),
+        type: event.type,
+        id: `${Date.now()}`,
+      })),
+      finalize(() => {
+        // Decrement subscriber count on unsubscribe
+        const count = this.subscriberCounts.get(sessionId) || 1;
+        this.subscriberCounts.set(sessionId, count - 1);
+        this.logger.log(`SSE subscriber removed for session ${sessionId} (remaining: ${count - 1})`);
+
+        // Clean up subject if no more subscribers
+        if (count - 1 <= 0) {
+          this.sessionEventSubjects.delete(sessionId);
+          this.subscriberCounts.delete(sessionId);
+          this.logger.log(`SSE subject cleaned up for session ${sessionId}`);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Emit a session event to all connected SSE clients.
+   * Called by AgentServerService when agent state changes.
+   */
+  emitSessionEvent(event: SessionEvent): void {
+    const subject = this.sessionEventSubjects.get(event.sessionId);
+    if (subject) {
+      this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
+      subject.next(event);
+    } else {
+      this.logger.debug(`No SSE subscribers for session ${event.sessionId}, event not emitted`);
+    }
+  }
+
+  /**
+   * Emit an agent.ready event.
+   */
+  emitAgentReady(sessionId: string, agentId: string, agentName: string, agentType?: string): void {
+    this.emitSessionEvent({
+      type: 'agent.ready',
+      sessionId,
+      agentId,
+      agentName,
+      agentType,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.failed event.
+   */
+  emitAgentFailed(sessionId: string, agentId: string, agentName: string, error: string): void {
+    this.emitSessionEvent({
+      type: 'agent.failed',
+      sessionId,
+      agentId,
+      agentName,
+      error,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.starting event.
+   */
+  emitAgentStarting(sessionId: string, agentId: string, agentName: string, agentType?: string): void {
+    this.emitSessionEvent({
+      type: 'agent.starting',
+      sessionId,
+      agentId,
+      agentName,
+      agentType,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.stopped event.
+   */
+  emitAgentStopped(sessionId: string, agentId: string, agentName: string): void {
+    this.emitSessionEvent({
+      type: 'agent.stopped',
+      sessionId,
+      agentId,
+      agentName,
+      timestamp: new Date().toISOString(),
+    });
   }
 }

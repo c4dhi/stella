@@ -145,10 +145,24 @@ export class PeerTransport implements Transport {
 
       // Set up event listeners
       room.on(RoomEvent.Connected, () => {
+        console.log('🔗 [LIVEKIT] RoomEvent.Connected')
+        this.onConnected()
+      })
+
+      room.on(RoomEvent.Reconnecting, () => {
+        // Log but don't change status - keep UI stable during transient reconnects
+        console.log('🔗 [LIVEKIT] RoomEvent.Reconnecting - keeping UI stable')
+      })
+
+      room.on(RoomEvent.Reconnected, () => {
+        // Reconnection successful - ensure status stays connected
+        console.log('🔗 [LIVEKIT] RoomEvent.Reconnected - connection restored')
+        // Fire onConnected again to ensure UI is in correct state
         this.onConnected()
       })
 
       room.on(RoomEvent.Disconnected, (reason) => {
+        console.log(`🔗 [LIVEKIT] RoomEvent.Disconnected: ${reason}`)
         this.onDisconnected(reason?.toString())
       })
 
@@ -207,8 +221,8 @@ export class PeerTransport implements Transport {
           //   data: env.data
           // })
 
-          if (env.type === 'transcript' || env.type === 'transcript_chunk') {
-            // Transform server transcript chunk format to frontend format
+          if (env.type === 'transcript' || env.type === 'transcript_chunk' || env.type === 'agent_text') {
+            // Transform server transcript/agent_text format to frontend format
             const serverData = env.data
 
             // WORKAROUND: Server timestamps are unreliable (2 hours behind)
@@ -234,19 +248,41 @@ export class PeerTransport implements Transport {
               }
             }
 
-            // Determine role based on participant_id:
-            // - If it matches current user's name → 'user' (messages from the logged-in user)
-            // - Otherwise → 'assistant' (messages from agents or other participants)
-            const isUserMessage = serverData.participant_id === this.userName
+            // Determine role based on source field (new semantic approach)
+            // or fall back to participant_id matching (backwards compat)
+            const source = serverData.source as string | undefined
+            let role: 'user' | 'assistant'
+            let displayName: string
+
+            if (source === 'user_speech' || source === 'user_text') {
+              // User messages (speech transcribed by agent or typed text)
+              role = 'user'
+              displayName = serverData.speaker_name || serverData.participant_id || this.userName
+            } else if (source === 'agent_response' || env.type === 'agent_text') {
+              // Agent response messages
+              role = 'assistant'
+              displayName = serverData.agent_name || 'Agent'
+            } else {
+              // Fallback to existing logic for backwards compat
+              const isUserMessage = serverData.participant_id === this.userName
+              role = isUserMessage ? 'user' : 'assistant'
+              displayName = serverData.participant_id || (isUserMessage ? this.userName : 'Agent')
+            }
 
             const transcriptChunk: TranscriptChunk = {
               id: serverData.transcript_id || generateUUID(),
-              role: isUserMessage ? 'user' : 'assistant',
+              role,
               text: serverData.text,
               status: serverData.is_final ? 'final' : 'partial',
               startedAt: startedAtMs,
               finalizedAt: serverData.is_final ? startedAtMs : undefined,
-              participant_id: serverData.participant_id
+              // Attribution fields
+              participant_id: serverData.participant_id,
+              speaker_id: serverData.speaker_id,
+              speaker_name: displayName,
+              agent_id: serverData.agent_id,
+              agent_name: serverData.agent_name,
+              source: serverData.source,
             }
 
             this.onTranscript(transcriptChunk)
@@ -305,8 +341,28 @@ export class PeerTransport implements Transport {
       })
 
       room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-        if (state === ConnectionState.Disconnected) {
-          this.onError(new Error('LiveKit connection failed'))
+        // Log all connection state changes for debugging
+        console.log(`🔗 [LIVEKIT] ConnectionStateChanged: ${state}`)
+
+        // Handle reconnection states gracefully - don't flicker the UI
+        // ConnectionState enum values: Disconnected, Connecting, Connected, Reconnecting
+        switch (state) {
+          case ConnectionState.Reconnecting:
+            // Don't change UI status during reconnection - it's transient
+            console.log('🔗 [LIVEKIT] Reconnecting... (keeping UI stable)')
+            break
+          case ConnectionState.Connected:
+            // Successfully reconnected
+            if (this.connectionState === 'connected') {
+              console.log('🔗 [LIVEKIT] Reconnection successful')
+            }
+            break
+          case ConnectionState.Disconnected:
+            // Only log - let RoomEvent.Disconnected handle the actual status change
+            if (this.connectionState === 'connected') {
+              console.warn('🔗 [LIVEKIT] Unexpected disconnection detected')
+            }
+            break
         }
       })
 

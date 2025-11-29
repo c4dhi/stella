@@ -14,11 +14,13 @@ class STTSession(ABC):
     """
 
     @abstractmethod
-    def process_audio(self, audio_data: bytes) -> List[stt_pb2.TranscriptEvent]:
+    def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
         """Process an audio chunk and return transcript events.
 
         Args:
-            audio_data: Raw PCM audio (16-bit, 16kHz, mono)
+            audio_data: Raw PCM audio (16-bit, mono)
+            sample_rate: Sample rate of the input audio (default 16000).
+                         Provider will resample to model's required rate if needed.
 
         Returns:
             List of TranscriptEvent (may be empty, partial, or final)
