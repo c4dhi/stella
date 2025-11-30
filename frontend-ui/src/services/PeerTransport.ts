@@ -796,7 +796,7 @@ export class PeerTransport implements Transport {
   }
 
   private isProcessingMessage(type: string): boolean {
-    return ['decision_stream', 'prompt_execution', 'expert_status', 'safety_check'].includes(type)
+    return ['decision_stream', 'prompt_execution', 'expert_status', 'safety_check', 'debug'].includes(type)
   }
 
   private transformProcessingMessage(env: Envelope<any>): ProcessingMessage {
@@ -805,6 +805,25 @@ export class PeerTransport implements Transport {
 
     // Use client timestamp for consistency (server timestamps are unreliable)
     const timestamp = Date.now()
+
+    // Handle debug messages specially - transform to DebugData format
+    if (env.type === 'debug') {
+      return {
+        id: generateUUID(),
+        type: 'debug',
+        role: 'system',
+        status: 'final',
+        startedAt: timestamp,
+        finalizedAt: timestamp,
+        streamId: generateUUID(),
+        data: {
+          component: serverData.component || 'agent',
+          level: serverData.level || 'info',
+          message: serverData.content || serverData.message || '',
+          metadata: serverData.metadata || serverData
+        }
+      }
+    }
 
     return {
       id: generateUUID(),
@@ -828,6 +847,8 @@ export class PeerTransport implements Transport {
         return 'expert_status'
       case 'safety_check':
         return 'safety_check'
+      case 'debug':
+        return 'debug'
       default:
         return 'decision'
     }

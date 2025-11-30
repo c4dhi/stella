@@ -55,7 +55,7 @@ export default function SessionView() {
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    onConfirm: () => { },
   })
 
   // Agent modal states
@@ -395,22 +395,22 @@ export default function SessionView() {
     return () => {
       // Cleanup ALL callbacks
       console.log('[SessionView] Cleaning up transport callbacks')
-      transport.onConnected = () => {}
-      transport.onDisconnected = () => {}
-      transport.onError = () => {}
-      transport.onTranscript = () => {}
-      transport.onProcessingMessage = () => {}
-      transport.onTTSStart = () => {}
-      transport.onTTSStop = () => {}
-      transport.onParticipantJoined = () => {}
-      transport.onParticipantLeft = () => {}
-      transport.onAudioLevel = () => {}
-      transport.onRemoteSpeaking = () => {}
-      transport.onLLMConfig = () => {}
-      transport.onTodoListUpdate = () => {}
-      transport.onPlanProgress = () => {}
-      transport.onDeliverableUpdate = () => {}
-      transport.onStateChange = () => {}
+      transport.onConnected = () => { }
+      transport.onDisconnected = () => { }
+      transport.onError = () => { }
+      transport.onTranscript = () => { }
+      transport.onProcessingMessage = () => { }
+      transport.onTTSStart = () => { }
+      transport.onTTSStop = () => { }
+      transport.onParticipantJoined = () => { }
+      transport.onParticipantLeft = () => { }
+      transport.onAudioLevel = () => { }
+      transport.onRemoteSpeaking = () => { }
+      transport.onLLMConfig = () => { }
+      transport.onTodoListUpdate = () => { }
+      transport.onPlanProgress = () => { }
+      transport.onDeliverableUpdate = () => { }
+      transport.onStateChange = () => { }
     }
   }, [transport, session])
 
@@ -657,9 +657,8 @@ export default function SessionView() {
   return (
     <div className={`w-full h-screen transition-colors duration-200 ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
       {/* Header */}
-      <header className={`sticky top-0 z-40 border-b transition-colors duration-200 backdrop-blur-sm ${
-        isDark ? 'bg-surface-dark/95 border-border-dark' : 'bg-white/95 border-border'
-      }`}>
+      <header className={`sticky top-0 z-40 border-b transition-colors duration-200 backdrop-blur-sm ${isDark ? 'bg-surface-dark/95 border-border-dark' : 'bg-white/95 border-border'
+        }`}>
         <div className="max-w-7xl mx-auto px-6 py-3">
           <div className="flex items-center gap-3">
             {/* Back Button */}
@@ -724,9 +723,9 @@ export default function SessionView() {
         </div>
       </header>
 
-      <div className={`h-[calc(100vh-81px)] flex gap-4 px-4 pb-4 mt-6 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+      <div className={`h-[calc(100vh-81px)] flex gap-4 px-4 py-4 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
         {/* Left Sidebar - Participants and Agents */}
-        <div className="flex-shrink-0 space-y-4">
+        <div className="flex-shrink-0 space-y-4 pt-4">
           <ParticipantSection
             sessionId={sessionId}
             participants={participants}
@@ -745,11 +744,10 @@ export default function SessionView() {
         <div className={`flex flex-col gap-3 transition-all duration-300 ${showTaskPanel ? 'flex-1' : 'w-full max-w-3xl mx-auto'}`}>
           <ConnectPanel roomName={session?.room.livekitRoomName} />
 
-          <div className={`flex-1 backdrop-blur-xl rounded-xl shadow-sm flex flex-col overflow-hidden transition-colors duration-300 ${
-            isDark
-              ? 'bg-white/5 border border-white/10'
-              : 'bg-white/90 border border-neutral-200/60'
-          }`}>
+          <div className={`flex-1 backdrop-blur-xl rounded-xl shadow-sm flex flex-col overflow-hidden transition-colors duration-300 ${isDark
+            ? 'bg-white/5 border border-white/10'
+            : 'bg-white/90 border border-neutral-200/60'
+            }`}>
             <ChatView
               listenerStatus={listenerStatus}
               onShowLogs={() => setShowLogsModal(true)}

@@ -88,12 +88,20 @@ export interface SafetyCheckData {
   stream_id: string
 }
 
+export interface DebugData {
+  component: string
+  level: 'info' | 'debug' | 'warn' | 'error'
+  message: string
+  metadata?: Record<string, any>
+}
+
 // Processing message types that will be displayed in chat
-export type ProcessingMessageType = 
-  | 'decision' 
-  | 'prompt_execution' 
-  | 'expert_status' 
+export type ProcessingMessageType =
+  | 'decision'
+  | 'prompt_execution'
+  | 'expert_status'
   | 'safety_check'
+  | 'debug'
 
 export interface ProcessingMessage {
   id: TurnId
@@ -103,7 +111,7 @@ export interface ProcessingMessage {
   startedAt: number
   finalizedAt?: number
   streamId: string
-  data: DecisionStreamData | PromptExecutionData | ExpertStatusData | SafetyCheckData
+  data: DecisionStreamData | PromptExecutionData | ExpertStatusData | SafetyCheckData | DebugData
 }
 
 // Participant events for room join/leave notifications
@@ -169,6 +177,7 @@ export type EnvelopeType =
   | 'prompt_execution'
   | 'expert_status'
   | 'safety_check'
+  | 'debug'
   | 'tts_start'
   | 'tts_stop'
   | 'tts_end'
