@@ -237,35 +237,27 @@ export default function SessionView() {
     }
 
     // === Participant handlers (from ConnectPanel) ===
-    // Filter out agent joins - agents are notified via SSE when they're ready
     transport.onParticipantJoined = (participantId: string, participantName?: string) => {
-      // Skip agent join events - they have identities like "agent-{uuid}"
-      // Agent readiness is handled by SSE events (agent.ready) for better UX
-      if (participantId.startsWith('agent-')) {
-        console.log(`[SessionView] Skipping agent join event for ${participantId}`)
-        return
-      }
+      // For agents, use the display name from LiveKit (set via AGENT_NAME env var)
+      // The participantName will be the agent's configured name (e.g., "Grace", "Echo")
+      const displayName = participantName || participantId
       const event: ParticipantEvent = {
         id: generateUUID(),
         type: 'joined',
         participantId,
-        participantName,
+        participantName: displayName,
         startedAt: Date.now(),
         messageType: 'participant'
       }
       addParticipantEvent(event)
     }
     transport.onParticipantLeft = (participantId: string, participantName?: string) => {
-      // Skip agent leave events - they have identities like "agent-{uuid}"
-      if (participantId.startsWith('agent-')) {
-        console.log(`[SessionView] Skipping agent leave event for ${participantId}`)
-        return
-      }
+      const displayName = participantName || participantId
       const event: ParticipantEvent = {
         id: generateUUID(),
         type: 'left',
         participantId,
-        participantName,
+        participantName: displayName,
         startedAt: Date.now(),
         messageType: 'participant'
       }

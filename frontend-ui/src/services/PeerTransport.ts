@@ -368,10 +368,12 @@ export class PeerTransport implements Transport {
 
       // Listen for participant join/leave events
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        console.log(`👤 [JOIN] Participant connected: ${participant.identity} (${participant.name})`)
         this.onParticipantJoined(participant.identity, participant.name)
       })
 
       room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+        console.log(`👤 [LEAVE] Participant disconnected: ${participant.identity} (${participant.name})`)
         this.onParticipantLeft(participant.identity, participant.name)
       })
 
@@ -391,6 +393,13 @@ export class PeerTransport implements Transport {
       await room.startAudio()
 
       console.log(`👤 [USER] Connected as: ${room.localParticipant.identity}`)
+
+      // Notify about participants already in the room
+      // (ParticipantConnected only fires for joins AFTER we connect)
+      for (const participant of room.remoteParticipants.values()) {
+        console.log(`👤 [EXISTING] Participant already in room: ${participant.identity} (${participant.name})`)
+        this.onParticipantJoined(participant.identity, participant.name)
+      }
 
       // Publish microphone if available
       if (this.micStream) {
