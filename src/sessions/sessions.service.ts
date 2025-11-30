@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException, UnauthorizedException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
@@ -1017,5 +1018,139 @@ export class SessionsService {
       agentName,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ============================================================================
+  // Chat History API (for Agent SDK)
+  // ============================================================================
+
+  /**
+   * Validate an agent's JWT token and verify access to a session.
+   *
+   * @param token JWT token signed with LIVEKIT_API_SECRET
+   * @param sessionId Session ID the agent is requesting access to
+   * @returns The decoded token claims if valid
+   * @throws UnauthorizedException if token is invalid
+   * @throws ForbiddenException if token doesn't have access to the session
+   */
+  async validateAgentToken(token: string, sessionId: string): Promise<{ identity: string; room: string }> {
+    const apiKey = this.livekit.getApiKey();
+    const apiSecret = this.livekit.getApiSecret();
+
+    const verifier = new TokenVerifier(apiKey, apiSecret);
+
+    try {
+      // Verify the token signature and expiration
+      const claims = await verifier.verify(token);
+
+      // Get the identity from claims
+      const identity = claims.sub;
+      if (!identity) {
+        throw new UnauthorizedException('Token missing identity (sub) claim');
+      }
+
+      // Verify it's an agent token (identity should start with 'agent-')
+      if (!identity.startsWith('agent-')) {
+        throw new ForbiddenException('Only agent tokens can access chat history');
+      }
+
+      // Get the room from video grants
+      const roomName = claims.video?.room;
+      if (!roomName) {
+        throw new UnauthorizedException('Token missing room claim');
+      }
+
+      // Verify the session exists and get its room name
+      const session = await this.prisma.session.findUnique({
+        where: { id: sessionId },
+        include: { room: true },
+      });
+
+      if (!session) {
+        throw new NotFoundException(`Session ${sessionId} not found`);
+      }
+
+      // Verify the token's room matches the session's room
+      if (session.room?.livekitRoomName !== roomName) {
+        throw new ForbiddenException('Token does not have access to this session');
+      }
+
+      return { identity, room: roomName };
+    } catch (error) {
+      if (error instanceof UnauthorizedException ||
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Token validation failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+  }
+
+  /**
+   * Get chat history for a session.
+   *
+   * This endpoint is designed for agents to fetch conversation history
+   * for building context or resuming conversations.
+   *
+   * @param sessionId Session ID to get history for
+   * @param options Query options
+   * @returns Paginated list of messages with full envelope data
+   */
+  async getChatHistory(
+    sessionId: string,
+    options: {
+      includeDebug?: boolean;
+      limit?: number;
+      before?: string;
+    } = {},
+  ) {
+    const limit = Math.min(options.limit || 100, 500);
+
+    // Define message types to include
+    const chatMessageTypes = ['user_text', 'transcript', 'transcript_chunk', 'agent_text'];
+    const debugMessageTypes = ['debug', 'decision_stream', 'expert_status', 'prompt_execution', 'safety_check'];
+
+    const messageTypes = options.includeDebug
+      ? [...chatMessageTypes, ...debugMessageTypes]
+      : chatMessageTypes;
+
+    // Build where clause
+    const where: Prisma.MessageWhereInput = {
+      sessionId,
+      messageType: { in: messageTypes },
+      ...(options.before && { timestamp: { lt: new Date(options.before) } }),
+    };
+
+    // Fetch messages with pagination (one extra to check hasMore)
+    const messages = await this.prisma.message.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = messages.length > limit;
+    const results = hasMore ? messages.slice(0, -1) : messages;
+
+    // Transform to response format with full envelope
+    const formattedMessages = results.reverse().map((msg) => ({
+      id: msg.id,
+      timestamp: msg.timestamp.toISOString(),
+      envelope: (msg.metadata as any)?.envelope || {
+        type: msg.messageType,
+        data: msg.content,
+      },
+      role: msg.role || 'system',
+      content: msg.content,
+      messageType: msg.messageType,
+    }));
+
+    return {
+      messages: formattedMessages,
+      hasMore,
+      nextCursor: hasMore && results.length > 0
+        ? results[results.length - 1].timestamp.toISOString()
+        : null,
+    };
   }
 }
