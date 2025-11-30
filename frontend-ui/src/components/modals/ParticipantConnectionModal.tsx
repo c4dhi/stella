@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiClient } from '../../services/ApiClient'
+import { useThemeStore } from '../../store/themeStore'
 import type { ParticipantConnectionInfoResponse } from '../../lib/api-types'
 import { getRuntimeConfig } from '../../config/runtime'
 
@@ -18,6 +19,8 @@ export default function ParticipantConnectionModal({
   const [serverUrl, setServerUrl] = useState<string>(getRuntimeConfig().apiUrl)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   useEffect(() => {
     loadConnectionInfo()
@@ -68,28 +71,32 @@ export default function ParticipantConnectionModal({
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
-          className="
-            bg-white/95 backdrop-blur-xl border border-neutral-200/60
-            rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-            w-full max-w-4xl p-8
-          "
+          className={`
+            backdrop-blur-xl rounded-[20px] w-full max-w-4xl p-8
+            ${isDark
+              ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+              : 'bg-white border border-neutral-200 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+            }
+          `}
           onClick={(e) => e.stopPropagation()}
         >
           {isLoading ? (
             <div className="text-center py-8">
-              <div className="text-sm text-neutral-400 font-light">Loading connection info...</div>
+              <div className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>Loading connection info...</div>
             </div>
           ) : error ? (
             <div className="text-center py-8">
-              <div className="text-sm text-red-600 font-light">{error}</div>
+              <div className={`text-sm font-light ${isDark ? 'text-red-400' : 'text-red-600'}`}>{error}</div>
               <button
                 onClick={onClose}
-                className="
-                  mt-4 px-4 py-2 rounded-xl
-                  bg-neutral-900 text-white text-sm font-light tracking-wider
-                  hover:bg-neutral-800
+                className={`
+                  mt-4 px-4 py-2 rounded-xl text-sm font-light tracking-wider
                   transition-all duration-200
-                "
+                  ${isDark
+                    ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                    : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                  }
+                `}
               >
                 Close
               </button>
@@ -98,20 +105,22 @@ export default function ParticipantConnectionModal({
             <>
               <div className="flex items-start justify-between mb-6">
                 <div>
-                  <h2 className="text-2xl font-light text-neutral-900 mb-2">
+                  <h2 className={`text-2xl font-light mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
                     Connection Information
                   </h2>
-                  <p className="text-sm text-neutral-500 font-light">
+                  <p className={`text-sm font-light ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                     {connectionInfo.participantName}
                   </p>
                 </div>
                 <button
                   onClick={onClose}
-                  className="
-                    p-2 rounded-lg
-                    text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                    transition-all duration-200
-                  "
+                  className={`
+                    p-2 rounded-lg transition-all duration-200
+                    ${isDark
+                      ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                    }
+                  `}
                 >
                   <svg
                     width="20"
@@ -131,7 +140,7 @@ export default function ParticipantConnectionModal({
                 <div className="flex-1 space-y-5">
                   {/* Session Server URL */}
                   <div>
-                    <label className="block text-xs text-neutral-600 font-light tracking-wider uppercase mb-2">
+                    <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                       Session Server URL
                     </label>
                     <div className="flex gap-2">
@@ -139,22 +148,24 @@ export default function ParticipantConnectionModal({
                         type="text"
                         value={serverUrl}
                         readOnly
-                        className="
-                          flex-1 px-4 py-2.5 rounded-xl
-                          bg-neutral-50/50 border border-neutral-200/60
-                          text-neutral-900 text-sm font-mono font-light
-                          focus:outline-none
-                        "
+                        className={`
+                          flex-1 px-4 py-2.5 rounded-xl text-sm font-mono font-light focus:outline-none
+                          ${isDark
+                            ? 'bg-zinc-800 border border-zinc-700 text-zinc-100'
+                            : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900'
+                          }
+                        `}
                       />
                       <button
                         onClick={() => copyToClipboard(serverUrl, 'Session Server URL')}
-                        className="
-                          px-3 py-2.5 rounded-lg
-                          bg-neutral-100 text-neutral-600 text-xs font-light
-                          hover:bg-neutral-200
-                          transition-all duration-200
-                          flex-shrink-0
-                        "
+                        className={`
+                          px-3 py-2.5 rounded-lg text-xs font-light
+                          transition-all duration-200 flex-shrink-0
+                          ${isDark
+                            ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+                            : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                          }
+                        `}
                         title="Copy to clipboard"
                       >
                         <svg
@@ -174,7 +185,7 @@ export default function ParticipantConnectionModal({
 
                   {/* JWT Token */}
                   <div>
-                    <label className="block text-xs text-neutral-600 font-light tracking-wider uppercase mb-2">
+                    <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                       Authentication Token
                     </label>
                     <div className="flex gap-2">
@@ -182,25 +193,25 @@ export default function ParticipantConnectionModal({
                         rows={5}
                         value={connectionInfo?.token || ''}
                         readOnly
-                        className="
-                          flex-1 px-4 py-2.5 rounded-xl
-                          bg-neutral-50/50 border border-neutral-200/60
-                          text-neutral-900 text-sm font-mono font-light
-                          focus:outline-none
-                          resize-none
-                          break-all
-                        "
+                        className={`
+                          flex-1 px-4 py-2.5 rounded-xl text-sm font-mono font-light
+                          focus:outline-none resize-none break-all
+                          ${isDark
+                            ? 'bg-zinc-800 border border-zinc-700 text-zinc-100'
+                            : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900'
+                          }
+                        `}
                       />
                       <button
                         onClick={() => copyToClipboard(connectionInfo?.token || '', 'Authentication Token')}
-                        className="
-                          px-3 py-2.5 rounded-lg
-                          bg-neutral-100 text-neutral-600 text-xs font-light
-                          hover:bg-neutral-200
-                          transition-all duration-200
-                          flex-shrink-0
-                          self-start
-                        "
+                        className={`
+                          px-3 py-2.5 rounded-lg text-xs font-light
+                          transition-all duration-200 flex-shrink-0 self-start
+                          ${isDark
+                            ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+                            : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                          }
+                        `}
                         title="Copy to clipboard"
                       >
                         <svg
@@ -222,11 +233,13 @@ export default function ParticipantConnectionModal({
 
                 {/* QR Code */}
                 <div className="flex-shrink-0 flex flex-col items-center gap-4">
-                  <div className="
-                    p-6 rounded-xl
-                    bg-white border border-neutral-200/60
-                    shadow-sm
-                  ">
+                  <div className={`
+                    p-6 rounded-xl shadow-sm
+                    ${isDark
+                      ? 'bg-white'
+                      : 'bg-white border border-neutral-200/60'
+                    }
+                  `}>
                     <QRCodeSVG
                       value={qrCodeData}
                       size={300}
@@ -234,21 +247,23 @@ export default function ParticipantConnectionModal({
                       includeMargin={false}
                     />
                   </div>
-                  <p className="text-xs text-neutral-500 font-light tracking-wider uppercase text-center">
+                  <p className={`text-xs font-light tracking-wider uppercase text-center ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                     Scan to connect
                   </p>
                 </div>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-neutral-200/60">
+              <div className={`mt-6 pt-6 border-t ${isDark ? 'border-zinc-800' : 'border-neutral-200/60'}`}>
                 <button
                   onClick={onClose}
-                  className="
-                    w-full py-2.5 px-4 rounded-xl
-                    bg-neutral-900 text-white text-sm font-light tracking-wider
-                    hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
+                  className={`
+                    w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                     transition-all duration-200
-                  "
+                    ${isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                    }
+                  `}
                 >
                   Close
                 </button>

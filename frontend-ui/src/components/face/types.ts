@@ -1,6 +1,6 @@
 /**
- * GRACE Face Component Types
- * Port from mobile client (grace-ai-mobile-client/app/components/AnimatedFace.tsx)
+ * STELLA Face Component Types
+ * Port from mobile client with web-specific adaptations
  */
 
 export type EyeEmotion =
@@ -56,7 +56,7 @@ export interface FaceTrackingData {
   method: 'webcam' | 'mouse' | 'none';
 }
 
-export interface GraceFaceProps {
+export interface StellaFaceProps {
   isUserSpeaking?: boolean;
   isRemoteSpeaking?: boolean;
   audioLevel?: number; // 0.0 to 1.0
@@ -65,6 +65,9 @@ export interface GraceFaceProps {
   size?: number; // Face size in pixels (default: responsive)
   className?: string;
 }
+
+// Legacy alias for backward compatibility
+export type GraceFaceProps = StellaFaceProps;
 
 export interface FaceRendererProps {
   size: number;

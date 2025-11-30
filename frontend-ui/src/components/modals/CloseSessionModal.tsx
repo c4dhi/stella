@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
+import { useThemeStore } from '../../store/themeStore'
 
 interface CloseSessionModalProps {
   isOpen: boolean
@@ -13,6 +14,9 @@ export default function CloseSessionModal({
   onConfirm,
   onCancel,
 }: CloseSessionModalProps) {
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -20,33 +24,35 @@ export default function CloseSessionModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm"
+          transition={{ duration: 0.15 }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
           onClick={onCancel}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="
-              bg-white/95 backdrop-blur-xl border border-neutral-200/60
-              rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-              w-full max-w-md p-6
-            "
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className={`card-elevated w-full max-w-md p-6 ${
+              isDark ? 'bg-surface-dark-secondary' : ''
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="mb-4">
-              <h2 className="text-xl font-light text-neutral-900 tracking-wide">
+              <h2 className={`text-heading-lg ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                 Close Session
               </h2>
             </div>
 
             {/* Message */}
-            <div className="mb-6 text-sm text-neutral-600 font-light leading-relaxed">
+            <div className={`mb-6 text-body leading-relaxed ${
+              isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+            }`}>
               <p className="mb-3">
-                Are you sure you want to close <span className="font-mono font-medium text-neutral-900">{sessionName}</span>?
+                Are you sure you want to close <span className={`font-mono font-medium ${
+                  isDark ? 'text-content-inverse' : 'text-content'
+                }`}>{sessionName}</span>?
               </p>
               <p>
                 This will stop all running agents and mark the session as closed.
@@ -59,25 +65,14 @@ export default function CloseSessionModal({
               <button
                 type="button"
                 onClick={onCancel}
-                className="
-                  flex-1 py-2.5 px-4 rounded-xl
-                  bg-neutral-100/80 text-neutral-600 text-sm font-light tracking-wider
-                  hover:bg-neutral-200/80
-                  transition-all duration-200
-                "
+                className="btn-secondary flex-1"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className="
-                  flex-1 py-2.5 px-4 rounded-xl
-                  bg-neutral-900 text-white text-sm font-light tracking-wider
-                  hover:bg-neutral-800
-                  shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                  transition-all duration-200
-                "
+                className="btn-primary flex-1"
               >
                 Close Session
               </button>

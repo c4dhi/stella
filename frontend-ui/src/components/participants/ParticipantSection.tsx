@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import type { Participant } from '../../lib/api-types'
+import { useThemeStore } from '../../store/themeStore'
 
 interface ParticipantSectionProps {
   sessionId: string
@@ -16,6 +17,9 @@ export default function ParticipantSection({
   onShowConnectionInfo,
   onRemoveParticipant
 }: ParticipantSectionProps) {
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
+
   return (
       <motion.div
         initial={{ opacity: 0, x: -20 }}
@@ -25,33 +29,36 @@ export default function ParticipantSection({
       >
         {/* Participants Panel */}
         <div
-          className="
-            bg-white/95 backdrop-blur-xl border border-neutral-200/60
-            rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.04)]
-            flex flex-col overflow-hidden
-          "
+          className={`
+            backdrop-blur-xl rounded-[16px] flex flex-col overflow-hidden
+            ${isDark
+              ? 'bg-white/5 border border-white/10'
+              : 'bg-white border border-border shadow-sm'
+            }
+          `}
         >
           {/* Header */}
-          <div className="p-4 border-b border-neutral-200/60">
-            <h2 className="text-lg font-thin text-neutral-900 tracking-wider mb-1">
+          <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
+            <h2 className={`text-lg font-thin tracking-wider mb-1 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
               Participants
             </h2>
-            <p className="text-[10px] text-neutral-500 font-light tracking-wider uppercase">
+            <p className={`text-[10px] font-light tracking-wider uppercase ${isDark ? 'text-content-inverse-secondary' : 'text-content-tertiary'}`}>
               {participants.filter(p => !p.leftAt).length} active
             </p>
           </div>
 
           {/* Register Button */}
-          <div className="p-4 border-b border-neutral-200/60">
+          <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
             <button
               onClick={onRegisterClick}
-              className="
-                w-full py-2.5 px-4 rounded-xl
-                bg-neutral-900 text-white text-sm font-light tracking-wider
-                hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                transition-all duration-200
-                flex items-center justify-center gap-2
-              "
+              className={`
+                w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                transition-all duration-200 flex items-center justify-center gap-2
+                ${isDark
+                  ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                  : 'bg-content text-white hover:bg-content/90 shadow-sm'
+                }
+              `}
             >
               <svg
                 width="16"
@@ -70,7 +77,7 @@ export default function ParticipantSection({
           {/* Participants List */}
           <div className="p-4 space-y-3 max-h-64 overflow-y-auto">
             {participants.length === 0 ? (
-              <div className="text-center py-8 text-sm text-neutral-400 font-light">
+              <div className={`text-center py-8 text-sm font-light ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
                 No participants registered yet
               </div>
             ) : (
@@ -81,23 +88,24 @@ export default function ParticipantSection({
                     key={participant.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="
-                      p-4 rounded-xl
-                      bg-neutral-50/50 border border-neutral-200/60
-                      hover:bg-white hover:border-neutral-300/60
-                      transition-all duration-200
-                    "
+                    className={`
+                      p-4 rounded-xl transition-all duration-200
+                      ${isDark
+                        ? 'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20'
+                        : 'bg-surface-secondary border border-border hover:bg-surface-tertiary hover:border-border-secondary'
+                      }
+                    `}
                   >
                     {/* Participant Name */}
                     <div className="flex items-start justify-between mb-2">
-                      <div className="text-sm font-light text-neutral-900 flex items-center gap-2">
+                      <div className={`text-sm font-light flex items-center gap-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                         <span>👤</span>
                         <span>{participant.name}</span>
                       </div>
                     </div>
 
                     {/* Joined Date */}
-                    <div className="text-[10px] text-neutral-400 font-light tracking-wider uppercase mb-3">
+                    <div className={`text-[10px] font-light tracking-wider uppercase mb-3 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
                       Joined {new Date(participant.joinedAt).toLocaleTimeString()}
                     </div>
 
@@ -105,13 +113,14 @@ export default function ParticipantSection({
                     <div className="flex gap-2">
                       <button
                         onClick={() => onShowConnectionInfo(participant.id)}
-                        className="
+                        className={`
                           flex-1 py-1.5 px-2 rounded-lg text-xs font-light
-                          bg-white border border-neutral-200/60
-                          text-neutral-600 hover:text-neutral-900 hover:border-neutral-300/60
-                          transition-all duration-200
-                          flex items-center justify-center gap-1
-                        "
+                          transition-all duration-200 flex items-center justify-center gap-1
+                          ${isDark
+                            ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
+                            : 'bg-white border border-border text-content-secondary hover:text-content hover:border-border-secondary'
+                          }
+                        `}
                       >
                         <svg
                           width="14"
@@ -128,11 +137,13 @@ export default function ParticipantSection({
                       </button>
                       <button
                         onClick={() => onRemoveParticipant(participant.id, participant.name)}
-                        className="
-                          py-1.5 px-2 rounded-lg text-xs font-light
-                          text-red-600 hover:bg-red-50/80
-                          transition-all duration-200
-                        "
+                        className={`
+                          py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
+                          ${isDark
+                            ? 'text-red-400 hover:bg-red-500/20'
+                            : 'text-red-500 hover:bg-red-50'
+                          }
+                        `}
                         title="Remove participant"
                       >
                         <svg

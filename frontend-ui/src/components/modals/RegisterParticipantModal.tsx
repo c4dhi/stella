@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useThemeStore } from '../../store/themeStore'
 
 interface RegisterParticipantModalProps {
   isOpen: boolean
@@ -14,6 +15,8 @@ export default function RegisterParticipantModal({
 }: RegisterParticipantModalProps) {
   const [name, setName] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -52,17 +55,19 @@ export default function RegisterParticipantModal({
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="
-              bg-white/95 backdrop-blur-xl border border-neutral-200/60
-              rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-              w-full max-w-md p-6
-            "
+            className={`
+              backdrop-blur-xl rounded-[20px] w-full max-w-md p-6
+              ${isDark
+                ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                : 'bg-white border border-neutral-200 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+              }
+            `}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-2xl font-light text-neutral-900 mb-2">
+            <h2 className={`text-2xl font-light mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
               Register Participant
             </h2>
-            <p className="text-sm text-neutral-500 font-light mb-6">
+            <p className={`text-sm font-light mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
               Enter a name for the new participant
             </p>
 
@@ -70,7 +75,7 @@ export default function RegisterParticipantModal({
               <div className="mb-6">
                 <label
                   htmlFor="participant-name"
-                  className="block text-xs text-neutral-600 font-light tracking-wider uppercase mb-2"
+                  className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
                 >
                   Participant Name
                 </label>
@@ -80,14 +85,14 @@ export default function RegisterParticipantModal({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Enter participant name..."
-                  className="
-                    w-full px-4 py-2.5 rounded-xl
-                    bg-neutral-50/50 border border-neutral-200/60
-                    text-neutral-900 text-sm font-light
-                    placeholder:text-neutral-400
-                    focus:outline-none focus:border-neutral-400/60 focus:bg-white
-                    transition-all duration-200
-                  "
+                  className={`
+                    w-full px-4 py-2.5 rounded-xl text-sm font-light
+                    focus:outline-none transition-all duration-200
+                    ${isDark
+                      ? 'bg-zinc-900 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500 focus:bg-zinc-900'
+                      : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                    }
+                  `}
                   autoFocus
                   disabled={isSubmitting}
                 />
@@ -98,26 +103,28 @@ export default function RegisterParticipantModal({
                   type="button"
                   onClick={handleClose}
                   disabled={isSubmitting}
-                  className="
-                    flex-1 py-2.5 px-4 rounded-xl
-                    bg-neutral-100 text-neutral-600 text-sm font-light tracking-wider
-                    hover:bg-neutral-200
-                    transition-all duration-200
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                  "
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                    transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+                    ${isDark
+                      ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                    }
+                  `}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!name.trim() || isSubmitting}
-                  className="
-                    flex-1 py-2.5 px-4 rounded-xl
-                    bg-neutral-900 text-white text-sm font-light tracking-wider
-                    hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                    transition-all duration-200
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                  "
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                    transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+                    ${isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                    }
+                  `}
                 >
                   {isSubmitting ? 'Registering...' : 'Register'}
                 </button>

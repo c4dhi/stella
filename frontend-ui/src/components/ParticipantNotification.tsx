@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import type { ParticipantEvent } from '../lib/types'
+import { useThemeStore } from '../store/themeStore'
 
 interface ParticipantNotificationProps {
   event: ParticipantEvent
@@ -7,7 +8,9 @@ interface ParticipantNotificationProps {
 
 export default function ParticipantNotification({ event }: ParticipantNotificationProps) {
   const displayName = event.participantName || event.participantId || 'Unknown'
-  const actionText = event.type === 'joined' ? 'joined' : 'left'
+  const actionText = event.type === 'joined' ? 'joined the session' : 'left the session'
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   return (
     <motion.div
@@ -18,11 +21,14 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
       transition={{ duration: 0.3 }}
     >
       <motion.div
-        className="
+        className={`
           inline-flex items-center gap-2 px-3 py-1.5 rounded-full
-          bg-neutral-100/80 text-neutral-500 border border-neutral-200/60
           text-xs font-light tracking-wide backdrop-blur-sm
-        "
+          ${isDark
+            ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+            : 'bg-neutral-100 text-neutral-500 border border-neutral-200'
+          }
+        `}
         initial={{ y: 10 }}
         animate={{ y: 0 }}
         transition={{ delay: 0.1, duration: 0.3 }}
@@ -42,7 +48,7 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
-              className="text-neutral-400"
+              className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
             >
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
@@ -57,7 +63,7 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
-              className="text-neutral-400"
+              className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
             >
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
@@ -73,22 +79,9 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
           transition={{ delay: 0.3, duration: 0.3 }}
           className="whitespace-nowrap"
         >
-          <span className="text-neutral-600 font-medium">{displayName}</span>
+          <span className={isDark ? 'text-zinc-300 font-medium' : 'text-neutral-600 font-medium'}>{displayName}</span>
           <span className="ml-1">{actionText}</span>
         </motion.span>
-
-        {/* Timestamp */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 0.6 }}
-          transition={{ delay: 0.4, duration: 0.3 }}
-          className="text-[9px] text-neutral-400 tracking-wider"
-        >
-          {new Date(event.startedAt).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit'
-          })}
-        </motion.div>
       </motion.div>
     </motion.div>
   )

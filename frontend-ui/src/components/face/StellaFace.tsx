@@ -1,5 +1,5 @@
 /**
- * GRACE Face Component
+ * STELLA Face Component
  * Main face component that integrates tracking, animation, and rendering
  * Port from mobile client with web-specific adaptations
  */
@@ -9,9 +9,9 @@ import FaceRenderer from './FaceRenderer';
 import { useFaceTracking } from './hooks/useFaceTracking';
 import { useFaceAnimation } from './hooks/useFaceAnimation';
 import { useMouthAnimation } from './hooks/useMouthAnimation';
-import type { GraceFaceProps } from './types';
+import type { StellaFaceProps } from './types';
 
-const GraceFace: React.FC<GraceFaceProps> = ({
+const StellaFace: React.FC<StellaFaceProps> = ({
   isUserSpeaking = false,
   isRemoteSpeaking = false,
   audioLevel = 0,
@@ -91,4 +91,4 @@ const GraceFace: React.FC<GraceFaceProps> = ({
   );
 };
 
-export default GraceFace;
+export default StellaFace;

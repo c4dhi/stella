@@ -1,6 +1,7 @@
 
 import { useState } from 'react'
 import { useStore } from '../store'
+import { useThemeStore } from '../store/themeStore'
 
 interface ConnectPanelProps {
   roomName?: string
@@ -13,6 +14,8 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   const status = useStore(s => s.status)
   const setStatus = useStore(s => s.setStatus)
   const vu = useStore(s => s.vu)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   // Get transport from store (already initialized during store creation)
   const transport = useStore(s => s.transport)
@@ -69,14 +72,22 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   }
 
   return (
-    <div className="px-4 py-2 rounded-xl bg-white/90 backdrop-blur-xl shadow-sm border border-neutral-200/60 flex items-center gap-3">
+    <div className={`px-4 py-2 rounded-xl backdrop-blur-xl flex items-center gap-3 ${
+      isDark
+        ? 'bg-white/5 border border-white/10'
+        : 'bg-white/90 shadow-sm border border-neutral-200/60'
+    }`}>
       <button
         onClick={reconnect}
         disabled={status === 'connecting'}
         className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed ${
           status === 'connecting'
-            ? 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
-            : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
+            ? isDark
+              ? 'bg-white/10 text-content-inverse-secondary border border-white/10'
+              : 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
+            : isDark
+              ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+              : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
         }`}
       >
         {status === 'connecting' ? 'Connecting...' : 'Reconnect'}
@@ -90,8 +101,12 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             onClick={toggleVoiceNarration}
             className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 border flex items-center gap-2 ${
               voiceNarrationEnabled
-                ? 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
-                : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80 border-neutral-300/50'
+                ? isDark
+                  ? 'bg-white/20 text-white hover:bg-white/30 border-white/20'
+                  : 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                : isDark
+                  ? 'bg-white/10 text-content-inverse-secondary hover:bg-white/20 border-white/10'
+                  : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80 border-neutral-300/50'
             }`}
             title={`${voiceNarrationEnabled ? 'Disable' : 'Enable'} voice narration`}
           >
@@ -124,17 +139,23 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]'
             : status === 'connecting'
               ? 'bg-yellow-500 animate-pulse'
-              : 'bg-neutral-300'
+              : isDark ? 'bg-white/30' : 'bg-neutral-300'
             }`} />
-          <div className="text-[10px] text-neutral-600 font-light tracking-wider uppercase">
+          <div className={`text-[10px] font-light tracking-wider uppercase ${
+            isDark ? 'text-content-inverse-secondary' : 'text-neutral-600'
+          }`}>
             {status}
           </div>
         </div>
 
         {vu > 0 && (
-          <div className="w-12 h-px bg-neutral-200/80 rounded-full overflow-hidden backdrop-blur-sm">
+          <div className={`w-12 h-px rounded-full overflow-hidden backdrop-blur-sm ${
+            isDark ? 'bg-white/20' : 'bg-neutral-200/80'
+          }`}>
             <div
-              className="h-px bg-neutral-700 rounded-full transition-all duration-100"
+              className={`h-px rounded-full transition-all duration-100 ${
+                isDark ? 'bg-white/70' : 'bg-neutral-700'
+              }`}
               style={{ width: `${Math.round(vu * 100)}%` }}
             />
           </div>
