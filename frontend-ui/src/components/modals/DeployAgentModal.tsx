@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import EmojiPicker from '../EmojiPicker'
 import { apiClient } from '../../services/ApiClient'
+import { useThemeStore } from '../../store/themeStore'
 import type { AgentType } from '../../lib/api-types'
 
 interface DeployAgentModalProps {
@@ -18,11 +19,13 @@ export default function DeployAgentModal({
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤖')
   const [planId, setPlanId] = useState('')
-  const [agentType, setAgentType] = useState('grace-agent')
+  const [agentType, setAgentType] = useState('stella-agent')
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingTypes, setIsLoadingTypes] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   // Fetch agent types when modal opens
   useEffect(() => {
@@ -39,7 +42,7 @@ export default function DeployAgentModal({
           console.error('Failed to fetch agent types:', err)
           // Set default agent types if API fails
           setAgentTypes([
-            { id: 'grace-agent', name: 'Grace Agent', description: 'Full-featured conversational AI' }
+            { id: 'stella-agent', name: 'STELLA Agent', description: 'Full-featured conversational AI' }
           ])
         })
         .finally(() => setIsLoadingTypes(false))
@@ -90,11 +93,13 @@ export default function DeployAgentModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="
-              bg-white/95 backdrop-blur-xl border border-neutral-200/60
-              rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-              w-full max-w-md p-6
-            "
+            className={`
+              backdrop-blur-xl rounded-[20px] w-full max-w-md p-6
+              ${isDark
+                ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                : 'bg-white border border-neutral-200 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+              }
+            `}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -102,23 +107,24 @@ export default function DeployAgentModal({
               <button
                 onClick={handleClose}
                 disabled={isSubmitting}
-                className="
-                  absolute -top-1 -right-1
-                  p-2 rounded-lg
-                  text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                  transition-all duration-200
+                className={`
+                  absolute -top-1 -right-1 p-2 rounded-lg transition-all duration-200
                   disabled:opacity-60 disabled:cursor-not-allowed
-                "
+                  ${isDark
+                    ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                    : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                  }
+                `}
                 title="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
               </button>
-              <h2 className="text-2xl font-light text-neutral-900 tracking-wide">
+              <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
                 Deploy Agent
               </h2>
-              <p className="text-sm text-neutral-500 font-light mt-1">
+              <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                 Start an AI agent to join this session
               </p>
             </div>
@@ -127,11 +133,11 @@ export default function DeployAgentModal({
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Agent Type Selection */}
               <div>
-                <label className="block text-xs font-light text-neutral-600 tracking-wider uppercase mb-2">
+                <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                   Agent Type
                 </label>
                 {isLoadingTypes ? (
-                  <div className="h-[72px] flex items-center justify-center text-neutral-400 text-sm">
+                  <div className={`h-[72px] flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                     Loading agent types...
                   </div>
                 ) : (
@@ -144,15 +150,27 @@ export default function DeployAgentModal({
                         className={`
                           p-3 rounded-xl text-left transition-all duration-200
                           ${agentType === type.id
-                            ? 'bg-neutral-900 text-white ring-2 ring-neutral-900'
-                            : 'bg-neutral-50/50 border border-neutral-200/60 hover:bg-neutral-100/80'
+                            ? isDark
+                              ? 'bg-white/10 text-white ring-2 ring-white/30'
+                              : 'bg-neutral-900 text-white ring-2 ring-neutral-900'
+                            : isDark
+                              ? 'bg-zinc-800 border border-zinc-700 hover:bg-zinc-700'
+                              : 'bg-neutral-50/50 border border-neutral-200/60 hover:bg-neutral-100/80'
                           }
                         `}
                       >
-                        <div className={`text-sm font-medium ${agentType === type.id ? 'text-white' : 'text-neutral-900'}`}>
+                        <div className={`text-sm font-medium ${
+                          agentType === type.id
+                            ? 'text-white'
+                            : isDark ? 'text-zinc-100' : 'text-neutral-900'
+                        }`}>
                           {type.name}
                         </div>
-                        <div className={`text-xs mt-0.5 ${agentType === type.id ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                        <div className={`text-xs mt-0.5 ${
+                          agentType === type.id
+                            ? isDark ? 'text-zinc-300' : 'text-neutral-300'
+                            : isDark ? 'text-zinc-400' : 'text-neutral-500'
+                        }`}>
                           {type.description}
                         </div>
                       </button>
@@ -165,7 +183,7 @@ export default function DeployAgentModal({
               <div className="flex gap-3">
                 {/* Icon Picker */}
                 <div>
-                  <label className="block text-xs font-light text-neutral-600 tracking-wider uppercase mb-2">
+                  <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                     Icon
                   </label>
                   <EmojiPicker value={icon} onChange={setIcon} />
@@ -173,7 +191,7 @@ export default function DeployAgentModal({
 
                 {/* Name */}
                 <div className="flex-1">
-                  <label className="block text-xs font-light text-neutral-600 tracking-wider uppercase mb-2">
+                  <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                     Agent Name
                   </label>
                   <input
@@ -182,14 +200,14 @@ export default function DeployAgentModal({
                     onChange={(e) => setName(e.target.value)}
                     required
                     maxLength={255}
-                    className="
-                      w-full px-4 py-3 rounded-xl
-                      bg-neutral-50/50 border border-neutral-200/60
-                      text-neutral-900 text-sm font-light
-                      focus:outline-none focus:border-neutral-400/60 focus:bg-white
-                      transition-all duration-200
-                      placeholder:text-neutral-400
-                    "
+                    className={`
+                      w-full px-4 py-3 rounded-xl text-sm font-light
+                      focus:outline-none transition-all duration-200
+                      ${isDark
+                        ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
+                        : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                      }
+                    `}
                     placeholder="e.g., Memory Coach"
                   />
                 </div>
@@ -197,25 +215,25 @@ export default function DeployAgentModal({
 
               {/* Plan ID */}
               <div>
-                <label className="block text-xs font-light text-neutral-600 tracking-wider uppercase mb-2">
-                  Plan ID <span className="text-neutral-400">(Optional)</span>
+                <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                  Plan ID <span className={isDark ? 'text-zinc-500' : 'text-neutral-400'}>(Optional)</span>
                 </label>
                 <input
                   type="text"
                   value={planId}
                   onChange={(e) => setPlanId(e.target.value)}
                   maxLength={255}
-                  className="
-                    w-full px-4 py-3 rounded-xl
-                    bg-neutral-50/50 border border-neutral-200/60
-                    text-neutral-900 text-sm font-light
-                    focus:outline-none focus:border-neutral-400/60 focus:bg-white
-                    transition-all duration-200
-                    placeholder:text-neutral-400
-                  "
-                  placeholder="e.g., grace_smalltalk"
+                  className={`
+                    w-full px-4 py-3 rounded-xl text-sm font-light
+                    focus:outline-none transition-all duration-200
+                    ${isDark
+                      ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
+                      : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                    }
+                  `}
+                  placeholder="e.g., stella_smalltalk"
                 />
-                <div className="mt-2 text-xs text-neutral-500 font-light">
+                <div className={`mt-2 text-xs font-light ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
                   Leave empty for default agent configuration
                 </div>
               </div>
@@ -225,7 +243,11 @@ export default function DeployAgentModal({
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="p-3 rounded-lg bg-red-50/80 border border-red-200/60 text-red-600 text-xs font-light"
+                  className={`p-3 rounded-lg text-xs font-light ${
+                    isDark
+                      ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                      : 'bg-red-50/80 border border-red-200/60 text-red-600'
+                  }`}
                 >
                   {error}
                 </motion.div>
@@ -237,26 +259,28 @@ export default function DeployAgentModal({
                   type="button"
                   onClick={handleClose}
                   disabled={isSubmitting}
-                  className="
-                    flex-1 py-2.5 px-4 rounded-xl
-                    bg-neutral-100/80 text-neutral-600 text-sm font-light tracking-wider
-                    hover:bg-neutral-200/80 disabled:opacity-60 disabled:cursor-not-allowed
-                    transition-all duration-200
-                  "
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                    transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed
+                    ${isDark
+                      ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
+                      : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80'
+                    }
+                  `}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !name.trim()}
-                  className="
-                    flex-1 py-2.5 px-4 rounded-xl
-                    bg-neutral-900 text-white text-sm font-light tracking-wider
-                    hover:bg-neutral-800
-                    disabled:opacity-60 disabled:cursor-not-allowed
-                    shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                    transition-all duration-200
-                  "
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                    transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed
+                    ${isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                    }
+                  `}
                 >
                   {isSubmitting ? 'Deploying...' : 'Deploy Agent'}
                 </button>

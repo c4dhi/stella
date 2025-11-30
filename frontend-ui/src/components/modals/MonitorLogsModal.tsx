@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiClient } from '../../services/ApiClient'
+import { useThemeStore } from '../../store/themeStore'
 import type { LogEntry } from '../../lib/api-types'
 
 interface MonitorLogsModalProps {
@@ -14,6 +15,8 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
   const [isLoading, setIsLoading] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   // Fetch logs
   const fetchLogs = async () => {
@@ -49,15 +52,25 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
   const getLevelColor = (level: string) => {
     switch (level) {
       case 'error':
-        return 'text-red-600 bg-red-50 border-red-200'
+        return isDark
+          ? 'text-red-400 bg-red-500/10 border-red-500/30'
+          : 'text-red-600 bg-red-50 border-red-200'
       case 'warn':
-        return 'text-yellow-700 bg-yellow-50 border-yellow-200'
+        return isDark
+          ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30'
+          : 'text-yellow-700 bg-yellow-50 border-yellow-200'
       case 'log':
-        return 'text-green-700 bg-green-50 border-green-200'
+        return isDark
+          ? 'text-green-400 bg-green-500/10 border-green-500/30'
+          : 'text-green-700 bg-green-50 border-green-200'
       case 'debug':
-        return 'text-blue-600 bg-blue-50 border-blue-200'
+        return isDark
+          ? 'text-blue-400 bg-blue-500/10 border-blue-500/30'
+          : 'text-blue-600 bg-blue-50 border-blue-200'
       default:
-        return 'text-neutral-600 bg-neutral-50 border-neutral-200'
+        return isDark
+          ? 'text-zinc-400 bg-zinc-800 border-zinc-700'
+          : 'text-neutral-600 bg-neutral-50 border-neutral-200'
     }
   }
 
@@ -82,23 +95,27 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
             exit={{ opacity: 0, scale: 0.95 }}
           >
             <div
-              className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col"
+              className={`rounded-2xl max-w-4xl w-full max-h-[80vh] flex flex-col ${
+                isDark ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]' : 'bg-white shadow-2xl'
+              }`}
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
+              <div className={`flex items-center justify-between px-6 py-4 border-b ${
+                isDark ? 'border-zinc-800' : 'border-neutral-200'
+              }`}>
                 <div>
-                  <h2 className="text-lg font-light text-neutral-900">
+                  <h2 className={`text-lg font-light ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
                     Listener Monitor Logs
                   </h2>
-                  <p className="text-xs text-neutral-500 mt-1">
+                  <p className={`text-xs mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
                     {sessionId ? `Filtered for session ${sessionId.slice(0, 8)}...` : 'All sessions'}
                   </p>
                 </div>
 
                 <div className="flex items-center gap-3">
                   {/* Auto-scroll toggle */}
-                  <label className="flex items-center gap-2 text-xs text-neutral-600 cursor-pointer">
+                  <label className={`flex items-center gap-2 text-xs cursor-pointer ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                     <input
                       type="checkbox"
                       checked={autoScroll}
@@ -111,11 +128,13 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                   {/* Refresh button */}
                   <button
                     onClick={fetchLogs}
-                    className="p-2 rounded-lg hover:bg-neutral-100 transition-colors"
+                    className={`p-2 rounded-lg transition-colors ${
+                      isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                    }`}
                     title="Refresh logs"
                   >
                     <svg
-                      className={`w-4 h-4 text-neutral-600 ${isLoading ? 'animate-spin' : ''}`}
+                      className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''} ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -128,10 +147,12 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                   {/* Close button */}
                   <button
                     onClick={onClose}
-                    className="p-2 rounded-lg hover:bg-neutral-100 transition-colors"
+                    className={`p-2 rounded-lg transition-colors ${
+                      isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                    }`}
                   >
                     <svg
-                      className="w-5 h-5 text-neutral-600"
+                      className={`w-5 h-5 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -144,9 +165,11 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
               </div>
 
               {/* Logs */}
-              <div className="flex-1 overflow-auto p-4 bg-neutral-50 font-mono text-xs">
+              <div className={`flex-1 overflow-auto p-4 font-mono text-xs ${
+                isDark ? 'bg-zinc-950' : 'bg-neutral-50'
+              }`}>
                 {logs.length === 0 ? (
-                  <div className="text-center text-neutral-400 py-8">
+                  <div className={`text-center py-8 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                     No logs available
                   </div>
                 ) : (
@@ -183,14 +206,20 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-3 border-t rounded-b-2xl border-neutral-200 bg-neutral-50 flex items-center justify-between">
-                <div className="text-xs text-neutral-500">
+              <div className={`px-6 py-3 border-t rounded-b-2xl flex items-center justify-between ${
+                isDark ? 'border-zinc-800 bg-zinc-900' : 'border-neutral-200 bg-neutral-50'
+              }`}>
+                <div className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
                   {logs.length} log {logs.length === 1 ? 'entry' : 'entries'}
-                  {isLoading && <span className="ml-2 text-neutral-400">• Refreshing...</span>}
+                  {isLoading && <span className={`ml-2 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}>• Refreshing...</span>}
                 </div>
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 rounded-lg bg-neutral-900 text-white text-sm font-light hover:bg-neutral-800 transition-colors"
+                  className={`px-4 py-2 rounded-lg text-sm font-light transition-colors ${
+                    isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                  }`}
                 >
                   Close
                 </button>

@@ -1,17 +1,17 @@
 /**
- * GRACE Face Modal
- * Full-screen black overlay with animated GRACE face
+ * STELLA Face Modal
+ * Full-screen black overlay with animated STELLA face
  */
 
 import React, { useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import GraceFace from './GraceFace';
+import StellaFace from './StellaFace';
 import UserTranscriptOverlay from './UserTranscriptOverlay';
 import { X } from 'lucide-react';
 import { useStore } from '../../store';
 import { startMicWithVu } from '../../services/audio/capture';
 
-interface GraceFaceModalProps {
+interface StellaFaceModalProps {
   isOpen: boolean;
   onClose: () => void;
   isUserSpeaking?: boolean;
@@ -19,7 +19,7 @@ interface GraceFaceModalProps {
   audioLevel?: number;
 }
 
-const GraceFaceModal: React.FC<GraceFaceModalProps> = ({
+const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
   isOpen,
   onClose,
   isUserSpeaking = false,
@@ -167,14 +167,14 @@ const GraceFaceModal: React.FC<GraceFaceModalProps> = ({
             <X className="w-6 h-6 text-white" />
           </motion.button>
 
-          {/* GRACE Face */}
+          {/* STELLA Face */}
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             transition={{ duration: 0.4, ease: 'easeOut' }}
           >
-            <GraceFace
+            <StellaFace
               isUserSpeaking={isUserSpeaking}
               isRemoteSpeaking={isRemoteSpeaking}
               audioLevel={audioLevel}
@@ -238,4 +238,4 @@ const GraceFaceModal: React.FC<GraceFaceModalProps> = ({
   );
 };
 
-export default GraceFaceModal;
+export default StellaFaceModal;

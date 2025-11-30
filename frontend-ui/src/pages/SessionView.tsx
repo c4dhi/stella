@@ -14,9 +14,11 @@ import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
 import NetworkInfoModal from '../components/modals/NetworkInfoModal'
-import GraceFaceModal from '../components/face/GraceFaceModal'
+import StellaFaceModal from '../components/face/StellaFaceModal'
+import ThemeToggle from '../components/ThemeToggle'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
+import { useThemeStore } from '../store/themeStore'
 import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
@@ -27,6 +29,13 @@ export default function SessionView() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const { addToast } = useToastStore()
+  const { resolvedTheme, initializeTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
+
+  // Initialize theme on mount
+  useEffect(() => {
+    initializeTheme()
+  }, [initializeTheme])
 
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -626,21 +635,18 @@ export default function SessionView() {
 
   if (isLoading) {
     return (
-      <div className="w-full h-screen flex items-center justify-center bg-neutral-50">
-        <div className="text-sm text-neutral-400 font-light">Loading session...</div>
+      <div className={`w-full h-screen flex items-center justify-center transition-colors duration-200 ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
+        <div className={`text-body ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>Loading session...</div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="w-full h-screen flex items-center justify-center bg-neutral-50">
+      <div className={`w-full h-screen flex items-center justify-center transition-colors duration-200 ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
         <div className="text-center">
-          <div className="text-red-600 text-sm font-light mb-4">{error}</div>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="px-4 py-2 rounded-lg bg-neutral-900 text-white text-sm font-light"
-          >
+          <div className={`text-body mb-4 ${isDark ? 'text-red-400' : 'text-red-600'}`}>{error}</div>
+          <button onClick={() => navigate('/dashboard')} className="btn-primary">
             Back to Dashboard
           </button>
         </div>
@@ -649,29 +655,20 @@ export default function SessionView() {
   }
 
   return (
-    <div className="w-full h-screen bg-neutral-50">
+    <div className={`w-full h-screen transition-colors duration-200 ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
       {/* Header */}
-      <header className="bg-white/90 backdrop-blur-xl border-b border-neutral-200/60 sticky top-0 z-40">
+      <header className={`sticky top-0 z-40 border-b transition-colors duration-200 backdrop-blur-sm ${
+        isDark ? 'bg-surface-dark/95 border-border-dark' : 'bg-white/95 border-border'
+      }`}>
         <div className="max-w-7xl mx-auto px-6 py-3">
           <div className="flex items-center gap-3">
-            {/* Back Button - vertically centered */}
+            {/* Back Button */}
             <Link
               to={`/project/${session?.projectId}`}
-              className="
-                p-1.5 rounded-lg self-center
-                text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                transition-all duration-200
-              "
+              className="btn-ghost p-1.5"
               title="Back to sessions"
             >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
             </Link>
@@ -679,48 +676,31 @@ export default function SessionView() {
             {/* Breadcrumb and Title */}
             <div className="flex-1">
               {/* Breadcrumb */}
-              <div className="flex items-center gap-2 text-xs text-neutral-500 font-light mb-1">
-                <Link
-                  to="/dashboard"
-                  className="hover:text-neutral-900 transition-colors duration-200"
-                >
+              <div className={`flex items-center gap-2 text-caption mb-1 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                <Link to="/dashboard" className={`transition-colors ${isDark ? 'hover:text-content-inverse' : 'hover:text-content'}`}>
                   Projects
                 </Link>
                 <span>/</span>
-                <Link
-                  to={`/project/${session?.projectId}`}
-                  className="hover:text-neutral-900 transition-colors duration-200"
-                >
+                <Link to={`/project/${session?.projectId}`} className={`transition-colors ${isDark ? 'hover:text-content-inverse' : 'hover:text-content'}`}>
                   Sessions
                 </Link>
                 <span>/</span>
-                <span className="text-neutral-900 font-mono text-[10px]">
+                <span className={`font-mono ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                   {session?.room.livekitRoomName || 'Session'}
                 </span>
               </div>
 
               {/* Title - Editable */}
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-light text-neutral-900 tracking-wide">
+                <h1 className={`text-heading-sm ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                   {session?.name || session?.room.livekitRoomName || 'Session'}
                 </h1>
                 <button
                   onClick={() => setIsEditModalOpen(true)}
-                  className="
-                    p-1.5 rounded-lg
-                    text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                    transition-all duration-200
-                  "
+                  className="btn-ghost p-1"
                   title="Edit session name"
                 >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                   </svg>
@@ -728,27 +708,23 @@ export default function SessionView() {
               </div>
             </div>
 
-            {/* Right side - Info button */}
+            {/* Right side - Theme toggle and Info button */}
+            <ThemeToggle />
             <button
               onClick={() => setIsNetworkInfoOpen(true)}
-              className="
-                p-2 rounded-lg text-xs font-light tracking-wider
-                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
-                transition-all duration-200
-              "
+              className="btn-ghost p-2"
               title="Network Information"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
+                <path d="M12 16v-4M12 8h.01" />
               </svg>
             </button>
           </div>
         </div>
       </header>
 
-      <div className="h-[calc(100vh-80px)] flex gap-4 p-4 text-neutral-900">
+      <div className={`h-[calc(100vh-81px)] flex gap-4 px-4 pb-4 mt-6 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
         {/* Left Sidebar - Participants and Agents */}
         <div className="flex-shrink-0 space-y-4">
           <ParticipantSection
@@ -769,7 +745,11 @@ export default function SessionView() {
         <div className={`flex flex-col gap-3 transition-all duration-300 ${showTaskPanel ? 'flex-1' : 'w-full max-w-3xl mx-auto'}`}>
           <ConnectPanel roomName={session?.room.livekitRoomName} />
 
-          <div className="flex-1 bg-white/90 backdrop-blur-xl rounded-xl shadow-sm border border-neutral-200/60 flex flex-col overflow-hidden">
+          <div className={`flex-1 backdrop-blur-xl rounded-xl shadow-sm flex flex-col overflow-hidden transition-colors duration-300 ${
+            isDark
+              ? 'bg-white/5 border border-white/10'
+              : 'bg-white/90 border border-neutral-200/60'
+          }`}>
             <ChatView
               listenerStatus={listenerStatus}
               onShowLogs={() => setShowLogsModal(true)}
@@ -841,8 +821,8 @@ export default function SessionView() {
         onClose={() => setIsNetworkInfoOpen(false)}
       />
 
-      {/* GRACE Face Modal - Full Screen */}
-      <GraceFaceModal
+      {/* STELLA Face Modal - Full Screen */}
+      <StellaFaceModal
         isOpen={isFaceModalOpen}
         onClose={() => setFaceModalOpen(false)}
         isRemoteSpeaking={isRemoteSpeaking}

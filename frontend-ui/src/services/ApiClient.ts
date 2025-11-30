@@ -59,8 +59,8 @@ class SessionManagementClient {
   ): Promise<T> {
     const url = `${this.getBaseUrl()}${path}`
 
-    // Get JWT token from localStorage
-    const token = localStorage.getItem('grace_auth_token')
+    // Get JWT token from localStorage (check new key first, then old for migration)
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
 
     // Build headers
     const headers: Record<string, string> = {
@@ -85,6 +85,8 @@ class SessionManagementClient {
     // Handle 401 Unauthorized - redirect to login
     if (response.status === 401) {
       // Clear stored auth data
+      localStorage.removeItem('stella_auth_token')
+      localStorage.removeItem('stella_user')
       localStorage.removeItem('grace_auth_token')
       localStorage.removeItem('grace_user')
 
