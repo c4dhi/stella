@@ -146,52 +146,131 @@ class RoomManager:
             )
 
     async def _handle_data_message(self, session_id: str, room_name: str, data_packet: rtc.DataPacket):
-        """Process and store a data message"""
+        """
+        Process and selectively store data messages.
+
+        FILTERING LOGIC:
+        - Only store final messages (is_final=true), not partial/streaming ones
+        - For user_text: Only store the ORIGINAL from the human user, not echoes from agents
+        - For transcripts (user_speech): Only store final transcripts, not partials
+        - For agent_text: Only store final responses, not streaming chunks
+        - For debug messages: Store all (for transparency)
+        - Skip audio streaming, TTS control, and other control messages
+        """
         try:
             # Decode the message
             message_text = data_packet.data.decode('utf-8')
             envelope = json.loads(message_text)
 
-            # Extract participant info from envelope FIRST (authoritative source)
-            # The envelope's participant_id is set by the sender and represents the logical sender
-            envelope_participant_id = envelope.get('participant_id')
-
-            # Fallback to LiveKit packet participant if envelope doesn't have it
+            # Get packet participant info (who actually sent the LiveKit packet)
             packet_participant_identity = None
             packet_participant_name = None
             if data_packet.participant:
                 packet_participant_identity = data_packet.participant.identity
                 packet_participant_name = data_packet.participant.name
 
-            # Use envelope participant_id first (more accurate for message attribution)
-            # Fall back to packet participant if envelope doesn't specify
-            participant_identity = envelope_participant_id or packet_participant_identity
-            participant_name = packet_participant_name  # Use LiveKit display name
-
-            # Log message (but not audio chunks to avoid spam)
+            # Extract message details
             message_type = envelope.get('type', 'unknown')
-            if message_type != 'audio_stream_chunk':
-                print(f"📨 Message in {room_name}: type={message_type}, from={participant_identity}")
+            message_data = envelope.get('data', {})
 
-                # Log transcript messages to dashboard (only final transcripts)
-                if message_type == 'transcript_chunk':
-                    is_final = envelope.get('data', {}).get('is_final', True)
-                    # Only log final transcripts, skip partial ones
-                    if is_final:
-                        await self.message_client.post_log(
-                            'debug',
-                            f'Received final transcript from {participant_identity or "unknown"}',
-                            session_id=session_id,
-                            data={'type': message_type, 'is_final': is_final}
-                        )
+            # Handle both flat and nested data structures
+            if isinstance(message_data, str):
+                # For user_text, data is just the text string
+                is_final = True  # user_text from frontend is always final
+            else:
+                is_final = message_data.get('is_final', True)
 
-            # Store complete message envelope via API
-            await self.message_client.store_message(
-                session_id=session_id,
-                message_envelope=envelope,
-                participant_identity=participant_identity,
-                participant_name=participant_name
-            )
+            # Get envelope's participant_id (logical sender for attribution)
+            envelope_participant_id = envelope.get('participant_id')
+            data_source = message_data.get('source') if isinstance(message_data, dict) else None
+
+            # SKIP: Audio streaming messages (too noisy, not needed for replay)
+            if message_type in ('audio_stream_start', 'audio_stream_chunk', 'audio_stream_stop', 'audio_stream_mute'):
+                return
+
+            # SKIP: TTS control messages (not needed for replay)
+            if message_type in ('tts_start', 'tts_stop', 'tts_end', 'tts_pause', 'tts_resume', 'tts_paused', 'tts_resumed'):
+                return
+
+            # SKIP: Barge-in and control messages
+            if message_type in ('barge_in', 'voice_narration_control', 'heartbeat'):
+                return
+
+            # Log message for debugging (skip audio chunks)
+            print(f"📨 Message in {room_name}: type={message_type}, from={packet_participant_identity}, is_final={is_final}")
+
+            # === FILTERING LOGIC ===
+            should_store = False
+            participant_identity = envelope_participant_id or packet_participant_identity
+            participant_name = packet_participant_name
+
+            if message_type == 'user_text':
+                # STORE: Only if sent by actual user (human), NOT echoed by agent
+                # The original user_text comes from 'human' participant identity
+                # Echoed versions come from the agent identity
+                if packet_participant_identity == 'human':
+                    should_store = True
+                    print(f"   ✅ Storing original user_text from human")
+                else:
+                    print(f"   ⏭️ Skipping echoed user_text from {packet_participant_identity}")
+
+            elif message_type in ('transcript', 'transcript_chunk'):
+                # STORE: Only final transcripts, skip partial ones
+                if is_final:
+                    should_store = True
+                    print(f"   ✅ Storing final transcript (source={data_source})")
+                else:
+                    print(f"   ⏭️ Skipping partial transcript")
+
+            elif message_type == 'agent_text':
+                # STORE: Only final agent responses, skip streaming chunks
+                if is_final:
+                    should_store = True
+                    print(f"   ✅ Storing final agent_text")
+                else:
+                    print(f"   ⏭️ Skipping partial agent_text chunk")
+
+            elif message_type == 'debug':
+                # STORE: All debug messages for transparency
+                should_store = True
+                print(f"   ✅ Storing debug message")
+
+            elif message_type in ('decision_stream', 'expert_status', 'prompt_execution', 'safety_check'):
+                # STORE: Processing/decision messages (for replay of debug view)
+                should_store = True
+                print(f"   ✅ Storing processing message: {message_type}")
+
+            elif message_type in ('complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'):
+                # STORE: Task and plan updates (for task panel replay)
+                should_store = True
+                print(f"   ✅ Storing task/plan message: {message_type}")
+
+            elif message_type == 'llm_config':
+                # STORE: LLM configuration for session context
+                should_store = True
+                print(f"   ✅ Storing llm_config")
+
+            else:
+                # SKIP: Unknown message types by default
+                print(f"   ⏭️ Skipping unknown message type: {message_type}")
+
+            # Store the message if it passes the filter
+            if should_store:
+                await self.message_client.store_message(
+                    session_id=session_id,
+                    message_envelope=envelope,
+                    participant_identity=participant_identity,
+                    participant_name=participant_name
+                )
+
+                # Log to dashboard for monitoring
+                if message_type in ('transcript', 'transcript_chunk') and is_final:
+                    await self.message_client.post_log(
+                        'debug',
+                        f'Recorded final transcript from {participant_identity or "unknown"}',
+                        session_id=session_id,
+                        data={'type': message_type, 'source': data_source}
+                    )
 
         except json.JSONDecodeError as e:
             print(f"⚠️  Invalid JSON in message from {room_name}: {e}")

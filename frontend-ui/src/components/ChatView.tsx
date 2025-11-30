@@ -132,8 +132,8 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       const messageData = envelope.data || envelope
 
       // Handle different message types
-      if (messageType === 'transcript_chunk') {
-        // Transcript messages
+      if (messageType === 'transcript_chunk' || messageType === 'transcript') {
+        // User speech transcripts (from STT)
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : messageData.text,
@@ -148,6 +148,58 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           agent_name: messageData?.agent_name,
           source: messageData?.source,  // Message source: user_speech, user_text, agent_response
           dataSource: 'db' as const,    // Data source: db or live
+        }
+      } else if (messageType === 'agent_text') {
+        // Agent response messages
+        return {
+          id: msg.id,
+          text: typeof messageData === 'string' ? messageData : messageData.text,
+          role: 'assistant' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          messageType: 'transcript' as const,
+          participant_id: messageData?.agent_id || getParticipantName(msg),
+          speaker_name: messageData?.agent_name || 'Agent',
+          agent_name: messageData?.agent_name || 'Agent',
+          agent_id: messageData?.agent_id,
+          source: 'agent_response' as const,
+          dataSource: 'db' as const,
+        }
+      } else if (messageType === 'user_text') {
+        // User typed text messages
+        const textContent = typeof messageData === 'string' ? messageData : (messageData.text || messageData)
+        return {
+          id: msg.id,
+          text: typeof textContent === 'string' ? textContent : JSON.stringify(textContent),
+          role: 'user' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          messageType: 'transcript' as const,
+          participant_id: envelope.participant_id || getParticipantName(msg),
+          speaker_name: envelope.participant_id || getParticipantName(msg),
+          source: 'user_text' as const,
+          dataSource: 'db' as const,
+        }
+      } else if (messageType === 'debug') {
+        // Debug messages - display in processing view
+        return {
+          id: msg.id,
+          type: 'debug' as const,
+          role: 'system' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          streamId: messageData.stream_id || 'db-stream',
+          data: {
+            component: messageData.component || 'agent',
+            level: messageData.level || 'info',
+            message: messageData.content || messageData.message || '',
+            metadata: messageData.metadata || messageData
+          },
+          messageType: 'processing' as const,
+          dataSource: 'db' as const,
         }
       } else if (['decision_stream', 'expert_status', 'expert_results', 'prompt_execution', 'safety_check'].includes(messageType)) {
         // Processing messages
@@ -191,6 +243,12 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       }
     }).filter((msg): msg is NonNullable<typeof msg> => msg !== null) // Remove nulls with type guard
 
+    // Filter historical messages based on showProcessingMessages toggle
+    // When processing/debug is disabled, hide those messages from DB as well
+    const filteredHistorical = showProcessingMessages
+      ? historical
+      : historical.filter(msg => msg.messageType !== 'processing')
+
     // Combine with live messages
     const liveTranscripts = turns.map(t => ({ ...t, messageType: 'transcript' as const, dataSource: 'live' as const }))
     const processing = showProcessingMessages
@@ -198,7 +256,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       : []
     const events = participantEvents.map(e => ({ ...e, dataSource: 'live' as const }))
 
-    const combined = [...historical, ...liveTranscripts, ...processing, ...events]
+    const combined = [...filteredHistorical, ...liveTranscripts, ...processing, ...events]
 
     // Deduplicate by ID (prefer live version if exists)
     const unique = Array.from(

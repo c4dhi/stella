@@ -237,7 +237,14 @@ export default function SessionView() {
     }
 
     // === Participant handlers (from ConnectPanel) ===
-    transport.onParticipantJoined = (participantId: string, participantName?: string) => {
+    transport.onParticipantJoined = (participantId: string, participantName?: string, isExisting?: boolean) => {
+      // Skip adding "joined" events for participants that were already in the room
+      // when we connected - we only want to show notifications for NEW joins
+      if (isExisting) {
+        console.log(`[SessionView] Skipping join notification for existing participant: ${participantName || participantId}`)
+        return
+      }
+
       // For agents, use the display name from LiveKit (set via AGENT_NAME env var)
       // The participantName will be the agent's configured name (e.g., "Grace", "Echo")
       const displayName = participantName || participantId
@@ -717,7 +724,7 @@ export default function SessionView() {
 
       <div className={`h-[calc(100vh-81px)] flex gap-4 px-4 py-4 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
         {/* Left Sidebar - Participants and Agents */}
-        <div className="flex-shrink-0 space-y-4 pt-4">
+        <div className="flex-shrink-0 space-y-4">
           <ParticipantSection
             sessionId={sessionId}
             participants={participants}

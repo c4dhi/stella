@@ -75,7 +75,7 @@ export class PeerTransport implements Transport {
   onPlanProgress = (_data: PlanProgressUpdate) => {}
   onDeliverableUpdate = (_data: PlanDeliverableUpdate) => {}
   onStateChange = (_data: StateChangeNotification) => {}
-  onParticipantJoined = (_participantId: string, _participantName?: string) => {}
+  onParticipantJoined = (_participantId: string, _participantName?: string, _isExisting?: boolean) => {}
   onParticipantLeft = (_participantId: string, _participantName?: string) => {}
   onLLMConfig = (_config: any) => {}
   onAudioLevel = (_level: number) => {}
@@ -396,9 +396,10 @@ export class PeerTransport implements Transport {
 
       // Notify about participants already in the room
       // (ParticipantConnected only fires for joins AFTER we connect)
+      // Mark these as "existing" so we don't show "joined" notifications
       for (const participant of room.remoteParticipants.values()) {
         console.log(`👤 [EXISTING] Participant already in room: ${participant.identity} (${participant.name})`)
-        this.onParticipantJoined(participant.identity, participant.name)
+        this.onParticipantJoined(participant.identity, participant.name, true /* isExisting */)
       }
 
       // Publish microphone if available

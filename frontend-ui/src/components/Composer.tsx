@@ -138,11 +138,10 @@ export default function Composer() {
 
   return (
     <motion.div
-      className={`px-4 py-4 backdrop-blur-sm rounded-xl border ${
-        isDark
+      className={`px-4 py-4 backdrop-blur-sm rounded-xl border ${isDark
           ? 'bg-surface-dark-secondary/90 border-border-dark'
           : 'bg-white/90 border-border shadow-sm'
-      }`}
+        }`}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
@@ -150,21 +149,19 @@ export default function Composer() {
       <div className="flex items-center gap-2">
         {/* Input Field Container */}
         <div
-          className={`min-h-9 flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border transition-all duration-200 ${
-            isDark
+          className={`min-h-9 flex-1 flex items-center gap-2 rounded-lg border transition-all duration-200 ${isDark
               ? 'bg-surface-dark-tertiary border-border-dark focus-within:border-border-dark-secondary'
               : 'bg-surface-secondary border-border focus-within:border-border-secondary focus-within:bg-white'
-          }`}
+            }`}
         >
           <input
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            className={`flex-1 bg-transparent border-none outline-none text-body ${
-              isDark
+            className={`flex-1 bg-transparent px-3 py-2 rounded-lg outline-none text-body ${isDark
                 ? 'text-content-inverse placeholder:text-content-inverse-tertiary'
                 : 'text-content placeholder:text-content-tertiary'
-            }`}
+              }`}
             placeholder={status === 'connected' ? 'Type your message...' : 'Connect to start'}
             disabled={status !== 'connected'}
           />
@@ -216,8 +213,7 @@ export default function Composer() {
           <motion.button
             onClick={toggleMute}
             disabled={status !== 'connected'}
-            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-200 ${
-              status !== 'connected'
+            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-200 ${status !== 'connected'
                 ? isDark
                   ? 'bg-surface-dark-tertiary text-content-inverse-tertiary cursor-not-allowed'
                   : 'bg-surface-secondary text-content-tertiary cursor-not-allowed'
@@ -228,7 +224,7 @@ export default function Composer() {
                   : isDark
                     ? 'bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50 border border-emerald-500/30'
                     : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200'
-            }`}
+              }`}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -256,13 +252,12 @@ export default function Composer() {
           <motion.button
             onClick={send}
             disabled={!text.trim() || status !== 'connected'}
-            className={`h-9 px-4 py-2 rounded-lg text-ui transition-all duration-200 ${
-              !text.trim() || status !== 'connected'
+            className={`h-9 px-4 py-2 rounded-lg text-ui transition-all duration-200 ${!text.trim() || status !== 'connected'
                 ? isDark
                   ? 'bg-surface-dark-tertiary text-content-inverse-tertiary cursor-not-allowed'
                   : 'bg-surface-secondary text-content-tertiary cursor-not-allowed'
                 : 'btn-primary'
-            }`}
+              }`}
             whileHover={text.trim() && status === 'connected' ? { scale: 1.02 } : {}}
             whileTap={text.trim() && status === 'connected' ? { scale: 0.98 } : {}}
           >

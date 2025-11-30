@@ -282,7 +282,7 @@ export default function DeployAgentModal({
 
                         {/* Description */}
                         <p className={`text-xs font-light leading-relaxed ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                          Deploy custom agents using the Grace Agent SDK
+                          Deploy custom agents using the STELLA Agent SDK
                         </p>
                       </button>
                     </div>
@@ -386,11 +386,10 @@ export default function DeployAgentModal({
                       <motion.div
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className={`p-3 rounded-lg text-xs font-light ${
-                          isDark
+                        className={`p-3 rounded-lg text-xs font-light ${isDark
                             ? 'bg-red-500/10 border border-red-500/20 text-red-400'
                             : 'bg-red-50/80 border border-red-200/60 text-red-600'
-                        }`}
+                          }`}
                       >
                         {error}
                       </motion.div>

@@ -138,7 +138,7 @@ export interface TransportEvents {
   onPlanProgress: (data: PlanProgressUpdate) => void
   onDeliverableUpdate: (data: PlanDeliverableUpdate) => void
   onStateChange: (data: StateChangeNotification) => void
-  onParticipantJoined: (participantId: string, participantName?: string) => void
+  onParticipantJoined: (participantId: string, participantName?: string, isExisting?: boolean) => void
   onParticipantLeft: (participantId: string, participantName?: string) => void
   onLLMConfig: (config: any) => void
   onAudioLevel: (level: number) => void

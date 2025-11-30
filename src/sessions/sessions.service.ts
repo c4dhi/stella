@@ -860,18 +860,24 @@ export class SessionsService {
     }
 
     // Extract content for searchability (but keep full envelope in metadata)
+    // The message recorder is responsible for filtering - we trust it only sends what should be stored
     const messageData = messageEnvelope.data || messageEnvelope;
     let content: string;
-    if (messageType === 'transcript_chunk') {
-      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
 
-      // Skip partial transcripts
-      const isFinal = messageData.is_final !== false;
-      if (!isFinal) {
-        return { success: true, stored: false, reason: 'partial_transcript_skipped' };
-      }
+    // Handle transcript types (both 'transcript' and 'transcript_chunk' for compatibility)
+    if (messageType === 'transcript_chunk' || messageType === 'transcript') {
+      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
+    } else if (messageType === 'agent_text') {
+      // Agent responses - extract text content
+      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
+    } else if (messageType === 'user_text') {
+      // User text input - data is the text string itself
+      content = typeof messageData === 'string' ? messageData : (messageData.text || JSON.stringify(messageData));
+    } else if (messageType === 'debug') {
+      // Debug messages - extract the message content
+      content = typeof messageData === 'string' ? messageData : (messageData.content || messageData.message || JSON.stringify(messageData));
     } else {
-      // For non-transcript messages, store the data as JSON string
+      // For other messages, store the data as JSON string for completeness
       content = typeof messageData === 'string' ? messageData : JSON.stringify(messageData);
     }
 
