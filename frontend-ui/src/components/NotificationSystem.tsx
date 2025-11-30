@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useState } from 'react'
+import { useThemeStore } from '../store/themeStore'
 
 interface UpdateNotification {
   id: string
@@ -20,7 +21,7 @@ interface NotificationSystemProps {
   autoHideDuration?: number
 }
 
-const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type']; importance: UpdateNotification['importance'] }) => {
+const NotificationIcon = ({ type, importance, isDark }: { type: UpdateNotification['type']; importance: UpdateNotification['importance']; isDark: boolean }) => {
   const iconClass = importance === 'high' ? 'w-5 h-5' : 'w-4 h-4'
 
   switch (type) {
@@ -28,7 +29,9 @@ const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type
       return (
         <motion.div
           className={`rounded-full flex items-center justify-center ${
-            importance === 'high' ? 'bg-green-500 text-white p-1' : 'bg-green-100 text-green-600'
+            importance === 'high'
+              ? 'bg-green-500 text-white p-1'
+              : isDark ? 'bg-green-900/50 text-green-400' : 'bg-green-100 text-green-600'
           }`}
           initial={{ scale: 0, rotate: -180 }}
           animate={{ scale: 1, rotate: 0 }}
@@ -43,7 +46,9 @@ const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type
       return (
         <motion.div
           className={`rounded-full flex items-center justify-center ${
-            importance === 'high' ? 'bg-blue-500 text-white p-1' : 'bg-blue-100 text-blue-600'
+            importance === 'high'
+              ? 'bg-blue-500 text-white p-1'
+              : isDark ? 'bg-blue-900/50 text-blue-400' : 'bg-blue-100 text-blue-600'
           }`}
           initial={{ scale: 0, rotate: -90 }}
           animate={{ scale: 1, rotate: 0 }}
@@ -58,7 +63,9 @@ const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type
       return (
         <motion.div
           className={`rounded-full flex items-center justify-center ${
-            importance === 'high' ? 'bg-yellow-500 text-white p-1' : 'bg-yellow-100 text-yellow-600'
+            importance === 'high'
+              ? 'bg-yellow-500 text-white p-1'
+              : isDark ? 'bg-yellow-900/50 text-yellow-400' : 'bg-yellow-100 text-yellow-600'
           }`}
           initial={{ scale: 0 }}
           animate={{ scale: [1, 1.2, 1] }}
@@ -73,7 +80,9 @@ const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type
       return (
         <motion.div
           className={`rounded-full flex items-center justify-center ${
-            importance === 'high' ? 'bg-purple-500 text-white p-1' : 'bg-purple-100 text-purple-600'
+            importance === 'high'
+              ? 'bg-purple-500 text-white p-1'
+              : isDark ? 'bg-purple-900/50 text-purple-400' : 'bg-purple-100 text-purple-600'
           }`}
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
@@ -86,8 +95,8 @@ const NotificationIcon = ({ type, importance }: { type: UpdateNotification['type
       )
     default:
       return (
-        <div className={`rounded-full bg-gray-100 text-gray-600 flex items-center justify-center`}>
-          <div className="w-2 h-2 bg-gray-400 rounded-full" />
+        <div className={`rounded-full flex items-center justify-center ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-gray-100 text-gray-600'}`}>
+          <div className={`w-2 h-2 rounded-full ${isDark ? 'bg-zinc-500' : 'bg-gray-400'}`} />
         </div>
       )
   }
@@ -104,6 +113,8 @@ const NotificationToast = ({
   onMarkAsRead: (id: string) => void;
   autoHideDuration?: number;
 }) => {
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
   const [isVisible, setIsVisible] = useState(true)
 
   useEffect(() => {
@@ -149,8 +160,12 @@ const NotificationToast = ({
       className={`
         relative p-4 rounded-xl border shadow-lg backdrop-blur-sm cursor-pointer group
         ${notification.importance === 'high'
-          ? 'bg-white/95 border-blue-200 shadow-blue-100/50'
-          : 'bg-white/90 border-neutral-200/60'
+          ? isDark
+            ? 'bg-zinc-800/95 border-blue-700/60 shadow-blue-900/30'
+            : 'bg-white/95 border-blue-200 shadow-blue-100/50'
+          : isDark
+            ? 'bg-zinc-800/90 border-zinc-700/60'
+            : 'bg-white/90 border-neutral-200/60'
         }
       `}
       onClick={handleDismiss}
@@ -160,7 +175,7 @@ const NotificationToast = ({
       {/* Importance indicator */}
       {notification.importance === 'high' && (
         <motion.div
-          className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"
+          className={`absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 ${isDark ? 'border-zinc-800' : 'border-white'}`}
           animate={{
             scale: [1, 1.2, 1],
             opacity: [0.8, 1, 0.8]
@@ -173,16 +188,18 @@ const NotificationToast = ({
       )}
 
       <div className="flex items-start gap-3">
-        <NotificationIcon type={notification.type} importance={notification.importance} />
+        <NotificationIcon type={notification.type} importance={notification.importance} isDark={isDark} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2 mb-1">
             <h4 className={`font-medium truncate ${
-              notification.importance === 'high' ? 'text-sm text-neutral-900' : 'text-xs text-neutral-800'
+              notification.importance === 'high'
+                ? isDark ? 'text-sm text-zinc-100' : 'text-sm text-neutral-900'
+                : isDark ? 'text-xs text-zinc-200' : 'text-xs text-neutral-800'
             }`}>
               {notification.title}
             </h4>
-            <time className="text-[9px] text-neutral-500 shrink-0">
+            <time className={`text-[9px] shrink-0 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
               {new Date(notification.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit'
@@ -191,7 +208,9 @@ const NotificationToast = ({
           </div>
 
           <p className={`leading-relaxed ${
-            notification.importance === 'high' ? 'text-xs text-neutral-700' : 'text-[11px] text-neutral-600'
+            notification.importance === 'high'
+              ? isDark ? 'text-xs text-zinc-300' : 'text-xs text-neutral-700'
+              : isDark ? 'text-[11px] text-zinc-400' : 'text-[11px] text-neutral-600'
           }`}>
             {notification.message}
           </p>
@@ -202,16 +221,20 @@ const NotificationToast = ({
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               transition={{ duration: 0.3, delay: 0.5 }}
-              className="mt-2 p-2 bg-green-50/80 rounded-md border border-green-200/40"
+              className={`mt-2 p-2 rounded-md border ${
+                isDark
+                  ? 'bg-green-900/30 border-green-700/40'
+                  : 'bg-green-50/80 border-green-200/40'
+              }`}
             >
-              <div className="text-[9px] text-green-700 font-medium mb-1">
+              <div className={`text-[9px] font-medium mb-1 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                 AI Reasoning:
               </div>
-              <div className="text-[10px] text-green-800 italic leading-relaxed">
+              <div className={`text-[10px] italic leading-relaxed ${isDark ? 'text-green-300' : 'text-green-800'}`}>
                 {notification.data.reasoning}
               </div>
               {notification.data.confidence && (
-                <div className="text-[9px] text-green-600 mt-1">
+                <div className={`text-[9px] mt-1 ${isDark ? 'text-green-500' : 'text-green-600'}`}>
                   Confidence: {Math.round(notification.data.confidence * 100)}%
                 </div>
               )}
@@ -222,11 +245,13 @@ const NotificationToast = ({
         {/* Dismiss button */}
         <motion.button
           onClick={handleDismiss}
-          className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-all duration-200"
+          className={`opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded-full transition-all duration-200 ${
+            isDark ? 'hover:bg-zinc-700' : 'hover:bg-neutral-100'
+          }`}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}
         >
-          <svg className="w-3 h-3 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className={`w-3 h-3 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </motion.button>
@@ -252,6 +277,8 @@ export default function NotificationSystem({
   maxVisible = 3,
   autoHideDuration = 5000
 }: NotificationSystemProps) {
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
   const unreadNotifications = notifications.filter(n => !n.read)
   const visibleNotifications = unreadNotifications.slice(0, maxVisible)
 
@@ -276,7 +303,11 @@ export default function NotificationSystem({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.8 }}
           onClick={onClearAll}
-          className="w-full p-2 rounded-lg bg-white/80 backdrop-blur-sm border border-neutral-200/60 text-xs text-neutral-600 hover:text-neutral-800 hover:bg-white/90 transition-all duration-200"
+          className={`w-full p-2 rounded-lg backdrop-blur-sm border text-xs transition-all duration-200 ${
+            isDark
+              ? 'bg-zinc-800/80 border-zinc-700/60 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/90'
+              : 'bg-white/80 border-neutral-200/60 text-neutral-600 hover:text-neutral-800 hover:bg-white/90'
+          }`}
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >

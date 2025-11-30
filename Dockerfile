@@ -56,7 +56,8 @@ RUN npm ci --only=production
 COPY --from=builder /app/dist ./dist
 
 # Copy proto files for gRPC client (STT service)
-COPY --from=builder /app/proto ./proto
+# Proto is expected at dist/proto relative to dist/src/main.js (__dirname/../proto)
+COPY --from=builder /app/proto ./dist/proto
 
 # Cache buster for Prisma schema changes - this ARG invalidates the cache
 # when the schema changes, ensuring prisma generate runs with the new schema
@@ -67,4 +68,4 @@ RUN echo "Schema checksum: ${PRISMA_SCHEMA_CHECKSUM}" && npx prisma generate
 EXPOSE 3000
 
 # Start the application
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]

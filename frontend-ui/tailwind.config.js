@@ -17,18 +17,18 @@ export default {
           'dark-secondary': '#18181b', // Dark mode secondary (zinc-900)
           'dark-tertiary': '#27272a',  // Dark mode tertiary (zinc-800)
         },
-        // Primary brand color - Violet (softer)
+        // Primary brand color - Neon Purple (vibrant for dark mode)
         primary: {
-          50: '#f8f7fc',
-          100: '#f0edfa',
-          200: '#e2ddf6',
-          300: '#ccc2ef',
-          400: '#a897e0',
-          500: '#8670d4',   // Main brand - softer violet
-          600: '#7259c4',   // Darker variant
-          700: '#5f47a8',
-          800: '#4e3b89',
-          900: '#412f70',
+          50: '#faf5ff',
+          100: '#f3e8ff',
+          200: '#e9d5ff',
+          300: '#d8b4fe',
+          400: '#c084fc',
+          500: '#a855f7',   // Main brand - vibrant purple
+          600: '#9333ea',   // Darker variant
+          700: '#7c3aed',   // Neon purple
+          800: '#6b21a8',
+          900: '#581c87',
         },
         // Text colors - softer, warmer tones
         content: {
@@ -106,9 +106,9 @@ export default {
         'md': '0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)',
         'lg': '0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.05)',
         'xl': '0 20px 25px -5px rgb(0 0 0 / 0.05), 0 8px 10px -6px rgb(0 0 0 / 0.05)',
-        // Colored shadows for hover states
-        'primary': '0 4px 14px -2px rgb(139 92 246 / 0.25)',
-        'primary-lg': '0 8px 24px -4px rgb(139 92 246 / 0.3)',
+        // Colored shadows for hover states - neon purple glow
+        'primary': '0 4px 20px -2px rgb(168 85 247 / 0.4)',
+        'primary-lg': '0 8px 30px -4px rgb(168 85 247 / 0.5)',
         // Dark mode shadows
         'dark': '0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.2)',
         'dark-lg': '0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3)',

@@ -83,10 +83,10 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
         className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed ${
           status === 'connecting'
             ? isDark
-              ? 'bg-white/10 text-content-inverse-secondary border border-white/10'
+              ? 'bg-primary-500/50 text-white/70 border border-primary-400/30'
               : 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
             : isDark
-              ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+              ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
               : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
         }`}
       >
@@ -102,7 +102,7 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 border flex items-center gap-2 ${
               voiceNarrationEnabled
                 ? isDark
-                  ? 'bg-white/20 text-white hover:bg-white/30 border-white/20'
+                  ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border-primary-400/30'
                   : 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
                 : isDark
                   ? 'bg-white/10 text-content-inverse-secondary hover:bg-white/20 border-white/10'

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { exec, ExecException } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
+import { AgentTypeService, AgentTypeInfo as DbAgentTypeInfo } from '../agent-type/agent-type.service';
 
 const execAsync = promisify(exec);
 
@@ -13,10 +14,16 @@ export interface AgentImageConfig {
   tag: string;
 }
 
+// Extended type info for gallery display
 export interface AgentTypeInfo {
   id: string;
+  slug: string;
   name: string;
   description: string;
+  icon: string | null;
+  version: string;
+  isBuiltIn: boolean;
+  capabilities: string[];
 }
 
 // Metadata for each agent type
@@ -58,7 +65,10 @@ export class AgentImageService {
   // Track images currently being built to avoid duplicate builds
   private readonly buildingImages: Map<string, Promise<string>> = new Map();
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private agentTypeService: AgentTypeService,
+  ) {
     // Detect if running inside a K8s pod
     this.isRunningInK8s = !!process.env.KUBERNETES_SERVICE_HOST;
 
@@ -123,17 +133,37 @@ export class AgentImageService {
 
   /**
    * Get all registered agent types with metadata.
+   * Tries database first, falls back to hardcoded metadata.
    */
-  getAgentTypesWithInfo(): AgentTypeInfo[] {
-    return Array.from(this.agentRegistry.keys()).map((id) => {
-      const metadata = AGENT_TYPE_METADATA[id] || {
-        name: id,
+  async getAgentTypesWithInfo(): Promise<AgentTypeInfo[]> {
+    try {
+      // Try to get agent types from database
+      const dbTypes = await this.agentTypeService.getAgentTypesForGallery();
+
+      if (dbTypes.length > 0) {
+        this.logger.debug(`Loaded ${dbTypes.length} agent types from database`);
+        return dbTypes;
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to load agent types from database: ${error.message}`);
+    }
+
+    // Fallback to hardcoded metadata (for backward compatibility)
+    this.logger.debug('Using hardcoded agent type metadata');
+    return Array.from(this.agentRegistry.keys()).map((slug) => {
+      const metadata = AGENT_TYPE_METADATA[slug] || {
+        name: slug,
         description: 'No description available',
       };
       return {
-        id,
+        id: slug,  // Use slug as ID for backward compat
+        slug,
         name: metadata.name,
         description: metadata.description,
+        icon: null,
+        version: '1.0.0',
+        isBuiltIn: true,
+        capabilities: [],
       };
     });
   }

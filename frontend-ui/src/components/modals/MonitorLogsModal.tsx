@@ -207,7 +207,7 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
 
               {/* Footer */}
               <div className={`px-6 py-3 border-t rounded-b-2xl flex items-center justify-between ${
-                isDark ? 'border-zinc-800 bg-zinc-900' : 'border-neutral-200 bg-neutral-50'
+                isDark ? 'border-zinc-700 bg-zinc-900' : 'border-neutral-200 bg-neutral-50'
               }`}>
                 <div className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
                   {logs.length} log {logs.length === 1 ? 'entry' : 'entries'}
@@ -217,7 +217,7 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                   onClick={onClose}
                   className={`px-4 py-2 rounded-lg text-sm font-light transition-colors ${
                     isDark
-                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
                       : 'bg-neutral-900 text-white hover:bg-neutral-800'
                   }`}
                 >

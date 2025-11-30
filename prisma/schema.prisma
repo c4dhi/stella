@@ -93,6 +93,37 @@ enum AgentStatus {
   FAILED
 }
 
+// Agent type registry - supports built-in and future custom agents
+model AgentType {
+  id               String    @id @default(uuid())
+  slug             String    @unique  // e.g., "grace-agent", "echo-agent"
+  name             String              // Display name: "Grace Agent"
+  description      String              // Short description for gallery card
+  icon             String?             // Default emoji or image URL
+  version          String    @default("1.0.0")
+
+  // Built-in vs custom
+  isBuiltIn        Boolean   @default(true)
+
+  // Future custom agent support (not implemented yet)
+  imageUrl         String?             // Docker image URL for custom agents
+  author           String?             // Author name/email
+  validationStatus String?   @default("approved") // "pending", "approved", "rejected"
+
+  // Future filtering support
+  capabilities     Json?               // e.g., ["voice", "text", "plans"]
+
+  // Timestamps
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  agents           AgentInstance[]
+
+  @@index([slug])
+  @@index([isBuiltIn])
+}
+
 model AgentInstance {
   id            String       @id @default(uuid())
   sessionId     String
@@ -104,7 +135,9 @@ model AgentInstance {
   secretName    String?
   configMapName String?
   planId        String?
-  agentType     String?      @default("grace-agent")  // Agent type identifier for image selection
+  agentType     String?      @default("grace-agent")  // Agent type slug for backward compat
+  agentTypeId   String?                               // FK to AgentType (optional for backward compat)
+  agentTypeRef  AgentType?   @relation(fields: [agentTypeId], references: [id])
   createdAt     DateTime     @default(now())
   stoppedAt     DateTime?
 
@@ -117,6 +150,7 @@ model AgentInstance {
 
   @@index([sessionId])
   @@index([status])
+  @@index([agentTypeId])
 }
 
 model Participant {

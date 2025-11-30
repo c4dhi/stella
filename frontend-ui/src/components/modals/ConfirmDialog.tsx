@@ -32,7 +32,7 @@ export default function ConfirmDialog({
         : 'flex-1 py-2.5 px-4 rounded-xl bg-red-600 text-white text-sm font-light tracking-wider hover:bg-red-700 shadow-[0_1px_20px_rgba(220,38,38,0.2)] transition-all duration-200'
     }
     return isDark
-      ? 'flex-1 py-2.5 px-4 rounded-xl bg-white/10 text-white text-sm font-light tracking-wider hover:bg-white/20 border border-white/10 transition-all duration-200'
+      ? 'flex-1 py-2.5 px-4 rounded-xl bg-primary-500 text-white text-sm font-light tracking-wider hover:bg-primary-400 hover:shadow-primary border border-primary-400/30 transition-all duration-200'
       : 'flex-1 py-2.5 px-4 rounded-xl bg-neutral-900 text-white text-sm font-light tracking-wider hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] transition-all duration-200'
   }
 

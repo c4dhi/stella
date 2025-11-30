@@ -55,8 +55,8 @@ export default function ParticipantSection({
                 w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                 transition-all duration-200 flex items-center justify-center gap-2
                 ${isDark
-                  ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
-                  : 'bg-content text-white hover:bg-content/90 shadow-sm'
+                  ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
+                  : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-sm'
                 }
               `}
             >

@@ -253,14 +253,14 @@ export default function ParticipantConnectionModal({
                 </div>
               </div>
 
-              <div className={`mt-6 pt-6 border-t ${isDark ? 'border-zinc-800' : 'border-neutral-200/60'}`}>
+              <div className={`mt-6 pt-6 border-t ${isDark ? 'border-zinc-700' : 'border-neutral-200/60'}`}>
                 <button
                   onClick={onClose}
                   className={`
                     w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                     transition-all duration-200
                     ${isDark
-                      ? 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                      ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
                       : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
                     }
                   `}

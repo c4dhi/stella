@@ -126,7 +126,7 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3 min-h-0">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-5 min-h-0">
           <StateList
             states={states}
             currentStateId={todoList.current_state?.id || null}

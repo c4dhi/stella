@@ -102,7 +102,7 @@ spec:
         args:
         - |
           # Run database migrations and start the NestJS server
-          npx prisma migrate deploy && node dist/main
+          npx prisma migrate deploy && node dist/src/main
         volumeMounts:
         # Mount Docker socket for building images
         - name: docker-sock

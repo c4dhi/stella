@@ -286,6 +286,7 @@ export const useStore = create<
 
     if (idx >= 0) {
       next = [...existing];
+      // Replace with new chunk (SDK sends accumulated text)
       next[idx] = c
     } else {
       next = [...existing, c]

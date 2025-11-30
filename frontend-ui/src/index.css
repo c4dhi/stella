@@ -111,16 +111,22 @@
    Component Classes
    ================================================================= */
 @layer components {
-  /* Primary Button */
+  /* Primary Button - Black in light mode, Purple in dark mode */
   .btn-primary {
     @apply px-4 py-2.5 rounded-lg
-           bg-primary-500 text-white
+           bg-neutral-900 text-white
            text-ui font-medium
-           shadow-sm hover:shadow-primary
-           hover:bg-primary-600
-           active:bg-primary-700
+           shadow-sm
+           hover:bg-neutral-800
+           active:bg-neutral-950
            transition-all duration-200 ease-smooth
            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-sm;
+  }
+
+  body.dark .btn-primary {
+    @apply bg-primary-500 text-white
+           hover:bg-primary-400 hover:shadow-primary
+           active:bg-primary-600;
   }
 
   /* Secondary Button */

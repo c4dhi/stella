@@ -211,8 +211,13 @@ export interface CreateAgentDto {
 
 export interface AgentType {
   id: string
+  slug: string
   name: string
   description: string
+  icon: string | null
+  version: string
+  isBuiltIn: boolean
+  capabilities: string[]
 }
 
 export interface SessionEvent {

@@ -31,7 +31,7 @@ export class AgentsController {
   ) {}
 
   @Get('agent-types')
-  getAgentTypes() {
+  async getAgentTypes() {
     return this.agentImageService.getAgentTypesWithInfo();
   }
 
