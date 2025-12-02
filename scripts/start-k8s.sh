@@ -176,8 +176,14 @@ fi
 if [ "$STOP_MODE" = true ]; then
     echo "🛑 Stopping Grace AI Kubernetes services..."
 
-    # Stop port-forwards
-    if [ -f "$PID_DIR/port-forwards.pid" ]; then
+    # Stop port-forwards using daemon script if available
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PORT_FORWARD_DAEMON="$SCRIPT_DIR/port-forward-daemon.sh"
+
+    if [ -x "$PORT_FORWARD_DAEMON" ]; then
+        "$PORT_FORWARD_DAEMON" stop
+    elif [ -f "$PID_DIR/port-forwards.pid" ]; then
+        # Fallback to PID-based cleanup
         while read pid; do
             kill $pid 2>/dev/null && echo "  ✓ Stopped port-forward (PID: $pid)" || true
         done < "$PID_DIR/port-forwards.pid"
@@ -1863,7 +1869,7 @@ if [ "$WAIT_TTS" = true ]; then
 fi
 
 
-# Start port-forwards
+# Start port-forwards using the daemon script (with auto-restart)
 # Create port-forwards for all services:
 #   - Frontend: localhost:8080
 #   - Backend: localhost:3000
@@ -1871,46 +1877,55 @@ fi
 # In production, Caddy proxies external HTTPS traffic to these localhost ports
 echo -e "${GREEN}🌐 Setting up port forwards...${NC}"
 
-if [ "$DAEMON_MODE" = true ]; then
-    # Daemon mode: Use nohup and save PIDs
-    # Important: Explicitly set KUBECONFIG for nohup processes (needed for K3s)
-    KUBECONFIG_PATH="$KUBECONFIG"
-    if [ -z "$KUBECONFIG_PATH" ]; then
-        # Default kubeconfig location
-        KUBECONFIG_PATH="$HOME/.kube/config"
+# Use the port-forward-daemon.sh script which has auto-restart with exponential backoff
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORT_FORWARD_DAEMON="$SCRIPT_DIR/port-forward-daemon.sh"
+
+if [ -x "$PORT_FORWARD_DAEMON" ]; then
+    if [ "$DAEMON_MODE" = true ]; then
+        # Daemon mode: Run port-forward daemon in background
+        "$PORT_FORWARD_DAEMON" start -d
+    else
+        # Foreground mode: Start daemon processes but don't wait
+        # The daemon script will manage auto-restart
+        "$PORT_FORWARD_DAEMON" start -d
     fi
-
-    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
-    PF_FRONTEND=$!
-
-    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
-    PF_BACKEND=$!
-
-    # PostgreSQL port-forward (5432 for both local and production)
-    nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
-    PF_POSTGRES=$!
-
-    # Save PIDs to file
-    echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
-    echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
-    echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
-
-    # Detach from session
-    disown -a
 else
-    # Foreground mode: Normal background processes
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
-    PF_FRONTEND=$!
+    echo -e "${YELLOW}⚠️  port-forward-daemon.sh not found, falling back to simple port-forwards${NC}"
+    # Fallback to simple port-forwards (no auto-restart)
+    if [ "$DAEMON_MODE" = true ]; then
+        KUBECONFIG_PATH="$KUBECONFIG"
+        if [ -z "$KUBECONFIG_PATH" ]; then
+            KUBECONFIG_PATH="$HOME/.kube/config"
+        fi
 
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-    PF_BACKEND=$!
+        nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > "$PID_DIR/pf-frontend.log" 2>&1 &
+        PF_FRONTEND=$!
 
-    # PostgreSQL port-forward (5432 for both local and production)
-    kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
-    PF_POSTGRES=$!
+        nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > "$PID_DIR/pf-backend.log" 2>&1 &
+        PF_BACKEND=$!
+
+        nohup env KUBECONFIG="$KUBECONFIG_PATH" kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+        PF_POSTGRES=$!
+
+        echo "$PF_FRONTEND" > "$PID_DIR/port-forwards.pid"
+        echo "$PF_BACKEND" >> "$PID_DIR/port-forwards.pid"
+        echo "$PF_POSTGRES" >> "$PID_DIR/port-forwards.pid"
+
+        disown -a
+    else
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/frontend-ui 8080:8080 > /dev/null 2>&1 &
+        PF_FRONTEND=$!
+
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/session-management-server 3000:3000 > /dev/null 2>&1 &
+        PF_BACKEND=$!
+
+        kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 5432:5432 > /dev/null 2>&1 &
+        PF_POSTGRES=$!
+    fi
 fi
 
-echo -e "${GREEN}✓ Port forwards started${NC}"
+echo -e "${GREEN}✓ Port forwards started (with auto-restart)${NC}"
 
 # Give port forwards a moment to initialize
 sleep 2
@@ -1923,11 +1938,23 @@ if [ "$DAEMON_MODE" = false ]; then
     echo -e "${YELLOW}🛑 Stopping all services...${NC}"
     echo ""
 
-    # Kill port-forward processes
+    # Stop port-forwards using daemon script
     echo -e "${BLUE}Stopping port forwards...${NC}"
-    [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
-    [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
-    [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
+    # Compute script path inside function to ensure it's available
+    local cleanup_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local cleanup_daemon_script="$cleanup_script_dir/port-forward-daemon.sh"
+
+    if [ -x "$cleanup_daemon_script" ]; then
+        "$cleanup_daemon_script" stop
+    else
+        # Fallback: kill any kubectl port-forward processes for our namespace
+        echo -e "  Killing kubectl port-forward processes..."
+        pkill -f "kubectl port-forward -n ai-agents" 2>/dev/null || true
+        # Also try the old PID-based cleanup
+        [ ! -z "$PF_FRONTEND" ] && kill $PF_FRONTEND 2>/dev/null
+        [ ! -z "$PF_BACKEND" ] && kill $PF_BACKEND 2>/dev/null
+        [ ! -z "$PF_POSTGRES" ] && kill $PF_POSTGRES 2>/dev/null
+    fi
 
     # Clean up temporary files
     echo -e "${BLUE}Cleaning up temporary files...${NC}"

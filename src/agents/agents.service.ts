@@ -5,7 +5,7 @@ import { KubernetesService } from '../kubernetes/kubernetes.service';
 import { AgentServerService } from '../agent-server/agent-server.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
-import { AgentStatus } from '@prisma/client';
+import { AgentStatus, Prisma } from '@prisma/client';
 
 /**
  * AgentsService - Manages agent lifecycle.
@@ -232,7 +232,7 @@ export class AgentsService {
         sessionId,
         name: createAgentDto.name,
         icon: createAgentDto.icon || '🤖',
-        planId: createAgentDto.planId,
+        agentConfig: (createAgentDto.config || {}) as Prisma.InputJsonValue,
         agentType,
         status: AgentStatus.STARTING,
         healthState: 'initializing',
@@ -300,7 +300,7 @@ export class AgentsService {
         livekitApiKey,
         livekitApiSecret,
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
-        planId: createAgentDto.planId,
+        agentConfig: createAgentDto.config || {},
         forceRebuild: createAgentDto.forceRebuild,
       });
 
@@ -364,7 +364,7 @@ export class AgentsService {
         sessionId,
         name: createAgentDto.name,
         icon: createAgentDto.icon || '🤖',
-        planId: createAgentDto.planId,
+        agentConfig: (createAgentDto.config || {}) as Prisma.InputJsonValue,
         agentType,  // Store agent type for restarts
         status: AgentStatus.STARTING,
         healthState: 'initializing',
@@ -749,7 +749,7 @@ export class AgentsService {
         livekitApiKey,
         livekitApiSecret,
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
-        planId: agent.planId || undefined,
+        agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType: agent.agentType || 'grace-agent',  // Use stored agent type for image selection
       });
 

@@ -12,6 +12,7 @@ const builtInAgents = [
     isBuiltIn: true,
     validationStatus: 'approved',
     capabilities: ['voice', 'text'],
+    defaultConfig: {},  // Echo agent has no special config
   },
   {
     slug: 'grace-agent',
@@ -22,6 +23,7 @@ const builtInAgents = [
     isBuiltIn: true,
     validationStatus: 'approved',
     capabilities: ['voice', 'text', 'plans', 'experts'],
+    defaultConfig: { plan_id: 'grace_smalltalk' },  // Default plan for Grace agent
   },
 ]
 
@@ -39,6 +41,7 @@ async function main() {
         isBuiltIn: agent.isBuiltIn,
         validationStatus: agent.validationStatus,
         capabilities: agent.capabilities,
+        defaultConfig: agent.defaultConfig,
       },
       create: agent,
     })

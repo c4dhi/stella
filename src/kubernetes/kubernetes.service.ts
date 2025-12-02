@@ -15,7 +15,7 @@ export interface AgentPodConfig {
   livekitApiSecret: string;
   // openaiApiKey removed - now read from grace-ai-secrets
   ttsProvider: string;
-  planId?: string;
+  agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
   agentType?: string;       // Agent type (e.g., "grace-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
 }
@@ -250,7 +250,8 @@ export class KubernetesService {
         TTS_PROVIDER: config.ttsProvider,
         // OPENAI_API_KEY removed - now from grace-ai-secrets
         // ELEVENLABS_API_KEY removed - now from grace-ai-secrets
-        ...(config.planId && { PLAN_ID: config.planId }),
+        // Agent-specific config as JSON string (each agent interprets as needed)
+        AGENT_CONFIG: JSON.stringify(config.agentConfig || {}),
       },
     };
 

@@ -11,6 +11,7 @@ export interface AgentTypeInfo {
   version: string
   isBuiltIn: boolean
   capabilities: string[]
+  defaultConfig: Record<string, unknown>  // Default config for this agent type
 }
 
 @Injectable()
@@ -58,6 +59,7 @@ export class AgentTypeService {
       version: t.version,
       isBuiltIn: t.isBuiltIn,
       capabilities: (t.capabilities as string[]) || [],
+      defaultConfig: (t.defaultConfig as Record<string, unknown>) || {},
     }))
   }
 }

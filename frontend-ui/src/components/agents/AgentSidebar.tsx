@@ -134,8 +134,8 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   }, [sessionId])
 
   // Deploy new agent
-  const handleDeployAgent = async (name: string, icon?: string, planId?: string) => {
-    const newAgent = await apiClient.createAgent(sessionId, { name, icon, planId })
+  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => {
+    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType })
     setAgents(prev => [...prev, newAgent])
 
     // Auto-expand console to show deployment progress
@@ -529,10 +529,10 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     </div>
                   </div>
 
-                  {/* Plan ID */}
-                  {agent.planId && (
+                  {/* Agent Config */}
+                  {agent.agentConfig && Object.keys(agent.agentConfig).length > 0 && (
                     <div className={`text-xs font-light mb-3 font-mono truncate ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                      {agent.planId}
+                      {JSON.stringify(agent.agentConfig)}
                     </div>
                   )}
 

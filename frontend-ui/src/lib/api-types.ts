@@ -98,7 +98,7 @@ export interface AgentInstance {
   podName: string | null
   secretName: string | null
   configMapName: string | null
-  planId: string | null
+  agentConfig: Record<string, unknown> | null
   createdAt: string
   stoppedAt: string | null
 }
@@ -205,8 +205,8 @@ export interface CreateTokenDto {
 export interface CreateAgentDto {
   name: string // max 255 characters, required
   icon?: string // max 10 characters (emoji), optional
-  planId?: string // max 255 characters, optional
   agentType?: string // agent type id (e.g., 'grace-agent', 'echo-agent')
+  config?: Record<string, unknown> // agent-specific config (e.g., { plan_id: 'grace_smalltalk' })
 }
 
 export interface AgentType {
@@ -218,6 +218,7 @@ export interface AgentType {
   version: string
   isBuiltIn: boolean
   capabilities: string[]
+  defaultConfig: Record<string, unknown>  // Default config for this agent type
 }
 
 export interface SessionEvent {

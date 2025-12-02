@@ -112,6 +112,7 @@ model AgentType {
 
   // Future filtering support
   capabilities     Json?               // e.g., ["voice", "text", "plans"]
+  defaultConfig    Json?               // Default config for this agent type (e.g., { plan_id: "grace_smalltalk" })
 
   // Timestamps
   createdAt        DateTime  @default(now())
@@ -134,7 +135,7 @@ model AgentInstance {
   podName       String?
   secretName    String?
   configMapName String?
-  planId        String?
+  agentConfig   Json?        // Agent-specific config (e.g., { plan_id: "grace_smalltalk" })
   agentType     String?      @default("grace-agent")  // Agent type slug for backward compat
   agentTypeId   String?                               // FK to AgentType (optional for backward compat)
   agentTypeRef  AgentType?   @relation(fields: [agentTypeId], references: [id])
