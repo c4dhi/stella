@@ -70,6 +70,11 @@ class BaseAgent(ABC):
         self._audio_pipeline: Optional["AudioPipeline"] = None
         # History client (set by run_agent for chat history access)
         self._history_client: Optional["HistoryClient"] = None
+        # Last progress payload (for re-sending to new participants)
+        self._last_progress_payload: Optional[Dict[str, Any]] = None
+        # Agent identity (set by run_agent from environment variables)
+        self._agent_name: str = "Agent"
+        self._agent_id: str = ""
 
     @property
     def session_id(self) -> Optional[str]:
@@ -100,6 +105,16 @@ class BaseAgent(ABC):
     def agent_version(self, value: str) -> None:
         """Set the agent version."""
         self._agent_version = value
+
+    @property
+    def agent_name(self) -> str:
+        """The deployed agent name (from AGENT_NAME env var)."""
+        return self._agent_name
+
+    @property
+    def agent_id(self) -> str:
+        """The deployed agent ID (from AGENT_ID env var)."""
+        return self._agent_id
 
     @property
     def uptime_seconds(self) -> int:
@@ -415,6 +430,42 @@ class BaseAgent(ABC):
         """
         pass
 
+    async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
+        """
+        Called after session start, before the audio loop begins.
+
+        Override this to send initial outputs to the frontend, such as:
+        - Initial progress/todo list state
+        - Welcome messages
+        - Configuration confirmations
+
+        This is the right place to send the initial state of any progress
+        tracking or todo lists that the frontend should display immediately
+        when the agent joins the room.
+
+        Args:
+            session_id: The session that just started.
+
+        Yields:
+            AgentOutput messages to send before the audio loop starts.
+
+        Example:
+            ```python
+            async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
+                # Send initial progress state
+                if self.has_todo_list:
+                    progress = self.build_progress_state()
+                    yield AgentOutput.progress_update(
+                        session_id,
+                        progress,
+                        update_trigger="session_start"
+                    )
+            ```
+        """
+        # Default implementation yields nothing
+        return
+        yield  # Make this a generator
+
     async def run_audio_loop(self) -> None:
         """
         Main audio processing loop for direct LiveKit mode.
@@ -575,6 +626,27 @@ class BaseAgent(ABC):
                             }
                             logger.info(f"[METADATA MESSAGE] Publishing: {metadata_payload}")
                             await self.audio._room.publish_data(metadata_payload)
+
+                        elif output.type == OutputType.PROGRESS_UPDATE:
+                            # Forward progress updates to frontend for task panel display
+                            # Include agent identity metadata for proper display
+                            progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
+                            if output.metadata:
+                                # Include agent_name and agent_icon in the metadata
+                                if "metadata" not in progress_data:
+                                    progress_data["metadata"] = {}
+                                if "agent_name" in output.metadata:
+                                    progress_data["metadata"]["agent_name"] = output.metadata["agent_name"]
+                                if "agent_icon" in output.metadata:
+                                    progress_data["metadata"]["agent_icon"] = output.metadata["agent_icon"]
+                            progress_payload = {
+                                "type": "progress_update",
+                                "data": progress_data
+                            }
+                            # Store for re-sending to new participants
+                            self._last_progress_payload = progress_payload
+                            logger.info(f"[PROGRESS UPDATE] Publishing: {progress_payload}")
+                            await self.audio._room.publish_data(progress_payload)
 
                 finally:
                     self._is_processing = False

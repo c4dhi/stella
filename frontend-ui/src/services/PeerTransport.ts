@@ -12,6 +12,7 @@ import type {
   PlanProgressUpdate,
   PlanDeliverableUpdate,
   StateChangeNotification,
+  ProgressUpdateMessage,
 } from '../lib/types'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
@@ -80,6 +81,7 @@ export class PeerTransport implements Transport {
   onLLMConfig = (_config: any) => {}
   onAudioLevel = (_level: number) => {}
   onRemoteSpeaking = (_speaking: boolean) => {}
+  onProgressUpdate = (_data: ProgressUpdateMessage) => {}
 
   async connect(roomName?: string) {
     console.log(`[PeerTransport] connect() called - state=${this.connectionState}, room=${roomName}`)
@@ -331,6 +333,11 @@ export class PeerTransport implements Transport {
             const llmConfig = env.data
             console.log(`🤖 [LLM CONFIG] Provider: ${llmConfig.provider}, Model: ${llmConfig.model}`)
             this.onLLMConfig(llmConfig)
+          } else if (env.type === 'progress_update') {
+            // Handle generic progress update from SDK
+            const progressData = env.data as ProgressUpdateMessage
+            console.log(`📋 [PROGRESS UPDATE] ${progressData.progress_percentage?.toFixed(1) || 0}% - Trigger: ${progressData.update_trigger}`)
+            this.onProgressUpdate(progressData)
           } else {
             // console.log('🔍 [DEBUG] Other message type:', env.type)
             this.onServerMessage(env)

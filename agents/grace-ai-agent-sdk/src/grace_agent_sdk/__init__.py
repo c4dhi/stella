@@ -70,8 +70,16 @@ from grace_agent_sdk.messages.output import AgentOutput
 from grace_agent_sdk.agent.base import BaseAgent
 from grace_agent_sdk.run import run_agent_from_env
 from grace_agent_sdk.services.history_client import HistoryClient, HistoryClientError
+from grace_agent_sdk.progress import (
+    ExecutionMode,
+    ItemStatus,
+    GroupStatus,
+    ProgressItem,
+    ProgressGroup,
+    ProgressState,
+)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Message types
@@ -83,6 +91,13 @@ __all__ = [
     "AgentInput",
     "AgentOutput",
     "ChatMessage",
+    # Progress tracking types
+    "ExecutionMode",
+    "ItemStatus",
+    "GroupStatus",
+    "ProgressItem",
+    "ProgressGroup",
+    "ProgressState",
     # Agent interface
     "BaseAgent",
     # Entry point (config from environment)

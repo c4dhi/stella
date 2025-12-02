@@ -72,7 +72,7 @@ export default function RegisterParticipantModal({
             </p>
 
             <form onSubmit={handleSubmit}>
-              <div className="mb-6">
+              <div className="mb-4">
                 <label
                   htmlFor="participant-name"
                   className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
@@ -96,6 +96,41 @@ export default function RegisterParticipantModal({
                   autoFocus
                   disabled={isSubmitting}
                 />
+              </div>
+
+              {/* Share via link toggle - Coming Soon */}
+              <div className="mb-6">
+                <label className={`flex items-center justify-between cursor-not-allowed opacity-50`}>
+                  <div className="flex items-center gap-2">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      className={isDark ? 'text-zinc-400' : 'text-neutral-500'}
+                    >
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
+                    <span className={`text-sm font-light ${isDark ? 'text-zinc-300' : 'text-neutral-700'}`}>
+                      Share via link
+                    </span>
+                    <span className={`text-[10px] font-medium tracking-wider uppercase px-1.5 py-0.5 rounded ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-neutral-200 text-neutral-500'}`}>
+                      Coming Soon
+                    </span>
+                  </div>
+                  <div className={`
+                    w-10 h-6 rounded-full p-0.5 transition-colors
+                    ${isDark ? 'bg-zinc-700' : 'bg-neutral-300'}
+                  `}>
+                    <div className={`
+                      w-5 h-5 rounded-full transition-transform
+                      ${isDark ? 'bg-zinc-500' : 'bg-neutral-400'}
+                    `} />
+                  </div>
+                </label>
               </div>
 
               <div className="flex gap-3">

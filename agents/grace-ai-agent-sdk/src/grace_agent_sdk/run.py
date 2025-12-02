@@ -50,6 +50,7 @@ from grace_agent_sdk.livekit.room import RoomManager
 from grace_agent_sdk.services.stt_client import STTClient
 from grace_agent_sdk.services.tts_client import TTSClient
 from grace_agent_sdk.services.history_client import HistoryClient
+from grace_agent_sdk.messages.types import OutputType
 
 logger = logging.getLogger(__name__)
 
@@ -185,9 +186,11 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             agent_id=agent_id,
         )
 
-        # 6. Inject audio pipeline into agent
+        # 6. Inject audio pipeline and agent identity into agent
         agent._audio_pipeline = audio_pipeline
         agent._session_id = session_id
+        agent._agent_name = agent_name
+        agent._agent_id = agent_id
 
         # 7. Create HistoryClient for chat history access
         # Generate JWT token with same claims as LiveKit token (for validation)
@@ -225,7 +228,53 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         await agent.on_session_start(session_id, agent_config)
         logger.info(f"Agent session started with config keys: {list(agent_config.keys())}")
 
-        # 10. Run the agent's audio loop until shutdown
+        # 10. Call on_ready hook to send initial outputs (e.g., progress state)
+        async for output in agent.on_ready(session_id):
+            if output.type == OutputType.PROGRESS_UPDATE:
+                # Send progress update to frontend with agent identity metadata
+                progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
+                if output.metadata:
+                    # Include agent_name and agent_icon in the metadata
+                    if "metadata" not in progress_data:
+                        progress_data["metadata"] = {}
+                    if "agent_name" in output.metadata:
+                        progress_data["metadata"]["agent_name"] = output.metadata["agent_name"]
+                    if "agent_icon" in output.metadata:
+                        progress_data["metadata"]["agent_icon"] = output.metadata["agent_icon"]
+                progress_payload = {
+                    "type": "progress_update",
+                    "data": progress_data
+                }
+                # Store on agent for re-sending to new participants
+                agent._last_progress_payload = progress_payload
+                logger.info(f"[INITIAL PROGRESS] Publishing: {progress_payload}")
+                await audio_pipeline._room.publish_data(progress_payload)
+            elif output.type == OutputType.DEBUG:
+                # Forward debug messages
+                debug_payload = {
+                    "type": "debug",
+                    "data": {
+                        "content": output.content,
+                        "component": output.metadata.get("component", "agent") if output.metadata else "agent",
+                        "level": output.metadata.get("level", "info") if output.metadata else "info",
+                        "metadata": output.metadata or {}
+                    }
+                }
+                await audio_pipeline._room.publish_data(debug_payload)
+            else:
+                logger.debug(f"[ON_READY] Ignoring output type: {output.type}")
+
+        # 10b. Register callback to re-send progress when new participants join
+        def on_participant_joined(participant_identity: str):
+            # Use the agent's stored progress payload (updated by audio loop)
+            if agent._last_progress_payload:
+                logger.info(f"[PARTICIPANT JOINED] {participant_identity} - re-sending progress state")
+                # Schedule the async publish_data call
+                asyncio.create_task(audio_pipeline._room.publish_data(agent._last_progress_payload))
+
+        room_manager.on_participant_joined(on_participant_joined)
+
+        # 11. Run the agent's audio loop until shutdown
         audio_loop_task = asyncio.create_task(agent.run_audio_loop())
 
         # Wait for either shutdown signal or audio loop completion

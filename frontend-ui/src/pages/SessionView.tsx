@@ -22,7 +22,7 @@ import { useThemeStore } from '../store/themeStore'
 import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
-import type { TranscriptChunk, ProcessingMessage, ParticipantEvent } from '../lib/types'
+import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpdateMessage, TodoList, StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 import { generateUUID } from '../lib/uuid'
 
 export default function SessionView() {
@@ -386,7 +386,99 @@ export default function SessionView() {
       handleStateChange(data)
     }
 
+    // Handle generic progress updates from SDK (new format)
+    const handleProgressUpdate = (data: ProgressUpdateMessage) => {
+      try {
+        console.log(`📋 [PROGRESS] Generic progress update received:`, {
+          trigger: data.update_trigger,
+          progress: data.progress_percentage,
+          groups: data.groups?.length || 0,
+          current_group: data.current_group_id,
+        })
+
+        // Convert generic SDK ProgressState to TodoList format
+        const todoList: TodoList = {
+          initialized: true,
+          first_state_activated_at: data.started_at || new Date().toISOString(),
+          total_states: data.groups?.length || 0,
+          current_state_index: data.groups?.findIndex(g => g.id === data.current_group_id) ?? 0,
+          completed_states: data.groups?.filter(g => g.status === 'completed').length || 0,
+          remaining_states: data.groups?.filter(g => g.status !== 'completed').length || 0,
+          progress_percentage: data.progress_percentage || 0,
+          agentIcon: data.metadata?.agent_icon || '🤖',
+          current_state: data.current_group_id ? (() => {
+            const group = data.groups?.find(g => g.id === data.current_group_id)
+            if (!group) return null
+            return {
+              id: group.id,
+              title: group.label,
+              type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
+              description: group.description || '',
+              status: group.status as StateStatus,
+              state_number: data.groups?.findIndex(g => g.id === data.current_group_id) + 1 || 1,
+              is_complete: group.status === 'completed',
+            }
+          })() : null,
+          current_task: null, // Generic progress doesn't have task-level detail
+          states: data.groups?.map((group, index) => ({
+            id: group.id,
+            title: group.label,
+            type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
+            description: group.description || '',
+            status: group.status as StateStatus,
+            is_current: group.is_current,
+            completed_at: group.completed_at || undefined,
+            tasks: [{
+              id: `${group.id}_task`,
+              description: group.label,
+              instruction: group.description || '',
+              required: true,
+              status: group.status === 'completed' ? 'completed' as TaskStatus :
+                      group.is_current ? 'in_progress' as TaskStatus : 'pending' as TaskStatus,
+              deliverables: group.items?.map(item => ({
+                key: item.id,
+                description: item.label,
+                type: 'string',
+                required: item.required,
+                status: item.status as DeliverableStatus,
+                value: item.value,
+                collected_at: item.collected_at,
+                confidence: item.confidence,
+                reasoning: item.metadata?.reasoning,
+                acceptance_criteria: item.metadata?.acceptance_criteria,
+              })) || [],
+            }],
+          })) || [],
+          tasks_summary: {
+            total_tasks: data.groups?.length || 0,
+            completed_tasks: data.groups?.filter(g => g.status === 'completed').length || 0,
+            pending_tasks: data.groups?.filter(g => g.status === 'pending').length || 0,
+            current_tasks: data.groups?.filter(g => g.is_current).length || 0,
+          },
+          conversation_age_minutes: data.elapsed_minutes || 0,
+          last_updated: data.last_updated || new Date().toISOString(),
+        }
+
+        // Extract agent info from metadata
+        const agentId = data.metadata?.agent_id || 'default-agent'
+        const agentName = data.metadata?.agent_name || 'Agent'
+
+        // Route to multi-agent system
+        addLiveTaskUpdate(agentId, todoList, agentName)
+        setTodoList(todoList)
+
+        // Set processing mode based on current group's execution mode
+        const currentGroup = data.groups?.find(g => g.id === data.current_group_id)
+        if (currentGroup) {
+          setProcessingMode(currentGroup.execution_mode === 'sequential' ? 'strict' as StateType : 'loose' as StateType)
+        }
+      } catch (error) {
+        console.error('Error handling progress update:', error)
+      }
+    }
+
     transport.onTodoListUpdate = handleTodoListUpdate
+    transport.onProgressUpdate = handleProgressUpdate
     transport.onPlanProgress = handlePlanProgress
     transport.onDeliverableUpdate = handleDeliverableUpdate
     transport.onStateChange = handleStateMachineStateChange
@@ -407,6 +499,7 @@ export default function SessionView() {
       transport.onRemoteSpeaking = () => { }
       transport.onLLMConfig = () => { }
       transport.onTodoListUpdate = () => { }
+      transport.onProgressUpdate = () => { }
       transport.onPlanProgress = () => { }
       transport.onDeliverableUpdate = () => { }
       transport.onStateChange = () => { }

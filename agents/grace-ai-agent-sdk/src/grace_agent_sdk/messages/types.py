@@ -76,6 +76,9 @@ class OutputType(str, Enum):
     DEBUG = "debug"
     """Debug/log message - for transparency, not spoken via TTS."""
 
+    PROGRESS_UPDATE = "progress_update"
+    """Progress/task tracking update - displayed in task panel UI."""
+
 
 class StatusSubtype(str, Enum):
     """Subtypes for STATUS output messages."""

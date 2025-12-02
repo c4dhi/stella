@@ -25,6 +25,7 @@ from grace_agent.pipeline.aggregator import Aggregator
 from grace_agent.models.gate_result import GateRoute
 from grace_agent.state_machine import StateMachine
 from grace_agent.prompts.builder import PromptBuilder
+from grace_agent.adapters import ProgressAdapter
 
 
 class GraceAgent(BaseAgent):
@@ -83,6 +84,9 @@ class GraceAgent(BaseAgent):
 
         # Session config (no conversation state - fetched on demand)
         self.config: Dict[str, Any] = {}
+
+        # Track session start time for elapsed time calculation
+        self._session_started_at: Optional[str] = None
 
         print(f"[GraceAgent] Initialized with {len(self.expert_pool.agents)} experts")
 
@@ -332,19 +336,25 @@ class GraceAgent(BaseAgent):
                 if self.state_machine.is_initialized:
                     self.state_machine.increment_turn()
 
-            # Emit todo list state via debug message
+            # Emit progress update via dedicated message type
             if self.state_machine.is_initialized:
-                todo_list = self.state_machine.get_todo_list()
-                if todo_list:
+                execution_state = self.state_machine.execution_state
+                if execution_state:
                     # Clear state changed flag after processing
                     self.state_machine.clear_state_changed_flag()
 
-                    yield AgentOutput.debug(
+                    # Convert to generic SDK progress state
+                    progress_state = ProgressAdapter.from_execution_state(
+                        execution_state,
+                        started_at=self._session_started_at
+                    )
+
+                    yield AgentOutput.progress_update(
                         input.session_id,
-                        "Todo list state updated",
-                        component="state_machine",
-                        stage="todo_update",
-                        todo_list=todo_list.to_dict()
+                        progress_state,
+                        update_trigger="turn_completion",
+                        agent_name=self.agent_name,
+                        agent_icon="🤖"
                     )
 
         except Exception as e:
@@ -388,6 +398,8 @@ class GraceAgent(BaseAgent):
         """
         await super().on_session_start(session_id, config)
 
+        from datetime import datetime
+        self._session_started_at = datetime.utcnow().isoformat() + "Z"
         self.config = config
 
         # Initialize state machine from plan
@@ -424,6 +436,34 @@ class GraceAgent(BaseAgent):
 
         print(f"[GraceAgent] Session started: {session_id}")
         print(f"[GraceAgent] Config keys: {list(config.keys())}")
+
+    async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
+        """
+        Send initial progress state when agent joins the room.
+
+        This allows the frontend to display the todo list immediately
+        when the agent connects, before any user interaction.
+        """
+        if self.state_machine.is_initialized:
+            execution_state = self.state_machine.execution_state
+            if execution_state:
+                print(f"[GraceAgent] Sending initial progress state")
+
+                # Convert to generic SDK progress state
+                progress_state = ProgressAdapter.from_execution_state(
+                    execution_state,
+                    started_at=self._session_started_at
+                )
+
+                yield AgentOutput.progress_update(
+                    session_id,
+                    progress_state,
+                    update_trigger="session_start",
+                    agent_name=self.agent_name,
+                    agent_icon="🤖"
+                )
+        else:
+            print(f"[GraceAgent] No state machine initialized - skipping initial progress")
 
     async def on_session_end(self, session_id: str) -> Dict[str, Any]:
         """

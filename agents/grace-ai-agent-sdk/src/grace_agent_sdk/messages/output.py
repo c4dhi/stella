@@ -233,6 +233,66 @@ class AgentOutput:
             },
         )
 
+    # --- Factory methods for PROGRESS_UPDATE outputs ---
+
+    @classmethod
+    def progress_update(
+        cls,
+        session_id: str,
+        progress_state: "ProgressState",
+        update_trigger: str = "turn_completion",
+        **extra_metadata: Any,
+    ) -> "AgentOutput":
+        """
+        Create a progress/task tracking update message.
+
+        Use this to send task panel updates to the frontend. The progress state
+        contains groups of items that can be displayed in a todo-list style UI.
+
+        Args:
+            session_id: The session ID.
+            progress_state: The complete progress state (from grace_agent_sdk.progress).
+            update_trigger: What triggered this update (e.g., "turn_completion",
+                           "state_change", "item_collected").
+            **extra_metadata: Additional metadata to include.
+
+        Example:
+            from grace_agent_sdk.progress import ProgressState, ProgressGroup, ProgressItem
+
+            state = ProgressState(
+                groups=[
+                    ProgressGroup(
+                        id="intake",
+                        label="Patient Intake",
+                        execution_mode=ExecutionMode.FLEXIBLE,
+                        items=[
+                            ProgressItem(id="name", label="Name", status=ItemStatus.COMPLETED, value="John"),
+                            ProgressItem(id="dob", label="DOB", status=ItemStatus.PENDING),
+                        ]
+                    )
+                ],
+                current_group_id="intake",
+            )
+            yield AgentOutput.progress_update(session_id, state)
+        """
+        import json
+        from datetime import datetime
+
+        data = progress_state.to_dict()
+        data["update_trigger"] = update_trigger
+        data["timestamp"] = datetime.utcnow().isoformat() + "Z"
+
+        return cls(
+            session_id=session_id,
+            type=OutputType.PROGRESS_UPDATE,
+            content=json.dumps(data),
+            metadata={
+                "progress_state": data,
+                "update_trigger": update_trigger,
+                **extra_metadata,
+            },
+        )
+
     # --- Factory methods for DEBUG outputs ---
 
     @classmethod

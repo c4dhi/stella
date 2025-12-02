@@ -71,18 +71,18 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
     >
       {/* Card Container */}
       <div className={`
-        bg-white/95 backdrop-blur-xl border
-        border-${color}-200/60
-        rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.04)]
+        bg-white/95 dark:bg-neutral-900/95 backdrop-blur-xl border
+        border-${color}-200/60 dark:border-neutral-700/60
+        rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.04)] dark:shadow-[0_1px_30px_rgba(0,0,0,0.3)]
         h-full flex flex-col overflow-hidden
       `}>
         {/* Header with Agent Name and Close Button */}
         <div className={`
           p-3 border-b
-          border-${color}-200/60
+          border-${color}-200/60 dark:border-neutral-700/60
           flex items-center justify-between
         `}>
-          <h3 className="text-sm font-light text-neutral-900 tracking-wide flex items-center gap-1.5">
+          <h3 className="text-sm font-light text-neutral-900 dark:text-neutral-100 tracking-wide flex items-center gap-1.5">
             <span className="text-base">{todoList.agentIcon || '🤖'}</span>
             <span>{displayName}</span>
           </h3>
@@ -92,7 +92,7 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
             onClick={() => removeAgentTaskList(agentId)}
             className={`
               w-6 h-6 rounded-lg
-              text-neutral-400 hover:text-neutral-600 hover:bg-${color}-50
+              text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-${color}-50 dark:hover:bg-neutral-800
               transition-all duration-200
               flex items-center justify-center
             `}
@@ -111,7 +111,7 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
 
         {/* Progress Section */}
         <div className="p-3 pb-2">
-          <div className="text-[10px] text-neutral-500 font-light tracking-wider uppercase mb-3">
+          <div className="text-[10px] text-neutral-500 dark:text-neutral-400 font-light tracking-wider uppercase mb-3">
             {totalDeliverables} Deliverables
           </div>
 
@@ -137,10 +137,10 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
         {/* Footer */}
         <div className={`
           px-3 py-2 border-t
-          border-${color}-200/60
+          border-${color}-200/60 dark:border-neutral-700/60
           flex-shrink-0
         `}>
-          <div className="text-[9px] text-neutral-500 text-center tracking-wider uppercase font-light">
+          <div className="text-[9px] text-neutral-500 dark:text-neutral-400 text-center tracking-wider uppercase font-light">
             {Math.round(todoList.conversation_age_minutes || 0)}m elapsed
           </div>
         </div>

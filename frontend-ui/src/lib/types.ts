@@ -143,6 +143,7 @@ export interface TransportEvents {
   onLLMConfig: (config: any) => void
   onAudioLevel: (level: number) => void
   onRemoteSpeaking: (speaking: boolean) => void
+  onProgressUpdate: (data: ProgressUpdateMessage) => void
 }
 
 export interface Transport extends TransportEvents {
@@ -191,6 +192,7 @@ export type EnvelopeType =
   | 'state_change_notification'
   | 'task_progress_update'
   | 'llm_config'
+  | 'progress_update'
 
 export interface Envelope<T> {
   type: EnvelopeType
@@ -510,4 +512,75 @@ export interface StepChangeNotification {
   participant_id: string
   timestamp: string
   stream_id: string
+}
+
+// ============================================================================
+// Generic Progress Types (from SDK)
+// These are the new, agent-agnostic progress tracking types
+// ============================================================================
+
+export enum ExecutionMode {
+  SEQUENTIAL = "sequential",  // Tasks must be completed in order
+  FLEXIBLE = "flexible"       // Agent decides order based on conversation
+}
+
+export enum ProgressItemStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  SKIPPED = "skipped"
+}
+
+export enum ProgressGroupStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed"
+}
+
+export interface ProgressItem {
+  id: string
+  label: string
+  status: ProgressItemStatus | string
+  description?: string
+  required: boolean
+  value?: any
+  confidence?: number
+  collected_at?: string | null
+  metadata?: Record<string, any>
+}
+
+export interface ProgressGroup {
+  id: string
+  label: string
+  execution_mode: ExecutionMode | string
+  status: ProgressGroupStatus | string
+  items: ProgressItem[]
+  is_current: boolean
+  description?: string
+  completed_at?: string | null
+  metadata?: Record<string, any>
+}
+
+export interface ProgressState {
+  groups: ProgressGroup[]
+  current_group_id?: string
+  current_item_id?: string
+  progress_percentage: number
+  elapsed_minutes: number
+  started_at?: string
+  last_updated?: string
+  metadata?: Record<string, any>
+}
+
+export interface ProgressUpdateMessage {
+  groups: ProgressGroup[]
+  current_group_id?: string
+  current_item_id?: string
+  progress_percentage: number
+  elapsed_minutes: number
+  started_at?: string
+  last_updated?: string
+  update_trigger: string
+  timestamp: string
+  metadata?: Record<string, any>
 }
