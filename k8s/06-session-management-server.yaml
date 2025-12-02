@@ -95,9 +95,9 @@ spec:
         # Docker socket for building agent images
         - name: DOCKER_HOST
           value: "unix:///var/run/docker.sock"
-        # Workspace path for agent image building
+        # Workspace path for agent image building (agents are in grace-ai-backend/agents/)
         - name: AGENT_WORKSPACE_ROOT
-          value: "/workspace"
+          value: "/workspace/grace-ai-backend"
         command: ["sh", "-c"]
         args:
         - |

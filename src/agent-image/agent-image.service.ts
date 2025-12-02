@@ -47,16 +47,17 @@ export class AgentImageService {
   private readonly hasDockerSocket: boolean;
 
   // Registry of known agent types and their build contexts
+  // Paths are relative to grace-ai-backend/ directory (the new context)
   private readonly agentRegistry: Map<string, AgentImageConfig> = new Map([
     ['grace-agent', {
       imageName: 'grace-agent',
-      dockerfilePath: 'grace-agent/Dockerfile',
+      dockerfilePath: 'agents/grace-agent/Dockerfile',
       contextPath: '.',
       tag: 'latest',
     }],
     ['echo-agent', {
       imageName: 'echo-agent',
-      dockerfilePath: 'echo-agent/Dockerfile',
+      dockerfilePath: 'agents/echo-agent/Dockerfile',
       contextPath: '.',
       tag: 'latest',
     }],
@@ -83,8 +84,9 @@ export class AgentImageService {
     if (this.isRunningInK8s && process.env.AGENT_WORKSPACE_ROOT) {
       this.workspaceRoot = process.env.AGENT_WORKSPACE_ROOT;
     } else {
-      // Local development: workspace root is parent of grace-ai-backend
-      this.workspaceRoot = path.resolve(__dirname, '../../../../');
+      // Local development: workspace root is grace-ai-backend/ directory
+      // (agents are now inside grace-ai-backend/agents/)
+      this.workspaceRoot = path.resolve(__dirname, '../../../');
     }
 
     // Check if Docker socket is available (either native or mounted in K8s)

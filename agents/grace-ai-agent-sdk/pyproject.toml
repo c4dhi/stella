@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grace-ai-agent-sdk"
+version = "0.1.0"
+description = "SDK for building agents that integrate with the Grace AI platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Grace AI Team"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "grpcio>=1.60.0",
+    "grpcio-tools>=1.60.0",
+    "pydantic>=2.0.0",
+    "livekit>=0.11.0",
+    "PyJWT>=2.0.0",
+    "numpy>=1.24.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
+examples = [
+    "openai>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/grace-ai/grace-ai-agent-sdk"
+Documentation = "https://github.com/grace-ai/grace-ai-agent-sdk#readme"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"grace_agent_sdk" = ["py.typed"]
+"grace_agent_sdk._grpc" = ["*.py"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
