@@ -68,4 +68,6 @@ RUN echo "Schema checksum: ${PRISMA_SCHEMA_CHECKSUM}" && npx prisma generate
 EXPOSE 3000
 
 # Start the application
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
+# Note: Migrations are now handled by K8s init container (run-migrations)
+# for better failure visibility and separation of concerns
+CMD ["node", "dist/src/main"]
