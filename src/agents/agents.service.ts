@@ -226,13 +226,16 @@ export class AgentsService {
     // Determine agent type (default to grace-agent)
     const agentType = createAgentDto.agentType || 'grace-agent';
 
+    // Agent config is passed directly from the request (plan_id, etc.)
+    const agentConfig = createAgentDto.config || {};
+
     // 1. Create agent record (status=STARTING, no podName yet)
     const agent = await this.prisma.agentInstance.create({
       data: {
         sessionId,
         name: createAgentDto.name,
         icon: createAgentDto.icon || '🤖',
-        agentConfig: (createAgentDto.config || {}) as Prisma.InputJsonValue,
+        agentConfig: agentConfig as Prisma.InputJsonValue,
         agentType,
         status: AgentStatus.STARTING,
         healthState: 'initializing',

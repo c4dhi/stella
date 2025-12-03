@@ -509,7 +509,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     p-4 rounded-xl transition-all duration-200
                     ${isDark
                       ? 'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20'
-                      : 'bg-surface-secondary border border-border hover:bg-surface-tertiary hover:border-border-secondary'
+                      : 'bg-white border border-neutral-200 hover:border-neutral-300 shadow-sm'
                     }
                   `}
                 >
