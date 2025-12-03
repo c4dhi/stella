@@ -1733,7 +1733,13 @@ echo -n "  • Waiting for PostgreSQL... "
 kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
 
 # Phase 3: Deploy services that depend on PostgreSQL (session-management-server runs migrations)
-kubectl apply -f k8s/06-session-management-server.yaml > /dev/null
+# Generate session-management-server manifest with correct workspace path for current environment
+# PROJECT_DIR is grace-ai-backend, WORKSPACE_ROOT is the parent (grace-ai-workspace)
+WORKSPACE_ROOT="$(dirname "$PROJECT_DIR")"
+sed "s|/Users/felixmoser/Github/grace-ai-workspace|${WORKSPACE_ROOT}|g" \
+    k8s/06-session-management-server.yaml > ${TEMP_DIR}/06-session-management-server-updated.yaml
+echo -e "  ${CYAN}ℹ️  Workspace path: ${WORKSPACE_ROOT}${NC}"
+kubectl apply -f ${TEMP_DIR}/06-session-management-server-updated.yaml > /dev/null
 kubectl apply -f ${TEMP_DIR}/06-message-recorder-updated.yaml > /dev/null
 kubectl apply -f k8s/07-frontend-ui.yaml > /dev/null
 kubectl apply -f "$STT_MANIFEST" > /dev/null
