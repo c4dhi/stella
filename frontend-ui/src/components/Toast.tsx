@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect } from 'react'
+import { useThemeStore } from '../store/themeStore'
 
 export interface ToastProps {
   message: string
@@ -9,15 +10,24 @@ export interface ToastProps {
 }
 
 export default function Toast({ message, type, onClose, duration = 5000 }: ToastProps) {
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
+
   useEffect(() => {
     const timer = setTimeout(onClose, duration)
     return () => clearTimeout(timer)
   }, [duration, onClose])
 
   const colors = {
-    success: 'bg-green-50/95 border-green-200/60 text-green-800',
-    error: 'bg-red-50/95 border-red-200/60 text-red-800',
-    info: 'bg-blue-50/95 border-blue-200/60 text-blue-800',
+    success: isDark
+      ? 'bg-green-900/90 border-green-700/60 text-green-200'
+      : 'bg-green-50/95 border-green-200/60 text-green-800',
+    error: isDark
+      ? 'bg-red-900/90 border-red-700/60 text-red-200'
+      : 'bg-red-50/95 border-red-200/60 text-red-800',
+    info: isDark
+      ? 'bg-blue-900/90 border-blue-700/60 text-blue-200'
+      : 'bg-blue-50/95 border-blue-200/60 text-blue-800',
   }
 
   const icons = {

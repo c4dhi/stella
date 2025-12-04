@@ -7,13 +7,17 @@ import {
   Body,
   Param,
   Query,
+  Headers,
+  Sse,
   ValidationPipe,
   UsePipes,
   Logger,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
   Request,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
@@ -22,6 +26,13 @@ import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import type { LogEntry } from '../message-recorder/room-monitor.service';
+
+interface MessageEvent {
+  data: string;
+  id?: string;
+  type?: string;
+  retry?: number;
+}
 
 @Controller()
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -199,6 +210,13 @@ export class SessionsController {
     return this.sessionsService.getListenerStatus(sessionId);
   }
 
+  // SSE endpoint for real-time session events (agent ready, agent failed, etc.)
+  @Sse('sessions/:sessionId/events')
+  streamSessionEvents(@Param('sessionId') sessionId: string): Observable<MessageEvent> {
+    this.logger.log(`SSE connection opened for session ${sessionId}`);
+    return this.sessionsService.getSessionEventStream(sessionId);
+  }
+
   // Get monitoring logs
   @Get('monitoring/logs')
   getMonitoringLogs(@Query('sessionId') sessionId?: string): Promise<{
@@ -298,5 +316,53 @@ export class SessionsController {
     },
   ) {
     return this.sessionsService.storeParticipantEvent(sessionId, eventData);
+  }
+
+  /**
+   * Get chat history for an agent.
+   *
+   * This endpoint allows agents to fetch conversation history for their session.
+   * The agent must provide a valid LiveKit JWT token in the Authorization header.
+   *
+   * Unlike other /internal/* endpoints, this one validates the agent's token
+   * to ensure agents can only access their own session's history.
+   *
+   * Headers:
+   *   - Authorization: Bearer <token> - Agent's LiveKit JWT token (required)
+   *
+   * Query parameters:
+   *   - include_debug: boolean - Include debug/processing messages (default: false)
+   *   - limit: number - Max messages to return (default: 100, max: 500)
+   *   - before: string - ISO timestamp cursor for pagination
+   *
+   * Response:
+   *   - messages: Array of messages with full envelope data
+   *   - hasMore: boolean - Whether more messages exist
+   *   - nextCursor: string | null - Cursor for next page
+   */
+  @Public()
+  @Get('internal/sessions/:sessionId/chat-history')
+  async getChatHistory(
+    @Param('sessionId') sessionId: string,
+    @Headers('authorization') authHeader: string,
+    @Query('include_debug') includeDebug?: string,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+  ) {
+    // Extract token from Authorization header
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException('Missing or invalid Authorization header. Expected: Bearer <token>');
+    }
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+
+    // Validate the agent's token and verify access to this session
+    await this.sessionsService.validateAgentToken(token, sessionId);
+
+    // Fetch and return chat history
+    return this.sessionsService.getChatHistory(sessionId, {
+      includeDebug: includeDebug === 'true',
+      limit: limit ? parseInt(limit, 10) : undefined,
+      before: before,
+    });
   }
 }

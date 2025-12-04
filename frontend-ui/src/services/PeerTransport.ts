@@ -12,6 +12,7 @@ import type {
   PlanProgressUpdate,
   PlanDeliverableUpdate,
   StateChangeNotification,
+  ProgressUpdateMessage,
 } from '../lib/types'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
@@ -28,6 +29,15 @@ export class PeerTransport implements Transport {
   private audioLevelInterval?: number
   private remoteAudioTrack?: RemoteAudioTrack
 
+  // Connection state tracking to prevent duplicate connections
+  private connectionState: 'idle' | 'connecting' | 'connected' | 'disconnecting' = 'idle'
+  private connectionPromise?: Promise<void>
+  private currentRoomName?: string
+
+  // Audio track state tracking to prevent duplicate audio tracks
+  private isPublishingAudio: boolean = false
+  private isUnpublishingAudio: boolean = false
+
   // Web Audio API for accurate speech detection
   private audioContext?: AudioContext
   private audioAnalyser?: AnalyserNode
@@ -36,6 +46,21 @@ export class PeerTransport implements Transport {
   // Set the user's actual name for proper message attribution
   setUserName(name: string) {
     this.userName = name
+  }
+
+  // Check if connected to a specific room
+  isConnectedToRoom(roomName: string): boolean {
+    return this.connectionState === 'connected' && this.currentRoomName === roomName
+  }
+
+  // Get current connection state
+  getConnectionState(): 'idle' | 'connecting' | 'connected' | 'disconnecting' {
+    return this.connectionState
+  }
+
+  // Get current room name
+  getCurrentRoomName(): string | undefined {
+    return this.currentRoomName
   }
 
   onConnected = () => {}
@@ -51,13 +76,70 @@ export class PeerTransport implements Transport {
   onPlanProgress = (_data: PlanProgressUpdate) => {}
   onDeliverableUpdate = (_data: PlanDeliverableUpdate) => {}
   onStateChange = (_data: StateChangeNotification) => {}
-  onParticipantJoined = (_participantId: string, _participantName?: string) => {}
+  onParticipantJoined = (_participantId: string, _participantName?: string, _isExisting?: boolean) => {}
   onParticipantLeft = (_participantId: string, _participantName?: string) => {}
   onLLMConfig = (_config: any) => {}
   onAudioLevel = (_level: number) => {}
   onRemoteSpeaking = (_speaking: boolean) => {}
+  onProgressUpdate = (_data: ProgressUpdateMessage) => {}
 
   async connect(roomName?: string) {
+    console.log(`[PeerTransport] connect() called - state=${this.connectionState}, room=${roomName}`)
+
+    // Guard: If already connecting, wait for that connection to complete
+    if (this.connectionState === 'connecting' && this.connectionPromise) {
+      console.log('[PeerTransport] Already connecting, waiting for existing connection')
+      return this.connectionPromise
+    }
+
+    // Guard: If already connected to the same room, skip
+    if (this.connectionState === 'connected' && this.currentRoomName === roomName) {
+      console.log('[PeerTransport] Already connected to room:', roomName)
+      return
+    }
+
+    // Guard: If connected to a different room, disconnect first
+    if (this.connectionState === 'connected') {
+      console.log('[PeerTransport] Disconnecting from previous room before connecting to:', roomName)
+      await this.disconnect()
+    }
+
+    // Guard: If currently disconnecting, wait for it to complete with polling
+    if (this.connectionState === 'disconnecting') {
+      console.log('[PeerTransport] Waiting for disconnect to complete before connecting')
+      // Wait with exponential backoff, max 500ms total
+      let waitTime = 50
+      let totalWaited = 0
+      while (this.connectionState === 'disconnecting' && totalWaited < 500) {
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+        totalWaited += waitTime
+        waitTime = Math.min(waitTime * 2, 200)
+      }
+      if (this.connectionState === 'disconnecting') {
+        console.warn('[PeerTransport] Disconnect still in progress after 500ms, proceeding anyway')
+      }
+    }
+
+    // Set state and create connection promise
+    this.connectionState = 'connecting'
+    this.currentRoomName = roomName
+
+    this.connectionPromise = this._doConnect(roomName)
+
+    try {
+      await this.connectionPromise
+      this.connectionState = 'connected'
+      console.log(`[PeerTransport] Successfully connected to room: ${roomName}`)
+    } catch (error) {
+      this.connectionState = 'idle'
+      this.currentRoomName = undefined
+      throw error
+    } finally {
+      this.connectionPromise = undefined
+    }
+  }
+
+  private async _doConnect(roomName?: string) {
     try {
       // Create LiveKit room
       const room = new Room()
@@ -65,10 +147,24 @@ export class PeerTransport implements Transport {
 
       // Set up event listeners
       room.on(RoomEvent.Connected, () => {
+        console.log('🔗 [LIVEKIT] RoomEvent.Connected')
+        this.onConnected()
+      })
+
+      room.on(RoomEvent.Reconnecting, () => {
+        // Log but don't change status - keep UI stable during transient reconnects
+        console.log('🔗 [LIVEKIT] RoomEvent.Reconnecting - keeping UI stable')
+      })
+
+      room.on(RoomEvent.Reconnected, () => {
+        // Reconnection successful - ensure status stays connected
+        console.log('🔗 [LIVEKIT] RoomEvent.Reconnected - connection restored')
+        // Fire onConnected again to ensure UI is in correct state
         this.onConnected()
       })
 
       room.on(RoomEvent.Disconnected, (reason) => {
+        console.log(`🔗 [LIVEKIT] RoomEvent.Disconnected: ${reason}`)
         this.onDisconnected(reason?.toString())
       })
 
@@ -77,6 +173,13 @@ export class PeerTransport implements Transport {
           const audioTrack = track as RemoteAudioTrack
           const audioEl = audioTrack.attach()
           audioEl.autoplay = true
+          audioEl.volume = 1.0
+          audioEl.muted = false
+
+          // Add to DOM - required by some browsers for audio playback
+          audioEl.style.display = 'none'
+          document.body.appendChild(audioEl)
+
           this.remoteAudio = audioEl
           this.remoteAudioTrack = audioTrack
           this.setupAudioEventListeners(audioEl)
@@ -87,6 +190,24 @@ export class PeerTransport implements Transport {
 
           // Start monitoring audio levels for face animation
           this.startAudioLevelMonitoring()
+
+          // Debug: Log audio element state
+          console.log('🔊 [AUDIO] Remote audio track attached:', {
+            inDOM: audioEl.parentNode !== null,
+            autoplay: audioEl.autoplay,
+            volume: audioEl.volume,
+            muted: audioEl.muted,
+            paused: audioEl.paused,
+            readyState: audioEl.readyState,
+            srcObject: audioEl.srcObject ? 'MediaStream' : 'null',
+          })
+
+          // Explicitly try to play
+          audioEl.play().then(() => {
+            console.log('🔊 [AUDIO] play() succeeded')
+          }).catch((err) => {
+            console.error('🔊 [AUDIO] play() failed:', err.message)
+          })
         }
       })
 
@@ -102,8 +223,8 @@ export class PeerTransport implements Transport {
           //   data: env.data
           // })
 
-          if (env.type === 'transcript' || env.type === 'transcript_chunk') {
-            // Transform server transcript chunk format to frontend format
+          if (env.type === 'transcript' || env.type === 'transcript_chunk' || env.type === 'agent_text') {
+            // Transform server transcript/agent_text format to frontend format
             const serverData = env.data
 
             // WORKAROUND: Server timestamps are unreliable (2 hours behind)
@@ -129,19 +250,41 @@ export class PeerTransport implements Transport {
               }
             }
 
-            // Determine role based on participant_id:
-            // - If it matches current user's name → 'user' (messages from the logged-in user)
-            // - Otherwise → 'assistant' (messages from agents or other participants)
-            const isUserMessage = serverData.participant_id === this.userName
+            // Determine role based on source field (new semantic approach)
+            // or fall back to participant_id matching (backwards compat)
+            const source = serverData.source as string | undefined
+            let role: 'user' | 'assistant'
+            let displayName: string
+
+            if (source === 'user_speech' || source === 'user_text') {
+              // User messages (speech transcribed by agent or typed text)
+              role = 'user'
+              displayName = serverData.speaker_name || serverData.participant_id || this.userName
+            } else if (source === 'agent_response' || env.type === 'agent_text') {
+              // Agent response messages
+              role = 'assistant'
+              displayName = serverData.agent_name || 'Agent'
+            } else {
+              // Fallback to existing logic for backwards compat
+              const isUserMessage = serverData.participant_id === this.userName
+              role = isUserMessage ? 'user' : 'assistant'
+              displayName = serverData.participant_id || (isUserMessage ? this.userName : 'Agent')
+            }
 
             const transcriptChunk: TranscriptChunk = {
               id: serverData.transcript_id || generateUUID(),
-              role: isUserMessage ? 'user' : 'assistant',
+              role,
               text: serverData.text,
               status: serverData.is_final ? 'final' : 'partial',
               startedAt: startedAtMs,
               finalizedAt: serverData.is_final ? startedAtMs : undefined,
-              participant_id: serverData.participant_id
+              // Attribution fields
+              participant_id: serverData.participant_id,
+              speaker_id: serverData.speaker_id,
+              speaker_name: displayName,
+              agent_id: serverData.agent_id,
+              agent_name: serverData.agent_name,
+              source: serverData.source,
             }
 
             this.onTranscript(transcriptChunk)
@@ -190,6 +333,11 @@ export class PeerTransport implements Transport {
             const llmConfig = env.data
             console.log(`🤖 [LLM CONFIG] Provider: ${llmConfig.provider}, Model: ${llmConfig.model}`)
             this.onLLMConfig(llmConfig)
+          } else if (env.type === 'progress_update') {
+            // Handle generic progress update from SDK
+            const progressData = env.data as ProgressUpdateMessage
+            console.log(`📋 [PROGRESS UPDATE] ${progressData.progress_percentage?.toFixed(1) || 0}% - Trigger: ${progressData.update_trigger}`)
+            this.onProgressUpdate(progressData)
           } else {
             // console.log('🔍 [DEBUG] Other message type:', env.type)
             this.onServerMessage(env)
@@ -200,17 +348,39 @@ export class PeerTransport implements Transport {
       })
 
       room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-        if (state === ConnectionState.Disconnected) {
-          this.onError(new Error('LiveKit connection failed'))
+        // Log all connection state changes for debugging
+        console.log(`🔗 [LIVEKIT] ConnectionStateChanged: ${state}`)
+
+        // Handle reconnection states gracefully - don't flicker the UI
+        // ConnectionState enum values: Disconnected, Connecting, Connected, Reconnecting
+        switch (state) {
+          case ConnectionState.Reconnecting:
+            // Don't change UI status during reconnection - it's transient
+            console.log('🔗 [LIVEKIT] Reconnecting... (keeping UI stable)')
+            break
+          case ConnectionState.Connected:
+            // Successfully reconnected
+            if (this.connectionState === 'connected') {
+              console.log('🔗 [LIVEKIT] Reconnection successful')
+            }
+            break
+          case ConnectionState.Disconnected:
+            // Only log - let RoomEvent.Disconnected handle the actual status change
+            if (this.connectionState === 'connected') {
+              console.warn('🔗 [LIVEKIT] Unexpected disconnection detected')
+            }
+            break
         }
       })
 
       // Listen for participant join/leave events
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        console.log(`👤 [JOIN] Participant connected: ${participant.identity} (${participant.name})`)
         this.onParticipantJoined(participant.identity, participant.name)
       })
 
       room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+        console.log(`👤 [LEAVE] Participant disconnected: ${participant.identity} (${participant.name})`)
         this.onParticipantLeft(participant.identity, participant.name)
       })
 
@@ -225,7 +395,19 @@ export class PeerTransport implements Transport {
       const config = getRuntimeConfig()
       await room.connect(config.livekitUrl, token, connectOptions)
 
+      // Enable audio playback (required for browser autoplay policy)
+      // Must be called after user interaction (connect button click satisfies this)
+      await room.startAudio()
+
       console.log(`👤 [USER] Connected as: ${room.localParticipant.identity}`)
+
+      // Notify about participants already in the room
+      // (ParticipantConnected only fires for joins AFTER we connect)
+      // Mark these as "existing" so we don't show "joined" notifications
+      for (const participant of room.remoteParticipants.values()) {
+        console.log(`👤 [EXISTING] Participant already in room: ${participant.identity} (${participant.name})`)
+        this.onParticipantJoined(participant.identity, participant.name, true /* isExisting */)
+      }
 
       // Publish microphone if available
       if (this.micStream) {
@@ -236,12 +418,27 @@ export class PeerTransport implements Transport {
       }
 
     } catch (error) {
-      console.error('Failed to connect to LiveKit:', error)
+      console.error('[PeerTransport] Failed to connect to LiveKit:', error)
       this.onError(error as Error)
+      throw error  // Re-throw so the outer connect() can catch it
     }
   }
 
   async disconnect() {
+    console.log(`[PeerTransport] disconnect() called - state=${this.connectionState}`)
+
+    // Guard: If already disconnecting or idle, skip
+    if (this.connectionState === 'disconnecting') {
+      console.log('[PeerTransport] Already disconnecting')
+      return
+    }
+
+    if (this.connectionState === 'idle') {
+      console.log('[PeerTransport] Already disconnected')
+      return
+    }
+
+    this.connectionState = 'disconnecting'
     // Stop audio level monitoring
     this.stopAudioLevelMonitoring()
 
@@ -259,10 +456,27 @@ export class PeerTransport implements Transport {
       await this.room.disconnect()
       this.room = undefined
     }
-    this.remoteAudio?.pause()
+
+    // Clean up audio element from DOM
+    if (this.remoteAudio) {
+      this.remoteAudio.pause()
+      if (this.remoteAudio.parentNode) {
+        this.remoteAudio.parentNode.removeChild(this.remoteAudio)
+      }
+    }
     this.remoteAudio = undefined
     this.remoteAudioTrack = undefined
     this.publishedAudioTrack = undefined
+
+    // Reset audio publishing state
+    this.isPublishingAudio = false
+    this.isUnpublishingAudio = false
+
+    // Reset connection state
+    this.connectionState = 'idle'
+    this.currentRoomName = undefined
+
+    console.log('[PeerTransport] Disconnected successfully')
     this.onDisconnected('client disconnect')
   }
 
@@ -445,17 +659,47 @@ export class PeerTransport implements Transport {
       return false
     }
 
+    // Guard: Prevent multiple simultaneous publish operations
+    if (this.isPublishingAudio) {
+      console.warn('[AUDIO] Already publishing audio track, ignoring duplicate request')
+      return false
+    }
+
+    // Guard: Wait for any pending unpublish to complete
+    if (this.isUnpublishingAudio) {
+      console.log('[AUDIO] Waiting for unpublish to complete before publishing')
+      let waitTime = 0
+      while (this.isUnpublishingAudio && waitTime < 500) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        waitTime += 50
+      }
+      if (this.isUnpublishingAudio) {
+        console.warn('[AUDIO] Unpublish still in progress after 500ms, proceeding anyway')
+      }
+    }
+
+    // Guard: If there's already a published track, unpublish it first
+    if (this.publishedAudioTrack) {
+      console.log('[AUDIO] Existing track found, unpublishing before new publish')
+      await this.unpublishAudioTrack()
+    }
+
+    this.isPublishingAudio = true
+
     try {
       const audioTrack = stream.getAudioTracks()[0]
       if (audioTrack) {
         console.log('🔊 [AUDIO] Publishing audio track')
         this.publishedAudioTrack = await this.room.localParticipant.publishTrack(audioTrack)
         this.micStream = stream
+        console.log('✓ [AUDIO] Audio track published successfully')
         return true
       }
     } catch (error) {
       console.error('Error publishing audio track:', error)
       return false
+    } finally {
+      this.isPublishingAudio = false
     }
     return false
   }
@@ -466,26 +710,45 @@ export class PeerTransport implements Transport {
       return
     }
 
+    // Guard: Prevent multiple simultaneous unpublish operations
+    if (this.isUnpublishingAudio) {
+      console.warn('[AUDIO] Already unpublishing audio track, ignoring duplicate request')
+      return
+    }
+
+    // Guard: Nothing to unpublish
+    if (!this.publishedAudioTrack) {
+      console.log('[AUDIO] No audio track to unpublish')
+      return
+    }
+
+    this.isUnpublishingAudio = true
+
     try {
-      if (this.publishedAudioTrack) {
-        console.log('🔇 [AUDIO] Unpublishing audio track')
+      console.log('🔇 [AUDIO] Unpublishing audio track')
 
-        // Send mute signal to trigger VAD endpoint
-        this.sendMuteSignal()
+      // Send mute signal to trigger VAD endpoint
+      this.sendMuteSignal()
 
-        // Unpublish the track from LiveKit
-        await this.room.localParticipant.unpublishTrack(this.publishedAudioTrack.track!)
-
-        // Stop the media track
-        if (this.micStream) {
-          this.micStream.getTracks().forEach(track => track.stop())
-          this.micStream = undefined
-        }
-
-        this.publishedAudioTrack = undefined
+      // Unpublish the track from LiveKit
+      if (this.publishedAudioTrack.track) {
+        await this.room.localParticipant.unpublishTrack(this.publishedAudioTrack.track)
       }
+
+      // Stop the media track
+      if (this.micStream) {
+        this.micStream.getTracks().forEach(track => track.stop())
+        this.micStream = undefined
+      }
+
+      this.publishedAudioTrack = undefined
+      console.log('✓ [AUDIO] Audio track unpublished successfully')
     } catch (error) {
       console.error('Error unpublishing audio track:', error)
+      // Reset state even on error to prevent deadlock
+      this.publishedAudioTrack = undefined
+    } finally {
+      this.isUnpublishingAudio = false
     }
   }
 
@@ -550,7 +813,7 @@ export class PeerTransport implements Transport {
   }
 
   private isProcessingMessage(type: string): boolean {
-    return ['decision_stream', 'prompt_execution', 'expert_status', 'safety_check'].includes(type)
+    return ['decision_stream', 'prompt_execution', 'expert_status', 'safety_check', 'debug'].includes(type)
   }
 
   private transformProcessingMessage(env: Envelope<any>): ProcessingMessage {
@@ -559,6 +822,25 @@ export class PeerTransport implements Transport {
 
     // Use client timestamp for consistency (server timestamps are unreliable)
     const timestamp = Date.now()
+
+    // Handle debug messages specially - transform to DebugData format
+    if (env.type === 'debug') {
+      return {
+        id: generateUUID(),
+        type: 'debug',
+        role: 'system',
+        status: 'final',
+        startedAt: timestamp,
+        finalizedAt: timestamp,
+        streamId: generateUUID(),
+        data: {
+          component: serverData.component || 'agent',
+          level: serverData.level || 'info',
+          message: serverData.content || serverData.message || '',
+          metadata: serverData.metadata || serverData
+        }
+      }
+    }
 
     return {
       id: generateUUID(),
@@ -582,6 +864,8 @@ export class PeerTransport implements Transport {
         return 'expert_status'
       case 'safety_check':
         return 'safety_check'
+      case 'debug':
+        return 'debug'
       default:
         return 'decision'
     }

@@ -1,0 +1,256 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-service
+  namespace: ai-agents
+spec:
+  selector:
+    app: stt-service
+  ports:
+    - port: 50051
+      targetPort: 50051
+      name: grpc
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-service
+  namespace: ai-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-service
+  template:
+    metadata:
+      labels:
+        app: stt-service
+    spec:
+      # Uncomment for GPU deployments (production):
+      # runtimeClassName: nvidia
+      # ======================================================================
+      # Init Container: Download models to PersistentVolume on first startup
+      # ======================================================================
+      initContainers:
+      - name: download-models
+        image: stt-service:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "[STT Init] Starting model download check..."
+
+          # Get provider from env (default: sherpa)
+          STT_PROVIDER="${STT_PROVIDER:-sherpa}"
+          WHISPER_MODEL="${WHISPER_MODEL:-large-v3}"
+
+          # ================================================================
+          # Sherpa-ONNX Model (always needed for lightweight CPU inference)
+          # ================================================================
+          SHERPA_VERSION_FILE="/models/sherpa-onnx/.version"
+          SHERPA_VERSION="zipformer-2024-10-25-de"
+
+          if [ -f "$SHERPA_VERSION_FILE" ] && [ "$(cat $SHERPA_VERSION_FILE)" = "$SHERPA_VERSION" ]; then
+            echo "[STT Init] Sherpa-ONNX model already downloaded (version: $SHERPA_VERSION)"
+          else
+            echo "[STT Init] Downloading Sherpa-ONNX model..."
+            mkdir -p /models/sherpa-onnx
+            SHERPA_ONNX_CACHE_DIR=/models/sherpa-onnx python download_sherpa_model.py
+            echo "$SHERPA_VERSION" > "$SHERPA_VERSION_FILE"
+            echo "[STT Init] Sherpa-ONNX model download complete"
+          fi
+
+          # ================================================================
+          # Whisper Model (only when STT_PROVIDER=whisper)
+          # ================================================================
+          if [ "$STT_PROVIDER" = "whisper" ]; then
+            WHISPER_VERSION_FILE="/models/whisper/.version"
+
+            if [ -f "$WHISPER_VERSION_FILE" ] && [ "$(cat $WHISPER_VERSION_FILE)" = "$WHISPER_MODEL" ]; then
+              echo "[STT Init] Whisper model already downloaded (version: $WHISPER_MODEL)"
+            else
+              echo "[STT Init] Downloading Whisper model: $WHISPER_MODEL..."
+              mkdir -p /models/whisper
+              WHISPER_CACHE_DIR=/models/whisper WHISPER_MODEL=$WHISPER_MODEL python download_whisper_model.py
+              echo "$WHISPER_MODEL" > "$WHISPER_VERSION_FILE"
+              echo "[STT Init] Whisper model download complete"
+            fi
+
+            # Silero VAD (needed for Whisper)
+            VAD_VERSION_FILE="/models/silero-vad/.version"
+            VAD_VERSION="v5"
+
+            if [ -f "$VAD_VERSION_FILE" ] && [ "$(cat $VAD_VERSION_FILE)" = "$VAD_VERSION" ]; then
+              echo "[STT Init] Silero VAD already downloaded (version: $VAD_VERSION)"
+            else
+              echo "[STT Init] Downloading Silero VAD..."
+              mkdir -p /models/silero-vad
+              SILERO_VAD_CACHE_DIR=/models/silero-vad python download_silero_vad.py
+              echo "$VAD_VERSION" > "$VAD_VERSION_FILE"
+              echo "[STT Init] Silero VAD download complete"
+            fi
+          fi
+
+          echo "[STT Init] Model initialization complete!"
+        env:
+        - name: STT_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: STT_PROVIDER
+              optional: true
+        - name: WHISPER_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_MODEL
+              optional: true
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      containers:
+      - name: stt-service
+        image: stt-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50051
+          name: grpc
+        # Mount PV with models at cache directories
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/sherpa-onnx
+          subPath: sherpa-onnx
+        - name: model-cache
+          mountPath: /root/.cache/whisper
+          subPath: whisper
+        - name: model-cache
+          mountPath: /root/.cache/silero-vad
+          subPath: silero-vad
+        env:
+        - name: GRPC_PORT
+          value: "50051"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        # ====================================================================
+        # Provider Selection
+        # ====================================================================
+        - name: STT_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: STT_PROVIDER
+              optional: true
+        # ====================================================================
+        # Sherpa-ONNX Configuration (when STT_PROVIDER=sherpa)
+        # ====================================================================
+        - name: ONNX_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: ONNX_PROVIDER
+              optional: true
+        # ====================================================================
+        # faster-whisper Configuration (when STT_PROVIDER=whisper)
+        # ====================================================================
+        - name: WHISPER_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_MODEL
+              optional: true
+        - name: WHISPER_DEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_DEVICE
+              optional: true
+        - name: WHISPER_COMPUTE_TYPE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_COMPUTE_TYPE
+              optional: true
+        - name: WHISPER_LANGUAGE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_LANGUAGE
+              optional: true
+        - name: WHISPER_BEAM_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_BEAM_SIZE
+              optional: true
+        # ====================================================================
+        # VAD Configuration
+        # ====================================================================
+        - name: VAD_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_THRESHOLD
+              optional: true
+        - name: VAD_MIN_SILENCE_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_MIN_SILENCE_MS
+              optional: true
+        - name: PARTIAL_INTERVAL_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PARTIAL_INTERVAL_MS
+              optional: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+            # Uncomment for GPU (production with large-v3):
+            # nvidia.com/gpu: "1"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+            # Uncomment for GPU (production with large-v3):
+            # nvidia.com/gpu: "1"
+        # Note: For production GPU mode with large-v3, increase to:
+        #   requests: memory: "6Gi"
+        #   limits: memory: "10Gi"
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; print('ready')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; print('alive')"
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+      # ======================================================================
+      # Volumes: PersistentVolume for model storage
+      # ======================================================================
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: stt-models-pvc

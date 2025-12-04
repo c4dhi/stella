@@ -1,6 +1,6 @@
 /**
  * useFaceAnimation Hook
- * Port from mobile client (grace-ai-mobile-client/app/components/faces/defaultFace.tsx)
+ * Port from mobile client (stella-mobile-client/app/components/faces/defaultFace.tsx)
  * Handles blinking animation and eye state
  */
 

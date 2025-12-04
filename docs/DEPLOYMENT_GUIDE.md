@@ -1,6 +1,6 @@
-# Grace AI - Deployment Guide
+# STELLA - Deployment Guide
 
-Complete guide for deploying Grace AI in both local development and production environments.
+Complete guide for deploying STELLA in both local development and production environments.
 
 ## Table of Contents
 
@@ -13,7 +13,7 @@ Complete guide for deploying Grace AI in both local development and production e
 
 ## Overview
 
-Grace AI supports two deployment modes:
+STELLA supports two deployment modes:
 
 ### Local Development
 - **Access**: `localhost` with port-forwards
@@ -92,7 +92,7 @@ Grace AI supports two deployment modes:
 ### Step 1: Configure Environment
 
 ```bash
-cd grace-ai-backend
+cd stella-backend
 
 # Copy .env.example to .env
 cp .env.example .env
@@ -169,7 +169,7 @@ kubectl logs -f -n ai-agents deployment/session-management-server
 ### Step 1: Configure Environment
 
 ```bash
-cd grace-ai-backend
+cd stella-backend
 
 # Edit .env
 nano .env
@@ -255,21 +255,21 @@ For production reliability, set up automatic monitoring to restart port-forwards
 
 ```bash
 # Edit the service file with your paths
-nano scripts/systemd/grace-ai-port-forwards.service
+nano scripts/systemd/stella-ai-port-forwards.service
 
-# Replace YOUR_USERNAME and /path/to/grace-ai-backend
+# Replace YOUR_USERNAME and /path/to/stella-backend
 
 # Install the service
-sudo cp scripts/systemd/grace-ai-port-forwards.service /etc/systemd/system/
+sudo cp scripts/systemd/stella-ai-port-forwards.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable grace-ai-port-forwards
-sudo systemctl start grace-ai-port-forwards
+sudo systemctl enable stella-ai-port-forwards
+sudo systemctl start stella-ai-port-forwards
 
 # Check status
-sudo systemctl status grace-ai-port-forwards
+sudo systemctl status stella-ai-port-forwards
 
 # View logs
-sudo journalctl -u grace-ai-port-forwards -f
+sudo journalctl -u stella-ai-port-forwards -f
 ```
 
 **Option B: Cron Job (Simple Alternative)**
@@ -279,7 +279,7 @@ sudo journalctl -u grace-ai-port-forwards -f
 crontab -e
 
 # Add this line to check every minute
-* * * * * /path/to/grace-ai-backend/scripts/monitor-port-forwards.sh --once >> /tmp/grace-ai-k8s/cron.log 2>&1
+* * * * * /path/to/stella-backend/scripts/monitor-port-forwards.sh --once >> /tmp/stella-ai-k8s/cron.log 2>&1
 ```
 
 **Option C: Manual Monitoring (Development/Testing)**
@@ -494,7 +494,7 @@ kubectl exec -it -n ai-agents deployment/postgres -- cat /var/lib/postgresql/dat
 
 **Check ConfigMap has correct values:**
 ```bash
-kubectl get configmap grace-ai-config -n ai-agents -o yaml
+kubectl get configmap stella-ai-config -n ai-agents -o yaml
 ```
 
 **Restart deployments to reload ConfigMap:**

@@ -19,6 +19,12 @@ import type {
   AgentInstance,
   AgentWithPodStatus,
   CreateAgentDto,
+  AgentType,
+  CustomAgentType,
+  AgentUploadResponse,
+  AgentBuildStatus,
+  AgentBuildResponse,
+  SessionEvent,
   DeleteResponse,
   ApiError,
   Participant,
@@ -57,8 +63,8 @@ class SessionManagementClient {
   ): Promise<T> {
     const url = `${this.getBaseUrl()}${path}`
 
-    // Get JWT token from localStorage
-    const token = localStorage.getItem('grace_auth_token')
+    // Get JWT token from localStorage (check new key first, then old for migration)
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
 
     // Build headers
     const headers: Record<string, string> = {
@@ -83,6 +89,8 @@ class SessionManagementClient {
     // Handle 401 Unauthorized - redirect to login
     if (response.status === 401) {
       // Clear stored auth data
+      localStorage.removeItem('stella_auth_token')
+      localStorage.removeItem('stella_user')
       localStorage.removeItem('grace_auth_token')
       localStorage.removeItem('grace_user')
 
@@ -247,6 +255,10 @@ class SessionManagementClient {
   // Agents API
   // ============================================================================
 
+  async getAgentTypes(): Promise<AgentType[]> {
+    return this.get<AgentType[]>('/agent-types')
+  }
+
   async createAgent(
     sessionId: string,
     data: CreateAgentDto
@@ -390,6 +402,156 @@ class SessionManagementClient {
 
   async getNetworkInfo(): Promise<NetworkInfoResponse> {
     return this.get<NetworkInfoResponse>('/network-info')
+  }
+
+  // ============================================================================
+  // SSE Session Events API
+  // ============================================================================
+
+  /**
+   * Subscribe to real-time session events (agent ready, failed, etc.)
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToSessionEvents(
+    sessionId: string,
+    onEvent: (event: SessionEvent) => void,
+    onError?: (error: Event) => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/sessions/${sessionId}/events`
+
+    // Get auth token
+    const token = localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: SessionEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] SSE connection error:', e)
+      if (onError) {
+        onError(e)
+      }
+    }
+
+    // Return cleanup function
+    return () => {
+      eventSource.close()
+    }
+  }
+
+  // ============================================================================
+  // Custom Agent Upload API
+  // ============================================================================
+
+  /**
+   * Upload a custom agent package (zip file).
+   */
+  async uploadAgentPackage(file: File): Promise<AgentUploadResponse> {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${this.getBaseUrl()}/agent-types/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw error
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Get the current user's custom agents.
+   */
+  async getMyAgents(): Promise<CustomAgentType[]> {
+    return this.get<CustomAgentType[]>('/agent-types/my-agents')
+  }
+
+  /**
+   * Trigger a build for a custom agent.
+   */
+  async triggerAgentBuild(agentTypeId: string): Promise<AgentBuildResponse> {
+    return this.post<AgentBuildResponse>(`/agent-types/${agentTypeId}/build`)
+  }
+
+  /**
+   * Get build status for an agent.
+   */
+  async getAgentBuildStatus(agentTypeId: string): Promise<AgentBuildStatus | null> {
+    return this.get<AgentBuildStatus | null>(`/agent-types/${agentTypeId}/build-status`)
+  }
+
+  /**
+   * Get build history for an agent.
+   */
+  async getAgentBuildHistory(agentTypeId: string): Promise<AgentBuildStatus[]> {
+    return this.get<AgentBuildStatus[]>(`/agent-types/${agentTypeId}/build-history`)
+  }
+
+  /**
+   * Delete a custom agent.
+   */
+  async deleteCustomAgent(agentTypeId: string): Promise<{ success: boolean }> {
+    return this.post<{ success: boolean }>(`/agent-types/${agentTypeId}/delete`)
+  }
+
+  /**
+   * Subscribe to build logs via SSE.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToBuildLogs(
+    agentTypeId: string,
+    onLog: (data: { status: string; output?: string; errorMessage?: string }) => void,
+    onError?: (error: Event) => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/agent-types/${agentTypeId}/build-logs`
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onmessage = (e) => {
+      try {
+        if (e.data && e.data !== 'connected' && e.data !== 'no_build') {
+          const data = JSON.parse(e.data)
+          onLog(data)
+        }
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse build log event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Build log SSE connection error:', e)
+      if (onError) {
+        onError(e)
+      }
+    }
+
+    return () => {
+      eventSource.close()
+    }
   }
 }
 

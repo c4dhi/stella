@@ -12,6 +12,7 @@ import {
 import { Observable, interval } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { AgentsService } from './agents.service';
+import { AgentImageService } from '../agent-image/agent-image.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 
 interface MessageEvent {
@@ -24,7 +25,15 @@ interface MessageEvent {
 @Controller()
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AgentsController {
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly agentImageService: AgentImageService,
+  ) {}
+
+  @Get('agent-types')
+  async getAgentTypes() {
+    return this.agentImageService.getAgentTypesWithInfo();
+  }
 
   @Post('sessions/:sessionId/agents')
   create(

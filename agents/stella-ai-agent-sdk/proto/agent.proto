@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package stella.agent.v1;
+
+// AgentService - Service exposed by session-management server
+// Agents connect TO this service using the SDK
+service AgentService {
+  // Register an agent with a session
+  // Agent calls this to join a session and receive configuration
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+
+  // Bidirectional stream for agent communication
+  // Agent receives inputs, sends outputs
+  rpc AgentStream(stream AgentOutputProto) returns (stream AgentInputProto);
+
+  // Send interrupt signal to agent (fast path for barge-in)
+  // Server calls this when user starts speaking
+  rpc SendInterrupt(InterruptRequest) returns (InterruptResponse);
+
+  // Agent signals session end
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// AGENT STATE (for health monitoring)
+// ============================================================================
+
+enum AgentState {
+  AGENT_STATE_UNKNOWN = 0;
+  AGENT_STATE_INITIALIZING = 1;   // Agent is starting up
+  AGENT_STATE_READY = 2;          // Agent is ready to process inputs
+  AGENT_STATE_PROCESSING = 3;     // Agent is actively processing a request
+  AGENT_STATE_INTERRUPTED = 4;    // Agent was interrupted (e.g., barge-in)
+  AGENT_STATE_ERROR = 5;          // Agent encountered an error
+  AGENT_STATE_SHUTTING_DOWN = 6;  // Agent is shutting down gracefully
+}
+
+// ============================================================================
+// INPUT TYPES (Server -> Agent)
+// ============================================================================
+
+enum InputType {
+  INPUT_TYPE_UNSPECIFIED = 0;
+  INPUT_TYPE_TEXT = 1;           // Transcribed user speech or typed text
+  INPUT_TYPE_INTERRUPT = 2;      // User interrupted (barge-in)
+  INPUT_TYPE_SESSION_START = 3;  // Session starting with configuration
+  INPUT_TYPE_SESSION_END = 4;    // Session ending
+  INPUT_TYPE_CONFIG = 5;         // Runtime configuration update
+  INPUT_TYPE_HEALTH_CHECK = 6;   // Health check request (via stream)
+}
+
+message AgentInputProto {
+  string session_id = 1;
+  InputType type = 2;
+  string text = 3;                        // For TEXT type
+  repeated ConversationTurn history = 4;  // Conversation context
+  map<string, string> metadata = 5;       // Additional context (JSON strings for complex values)
+  int64 timestamp_ms = 6;
+  StreamHealthCheckRequest health_check = 7;  // For HEALTH_CHECK type
+}
+
+// Health check request sent via the bidirectional stream
+message StreamHealthCheckRequest {
+  string request_id = 1;  // Correlation ID for request/response matching
+}
+
+message ConversationTurn {
+  string role = 1;    // "user" or "assistant"
+  string content = 2;
+}
+
+// ============================================================================
+// OUTPUT TYPES (Agent -> Server)
+// ============================================================================
+
+enum OutputType {
+  OUTPUT_TYPE_UNSPECIFIED = 0;
+  OUTPUT_TYPE_TEXT_CHUNK = 1;   // Streaming text chunk
+  OUTPUT_TYPE_TEXT_FINAL = 2;   // Complete text (triggers TTS)
+  OUTPUT_TYPE_STATUS = 3;       // Processing status (no TTS)
+  OUTPUT_TYPE_METADATA = 4;     // Metadata update (no TTS)
+  OUTPUT_TYPE_ERROR = 5;        // Error message
+  OUTPUT_TYPE_HEALTH_STATUS = 6; // Health status response (via stream)
+}
+
+enum StatusSubtype {
+  STATUS_SUBTYPE_UNSPECIFIED = 0;
+  STATUS_SUBTYPE_PROCESSING = 1;
+  STATUS_SUBTYPE_THINKING = 2;
+  STATUS_SUBTYPE_EXPERT_START = 3;
+  STATUS_SUBTYPE_EXPERT_COMPLETE = 4;
+  STATUS_SUBTYPE_AGGREGATING = 5;
+}
+
+enum MetadataSubtype {
+  METADATA_SUBTYPE_UNSPECIFIED = 0;
+  METADATA_SUBTYPE_PLAN_UPDATE = 1;
+  METADATA_SUBTYPE_TASK_UPDATE = 2;
+  METADATA_SUBTYPE_DELIVERABLE = 3;
+  METADATA_SUBTYPE_PROGRESS = 4;
+  METADATA_SUBTYPE_STATE_TRANSITION = 5;
+}
+
+message AgentOutputProto {
+  string session_id = 1;
+  OutputType type = 2;
+  string content = 3;                      // Text content or JSON payload
+  bool is_final = 4;                       // For TEXT_CHUNK: last chunk in stream
+  string transcript_id = 5;                // Groups streaming chunks
+  StatusSubtype status_subtype = 6;        // For STATUS type
+  MetadataSubtype metadata_subtype = 7;    // For METADATA type
+  map<string, string> metadata = 8;        // Additional data
+  int64 timestamp_ms = 9;
+  StreamHealthStatusResponse health_status = 10;  // For HEALTH_STATUS type
+}
+
+// Health status response sent via the bidirectional stream
+message StreamHealthStatusResponse {
+  string request_id = 1;              // Correlation ID matching the request
+  AgentState state = 2;               // Current agent state
+  string session_id = 3;              // Current session ID (if any)
+  string agent_type = 4;              // Type of agent (e.g., "StellaAgent")
+  string agent_version = 5;           // Agent version
+  int64 uptime_seconds = 6;           // How long the agent has been running
+  int32 messages_processed = 7;       // Number of messages processed
+  string last_error = 8;              // Last error message (if any)
+  map<string, string> metadata = 9;   // Additional health metadata
+}
+
+// ============================================================================
+// REGISTRATION (Agent joins session)
+// ============================================================================
+
+message RegisterAgentRequest {
+  string agent_type = 1;         // Agent identifier (e.g., "stella-agent")
+  string agent_version = 2;      // Agent version
+  map<string, string> capabilities = 3;  // Agent capabilities
+}
+
+message RegisterAgentResponse {
+  bool success = 1;
+  string session_id = 2;         // Assigned session ID
+  string message = 3;            // Error message if not successful
+  map<string, string> config = 4;  // Session configuration
+}
+
+// ============================================================================
+// INTERRUPT (Fast path for barge-in)
+// ============================================================================
+
+message InterruptRequest {
+  string session_id = 1;
+  string reason = 2;  // "user_barge_in", "timeout", "manual"
+}
+
+message InterruptResponse {
+  bool success = 1;
+  bool was_processing = 2;  // True if agent was actively processing
+}
+
+// ============================================================================
+// SESSION END
+// ============================================================================
+
+message EndSessionRequest {
+  string session_id = 1;
+}
+
+message EndSessionResponse {
+  bool success = 1;
+  map<string, string> final_data = 2;  // Collected deliverables, etc.
+}
+
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string agent_type = 2;
+  string agent_version = 3;
+  string session_id = 4;  // Current session, if any
+}

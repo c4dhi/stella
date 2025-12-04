@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useParams } from 'react-router-dom'
 import { Eye } from 'lucide-react'
 import { useStore } from '../store'
+import { useThemeStore } from '../store/themeStore'
 import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
 import ParticipantNotification from './ParticipantNotification'
@@ -26,6 +27,8 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   const agentTaskLists = useStore(s => s.agentTaskLists)
   const setShowTaskPanel = useStore(s => s.setShowTaskPanel)
   const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   // Historical messages from database
   const historicalMessages = useStore(s => s.historicalMessages)
@@ -129,8 +132,8 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       const messageData = envelope.data || envelope
 
       // Handle different message types
-      if (messageType === 'transcript_chunk') {
-        // Transcript messages
+      if (messageType === 'transcript_chunk' || messageType === 'transcript') {
+        // User speech transcripts (from STT)
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : messageData.text,
@@ -140,7 +143,63 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           finalizedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          source: 'db' as const,
+          // Include attribution fields from stored envelope
+          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          agent_name: messageData?.agent_name,
+          source: messageData?.source,  // Message source: user_speech, user_text, agent_response
+          dataSource: 'db' as const,    // Data source: db or live
+        }
+      } else if (messageType === 'agent_text') {
+        // Agent response messages
+        return {
+          id: msg.id,
+          text: typeof messageData === 'string' ? messageData : messageData.text,
+          role: 'assistant' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          messageType: 'transcript' as const,
+          participant_id: messageData?.agent_id || getParticipantName(msg),
+          speaker_name: messageData?.agent_name || 'Agent',
+          agent_name: messageData?.agent_name || 'Agent',
+          agent_id: messageData?.agent_id,
+          source: 'agent_response' as const,
+          dataSource: 'db' as const,
+        }
+      } else if (messageType === 'user_text') {
+        // User typed text messages
+        const textContent = typeof messageData === 'string' ? messageData : (messageData.text || messageData)
+        return {
+          id: msg.id,
+          text: typeof textContent === 'string' ? textContent : JSON.stringify(textContent),
+          role: 'user' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          messageType: 'transcript' as const,
+          participant_id: envelope.participant_id || getParticipantName(msg),
+          speaker_name: envelope.participant_id || getParticipantName(msg),
+          source: 'user_text' as const,
+          dataSource: 'db' as const,
+        }
+      } else if (messageType === 'debug') {
+        // Debug messages - display in processing view
+        return {
+          id: msg.id,
+          type: 'debug' as const,
+          role: 'system' as const,
+          status: 'final' as const,
+          startedAt: timestamp,
+          finalizedAt: timestamp,
+          streamId: messageData.stream_id || 'db-stream',
+          data: {
+            component: messageData.component || 'agent',
+            level: messageData.level || 'info',
+            message: messageData.content || messageData.message || '',
+            metadata: messageData.metadata || messageData
+          },
+          messageType: 'processing' as const,
+          dataSource: 'db' as const,
         }
       } else if (['decision_stream', 'expert_status', 'expert_results', 'prompt_execution', 'safety_check'].includes(messageType)) {
         // Processing messages
@@ -155,7 +214,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           streamId: messageData.stream_id || 'db-stream',
           data: messageData,
           messageType: 'processing' as const,
-          source: 'db' as const,
+          dataSource: 'db' as const,
         }
       } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'].includes(messageType)) {
         // Task update messages - don't display in chat (handled by task panel)
@@ -176,19 +235,28 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          source: 'db' as const,
+          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          agent_name: messageData?.agent_name,
+          source: messageData?.source,
+          dataSource: 'db' as const,
         }
       }
     }).filter((msg): msg is NonNullable<typeof msg> => msg !== null) // Remove nulls with type guard
 
-    // Combine with live messages
-    const liveTranscripts = turns.map(t => ({ ...t, messageType: 'transcript' as const, source: 'live' as const }))
-    const processing = showProcessingMessages
-      ? processingMessages.map(p => ({ ...p, messageType: 'processing' as const, source: 'live' as const }))
-      : []
-    const events = participantEvents.map(e => ({ ...e, source: 'live' as const }))
+    // Filter historical messages based on showProcessingMessages toggle
+    // When processing/debug is disabled, hide those messages from DB as well
+    const filteredHistorical = showProcessingMessages
+      ? historical
+      : historical.filter(msg => msg.messageType !== 'processing')
 
-    const combined = [...historical, ...liveTranscripts, ...processing, ...events]
+    // Combine with live messages
+    const liveTranscripts = turns.map(t => ({ ...t, messageType: 'transcript' as const, dataSource: 'live' as const }))
+    const processing = showProcessingMessages
+      ? processingMessages.map(p => ({ ...p, messageType: 'processing' as const, dataSource: 'live' as const }))
+      : []
+    const events = participantEvents.map(e => ({ ...e, dataSource: 'live' as const }))
+
+    const combined = [...filteredHistorical, ...liveTranscripts, ...processing, ...events]
 
     // Deduplicate by ID (prefer live version if exists)
     const unique = Array.from(
@@ -263,7 +331,9 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header with processing toggle and task panel toggle */}
       <motion.div
-        className="px-4 py-3 border-b border-neutral-200/40 backdrop-blur-sm"
+        className={`px-4 py-3 border-b backdrop-blur-sm ${
+          isDark ? 'border-border-dark' : 'border-border'
+        }`}
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
@@ -280,7 +350,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
               return (
                 <button
                   onClick={onShowLogs}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-50/60 border border-neutral-200/60 hover:bg-neutral-100/80 hover:border-neutral-300/80 transition-all duration-200 cursor-pointer"
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all duration-200 cursor-pointer ${
+                    isDark
+                      ? 'bg-surface-dark-tertiary border-border-dark hover:bg-surface-dark-secondary hover:border-border-dark-secondary'
+                      : 'bg-surface-secondary border-border hover:bg-zinc-100 hover:border-border-secondary'
+                  }`}
                   title={
                     isRecording
                       ? 'Recording active - Click to view logs'
@@ -290,15 +364,17 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                   }
                 >
                   <div
-                    className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                    className={`status-dot ${
                       isRecording
-                        ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]'
+                        ? 'status-dot-error animate-pulse'
                         : isReconnecting
-                          ? 'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.6)]'
-                          : 'bg-neutral-300'
+                          ? 'status-dot-warning'
+                          : 'status-dot-neutral'
                     }`}
                   />
-                  <span className="text-[10px] text-neutral-600 font-light tracking-wider uppercase">
+                  <span className={`text-label uppercase ${
+                    isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                  }`}>
                     {isRecording ? 'RECORDING' : isReconnecting ? 'RECONNECTING' : 'IDLE'}
                   </span>
                   <svg
@@ -308,7 +384,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="1.5"
-                    className="text-neutral-400"
+                    className={isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}
                   >
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                     <polyline points="14 2 14 8 20 8" />
@@ -322,11 +398,17 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
             {/* Face Button */}
             <button
               onClick={() => setFaceModalOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-50/60 border border-neutral-200/60 hover:bg-neutral-100/80 hover:border-neutral-300/80 transition-all duration-200 cursor-pointer"
-              title="Show GRACE face interface"
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all duration-200 cursor-pointer ${
+                isDark
+                  ? 'bg-surface-dark-tertiary border-border-dark hover:bg-surface-dark-secondary hover:border-border-dark-secondary'
+                  : 'bg-surface-secondary border-border hover:bg-zinc-100 hover:border-border-secondary'
+              }`}
+              title="Show STELLA face interface"
             >
-              <Eye className="w-3 h-3 text-neutral-400" />
-              <span className="text-[10px] text-neutral-600 font-light tracking-wider uppercase">
+              <Eye className={`w-3 h-3 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`} />
+              <span className={`text-label uppercase ${
+                isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+              }`}>
                 FACE
               </span>
             </button>
@@ -336,12 +418,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           {!showTaskPanel && agentTaskLists.size > 0 && (
             <motion.button
               onClick={() => setShowTaskPanel(true)}
-              className="
-                flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs
-                bg-neutral-100/60 text-neutral-600 border border-neutral-200/60
-                hover:bg-neutral-200/60 hover:text-neutral-700
-                transition-all duration-200 font-light tracking-wide
-              "
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-label border transition-all duration-200 ${
+                isDark
+                  ? 'bg-surface-dark-tertiary text-content-inverse-secondary border-border-dark hover:bg-surface-dark-secondary'
+                  : 'bg-surface-secondary text-content-secondary border-border hover:bg-zinc-100'
+              }`}
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.3 }}
@@ -363,12 +444,14 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       {/* Messages */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-auto p-4 space-y-2"
+        className="flex-1 overflow-auto p-4 space-y-2 scrollbar-thin"
         onScroll={handleScroll}
       >
         {/* Loading indicator at top - only show when there are existing messages */}
         {isLoadingHistory && historicalMessages.length > 0 && (
-          <div className="text-center text-sm text-neutral-400 py-2 mb-2">
+          <div className={`text-center text-body-sm py-2 mb-2 ${
+            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+          }`}>
             <div className="inline-flex items-center gap-2">
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
@@ -390,7 +473,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                   message.role === 'system' ? (
                     // System messages - centered notification
                     <motion.div className="flex justify-center my-4">
-                      <div className="px-4 py-2 bg-neutral-100/60 text-neutral-600 border border-neutral-200/60 rounded-full text-xs font-light tracking-wide">
+                      <div className={`px-4 py-2 rounded-full text-caption ${
+                        isDark
+                          ? 'bg-zinc-800 text-zinc-300 border border-zinc-700'
+                          : 'bg-surface-secondary text-content-secondary border border-border'
+                      }`}>
                         {message.text}
                       </div>
                     </motion.div>
@@ -401,25 +488,40 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                 >
                   {/* Message Bubble */}
                   <div className={`
-                    px-4 py-3 backdrop-blur-sm border
+                    px-4 py-3 rounded-xl border overflow-hidden
                     ${message.role === 'user'
                       ? message.status === 'partial'
-                        ? 'bg-neutral-900/95 text-white border-neutral-800/40 rounded-[16px] opacity-85'  // User partial
-                        : 'bg-neutral-900 text-white border-neutral-800/60 rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.12)]'  // User final
+                        ? isDark
+                          ? 'bg-violet-600/90 text-white border-violet-500/40 opacity-85'
+                          : 'bg-content/90 text-white border-content/70 opacity-85'
+                        : isDark
+                          ? 'bg-violet-600 text-white border-violet-500/60 shadow-md'
+                          : 'bg-content text-white border-content shadow-sm'
                       : message.role === 'assistant'
-                        ? 'bg-white/95 text-neutral-900 border-neutral-200/80 rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.04)]'  // Assistant
-                        : 'bg-neutral-50/90 text-neutral-700 border-neutral-300/60 rounded-[14px]'  // Other
+                        ? isDark
+                          ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
+                          : 'bg-white text-content border-border shadow-sm'
+                        : isDark
+                          ? 'bg-zinc-800/80 text-zinc-200 border-zinc-700'
+                          : 'bg-white text-content-secondary border-border shadow-sm'
                     }
                   `}>
                     {/* Message Header */}
                     <motion.div
-                      className={`text-[10px] mb-2 flex items-center gap-2 tracking-wider uppercase font-light ${message.role === 'user' ? 'text-neutral-200' : 'text-neutral-600'
-                        }`}
+                      className={`text-label mb-2 flex items-center gap-2 uppercase ${
+                        message.role === 'user'
+                          ? 'text-white/70'
+                          : isDark ? 'text-zinc-400' : 'text-content-tertiary'
+                      }`}
                       initial={{ opacity: 0 }}
-                      animate={{ opacity: 0.6 }}
+                      animate={{ opacity: 1 }}
                       transition={{ delay: 0.1, duration: 0.3 }}
                     >
-                      <span>{message.participant_id || message.role}</span>
+                      <span>
+                        {message.source === 'agent_response'
+                          ? (message.agent_name || 'Agent')
+                          : (message.speaker_name || message.participant_id || message.role)}
+                      </span>
                       <span className="opacity-50">•</span>
                       <span>
                         {new Date(message.startedAt).toLocaleTimeString([], {
@@ -432,12 +534,14 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                     {/* Message Content */}
                     {message.status === 'partial' ? (
                       // No animation for partial messages to prevent weird text appearance
-                      <div
-                        className="font-light leading-relaxed text-[15px] opacity-85"
-                      >
+                      <div className="text-body leading-relaxed opacity-85 break-words overflow-wrap-anywhere">
                         {message.text}
                         <motion.span
-                          className="font-thin ml-1 text-neutral-400"
+                          className={`ml-1 ${
+                            message.role === 'user'
+                              ? 'text-white/50'
+                              : isDark ? 'text-zinc-500' : 'text-content-tertiary'
+                          }`}
                           animate={{ opacity: [0, 1, 0] }}
                           transition={{ duration: 1.2, repeat: Infinity }}
                         >
@@ -446,21 +550,13 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                       </div>
                     ) : (
                       // Final messages - no animations
-                      <div className="font-light leading-relaxed text-[15px]">
+                      <div className={`text-body leading-relaxed break-words overflow-wrap-anywhere ${
+                        message.role !== 'user' && isDark ? 'text-zinc-100' : ''
+                      }`}>
                         {message.text}
                       </div>
                     )}
                   </div>
-
-                  {/* Minimal shadow for user messages */}
-                  {message.role === 'user' && message.status === 'final' && (
-                    <motion.div
-                      className="absolute inset-0 rounded-[16px] bg-neutral-900/5 -z-10 blur-sm"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.3, duration: 0.4 }}
-                    />
-                  )}
                 </motion.div>
                   )
               ) : message.messageType === 'participant' ? (

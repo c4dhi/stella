@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts-service
+  namespace: ai-agents
+  labels:
+    app: tts-service
+spec:
+  selector:
+    app: tts-service
+  ports:
+    - port: 50052
+      targetPort: 50052
+      name: grpc
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-service
+  namespace: ai-agents
+  labels:
+    app: tts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts-service
+  template:
+    metadata:
+      labels:
+        app: tts-service
+    spec:
+      # GPU: runtimeClassName: nvidia
+      # ======================================================================
+      # Init Container: Download Kokoro models to PersistentVolume
+      # ======================================================================
+      initContainers:
+      - name: download-models
+        image: tts-service:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "[TTS Init] Starting model download check..."
+
+          # Get provider from env (default: edge_tts)
+          TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
+
+          # ================================================================
+          # Kokoro Model (only when TTS_PROVIDER=kokoro)
+          # ================================================================
+          if [ "$TTS_PROVIDER" = "kokoro" ]; then
+            KOKORO_VERSION_FILE="/models/kokoro/.version"
+            KOKORO_VERSION="v1.0"
+
+            if [ -f "$KOKORO_VERSION_FILE" ] && [ "$(cat $KOKORO_VERSION_FILE)" = "$KOKORO_VERSION" ]; then
+              echo "[TTS Init] Kokoro model already downloaded (version: $KOKORO_VERSION)"
+            else
+              echo "[TTS Init] Downloading Kokoro model..."
+              mkdir -p /models/kokoro
+              KOKORO_CACHE_DIR=/models/kokoro python download_kokoro_models.py
+              echo "$KOKORO_VERSION" > "$KOKORO_VERSION_FILE"
+              echo "[TTS Init] Kokoro model download complete"
+            fi
+          else
+            echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
+          fi
+
+          echo "[TTS Init] Model initialization complete!"
+        env:
+        - name: TTS_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: TTS_PROVIDER
+              optional: true
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      containers:
+      - name: tts-service
+        image: tts-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50052
+          name: grpc
+        # Mount PV with models at cache directory
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/kokoro
+          subPath: kokoro
+        env:
+        - name: GRPC_PORT
+          value: "50052"
+        - name: TTS_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: TTS_PROVIDER
+              optional: true
+        - name: ONNX_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: ONNX_PROVIDER
+              optional: true
+        - name: KOKORO_CACHE_DIR
+          value: "/root/.cache/kokoro"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+            # GPU: nvidia.com/gpu: "1"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+            # GPU: nvidia.com/gpu: "1"
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+      # ======================================================================
+      # Volumes: PersistentVolume for model storage
+      # ======================================================================
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: tts-models-pvc

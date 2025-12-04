@@ -1,0 +1,22 @@
+# =============================================================================
+# TTS Models Persistent Volume Claim
+# =============================================================================
+# Storage for TTS models to avoid baking into Docker images:
+# - Kokoro model: ~300MB (kokoro-v1.0.onnx)
+# - Kokoro voices: ~200MB (voices-v1.0.bin)
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tts-models-pvc
+  namespace: ai-agents
+  labels:
+    app: tts-service
+    component: models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

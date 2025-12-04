@@ -23,17 +23,17 @@ interface TaskProgressBarProps {
 const ProcessingModeIndicator = ({ mode }: { mode: StateType }) => {
   if (mode === StateType.STRICT) {
     return (
-      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 border border-blue-200" title="Sequential Processing Mode">
-        <span className="text-xs text-blue-600">⚡</span>
-        <span className="text-[10px] text-blue-700 tracking-wide uppercase font-medium">Sequential</span>
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700/50" title="Sequential Processing Mode">
+        <span className="text-xs text-blue-600 dark:text-blue-400">⚡</span>
+        <span className="text-[10px] text-blue-700 dark:text-blue-300 tracking-wide uppercase font-medium">Sequential</span>
       </div>
     )
   }
 
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 border border-green-200" title="Flexible Processing Mode">
-      <span className="text-xs text-green-600">🔄</span>
-      <span className="text-[10px] text-green-700 tracking-wide uppercase font-medium">Flexible</span>
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700/50" title="Flexible Processing Mode">
+      <span className="text-xs text-green-600 dark:text-green-400">🔄</span>
+      <span className="text-[10px] text-green-700 dark:text-green-300 tracking-wide uppercase font-medium">Flexible</span>
     </div>
   )
 }
@@ -66,7 +66,7 @@ export default function TaskProgressBar({
       className="relative space-y-3"
     >
       {/* Progress Track */}
-      <div className="h-px bg-neutral-200 rounded-full overflow-hidden">
+      <div className="h-px bg-neutral-200 dark:bg-neutral-700 rounded-full overflow-hidden">
         {/* Progress Fill */}
         <motion.div
           className={`h-full rounded-full ${
@@ -93,13 +93,13 @@ export default function TaskProgressBar({
         transition={{ delay: 0.2, duration: 0.3 }}
       >
         {/* Progress Percentage */}
-        <div className="text-[10px] font-normal text-neutral-400 tracking-wide">
+        <div className="text-[10px] font-normal text-neutral-400 dark:text-neutral-500 tracking-wide">
           {Math.round(progress)}%
         </div>
 
         {/* Deliverables Counter */}
-        <div className="text-[10px] font-normal text-neutral-500 tracking-wide">
-          <span className="text-[9px] text-neutral-400 tracking-wide uppercase mr-1">Deliverables</span>
+        <div className="text-[10px] font-normal text-neutral-500 dark:text-neutral-400 tracking-wide">
+          <span className="text-[9px] text-neutral-400 dark:text-neutral-500 tracking-wide uppercase mr-1">Deliverables</span>
           <span className="font-medium">{displayCurrentStep}</span>
           <span className="mx-0.5 opacity-40">/</span>
           <span>{displayTotalSteps}</span>

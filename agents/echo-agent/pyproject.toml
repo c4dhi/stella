@@ -1,0 +1,30 @@
+[project]
+name = "echo-agent"
+version = "0.1.0"
+description = "Echo Agent - Simple test agent that echoes user input"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "STELLA Team"}
+]
+
+dependencies = [
+    "stella-ai-agent-sdk",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+echo-agent = "echo_agent.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

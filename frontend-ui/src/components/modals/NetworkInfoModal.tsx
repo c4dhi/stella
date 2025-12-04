@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { apiClient } from '../../services/ApiClient'
 import { useStore } from '../../store'
+import { useThemeStore } from '../../store/themeStore'
 import type { NetworkInfoResponse } from '../../lib/api-types'
 
 interface NetworkInfoModalProps {
@@ -15,6 +16,8 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const llmConfig = useStore(s => s.llmConfig)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   useEffect(() => {
     if (isOpen) {
@@ -51,20 +54,26 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
 
         {/* Modal */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="relative w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.12)] border border-neutral-200/60 overflow-hidden"
+          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          className={`card-elevated relative w-full max-w-2xl overflow-hidden ${
+            isDark ? 'bg-surface-dark-secondary' : ''
+          }`}
         >
           {/* Header */}
-          <div className="px-6 py-4 border-b border-neutral-200/60">
+          <div className={`px-6 py-4 border-b ${isDark ? 'border-border-dark' : 'border-border'}`}>
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-light text-neutral-900 tracking-wide">
+              <h2 className={`text-heading ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                 Network Information
               </h2>
               <button
                 onClick={onClose}
-                className="p-2 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100/80 transition-all"
+                className={`p-2 rounded-lg transition-colors ${
+                  isDark
+                    ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
+                    : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
+                }`}
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M18 6L6 18M6 6l12 12" />
@@ -74,15 +83,21 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
           </div>
 
           {/* Content */}
-          <div className="px-6 py-6 max-h-[70vh] overflow-y-auto">
+          <div className="px-6 py-6 max-h-[70vh] overflow-y-auto scrollbar-thin">
             {loading && (
               <div className="flex items-center justify-center py-12">
-                <div className="text-sm text-neutral-400 font-light">Loading network information...</div>
+                <div className={`text-body ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                  Loading network information...
+                </div>
               </div>
             )}
 
             {error && (
-              <div className="p-4 rounded-xl bg-red-50/80 border border-red-200/60 text-red-600 text-sm font-light">
+              <div className={`p-4 rounded-lg text-body ${
+                isDark
+                  ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
                 {error}
               </div>
             )}
@@ -91,68 +106,98 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
               <div className="space-y-6">
                 {/* Environment Badge */}
                 <div className="flex items-center gap-2">
-                  <span className="px-3 py-1 rounded-full text-xs font-light bg-neutral-100 text-neutral-700 tracking-wider uppercase">
+                  <span className="badge-neutral uppercase">
                     {networkInfo.environment}
                   </span>
-                  <span className="text-xs text-neutral-400 font-light">
+                  <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
                     ({networkInfo.source})
                   </span>
                 </div>
 
                 {/* QR Code for Frontend */}
-                <div className="flex flex-col items-center gap-3 p-6 rounded-xl bg-neutral-50/80 border border-neutral-200/40">
-                  <div className="text-sm font-light text-neutral-600 tracking-wide">
+                <div className={`flex flex-col items-center gap-3 p-6 rounded-xl ${
+                  isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                }`}>
+                  <div className={`text-body ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
                     Scan to access from mobile
                   </div>
                   <div className="p-4 bg-white rounded-lg shadow-sm">
                     <QRCodeSVG value={networkInfo.frontendUrl} size={200} level="M" />
                   </div>
-                  <div className="text-xs text-neutral-400 font-mono break-all text-center">
+                  <div className={`text-caption font-mono break-all text-center ${
+                    isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                  }`}>
                     {networkInfo.frontendUrl}
                   </div>
                 </div>
 
                 {/* Connection Details */}
                 <div className="space-y-3">
-                  <h3 className="text-sm font-normal text-neutral-700 tracking-wide">Connection Details</h3>
+                  <h3 className={`text-body font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                    Connection Details
+                  </h3>
 
                   <div className="grid gap-3">
                     {/* Frontend URL */}
-                    <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                      <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                    <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                      isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                    }`}>
+                      <div className={`text-label uppercase ${
+                        isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                      }`}>
                         Frontend
                       </div>
-                      <div className="text-sm font-mono text-neutral-900 break-all">
+                      <div className={`text-body-sm font-mono break-all ${
+                        isDark ? 'text-content-inverse' : 'text-content'
+                      }`}>
                         {networkInfo.frontendUrl}
                       </div>
                     </div>
 
                     {/* Backend API URL */}
-                    <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                      <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                    <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                      isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                    }`}>
+                      <div className={`text-label uppercase ${
+                        isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                      }`}>
                         Backend API
                       </div>
-                      <div className="text-sm font-mono text-neutral-900 break-all">
+                      <div className={`text-body-sm font-mono break-all ${
+                        isDark ? 'text-content-inverse' : 'text-content'
+                      }`}>
                         {networkInfo.serverUrl}
                       </div>
                     </div>
 
                     {/* LiveKit URL */}
-                    <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                      <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                    <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                      isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                    }`}>
+                      <div className={`text-label uppercase ${
+                        isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                      }`}>
                         LiveKit Server
                       </div>
-                      <div className="text-sm font-mono text-neutral-900 break-all">
+                      <div className={`text-body-sm font-mono break-all ${
+                        isDark ? 'text-content-inverse' : 'text-content'
+                      }`}>
                         {networkInfo.livekitUrl}
                       </div>
                     </div>
 
                     {/* Detected IP */}
-                    <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                      <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                    <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                      isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                    }`}>
+                      <div className={`text-label uppercase ${
+                        isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                      }`}>
                         Detected IP
                       </div>
-                      <div className="text-sm font-mono text-neutral-900">
+                      <div className={`text-body-sm font-mono ${
+                        isDark ? 'text-content-inverse' : 'text-content'
+                      }`}>
                         {networkInfo.detectedIp}
                       </div>
                     </div>
@@ -160,61 +205,91 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
                 </div>
 
                 {/* System Info */}
-                <div className="pt-3 border-t border-neutral-200/60">
-                  <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className={`pt-3 border-t ${isDark ? 'border-border-dark' : 'border-border'}`}>
+                  <div className="grid grid-cols-2 gap-3 text-caption">
                     <div>
-                      <span className="text-neutral-500 font-light">Hostname: </span>
-                      <span className="text-neutral-700 font-mono">{networkInfo.hostname}</span>
+                      <span className={isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}>Hostname: </span>
+                      <span className={`font-mono ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                        {networkInfo.hostname}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-neutral-500 font-light">Platform: </span>
-                      <span className="text-neutral-700 font-mono">{networkInfo.platform}</span>
+                      <span className={isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}>Platform: </span>
+                      <span className={`font-mono ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                        {networkInfo.platform}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 {/* LLM Configuration */}
                 {llmConfig && (
-                  <div className="pt-3 border-t border-neutral-200/60">
-                    <h3 className="text-sm font-normal text-neutral-700 tracking-wide mb-3">AI Configuration</h3>
+                  <div className={`pt-3 border-t ${isDark ? 'border-border-dark' : 'border-border'}`}>
+                    <h3 className={`text-body font-medium mb-3 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                      AI Configuration
+                    </h3>
                     <div className="grid gap-3">
                       {/* Provider and Model */}
-                      <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                        <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                      <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                        isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                      }`}>
+                        <div className={`text-label uppercase ${
+                          isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                        }`}>
                           Provider & Model
                         </div>
-                        <div className="text-sm font-mono text-neutral-900">
+                        <div className={`text-body-sm font-mono ${
+                          isDark ? 'text-content-inverse' : 'text-content'
+                        }`}>
                           {llmConfig.provider} / {llmConfig.model}
                         </div>
                       </div>
 
                       {/* Base URL (if local) */}
                       {llmConfig.base_url && (
-                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                        <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                          isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                        }`}>
+                          <div className={`text-label uppercase ${
+                            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                          }`}>
                             Base URL
                           </div>
-                          <div className="text-sm font-mono text-neutral-900 break-all">
+                          <div className={`text-body-sm font-mono break-all ${
+                            isDark ? 'text-content-inverse' : 'text-content'
+                          }`}>
                             {llmConfig.base_url}
                           </div>
                         </div>
                       )}
 
                       {/* Settings */}
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                          isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                        }`}>
+                          <div className={`text-label uppercase ${
+                            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                          }`}>
                             Temperature
                           </div>
-                          <div className="text-sm font-mono text-neutral-900">
+                          <div className={`text-body-sm font-mono ${
+                            isDark ? 'text-content-inverse' : 'text-content'
+                          }`}>
                             {llmConfig.temperature}
                           </div>
                         </div>
-                        <div className="flex flex-col gap-1 p-3 rounded-lg bg-neutral-50/50 border border-neutral-200/40">
-                          <div className="text-xs text-neutral-500 font-light tracking-wider uppercase">
+                        <div className={`flex flex-col gap-1 p-3 rounded-lg ${
+                          isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-secondary'
+                        }`}>
+                          <div className={`text-label uppercase ${
+                            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                          }`}>
                             Max Tokens
                           </div>
-                          <div className="text-sm font-mono text-neutral-900">
+                          <div className={`text-body-sm font-mono ${
+                            isDark ? 'text-content-inverse' : 'text-content'
+                          }`}>
                             {llmConfig.max_tokens}
                           </div>
                         </div>
@@ -224,8 +299,12 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
                 )}
 
                 {/* Instructions */}
-                <div className="p-4 rounded-xl bg-blue-50/80 border border-blue-200/40 text-sm text-blue-800 font-light space-y-2">
-                  <div className="font-normal">📱 Access from your phone:</div>
+                <div className={`p-4 rounded-lg text-body-sm space-y-2 ${
+                  isDark
+                    ? 'bg-primary-900/30 border border-primary-500/20 text-primary-300'
+                    : 'bg-primary-50 border border-primary-200 text-primary-800'
+                }`}>
+                  <div className="font-medium">Access from your phone:</div>
                   <ol className="list-decimal list-inside space-y-1 ml-2">
                     <li>Make sure your phone is on the same WiFi network</li>
                     <li>Scan the QR code above or manually enter the frontend URL</li>
@@ -237,10 +316,10 @@ export default function NetworkInfoModal({ isOpen, onClose }: NetworkInfoModalPr
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-neutral-200/60 flex justify-end">
+          <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-border-dark' : 'border-border'}`}>
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm font-light tracking-wider text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80 transition-all"
+              className="btn-ghost"
             >
               Close
             </button>

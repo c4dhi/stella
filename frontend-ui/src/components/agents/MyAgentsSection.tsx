@@ -1,0 +1,220 @@
+import React, { useState, useEffect, useCallback } from 'react'
+import { Package, Clock, CheckCircle, XCircle, AlertTriangle, Trash2, RefreshCw } from 'lucide-react'
+import { apiClient } from '../../services/ApiClient'
+import { AgentBuildStatus } from './AgentBuildStatus'
+import type { CustomAgentType, AgentValidationStatus } from '../../lib/api-types'
+
+interface MyAgentsSectionProps {
+  onSelectAgent?: (agent: CustomAgentType) => void
+  refreshTrigger?: number
+}
+
+export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSectionProps) {
+  const [agents, setAgents] = useState<CustomAgentType[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>('')
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
+  const [deletingAgent, setDeletingAgent] = useState<string | null>(null)
+
+  const fetchAgents = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const data = await apiClient.getMyAgents()
+      setAgents(data)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load custom agents')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchAgents()
+  }, [fetchAgents, refreshTrigger])
+
+  const handleDelete = useCallback(async (agentId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+
+    if (!confirm('Are you sure you want to delete this agent? This cannot be undone.')) {
+      return
+    }
+
+    setDeletingAgent(agentId)
+    try {
+      await apiClient.deleteCustomAgent(agentId)
+      setAgents(prev => prev.filter(a => a.id !== agentId))
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete agent')
+    } finally {
+      setDeletingAgent(null)
+    }
+  }, [])
+
+  const getStatusBadge = (status: AgentValidationStatus | undefined) => {
+    switch (status) {
+      case 'APPROVED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+            <CheckCircle className="w-3 h-3" />
+            Approved
+          </span>
+        )
+      case 'PENDING':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+            <Clock className="w-3 h-3" />
+            Pending Review
+          </span>
+        )
+      case 'REJECTED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+            <XCircle className="w-3 h-3" />
+            Rejected
+          </span>
+        )
+      default:
+        return null
+    }
+  }
+
+  const getBuildStatusBadge = (lastBuild: CustomAgentType['lastBuild']) => {
+    if (!lastBuild) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+          Not Built
+        </span>
+      )
+    }
+
+    switch (lastBuild.status) {
+      case 'success':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+            <CheckCircle className="w-3 h-3" />
+            Built
+          </span>
+        )
+      case 'building':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 animate-pulse">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            Building
+          </span>
+        )
+      case 'failed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+            <AlertTriangle className="w-3 h-3" />
+            Build Failed
+          </span>
+        )
+      default:
+        return null
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <RefreshCw className="w-6 h-6 text-gray-400 animate-spin" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+        <p className="text-red-700">{error}</p>
+        <button
+          onClick={fetchAgents}
+          className="mt-2 text-sm text-red-600 hover:text-red-800 underline"
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+
+  if (agents.length === 0) {
+    return (
+      <div className="text-center py-8 px-4">
+        <Package className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+        <p className="text-gray-500">No custom agents yet</p>
+        <p className="text-sm text-gray-400 mt-1">
+          Upload an agent package to get started
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {agents.map((agent) => (
+        <div
+          key={agent.id}
+          className={`
+            border rounded-lg overflow-hidden transition-all
+            ${expandedAgent === agent.id ? 'ring-2 ring-blue-500' : 'hover:border-gray-400'}
+            ${agent.validationStatus === 'APPROVED' ? 'cursor-pointer' : ''}
+          `}
+        >
+          {/* Agent header */}
+          <div
+            className="p-4 flex items-start justify-between bg-white"
+            onClick={() => {
+              if (agent.validationStatus === 'APPROVED') {
+                onSelectAgent?.(agent)
+              } else {
+                setExpandedAgent(expandedAgent === agent.id ? null : agent.id)
+              }
+            }}
+          >
+            <div className="flex items-start gap-3">
+              {/* Icon */}
+              <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-xl">
+                {agent.icon || '📦'}
+              </div>
+
+              {/* Info */}
+              <div>
+                <h4 className="font-medium text-gray-900">{agent.name}</h4>
+                <p className="text-sm text-gray-500 line-clamp-1">{agent.description}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  {getStatusBadge(agent.validationStatus)}
+                  {getBuildStatusBadge(agent.lastBuild)}
+                  <span className="text-xs text-gray-400">v{agent.version}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Delete button */}
+            <button
+              onClick={(e) => handleDelete(agent.id, e)}
+              disabled={deletingAgent === agent.id}
+              className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+              title="Delete agent"
+            >
+              {deletingAgent === agent.id ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+
+          {/* Expanded build section */}
+          {expandedAgent === agent.id && (
+            <div className="border-t bg-gray-50 p-4">
+              <AgentBuildStatus
+                agentTypeId={agent.id}
+                onBuildComplete={fetchAgents}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}

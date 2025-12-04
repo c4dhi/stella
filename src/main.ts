@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
@@ -7,6 +9,18 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule);
+
+  // Add gRPC microservice for agent connections
+  const grpcPort = process.env.GRPC_PORT || '50051';
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.GRPC,
+    options: {
+      package: 'stella.agent.v1',
+      protoPath: join(__dirname, '../proto/agent.proto'),
+      url: `0.0.0.0:${grpcPort}`,
+    },
+  });
+  logger.log(`🔌 gRPC server configured on port ${grpcPort}`);
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -35,6 +49,10 @@ async function bootstrap() {
   logger.log(`🌐 CORS enabled for: ${corsOrigin}`);
 
   const port = process.env.PORT || 3000;
+
+  // Start all microservices (gRPC)
+  await app.startAllMicroservices();
+
   await app.listen(port, '0.0.0.0');
 
   const baseUrl = `http://localhost:${port}`;

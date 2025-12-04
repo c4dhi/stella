@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, UnauthorizedException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
@@ -10,11 +12,32 @@ import { CreateTokenDto } from './dto/create-token.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { Prisma } from '@prisma/client';
 
+// Session event types for SSE streaming
+export interface SessionEvent {
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped';
+  sessionId: string;
+  agentId?: string;
+  agentName?: string;
+  agentType?: string;
+  error?: string;
+  timestamp: string;
+}
+
+interface MessageEvent {
+  data: string;
+  id?: string;
+  type?: string;
+}
+
 @Injectable()
 export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
   private connectedSessions: Set<string> = new Set(); // Track Python recorder connections
   private lastStatusUpdate: Date = new Date();
+
+  // Event subjects for SSE streaming per session
+  private sessionEventSubjects: Map<string, Subject<SessionEvent>> = new Map();
+  private subscriberCounts: Map<string, number> = new Map();
 
   constructor(
     private prisma: PrismaService,
@@ -108,57 +131,68 @@ export class SessionsService {
   }
 
   async findOne(id: string) {
-    const session = await this.prisma.session.findUnique({
-      where: { id },
-      include: {
-        room: true,
-        agents: {
-          orderBy: {
-            createdAt: 'desc',
+    this.logger.debug(`findOne: Looking up session ${id}`);
+
+    try {
+      const session = await this.prisma.session.findUnique({
+        where: { id },
+        include: {
+          room: true,
+          agents: {
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
+          participants: {
+            where: {
+              leftAt: null,
+            },
+            orderBy: {
+              joinedAt: 'desc',
+            },
+          },
+          _count: {
+            select: {
+              messages: true,
+              events: true,
+            },
           },
         },
-        participants: {
-          where: {
-            leftAt: null,
-          },
-          orderBy: {
-            joinedAt: 'desc',
-          },
-        },
-        _count: {
-          select: {
-            messages: true,
-            events: true,
-          },
-        },
-      },
-    });
+      });
 
-    if (!session) {
-      throw new NotFoundException(`Session with ID ${id} not found`);
-    }
+      if (!session) {
+        this.logger.warn(`findOne: Session ${id} not found`);
+        throw new NotFoundException(`Session with ID ${id} not found`);
+      }
 
-    // Sync agent statuses from Kubernetes (only when session is actively viewed)
-    if (session.agents && session.agents.length > 0) {
-      this.logger.debug(`Syncing status for ${session.agents.length} agents in session ${id}`);
+      this.logger.debug(`findOne: Found session ${id} with ${session.agents?.length || 0} agents`);
 
-      // Sync all agents in parallel
-      await Promise.all(
-        session.agents.map(async (agent) => {
-          try {
-            const updatedStatus = await this.agentsService.syncAgentStatus(agent.id);
-            if (updatedStatus && updatedStatus !== agent.status) {
-              // Update the in-memory agent object with the synced status
-              agent.status = updatedStatus;
+      // Sync agent statuses from Kubernetes (only when session is actively viewed)
+      if (session.agents && session.agents.length > 0) {
+        this.logger.debug(`Syncing status for ${session.agents.length} agents in session ${id}`);
+
+        // Sync all agents in parallel
+        await Promise.all(
+          session.agents.map(async (agent) => {
+            try {
+              const updatedStatus = await this.agentsService.syncAgentStatus(agent.id);
+              if (updatedStatus && updatedStatus !== agent.status) {
+                // Update the in-memory agent object with the synced status
+                agent.status = updatedStatus;
+              }
+            } catch (error) {
+              this.logger.warn(`Failed to sync agent ${agent.id}: ${error.message}`);
             }
-          } catch (error) {
-            this.logger.warn(`Failed to sync agent ${agent.id}: ${error.message}`);
-          }
-        })
-      );
-    }
+          })
+        );
+      }
 
-    return session;
+      return session;
+    } catch (error) {
+      this.logger.error(`findOne: Error fetching session ${id}: ${error.message}`);
+      this.logger.error(`findOne: Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   async createJoinToken(sessionId: string, createTokenDto: CreateTokenDto) {
@@ -827,18 +861,24 @@ export class SessionsService {
     }
 
     // Extract content for searchability (but keep full envelope in metadata)
+    // The message recorder is responsible for filtering - we trust it only sends what should be stored
     const messageData = messageEnvelope.data || messageEnvelope;
     let content: string;
-    if (messageType === 'transcript_chunk') {
-      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
 
-      // Skip partial transcripts
-      const isFinal = messageData.is_final !== false;
-      if (!isFinal) {
-        return { success: true, stored: false, reason: 'partial_transcript_skipped' };
-      }
+    // Handle transcript types (both 'transcript' and 'transcript_chunk' for compatibility)
+    if (messageType === 'transcript_chunk' || messageType === 'transcript') {
+      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
+    } else if (messageType === 'agent_text') {
+      // Agent responses - extract text content
+      content = typeof messageData === 'string' ? messageData : (messageData.text || '');
+    } else if (messageType === 'user_text') {
+      // User text input - data is the text string itself
+      content = typeof messageData === 'string' ? messageData : (messageData.text || JSON.stringify(messageData));
+    } else if (messageType === 'debug') {
+      // Debug messages - extract the message content
+      content = typeof messageData === 'string' ? messageData : (messageData.content || messageData.message || JSON.stringify(messageData));
     } else {
-      // For non-transcript messages, store the data as JSON string
+      // For other messages, store the data as JSON string for completeness
       content = typeof messageData === 'string' ? messageData : JSON.stringify(messageData);
     }
 
@@ -863,5 +903,254 @@ export class SessionsService {
     });
 
     return { success: true, messageId: message.id, messageType };
+  }
+
+  // ============================================================================
+  // SSE Session Events
+  // ============================================================================
+
+  /**
+   * Get an Observable stream of session events for SSE.
+   * Events include agent.ready, agent.failed, agent.stopped, etc.
+   */
+  getSessionEventStream(sessionId: string): Observable<MessageEvent> {
+    // Get or create a subject for this session
+    let subject = this.sessionEventSubjects.get(sessionId);
+    if (!subject) {
+      subject = new Subject<SessionEvent>();
+      this.sessionEventSubjects.set(sessionId, subject);
+      this.subscriberCounts.set(sessionId, 0);
+    }
+
+    // Increment subscriber count
+    const currentCount = this.subscriberCounts.get(sessionId) || 0;
+    this.subscriberCounts.set(sessionId, currentCount + 1);
+    this.logger.log(`SSE subscriber added for session ${sessionId} (total: ${currentCount + 1})`);
+
+    // Return observable that maps SessionEvent to MessageEvent format
+    return subject.asObservable().pipe(
+      filter((event) => event.sessionId === sessionId),
+      map((event) => ({
+        data: JSON.stringify(event),
+        type: event.type,
+        id: `${Date.now()}`,
+      })),
+      finalize(() => {
+        // Decrement subscriber count on unsubscribe
+        const count = this.subscriberCounts.get(sessionId) || 1;
+        this.subscriberCounts.set(sessionId, count - 1);
+        this.logger.log(`SSE subscriber removed for session ${sessionId} (remaining: ${count - 1})`);
+
+        // Clean up subject if no more subscribers
+        if (count - 1 <= 0) {
+          this.sessionEventSubjects.delete(sessionId);
+          this.subscriberCounts.delete(sessionId);
+          this.logger.log(`SSE subject cleaned up for session ${sessionId}`);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Emit a session event to all connected SSE clients.
+   * Called by AgentServerService when agent state changes.
+   */
+  emitSessionEvent(event: SessionEvent): void {
+    const subject = this.sessionEventSubjects.get(event.sessionId);
+    if (subject) {
+      this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
+      subject.next(event);
+    } else {
+      this.logger.debug(`No SSE subscribers for session ${event.sessionId}, event not emitted`);
+    }
+  }
+
+  /**
+   * Emit an agent.ready event.
+   */
+  emitAgentReady(sessionId: string, agentId: string, agentName: string, agentType?: string): void {
+    this.emitSessionEvent({
+      type: 'agent.ready',
+      sessionId,
+      agentId,
+      agentName,
+      agentType,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.failed event.
+   */
+  emitAgentFailed(sessionId: string, agentId: string, agentName: string, error: string): void {
+    this.emitSessionEvent({
+      type: 'agent.failed',
+      sessionId,
+      agentId,
+      agentName,
+      error,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.starting event.
+   */
+  emitAgentStarting(sessionId: string, agentId: string, agentName: string, agentType?: string): void {
+    this.emitSessionEvent({
+      type: 'agent.starting',
+      sessionId,
+      agentId,
+      agentName,
+      agentType,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit an agent.stopped event.
+   */
+  emitAgentStopped(sessionId: string, agentId: string, agentName: string): void {
+    this.emitSessionEvent({
+      type: 'agent.stopped',
+      sessionId,
+      agentId,
+      agentName,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // ============================================================================
+  // Chat History API (for Agent SDK)
+  // ============================================================================
+
+  /**
+   * Validate an agent's JWT token and verify access to a session.
+   *
+   * @param token JWT token signed with LIVEKIT_API_SECRET
+   * @param sessionId Session ID the agent is requesting access to
+   * @returns The decoded token claims if valid
+   * @throws UnauthorizedException if token is invalid
+   * @throws ForbiddenException if token doesn't have access to the session
+   */
+  async validateAgentToken(token: string, sessionId: string): Promise<{ identity: string; room: string }> {
+    const apiKey = this.livekit.getApiKey();
+    const apiSecret = this.livekit.getApiSecret();
+
+    const verifier = new TokenVerifier(apiKey, apiSecret);
+
+    try {
+      // Verify the token signature and expiration
+      const claims = await verifier.verify(token);
+
+      // Get the identity from claims
+      const identity = claims.sub;
+      if (!identity) {
+        throw new UnauthorizedException('Token missing identity (sub) claim');
+      }
+
+      // Verify it's an agent token (identity should start with 'agent-')
+      if (!identity.startsWith('agent-')) {
+        throw new ForbiddenException('Only agent tokens can access chat history');
+      }
+
+      // Get the room from video grants
+      const roomName = claims.video?.room;
+      if (!roomName) {
+        throw new UnauthorizedException('Token missing room claim');
+      }
+
+      // Verify the session exists and get its room name
+      const session = await this.prisma.session.findUnique({
+        where: { id: sessionId },
+        include: { room: true },
+      });
+
+      if (!session) {
+        throw new NotFoundException(`Session ${sessionId} not found`);
+      }
+
+      // Verify the token's room matches the session's room
+      if (session.room?.livekitRoomName !== roomName) {
+        throw new ForbiddenException('Token does not have access to this session');
+      }
+
+      return { identity, room: roomName };
+    } catch (error) {
+      if (error instanceof UnauthorizedException ||
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Token validation failed: ${error.message}`);
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+  }
+
+  /**
+   * Get chat history for a session.
+   *
+   * This endpoint is designed for agents to fetch conversation history
+   * for building context or resuming conversations.
+   *
+   * @param sessionId Session ID to get history for
+   * @param options Query options
+   * @returns Paginated list of messages with full envelope data
+   */
+  async getChatHistory(
+    sessionId: string,
+    options: {
+      includeDebug?: boolean;
+      limit?: number;
+      before?: string;
+    } = {},
+  ) {
+    const limit = Math.min(options.limit || 100, 500);
+
+    // Define message types to include
+    const chatMessageTypes = ['user_text', 'transcript', 'transcript_chunk', 'agent_text'];
+    const debugMessageTypes = ['debug', 'decision_stream', 'expert_status', 'prompt_execution', 'safety_check'];
+
+    const messageTypes = options.includeDebug
+      ? [...chatMessageTypes, ...debugMessageTypes]
+      : chatMessageTypes;
+
+    // Build where clause
+    const where: Prisma.MessageWhereInput = {
+      sessionId,
+      messageType: { in: messageTypes },
+      ...(options.before && { timestamp: { lt: new Date(options.before) } }),
+    };
+
+    // Fetch messages with pagination (one extra to check hasMore)
+    const messages = await this.prisma.message.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = messages.length > limit;
+    const results = hasMore ? messages.slice(0, -1) : messages;
+
+    // Transform to response format with full envelope
+    const formattedMessages = results.reverse().map((msg) => ({
+      id: msg.id,
+      timestamp: msg.timestamp.toISOString(),
+      envelope: (msg.metadata as any)?.envelope || {
+        type: msg.messageType,
+        data: msg.content,
+      },
+      role: msg.role || 'system',
+      content: msg.content,
+      messageType: msg.messageType,
+    }));
+
+    return {
+      messages: formattedMessages,
+      hasMore,
+      nextCursor: hasMore && results.length > 0
+        ? results[results.length - 1].timestamp.toISOString()
+        : null,
+    };
   }
 }

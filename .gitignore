@@ -3,6 +3,26 @@
 **/node_modules/
 /build
 
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python egg files
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+
 # Logs
 logs
 *.log

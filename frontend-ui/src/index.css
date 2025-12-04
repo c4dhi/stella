@@ -1,24 +1,344 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light dark;
+/* Custom utility for breaking long strings */
+@layer utilities {
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 
-/* Ensure body background changes with dark mode */
-body {
-  @apply bg-black text-white;
+/* =================================================================
+   STELLA Design System - Base Styles
+   ================================================================= */
+
+/* Self-hosted Inter font */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Light.woff2') format('woff2');
 }
 
-.ellipsis::after {
-  content: '…';
-  animation: dots 1s steps(5, end) infinite;
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Regular.woff2') format('woff2');
 }
 
-@keyframes dots {
-  0%, 20% { opacity: 0; }
-  50% { opacity: 1; }
-  100% { opacity: 0; }
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Bold.woff2') format('woff2');
+}
+
+/* Variable font for advanced typography */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter/InterVariable.woff2') format('woff2');
+}
+
+/* =================================================================
+   Base Layer
+   ================================================================= */
+@layer base {
+  :root {
+    color-scheme: light dark;
+    /* Smooth font rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  body {
+    @apply bg-surface text-content font-sans;
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+
+  body.dark {
+    @apply bg-surface-dark text-content-inverse;
+  }
+
+  /* Better focus states */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  body.dark *:focus-visible {
+    @apply ring-primary-400 ring-offset-surface-dark;
+  }
+
+  /* Custom selection */
+  ::selection {
+    @apply bg-primary-500/20 text-primary-900;
+  }
+
+  body.dark ::selection {
+    @apply bg-primary-400/30 text-primary-100;
+  }
+}
+
+/* =================================================================
+   Component Classes
+   ================================================================= */
+@layer components {
+  /* Primary Button - Black in light mode, Purple in dark mode */
+  .btn-primary {
+    @apply px-4 py-2.5 rounded-lg
+           bg-neutral-900 text-white
+           text-ui font-medium
+           shadow-sm
+           hover:bg-neutral-800
+           active:bg-neutral-950
+           transition-all duration-200 ease-smooth
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-sm;
+  }
+
+  body.dark .btn-primary {
+    @apply bg-primary-500 text-white
+           hover:bg-primary-400 hover:shadow-primary
+           active:bg-primary-600;
+  }
+
+  /* Secondary Button */
+  .btn-secondary {
+    @apply px-4 py-2.5 rounded-lg
+           bg-surface-secondary text-content
+           border border-border
+           text-ui font-medium
+           hover:bg-surface-tertiary hover:border-border-secondary
+           active:bg-surface-tertiary
+           transition-all duration-200 ease-smooth
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  body.dark .btn-secondary {
+    @apply bg-surface-dark-secondary text-content-inverse
+           border-border-dark
+           hover:bg-surface-dark-tertiary hover:border-border-dark-secondary
+           active:bg-zinc-700;
+  }
+
+  /* Ghost Button */
+  .btn-ghost {
+    @apply px-4 py-2.5 rounded-lg
+           text-content-secondary
+           text-ui font-medium
+           hover:bg-surface-secondary hover:text-content
+           active:bg-surface-tertiary
+           transition-all duration-200 ease-smooth;
+  }
+
+  body.dark .btn-ghost {
+    @apply text-content-inverse-secondary
+           hover:bg-white/10 hover:text-content-inverse
+           active:bg-white/15;
+  }
+
+  /* Input Field */
+  .input-field {
+    @apply w-full px-3.5 py-2.5 rounded-lg
+           bg-white text-content text-body
+           border border-border
+           placeholder:text-content-tertiary
+           hover:border-border-secondary
+           focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20
+           transition-all duration-200 ease-smooth;
+  }
+
+  body.dark .input-field {
+    @apply bg-surface-dark-secondary text-content-inverse
+           border-border-dark
+           placeholder:text-content-inverse-tertiary
+           hover:border-border-dark-secondary
+           focus:border-primary-400 focus:ring-primary-400/20;
+  }
+
+  /* Card */
+  .card {
+    @apply bg-white rounded-xl border border-border shadow-sm;
+  }
+
+  body.dark .card {
+    @apply bg-surface-dark-secondary border-border-dark shadow-dark;
+  }
+
+  /* Card Elevated (for modals, dropdowns) */
+  .card-elevated {
+    @apply bg-white rounded-xl border border-border shadow-lg;
+  }
+
+  body.dark .card-elevated {
+    @apply bg-surface-dark-secondary border-border-dark shadow-dark-lg;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded
+           text-label font-medium;
+  }
+
+  .badge-primary {
+    @apply badge bg-primary-100 text-primary-700;
+  }
+
+  body.dark .badge-primary {
+    @apply bg-primary-900/50 text-primary-300;
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-100 text-emerald-700;
+  }
+
+  body.dark .badge-success {
+    @apply bg-emerald-900/50 text-emerald-300;
+  }
+
+  .badge-warning {
+    @apply badge bg-amber-100 text-amber-700;
+  }
+
+  body.dark .badge-warning {
+    @apply bg-amber-900/50 text-amber-300;
+  }
+
+  .badge-error {
+    @apply badge bg-red-100 text-red-700;
+  }
+
+  body.dark .badge-error {
+    @apply bg-red-900/50 text-red-300;
+  }
+
+  .badge-neutral {
+    @apply badge bg-zinc-100 text-zinc-700;
+  }
+
+  body.dark .badge-neutral {
+    @apply bg-zinc-800 text-zinc-300;
+  }
+
+  /* Status Dot */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot-success {
+    @apply status-dot bg-emerald-500;
+  }
+
+  .status-dot-warning {
+    @apply status-dot bg-amber-500 animate-pulse-subtle;
+  }
+
+  .status-dot-error {
+    @apply status-dot bg-red-500;
+  }
+
+  .status-dot-neutral {
+    @apply status-dot bg-zinc-400;
+  }
+}
+
+/* =================================================================
+   Utility Classes
+   ================================================================= */
+@layer utilities {
+  /* Text gradient for brand */
+  .text-gradient-brand {
+    @apply bg-gradient-to-r from-primary-500 via-primary-400 to-violet-400
+           bg-clip-text text-transparent;
+  }
+
+  /* Subtle background pattern */
+  .bg-grid-pattern {
+    background-image:
+      linear-gradient(to right, rgb(0 0 0 / 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(0 0 0 / 0.02) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  body.dark .bg-grid-pattern {
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.02) 1px, transparent 1px);
+  }
+
+  /* Scrollbar styling */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(161 161 170) transparent;
+  }
+
+  body.dark .scrollbar-thin {
+    scrollbar-color: rgb(63 63 70) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgb(161 161 170);
+    border-radius: 3px;
+  }
+
+  body.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgb(63 63 70);
+  }
+
+  /* Hide scrollbar */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* =================================================================
+   Reduced Motion
+   ================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

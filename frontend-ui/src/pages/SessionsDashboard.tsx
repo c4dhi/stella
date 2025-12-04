@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { apiClient } from '../services/ApiClient'
+import { useThemeStore } from '../store/themeStore'
 import CreateSessionModal from '../components/modals/CreateSessionModal'
 import EditSessionModal from '../components/modals/EditSessionModal'
 import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
 import NetworkInfoModal from '../components/modals/NetworkInfoModal'
+import ThemeToggle from '../components/ThemeToggle'
 import { useToastStore } from '../store/toastStore'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
 
@@ -14,6 +16,8 @@ export default function SessionsDashboard() {
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
   const { addToast } = useToastStore()
+  const { resolvedTheme, initializeTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   const [project, setProject] = useState<ProjectWithSessions | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
@@ -29,6 +33,11 @@ export default function SessionsDashboard() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null)
   const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
+
+  // Initialize theme on mount
+  useEffect(() => {
+    initializeTheme()
+  }, [initializeTheme])
 
   // Load project and sessions
   const loadData = async () => {
@@ -167,76 +176,66 @@ export default function SessionsDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
+    <div className={`min-h-screen transition-colors duration-200 ${
+      isDark ? 'bg-surface-dark' : 'bg-surface'
+    }`}>
       {/* Header */}
-      <header className="bg-white/90 backdrop-blur-xl border-b border-neutral-200/60 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {/* Back Button - vertically centered */}
-              <Link
-                to="/dashboard"
-                className="
-                  p-2 rounded-lg self-center
-                  text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                  transition-all duration-200
-                "
-                title="Back to projects"
-              >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
+      <header className={`sticky top-0 z-40 border-b transition-colors duration-200 ${
+        isDark ? 'bg-surface-dark/95 border-border-dark' : 'bg-white/95 border-border'
+      } backdrop-blur-sm`}>
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* Back Button */}
+            <Link
+              to="/dashboard"
+              className="btn-ghost p-2"
+              title="Back to projects"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </Link>
+
+            {/* Breadcrumb and Title */}
+            <div>
+              {/* Breadcrumb */}
+              <div className={`flex items-center gap-2 text-caption mb-0.5 ${
+                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+              }`}>
+                <Link
+                  to="/dashboard"
+                  className={`transition-colors duration-200 ${
+                    isDark ? 'hover:text-content-inverse' : 'hover:text-content'
+                  }`}
                 >
-                  <path d="M19 12H5M12 19l-7-7 7-7" />
-                </svg>
-              </Link>
-
-              {/* Breadcrumb and Title */}
-              <div>
-                {/* Breadcrumb */}
-                <div className="flex items-center gap-2 text-xs text-neutral-500 font-light mb-1">
-                  <Link
-                    to="/dashboard"
-                    className="hover:text-neutral-900 transition-colors duration-200"
-                  >
-                    Projects
-                  </Link>
-                  <span>/</span>
-                  <span className="text-neutral-900">
-                    {project?.name || 'Loading...'}
-                  </span>
-                </div>
-
-                {/* Title */}
-                <div className="flex items-center gap-3">
-                  <h1 className="text-xl font-light text-neutral-900 tracking-wide">
-                    {project?.name || 'Project Sessions'}
-                  </h1>
-                </div>
-                <p className="text-xs text-neutral-500 font-light mt-0.5">
-                  Manage conversation sessions
-                </p>
+                  Projects
+                </Link>
+                <span>/</span>
+                <span className={isDark ? 'text-content-inverse' : 'text-content'}>
+                  {project?.name || 'Loading...'}
+                </span>
               </div>
-            </div>
 
-            {/* Right side - Info button */}
+              {/* Title */}
+              <h1 className={`text-heading-sm font-semibold tracking-tight ${
+                isDark ? 'text-content-inverse' : 'text-content'
+              }`}>
+                {project?.name || 'Project Sessions'}
+              </h1>
+            </div>
+          </div>
+
+          {/* Right side - Theme toggle and Info button */}
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
             <button
               onClick={() => setIsNetworkInfoOpen(true)}
-              className="
-                p-2 rounded-lg text-xs font-light tracking-wider
-                text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80
-                transition-all duration-200
-              "
+              className="btn-ghost p-2"
               title="Network Information"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
+                <path d="M12 16v-4M12 8h.01" />
               </svg>
             </button>
           </div>
@@ -244,34 +243,21 @@ export default function SessionsDashboard() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="max-w-6xl mx-auto px-6 py-8">
         {/* Actions Bar */}
         <motion.div
           className="mb-6 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between"
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
+          transition={{ duration: 0.3 }}
         >
           <div className="flex gap-3 items-center flex-wrap">
             {/* Create Button */}
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="
-                px-5 py-2.5 rounded-xl
-                bg-neutral-900 text-white text-sm font-light tracking-wider
-                hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                transition-all duration-200
-                flex items-center gap-2
-              "
+              className="btn-primary flex items-center gap-2"
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 5v14M5 12h14" />
               </svg>
               New Session
@@ -281,13 +267,9 @@ export default function SessionsDashboard() {
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value as SessionStatus | 'ALL')}
-              className="
-                px-4 py-2.5 rounded-xl text-sm font-light
-                bg-white/90 border border-neutral-200/60
-                text-neutral-900 hover:border-neutral-300/60
-                focus:outline-none focus:border-neutral-400/60
-                transition-all duration-200
-              "
+              className={`input-field w-auto py-2.5 ${
+                isDark ? '' : ''
+              }`}
             >
               <option value="ALL">All Sessions</option>
               <option value="ACTIVE">Active Only</option>
@@ -302,16 +284,12 @@ export default function SessionsDashboard() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search sessions..."
-              className="
-                w-full px-4 py-2.5 pl-10 rounded-xl text-sm font-light
-                bg-white/90 border border-neutral-200/60
-                text-neutral-900 placeholder:text-neutral-400
-                focus:outline-none focus:border-neutral-400/60
-                transition-all duration-200
-              "
+              className="input-field pl-10"
             />
             <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
+              className={`absolute left-3 top-1/2 -translate-y-1/2 ${
+                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+              }`}
               width="16"
               height="16"
               viewBox="0 0 24 24"
@@ -328,7 +306,7 @@ export default function SessionsDashboard() {
         {/* Loading State */}
         {isLoading && (
           <div className="flex items-center justify-center py-20">
-            <div className="text-sm text-neutral-400 font-light">
+            <div className={`text-body ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
               Loading sessions...
             </div>
           </div>
@@ -339,7 +317,11 @@ export default function SessionsDashboard() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="p-6 rounded-xl bg-red-50/80 border border-red-200/60 text-red-600 text-sm font-light"
+            className={`p-4 rounded-lg text-body ${
+              isDark
+                ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}
           >
             {error}
           </motion.div>
@@ -352,21 +334,25 @@ export default function SessionsDashboard() {
             animate={{ opacity: 1, y: 0 }}
             className="text-center py-20"
           >
-            <div className="text-6xl mb-4">🎙️</div>
-            <h3 className="text-xl font-light text-neutral-900 mb-2">
+            <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+              isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+            }`}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className={
+                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+              } stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+              </svg>
+            </div>
+            <h3 className={`text-heading mb-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
               No sessions yet
             </h3>
-            <p className="text-sm text-neutral-500 font-light mb-6">
+            <p className={`text-body mb-6 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
               Create your first session to start a conversation
             </p>
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="
-                px-5 py-2.5 rounded-xl
-                bg-neutral-900 text-white text-sm font-light tracking-wider
-                hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                transition-all duration-200
-              "
+              className="btn-primary"
             >
               Create Session
             </button>
@@ -391,63 +377,53 @@ export default function SessionsDashboard() {
               <motion.div
                 key={session.id}
                 variants={{
-                  hidden: { opacity: 0, x: -20 },
-                  visible: { opacity: 1, x: 0 },
+                  hidden: { opacity: 0, y: 10 },
+                  visible: { opacity: 1, y: 0 },
                 }}
-                className="
-                  bg-white/90 backdrop-blur-xl border border-neutral-200/60
-                  rounded-[16px] shadow-[0_1px_20px_rgba(0,0,0,0.04)]
-                  p-5 cursor-pointer
-                  hover:shadow-[0_1px_30px_rgba(0,0,0,0.08)]
-                  hover:border-neutral-300/60
-                  transition-all duration-300
-                  group
-                "
+                className={`group cursor-pointer rounded-xl p-5 transition-all duration-200 ${
+                  isDark
+                    ? 'bg-surface-dark-secondary border border-border-dark hover:border-border-dark-secondary'
+                    : 'bg-white border border-border shadow-sm hover:shadow-md hover:border-border-secondary'
+                }`}
                 onClick={() => navigate(`/session/${session.id}`)}
-                whileHover={{ x: 4 }}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     {/* Session Name & Status */}
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="text-sm font-light text-neutral-900">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className={`text-heading-sm ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                         {session.name || `Session ${new Date(session.createdAt).toLocaleDateString()}`}
-                      </div>
-                      <div
-                        className={`
-                          px-2 py-0.5 rounded text-[10px] font-light tracking-wider uppercase
-                          ${
-                            session.status === 'ACTIVE'
-                              ? 'bg-green-50/80 text-green-700 border border-green-200/60'
-                              : 'bg-neutral-100/80 text-neutral-600 border border-neutral-200/60'
-                          }
-                        `}
-                      >
+                      </h3>
+                      <span className={session.status === 'ACTIVE' ? 'badge-success' : 'badge-neutral'}>
                         {session.status}
-                      </div>
+                      </span>
                     </div>
 
                     {/* Room Name */}
-                    <div className="text-xs font-mono text-neutral-500 mb-3">
+                    <div className={`text-caption font-mono mb-3 ${
+                      isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                    }`}>
                       {session.room.livekitRoomName}
                     </div>
 
                     {/* Stats */}
-                    <div className="flex gap-6 text-xs text-neutral-500 font-light">
+                    <div className={`flex gap-6 text-body-sm ${
+                      isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                    }`}>
                       <div>
-                        <span className="text-neutral-900 font-normal">
+                        <span className={`font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                           {session._count.agents}
                         </span>{' '}
                         agents
                       </div>
                       <div>
-                        <span className="text-neutral-900 font-normal">
+                        <span className={`font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                           {session._count.participants}
                         </span>{' '}
                         participants
                       </div>
                       <div>
-                        <span className="text-neutral-900 font-normal">
+                        <span className={`font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                           {session._count.messages}
                         </span>{' '}
                         messages
@@ -463,12 +439,12 @@ export default function SessionsDashboard() {
                       return (
                         <div className="flex items-center gap-2 mt-3">
                           <div
-                            className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                            className={`status-dot ${
                               isRecording
-                                ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]'
+                                ? 'status-dot-error animate-pulse'
                                 : isReconnecting
-                                  ? 'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.6)]'
-                                  : 'bg-neutral-300'
+                                  ? 'status-dot-warning'
+                                  : 'status-dot-neutral'
                             }`}
                             title={
                               isRecording
@@ -478,7 +454,9 @@ export default function SessionsDashboard() {
                                   : 'Not recording'
                             }
                           />
-                          <span className="text-[10px] text-neutral-500 font-light tracking-wider uppercase">
+                          <span className={`text-label uppercase ${
+                            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                          }`}>
                             {isRecording ? 'RECORDING' : isReconnecting ? 'RECONNECTING' : 'IDLE'}
                           </span>
                         </div>
@@ -486,9 +464,11 @@ export default function SessionsDashboard() {
                     })()}
 
                     {/* Created Date */}
-                    <div className="text-[10px] text-neutral-400 font-light tracking-wider uppercase mt-2">
+                    <p className={`text-caption mt-2 ${
+                      isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                    }`}>
                       Created {new Date(session.createdAt).toLocaleString()}
-                    </div>
+                    </p>
                   </div>
 
                   {/* Actions */}
@@ -498,12 +478,7 @@ export default function SessionsDashboard() {
                         e.stopPropagation()
                         navigate(`/session/${session.id}`)
                       }}
-                      className="
-                        py-2 px-4 rounded-lg text-xs font-light tracking-wider
-                        bg-neutral-900 text-white
-                        hover:bg-neutral-800
-                        transition-all duration-200
-                      "
+                      className="btn-primary text-ui-sm py-2"
                     >
                       Open
                     </button>
@@ -512,23 +487,16 @@ export default function SessionsDashboard() {
                         e.stopPropagation()
                         setEditingSession(session)
                       }}
-                      className="
-                        py-2 px-3 rounded-lg text-xs font-light
-                        text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50/80
-                        transition-all duration-200
-                      "
+                      className={`p-2 rounded-lg transition-colors ${
+                        isDark
+                          ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
+                          : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
+                      }`}
                       title="Edit session"
                     >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      >
-                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                       </svg>
                     </button>
                     {session.status === 'ACTIVE' && (
@@ -541,21 +509,14 @@ export default function SessionsDashboard() {
                           })
                           setCloseModalOpen(true)
                         }}
-                        className="
-                          py-2 px-3 rounded-lg text-xs font-light
-                          text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50/80
-                          transition-all duration-200
-                        "
+                        className={`p-2 rounded-lg transition-colors ${
+                          isDark
+                            ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
+                            : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
+                        }`}
                         title="Close session"
                       >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                        >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                           <circle cx="12" cy="12" r="10" />
                           <path d="M15 9l-6 6M9 9l6 6" />
                         </svg>
@@ -571,24 +532,15 @@ export default function SessionsDashboard() {
                           })
                           setDeleteModalOpen(true)
                         }}
-                        className="
-                          py-2 px-3 rounded-lg text-xs font-light
-                          text-neutral-400 hover:text-red-600 hover:bg-red-50/80
-                          transition-all duration-200
-                        "
+                        className={`p-2 rounded-lg transition-colors ${
+                          isDark
+                            ? 'text-content-inverse-tertiary hover:text-red-400 hover:bg-red-500/10'
+                            : 'text-content-tertiary hover:text-red-600 hover:bg-red-50'
+                        }`}
                         title="Delete session permanently"
                       >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                        >
-                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                          <line x1="10" y1="11" x2="10" y2="17" />
-                          <line x1="14" y1="11" x2="14" y2="17" />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                         </svg>
                       </button>
                     )}

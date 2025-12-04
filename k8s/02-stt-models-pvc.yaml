@@ -1,0 +1,23 @@
+# =============================================================================
+# STT Models Persistent Volume Claim
+# =============================================================================
+# Storage for STT models to avoid baking into Docker images:
+# - Sherpa-ONNX: ~180MB (always downloaded)
+# - Whisper large-v3: ~3GB (when STT_PROVIDER=whisper)
+# - Silero VAD: ~50MB (when STT_PROVIDER=whisper)
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stt-models-pvc
+  namespace: ai-agents
+  labels:
+    app: stt-service
+    component: models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

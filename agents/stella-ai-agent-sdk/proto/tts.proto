@@ -1,0 +1,40 @@
+syntax = "proto3";
+package tts;
+
+service TextToSpeech {
+  // Synthesize text to audio (returns complete audio)
+  rpc Synthesize(SynthesizeRequest) returns (SynthesizeResponse);
+
+  // Synthesize text to streaming audio chunks
+  rpc SynthesizeStream(SynthesizeRequest) returns (stream AudioChunk);
+
+  // Health check
+  rpc HealthCheck(Empty) returns (HealthResponse);
+}
+
+message Empty {}
+
+message SynthesizeRequest {
+  string text = 1;              // Text to synthesize
+  string session_id = 2;        // Session identifier
+  string voice = 3;             // Optional voice override
+  float speed = 4;              // Speech rate (0.5-2.0, default 1.0)
+}
+
+message SynthesizeResponse {
+  bytes audio_data = 1;         // Raw PCM audio (16-bit, 16kHz, mono)
+  int32 sample_rate = 2;        // Sample rate (16000)
+  int32 duration_ms = 3;        // Audio duration in milliseconds
+}
+
+message AudioChunk {
+  bytes audio_data = 1;         // Raw PCM audio chunk
+  bool is_final = 2;            // True if last chunk
+  int32 chunk_index = 3;        // Chunk sequence number
+}
+
+message HealthResponse {
+  bool healthy = 1;
+  string provider = 2;          // Active TTS provider (edge_tts, kokoro)
+  string version = 3;
+}

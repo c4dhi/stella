@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { apiClient } from '../../services/ApiClient'
 import ConfirmDialog from '../modals/ConfirmDialog'
 import { useToastStore } from '../../store/toastStore'
+import { useThemeStore } from '../../store/themeStore'
 import type { AgentInstance, AgentWithPodStatus } from '../../lib/api-types'
 import { AgentStatus, POLL_INTERVALS } from '../../lib/api-types'
 import { getRuntimeConfig } from '../../config/runtime'
@@ -15,6 +16,8 @@ interface AgentSidebarProps {
 
 export default function AgentSidebar({ sessionId, initialAgents = [], onDeployClick }: AgentSidebarProps) {
   const { addToast } = useToastStore()
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
   const [agents, setAgents] = useState<AgentInstance[]>(initialAgents)
   const [selectedAgent, setSelectedAgent] = useState<AgentWithPodStatus | null>(null)
   const [showLogs, setShowLogs] = useState(false)
@@ -46,10 +49,44 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
     onConfirm: () => {},
   })
 
+  // Track previous agent statuses to detect STARTING -> RUNNING transitions
+  const prevAgentStatusesRef = useRef<Map<string, string>>(new Map())
+
   // Sync agents when initialAgents prop changes (immediate update from parent)
   useEffect(() => {
     setAgents(initialAgents)
   }, [initialAgents])
+
+  // Auto-expand logs when agent transitions to RUNNING
+  useEffect(() => {
+    agents.forEach(agent => {
+      const prevStatus = prevAgentStatusesRef.current.get(agent.id)
+      const currentStatus = agent.status
+
+      // Detect STARTING -> RUNNING transition
+      if (prevStatus === 'STARTING' && currentStatus === 'RUNNING') {
+        console.log(`[AgentSidebar] Agent ${agent.name} is now RUNNING, auto-expanding logs`)
+
+        // Auto-expand logs for this agent
+        if (!expandedLogs.has(agent.id) && agent.podName) {
+          const newExpanded = new Set(expandedLogs)
+          newExpanded.add(agent.id)
+          setExpandedLogs(newExpanded)
+
+          // Enable auto-scroll for this agent
+          const newAutoScroll = new Map(autoScrollEnabled)
+          newAutoScroll.set(agent.id, true)
+          setAutoScrollEnabled(newAutoScroll)
+
+          // Start log stream
+          startLogStream(agent.id)
+        }
+      }
+
+      // Update previous status
+      prevAgentStatusesRef.current.set(agent.id, currentStatus)
+    })
+  }, [agents])
 
   // Poll for agents status with smart merge
   useEffect(() => {
@@ -97,9 +134,17 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   }, [sessionId])
 
   // Deploy new agent
-  const handleDeployAgent = async (name: string, icon?: string, planId?: string) => {
-    const newAgent = await apiClient.createAgent(sessionId, { name, icon, planId })
+  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => {
+    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType })
     setAgents(prev => [...prev, newAgent])
+
+    // Auto-expand console to show deployment progress
+    setExpandedLogs(prev => new Set([...prev, newAgent.id]))
+
+    // Start log stream after a short delay for pod to be created
+    setTimeout(() => {
+      startLogStream(newAgent.id)
+    }, 2000)
   }
 
   // Stop agent
@@ -264,29 +309,44 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   // Start log streaming for an agent
   const startLogStream = (agentId: string) => {
     const apiUrl = getRuntimeConfig().apiUrl
-    const token = localStorage.getItem('grace_auth_token')
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
 
     // Include JWT token as query parameter for EventSource authentication
     const url = token
       ? `${apiUrl}/agents/${agentId}/logs/stream?token=${encodeURIComponent(token)}`
       : `${apiUrl}/agents/${agentId}/logs/stream`
 
+    console.log(`[AgentSidebar] Starting log stream for agent ${agentId} at ${url}`)
+
     const eventSource = new EventSource(url)
 
     eventSource.onmessage = (event) => {
-      const newLogsMap = new Map(liveLogsMap)
-      newLogsMap.set(agentId, event.data)
-      setLiveLogsMap(newLogsMap)
+      // Use functional update to avoid stale closure issue
+      setLiveLogsMap(prevMap => {
+        const newMap = new Map(prevMap)
+        newMap.set(agentId, event.data)
+        return newMap
+      })
     }
 
     eventSource.onerror = (error) => {
-      console.error('EventSource error:', error)
+      console.error('[AgentSidebar] EventSource error:', error)
       eventSource.close()
       eventSourcesMap.delete(agentId)
-      addToast({
-        message: 'Lost connection to log stream',
-        type: 'error'
+
+      // Set error message in logs - pod might not exist
+      setLiveLogsMap(prevMap => {
+        const newMap = new Map(prevMap)
+        const existingLogs = prevMap.get(agentId) || ''
+        if (!existingLogs) {
+          newMap.set(agentId, '[Console unavailable - agent pod may have been terminated]\n\nThe agent pod no longer exists in the cluster.\nThis can happen if:\n  - The agent crashed or was stopped\n  - The cluster was restarted\n  - The pod was manually deleted\n\nTry restarting the agent to view logs.')
+        }
+        return newMap
       })
+    }
+
+    eventSource.onopen = () => {
+      console.log(`[AgentSidebar] Log stream connected for agent ${agentId}`)
     }
 
     eventSourcesMap.set(agentId, eventSource)
@@ -352,17 +412,29 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   const getStatusColor = (status: AgentStatus) => {
     switch (status) {
       case 'RUNNING':
-        return 'bg-green-50/80 text-green-700 border-green-200/60'
+        return isDark
+          ? 'bg-green-500/20 text-green-400 border-green-500/30'
+          : 'bg-green-50 text-green-700 border-green-200'
       case 'STARTING':
-        return 'bg-blue-50/80 text-blue-700 border-blue-200/60 animate-pulse'
+        return isDark
+          ? 'bg-blue-500/20 text-blue-400 border-blue-500/30 animate-pulse'
+          : 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
       case 'STOPPING':
-        return 'bg-orange-50/80 text-orange-700 border-orange-200/60 animate-pulse'
+        return isDark
+          ? 'bg-orange-500/20 text-orange-400 border-orange-500/30 animate-pulse'
+          : 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
       case 'STOPPED':
-        return 'bg-neutral-100/80 text-neutral-600 border-neutral-200/60'
+        return isDark
+          ? 'bg-white/10 text-content-inverse-secondary border-white/10'
+          : 'bg-surface-tertiary text-content-secondary border-border'
       case 'FAILED':
-        return 'bg-red-50/80 text-red-700 border-red-200/60'
+        return isDark
+          ? 'bg-red-500/20 text-red-400 border-red-500/30'
+          : 'bg-red-50 text-red-600 border-red-200'
       default:
-        return 'bg-neutral-100/80 text-neutral-600 border-neutral-200/60'
+        return isDark
+          ? 'bg-white/10 text-content-inverse-secondary border-white/10'
+          : 'bg-surface-tertiary text-content-secondary border-border'
     }
   }
 
@@ -376,33 +448,36 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
       >
         {/* Agents Panel */}
         <div
-          className="
-            bg-white/95 backdrop-blur-xl border border-neutral-200/60
-            rounded-[16px] shadow-[0_1px_30px_rgba(0,0,0,0.04)]
-            h-full flex flex-col overflow-hidden
-          "
+          className={`
+            backdrop-blur-xl rounded-[16px] h-full flex flex-col overflow-hidden
+            ${isDark
+              ? 'bg-white/5 border border-white/10'
+              : 'bg-white border border-border shadow-sm'
+            }
+          `}
         >
           {/* Header */}
-          <div className="p-4 border-b border-neutral-200/60">
-            <h2 className="text-lg font-thin text-neutral-900 tracking-wider mb-1">
+          <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
+            <h2 className={`text-lg font-thin tracking-wider mb-1 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
               Agents
             </h2>
-            <p className="text-[10px] text-neutral-500 font-light tracking-wider uppercase">
+            <p className={`text-[10px] font-light tracking-wider uppercase ${isDark ? 'text-content-inverse-secondary' : 'text-content-tertiary'}`}>
               {agents.length} {agents.length === 1 ? 'agent' : 'agents'} deployed
             </p>
           </div>
 
           {/* Deploy Button */}
-          <div className="p-4 border-b border-neutral-200/60">
+          <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
             <button
               onClick={onDeployClick}
-              className="
-                w-full py-2.5 px-4 rounded-xl
-                bg-neutral-900 text-white text-sm font-light tracking-wider
-                hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]
-                transition-all duration-200
-                flex items-center justify-center gap-2
-              "
+              className={`
+                w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                transition-all duration-200 flex items-center justify-center gap-2
+                ${isDark
+                  ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
+                  : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-sm'
+                }
+              `}
             >
               <svg
                 width="16"
@@ -421,7 +496,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
           {/* Agents List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {agents.length === 0 ? (
-              <div className="text-center py-8 text-sm text-neutral-400 font-light">
+              <div className={`text-center py-8 text-sm font-light ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
                 No agents deployed yet
               </div>
             ) : (
@@ -430,16 +505,17 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                   key={agent.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="
-                    p-4 rounded-xl
-                    bg-neutral-50/50 border border-neutral-200/60
-                    hover:bg-white hover:border-neutral-300/60
-                    transition-all duration-200
-                  "
+                  className={`
+                    p-4 rounded-xl transition-all duration-200
+                    ${isDark
+                      ? 'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20'
+                      : 'bg-white border border-neutral-200 hover:border-neutral-300 shadow-sm'
+                    }
+                  `}
                 >
                   {/* Agent Name */}
                   <div className="flex items-start justify-between mb-2">
-                    <div className="text-sm font-light text-neutral-900 flex items-center gap-2">
+                    <div className={`text-sm font-light flex items-center gap-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                       <span>{agent.icon || '🤖'}</span>
                       <span>{agent.name}</span>
                     </div>
@@ -453,15 +529,15 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     </div>
                   </div>
 
-                  {/* Plan ID */}
-                  {agent.planId && (
-                    <div className="text-xs text-neutral-500 font-light mb-3 font-mono truncate">
-                      {agent.planId}
+                  {/* Agent Config */}
+                  {agent.agentConfig && Object.keys(agent.agentConfig).length > 0 && (
+                    <div className={`text-xs font-light mb-3 font-mono truncate ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                      {JSON.stringify(agent.agentConfig)}
                     </div>
                   )}
 
                   {/* Created Date */}
-                  <div className="text-[10px] text-neutral-400 font-light tracking-wider uppercase mb-3">
+                  <div className={`text-[10px] font-light tracking-wider uppercase mb-3 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
                     Started {new Date(agent.createdAt).toLocaleTimeString()}
                   </div>
 
@@ -469,38 +545,60 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleViewAgent(agent.id)}
-                      className="
-                        flex-1 py-1.5 px-2 rounded-lg text-xs font-light
-                        bg-white border border-neutral-200/60
-                        text-neutral-600 hover:text-neutral-900 hover:border-neutral-300/60
-                        transition-all duration-200
-                      "
+                      className={`
+                        flex-1 py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
+                        ${isDark
+                          ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
+                          : 'bg-white border border-border text-content-secondary hover:text-content hover:border-border-secondary'
+                        }
+                      `}
                     >
                       Details
                     </button>
-                    {agent.podName && (
+                    {(agent.status === 'RUNNING' || agent.status === 'STARTING') && (
                       <button
                         onClick={() => toggleLiveLogs(agent.id)}
-                        className="
+                        className={`
                           flex-1 py-1.5 px-2 rounded-lg text-xs font-light
-                          bg-white border border-neutral-200/60
-                          text-neutral-600 hover:text-neutral-900 hover:border-neutral-300/60
-                          transition-all duration-200
+                          border transition-all duration-200
                           flex items-center justify-center gap-1
-                        "
+                          ${expandedLogs.has(agent.id)
+                            ? isDark
+                              ? 'bg-white/20 border-white/20 text-content-inverse'
+                              : 'bg-content border-content text-white'
+                            : isDark
+                              ? 'bg-white/10 border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
+                              : 'bg-white border-border text-content-secondary hover:text-content hover:border-border-secondary'
+                          }
+                        `}
                       >
-                        {expandedLogs.has(agent.id) ? '▼' : '▶'} Logs
+                        {expandedLogs.has(agent.id) ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                            Console
+                          </>
+                        ) : (
+                          <>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <polyline points="4 17 10 11 4 5" />
+                              <line x1="12" y1="19" x2="20" y2="19" />
+                            </svg>
+                            Console
+                          </>
+                        )}
                       </button>
                     )}
                     {(agent.status === 'STOPPED' || agent.status === 'FAILED') && (
                       <>
                         <button
                           onClick={() => handleRestartAgent(agent.id)}
-                          className="
-                            py-1.5 px-2 rounded-lg text-xs font-light
-                            text-green-600 hover:bg-green-50/80
-                            transition-all duration-200
-                          "
+                          className={`
+                            py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
+                            ${isDark
+                              ? 'text-green-400 hover:bg-green-500/20'
+                              : 'text-green-600 hover:bg-green-50'
+                            }
+                          `}
                           title="Restart agent"
                         >
                           <svg
@@ -516,11 +614,13 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                         </button>
                         <button
                           onClick={() => handleDeleteAgent(agent.id)}
-                          className="
-                            py-1.5 px-2 rounded-lg text-xs font-light
-                            text-red-600 hover:bg-red-50/80
-                            transition-all duration-200
-                          "
+                          className={`
+                            py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
+                            ${isDark
+                              ? 'text-red-400 hover:bg-red-500/20'
+                              : 'text-red-500 hover:bg-red-50'
+                            }
+                          `}
                           title="Delete agent permanently"
                         >
                           <svg
@@ -541,11 +641,14 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                         onClick={() => agent.status !== 'STOPPING' && handleStopAgent(agent.id)}
                         disabled={agent.status === 'STOPPING'}
                         className={`
-                          py-1.5 px-2 rounded-lg text-xs font-light
-                          transition-all duration-200
+                          py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
                           ${agent.status === 'STOPPING'
-                            ? 'text-neutral-400 cursor-not-allowed opacity-50'
-                            : 'text-red-600 hover:bg-red-50/80 cursor-pointer'
+                            ? isDark
+                              ? 'text-content-inverse-tertiary cursor-not-allowed opacity-50'
+                              : 'text-content-tertiary cursor-not-allowed opacity-50'
+                            : isDark
+                              ? 'text-red-400 hover:bg-red-500/20 cursor-pointer'
+                              : 'text-red-500 hover:bg-red-50 cursor-pointer'
                           }
                         `}
                         title={agent.status === 'STOPPING' ? 'Stopping...' : 'Stop agent'}
@@ -578,7 +681,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                     )}
                   </div>
 
-                  {/* Live Logs Panel */}
+                  {/* Console Logs Panel */}
                   <AnimatePresence>
                     {expandedLogs.has(agent.id) && (
                       <motion.div
@@ -588,50 +691,60 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                         transition={{ duration: 0.2 }}
                         className="mt-3 overflow-hidden"
                       >
-                        {/* Log Panel Header */}
-                        <div className="flex items-center justify-between mb-2 px-1">
-                          <span className="text-[10px] text-neutral-500 font-light tracking-wider uppercase">
-                            Live Logs
-                          </span>
-                          <button
-                            onClick={() => setMaximizedLogAgent(agent.id)}
-                            className="
-                              p-1 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800
-                              transition-all duration-200
-                            "
-                            title="Maximize logs"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                            >
-                              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-                            </svg>
-                          </button>
-                        </div>
-                        <div
-                          ref={(el) => inlineLogRefs.current.set(agent.id, el)}
-                          onScroll={(e) => handleLogScroll(agent.id, e)}
-                          className="
-                            bg-neutral-900 text-neutral-100 rounded-lg p-3
-                            font-mono text-[10px] leading-relaxed
-                            max-h-64 overflow-y-auto
-                            border border-neutral-700
-                          "
-                        >
-                          {liveLogsMap.get(agent.id) ? (
-                            <pre className="whitespace-pre-wrap break-words">
-                              {liveLogsMap.get(agent.id)}
-                            </pre>
-                          ) : (
-                            <div className="text-neutral-500 italic">
-                              Connecting to log stream...
+                        {/* Console Container with integrated header */}
+                        <div className="relative bg-neutral-900 rounded-lg border border-neutral-700 overflow-hidden">
+                          {/* Console Header */}
+                          <div className="flex items-center justify-between px-3 py-2 bg-neutral-800/50 border-b border-neutral-700">
+                            <div className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                              <span className="text-[10px] text-neutral-400 font-light tracking-wider uppercase">
+                                Console Output
+                              </span>
                             </div>
-                          )}
+                            <button
+                              onClick={() => setMaximizedLogAgent(agent.id)}
+                              className="
+                                p-1.5 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700
+                                transition-all duration-200 flex items-center gap-1
+                              "
+                              title="Open in fullscreen"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              >
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                              </svg>
+                            </button>
+                          </div>
+                          {/* Console Content */}
+                          <div
+                            ref={(el) => inlineLogRefs.current.set(agent.id, el)}
+                            onScroll={(e) => handleLogScroll(agent.id, e)}
+                            className="
+                              text-neutral-100 p-3
+                              font-mono text-[10px] leading-relaxed
+                              h-32 overflow-y-auto
+                            "
+                          >
+                            {liveLogsMap.get(agent.id) ? (
+                              <pre className="whitespace-pre-wrap break-words">
+                                {liveLogsMap.get(agent.id)}
+                              </pre>
+                            ) : (
+                              <div className="text-neutral-500 italic flex items-center gap-2">
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Connecting to log stream...
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </motion.div>
                     )}
@@ -650,24 +763,53 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
             onClick={() => setSelectedAgent(null)}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="
-                bg-white/95 backdrop-blur-xl border border-neutral-200/60
-                rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-                w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto
-              "
+              className={`
+                backdrop-blur-xl rounded-[20px] w-full max-w-2xl p-6 max-h-[80vh] overflow-y-auto
+                ${isDark
+                  ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                  : 'bg-white/95 border border-neutral-200/60 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+                }
+              `}
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-2xl font-light text-neutral-900 mb-4">
-                Agent Details
-              </h2>
-              <pre className="text-xs font-mono bg-neutral-50/50 p-4 rounded-xl border border-neutral-200/60 overflow-x-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className={`text-2xl font-light ${isDark ? 'text-content-inverse' : 'text-neutral-900'}`}>
+                  Agent Details
+                </h2>
+                <button
+                  onClick={() => setSelectedAgent(null)}
+                  className={`
+                    p-2 rounded-lg transition-all duration-200
+                    ${isDark
+                      ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-white/10'
+                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                    }
+                  `}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <pre className={`text-xs font-mono p-4 rounded-xl whitespace-pre-wrap break-words ${
+                isDark
+                  ? 'bg-white/5 border border-white/10 text-content-inverse'
+                  : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900'
+              }`}>
                 {JSON.stringify(selectedAgent, null, 2)}
               </pre>
             </motion.div>
@@ -682,24 +824,26 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
             onClick={() => setShowLogs(false)}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="
-                bg-white/95 backdrop-blur-xl border border-neutral-200/60
-                rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-                w-full max-w-3xl p-6 max-h-[80vh] overflow-y-auto
-              "
+              className={`
+                backdrop-blur-xl rounded-[20px] w-full max-w-3xl p-6 max-h-[80vh] overflow-y-auto
+                ${isDark
+                  ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                  : 'bg-white/95 border border-neutral-200/60 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+                }
+              `}
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-2xl font-light text-neutral-900 mb-4">
+              <h2 className={`text-2xl font-light mb-4 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
                 Agent Logs
               </h2>
-              <pre className="text-xs font-mono bg-neutral-900 text-neutral-100 p-4 rounded-xl overflow-x-auto whitespace-pre-wrap">
+              <pre className="text-xs font-mono bg-neutral-900 text-neutral-100 p-4 rounded-xl overflow-x-auto whitespace-pre-wrap border border-neutral-700">
                 {logs || 'No logs available'}
               </pre>
             </motion.div>
@@ -721,31 +865,35 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="
-                bg-white/95 backdrop-blur-xl border border-neutral-200/60
-                rounded-[20px] shadow-[0_1px_40px_rgba(0,0,0,0.12)]
-                w-full h-full max-w-6xl max-h-[90vh]
+              className={`
+                backdrop-blur-xl rounded-[20px] w-full h-full max-w-6xl max-h-[90vh]
                 flex flex-col overflow-hidden
-              "
+                ${isDark
+                  ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                  : 'bg-white/95 border border-neutral-200/60 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+                }
+              `}
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="flex items-center justify-between p-6 border-b border-neutral-200/60">
+              <div className={`flex items-center justify-between p-6 border-b ${isDark ? 'border-zinc-700' : 'border-neutral-200/60'}`}>
                 <div>
-                  <h2 className="text-xl font-light text-neutral-900 tracking-wide">
+                  <h2 className={`text-xl font-light tracking-wide ${isDark ? 'text-content-inverse' : 'text-neutral-900'}`}>
                     Agent Logs
                   </h2>
-                  <p className="text-xs text-neutral-500 font-light mt-1">
+                  <p className={`text-xs font-light mt-1 ${isDark ? 'text-content-inverse-secondary' : 'text-neutral-500'}`}>
                     {agents.find(a => a.id === maximizedLogAgent)?.name || 'Agent'}
                   </p>
                 </div>
                 <button
                   onClick={() => setMaximizedLogAgent(null)}
-                  className="
-                    p-2 rounded-lg
-                    text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100
-                    transition-all duration-200
-                  "
+                  className={`
+                    p-2 rounded-lg transition-all duration-200
+                    ${isDark
+                      ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-white/10'
+                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                    }
+                  `}
                 >
                   <svg
                     width="20"

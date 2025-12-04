@@ -1,78 +1,25 @@
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useStore } from '../store'
-import type { TranscriptChunk, ProcessingMessage, ParticipantEvent } from '../lib/types'
-import { generateUUID } from '../lib/uuid'
+import { useThemeStore } from '../store/themeStore'
 
 interface ConnectPanelProps {
   roomName?: string
 }
 
+// NOTE: Transport event handlers are now consolidated in SessionView.tsx
+// This component only handles UI display and user actions (reconnect, voice toggle)
+
 export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   const status = useStore(s => s.status)
   const setStatus = useStore(s => s.setStatus)
   const vu = useStore(s => s.vu)
-  const vadEnabled = useStore(s => s.vadEnabled)
-  const setVadEnabled = useStore(s => s.setVadEnabled)
-  const upsertChunk = useStore(s => s.upsertChunk)
-  const addProcessingMessage = useStore(s => s.addProcessingMessage)
-  const addParticipantEvent = useStore(s => s.addParticipantEvent)
-  const setTTSPlaying = useStore(s => s.setTTSPlaying)
-  const setTTSPaused = useStore(s => s.setTTSPaused)
-  const setLLMConfig = useStore(s => s.setLLMConfig)
-  const setAudioLevel = useStore(s => s.setAudioLevel)
-  const setIsRemoteSpeaking = useStore(s => s.setIsRemoteSpeaking)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   // Get transport from store (already initialized during store creation)
   const transport = useStore(s => s.transport)
   const [voiceNarrationEnabled, setVoiceNarrationEnabled] = useState(true)
-
-  useEffect(() => {
-    // Set up transport event handlers
-
-    transport.onConnected = () => setStatus('connected')
-    transport.onDisconnected = () => setStatus('idle')
-    transport.onError = (e) => { console.error(e); setStatus('error') }
-    transport.onTranscript = (c: TranscriptChunk) => upsertChunk(c)
-    transport.onProcessingMessage = (m: ProcessingMessage) => addProcessingMessage(m)
-    transport.onTTSStart = () => {
-      setTTSPlaying(true)
-      setTTSPaused(false)
-    }
-    transport.onTTSStop = () => {
-      setTTSPlaying(false)
-      setTTSPaused(false)
-    }
-    transport.onParticipantJoined = (participantId: string, participantName?: string) => {
-      const event: ParticipantEvent = {
-        id: generateUUID(),
-        type: 'joined',
-        participantId,
-        participantName,
-        startedAt: Date.now(), // Use local timestamp for consistency with server message parsing
-        messageType: 'participant'
-      }
-      addParticipantEvent(event)
-    }
-    transport.onParticipantLeft = (participantId: string, participantName?: string) => {
-      const event: ParticipantEvent = {
-        id: generateUUID(),
-        type: 'left',
-        participantId,
-        participantName,
-        startedAt: Date.now(), // Use local timestamp for consistency with server message parsing
-        messageType: 'participant'
-      }
-      addParticipantEvent(event)
-    }
-    transport.onLLMConfig = (config: any) => {
-      console.log('[ConnectPanel] Received LLM config:', config)
-      setLLMConfig(config)
-    }
-    transport.onAudioLevel = (level: number) => setAudioLevel(level)
-    transport.onRemoteSpeaking = (speaking: boolean) => setIsRemoteSpeaking(speaking)
-
-  }, [transport, setStatus, upsertChunk, addProcessingMessage, addParticipantEvent, setTTSPlaying, setTTSPaused, setLLMConfig, setAudioLevel, setIsRemoteSpeaking])
 
   const connect = async () => {
     try {
@@ -125,14 +72,22 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   }
 
   return (
-    <div className="px-4 py-2 rounded-xl bg-white/90 backdrop-blur-xl shadow-sm border border-neutral-200/60 flex items-center gap-3">
+    <div className={`px-4 py-2 rounded-xl backdrop-blur-xl flex items-center gap-3 ${
+      isDark
+        ? 'bg-white/5 border border-white/10'
+        : 'bg-white/90 shadow-sm border border-neutral-200/60'
+    }`}>
       <button
         onClick={reconnect}
         disabled={status === 'connecting'}
         className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed ${
           status === 'connecting'
-            ? 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
-            : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
+            ? isDark
+              ? 'bg-primary-500/50 text-white/70 border border-primary-400/30'
+              : 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
+            : isDark
+              ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
+              : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
         }`}
       >
         {status === 'connecting' ? 'Connecting...' : 'Reconnect'}
@@ -146,8 +101,12 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             onClick={toggleVoiceNarration}
             className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 border flex items-center gap-2 ${
               voiceNarrationEnabled
-                ? 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
-                : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80 border-neutral-300/50'
+                ? isDark
+                  ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border-primary-400/30'
+                  : 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                : isDark
+                  ? 'bg-white/10 text-content-inverse-secondary hover:bg-white/20 border-white/10'
+                  : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80 border-neutral-300/50'
             }`}
             title={`${voiceNarrationEnabled ? 'Disable' : 'Enable'} voice narration`}
           >
@@ -180,17 +139,23 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]'
             : status === 'connecting'
               ? 'bg-yellow-500 animate-pulse'
-              : 'bg-neutral-300'
+              : isDark ? 'bg-white/30' : 'bg-neutral-300'
             }`} />
-          <div className="text-[10px] text-neutral-600 font-light tracking-wider uppercase">
+          <div className={`text-[10px] font-light tracking-wider uppercase ${
+            isDark ? 'text-content-inverse-secondary' : 'text-neutral-600'
+          }`}>
             {status}
           </div>
         </div>
 
         {vu > 0 && (
-          <div className="w-12 h-px bg-neutral-200/80 rounded-full overflow-hidden backdrop-blur-sm">
+          <div className={`w-12 h-px rounded-full overflow-hidden backdrop-blur-sm ${
+            isDark ? 'bg-white/20' : 'bg-neutral-200/80'
+          }`}>
             <div
-              className="h-px bg-neutral-700 rounded-full transition-all duration-100"
+              className={`h-px rounded-full transition-all duration-100 ${
+                isDark ? 'bg-white/70' : 'bg-neutral-700'
+              }`}
               style={{ width: `${Math.round(vu * 100)}%` }}
             />
           </div>

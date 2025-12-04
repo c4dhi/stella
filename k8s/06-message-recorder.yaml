@@ -13,16 +13,22 @@ spec:
       labels:
         app: message-recorder
     spec:
+      # Add host.docker.internal to /etc/hosts
+      # OrbStack gateway is typically 192.168.194.1
+      hostAliases:
+      - ip: "192.168.194.1"
+        hostnames:
+        - "host.docker.internal"
       containers:
       - name: message-recorder
         image: message-recorder-python:latest
-        imagePullPolicy: Never  # Use local image from minikube
+        imagePullPolicy: IfNotPresent  # Use local image from K3s
         env:
         # External LiveKit Server (read from ConfigMap)
         - name: LIVEKIT_URL
           valueFrom:
             configMapKeyRef:
-              name: grace-ai-config
+              name: stella-ai-config
               key: LIVEKIT_URL
         - name: SESSION_SERVER_URL
           value: "http://session-management-server:3000"
@@ -31,12 +37,12 @@ spec:
         - name: LIVEKIT_API_KEY
           valueFrom:
             secretKeyRef:
-              name: grace-ai-secrets
+              name: stella-ai-secrets
               key: livekit-api-key
         - name: LIVEKIT_API_SECRET
           valueFrom:
             secretKeyRef:
-              name: grace-ai-secrets
+              name: stella-ai-secrets
               key: livekit-api-secret
         command: ["python", "-u", "main.py"]
         resources:

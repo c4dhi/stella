@@ -11,7 +11,13 @@ import { AgentsModule } from './agents/agents.module';
 import { LiveKitModule } from './livekit/livekit.module';
 import { KubernetesModule } from './kubernetes/kubernetes.module';
 import { MessageRecorderModule } from './message-recorder/message-recorder.module';
+import { AgentServerModule } from './agent-server/agent-server.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { StorageModule } from './storage/storage.module';
+import { AgentPackageModule } from './agent-package/agent-package.module';
+import { AgentBuildModule } from './agent-build/agent-build.module';
+import { AgentUploadModule } from './agent-upload/agent-upload.module';
 
 @Module({
   imports: [
@@ -27,6 +33,12 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     LiveKitModule,
     KubernetesModule,
     MessageRecorderModule,
+    AgentServerModule,
+    WebhooksModule,
+    StorageModule,
+    AgentPackageModule,
+    AgentBuildModule,
+    AgentUploadModule,
   ],
   controllers: [AppController],
   providers: [

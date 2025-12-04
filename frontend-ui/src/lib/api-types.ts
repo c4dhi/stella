@@ -18,6 +18,12 @@ export enum AgentStatus {
   FAILED = 'FAILED'
 }
 
+export enum AgentValidationStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
+}
+
 export type MessageType = 'text' | 'transcript' | 'system' | 'task_update' | 'deliverable' | 'state_change' | 'participant_event'
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Unknown'
@@ -98,7 +104,7 @@ export interface AgentInstance {
   podName: string | null
   secretName: string | null
   configMapName: string | null
-  planId: string | null
+  agentConfig: Record<string, unknown> | null
   createdAt: string
   stoppedAt: string | null
 }
@@ -205,7 +211,79 @@ export interface CreateTokenDto {
 export interface CreateAgentDto {
   name: string // max 255 characters, required
   icon?: string // max 10 characters (emoji), optional
-  planId?: string // max 255 characters, optional
+  agentType?: string // agent type id (e.g., 'stella-agent', 'echo-agent')
+  config?: Record<string, unknown> // agent-specific config (e.g., { plan_id: 'stella_smalltalk' })
+}
+
+export interface AgentType {
+  id: string
+  slug: string
+  name: string
+  description: string
+  icon: string | null
+  version: string
+  isBuiltIn: boolean
+  capabilities: string[]
+  defaultConfig: Record<string, unknown>  // Default config for this agent type
+  validationStatus?: AgentValidationStatus
+  configSchema?: Record<string, unknown>  // JSON Schema for config options
+  resourceGpu?: boolean
+  authorName?: string | null
+  authorEmail?: string | null
+  tags?: string[]
+  createdAt?: string
+}
+
+// Extended AgentType with build info (for my-agents endpoint)
+export interface CustomAgentType extends AgentType {
+  lastBuild: {
+    status: string
+    startedAt: string
+    completedAt: string | null
+  } | null
+}
+
+// Agent package upload response
+export interface AgentUploadResponse {
+  id: string
+  slug: string
+  name: string
+  version: string
+  validationStatus: AgentValidationStatus
+  warnings: string[]
+}
+
+// Agent build status
+export interface AgentBuildStatus {
+  id: string
+  status: 'pending' | 'building' | 'success' | 'failed'
+  imageName?: string
+  errorMessage?: string
+  startedAt: string
+  completedAt?: string
+}
+
+// Agent build trigger response
+export interface AgentBuildResponse {
+  buildLogId: string
+  message: string
+}
+
+// Package validation result (for showing errors before upload)
+export interface PackageValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export interface SessionEvent {
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+  sessionId: string
+  agentId?: string
+  agentName?: string
+  agentType?: string
+  error?: string
+  timestamp: string
 }
 
 // ============================================================================

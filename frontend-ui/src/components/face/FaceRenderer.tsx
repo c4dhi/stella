@@ -1,6 +1,6 @@
 /**
- * GRACE Face Renderer
- * Port from mobile client (grace-ai-mobile-client/app/components/faces/defaultFace.tsx)
+ * STELLA Face Renderer
+ * Port from mobile client (stella-mobile-client/app/components/faces/defaultFace.tsx)
  * Renders eyes, eyebrows, and mouth using SVG
  */
 

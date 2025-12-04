@@ -3,6 +3,8 @@ export type TurnId = string
 export type Role = 'user' | 'assistant' | 'system'
 export type TurnStatus = 'partial' | 'final'
 
+export type MessageSource = 'user_speech' | 'user_text' | 'agent_response'
+
 export interface TranscriptChunk {
   id: TurnId
   role: Role
@@ -10,7 +12,13 @@ export interface TranscriptChunk {
   status: TurnStatus
   startedAt: number
   finalizedAt?: number
-  participant_id?: string  // Agent name or participant identifier
+  // Attribution fields
+  participant_id?: string    // Backwards compat - sender identity
+  speaker_id?: string        // Who spoke (for user_speech/user_text)
+  speaker_name?: string      // Display name of speaker
+  agent_id?: string          // Agent ID (for agent_response)
+  agent_name?: string        // Agent display name
+  source?: MessageSource     // Message origin: user_speech, user_text, agent_response
 }
 
 // New message processing stream types
@@ -80,12 +88,20 @@ export interface SafetyCheckData {
   stream_id: string
 }
 
+export interface DebugData {
+  component: string
+  level: 'info' | 'debug' | 'warn' | 'error'
+  message: string
+  metadata?: Record<string, any>
+}
+
 // Processing message types that will be displayed in chat
-export type ProcessingMessageType = 
-  | 'decision' 
-  | 'prompt_execution' 
-  | 'expert_status' 
+export type ProcessingMessageType =
+  | 'decision'
+  | 'prompt_execution'
+  | 'expert_status'
   | 'safety_check'
+  | 'debug'
 
 export interface ProcessingMessage {
   id: TurnId
@@ -95,7 +111,7 @@ export interface ProcessingMessage {
   startedAt: number
   finalizedAt?: number
   streamId: string
-  data: DecisionStreamData | PromptExecutionData | ExpertStatusData | SafetyCheckData
+  data: DecisionStreamData | PromptExecutionData | ExpertStatusData | SafetyCheckData | DebugData
 }
 
 // Participant events for room join/leave notifications
@@ -122,11 +138,12 @@ export interface TransportEvents {
   onPlanProgress: (data: PlanProgressUpdate) => void
   onDeliverableUpdate: (data: PlanDeliverableUpdate) => void
   onStateChange: (data: StateChangeNotification) => void
-  onParticipantJoined: (participantId: string, participantName?: string) => void
+  onParticipantJoined: (participantId: string, participantName?: string, isExisting?: boolean) => void
   onParticipantLeft: (participantId: string, participantName?: string) => void
   onLLMConfig: (config: any) => void
   onAudioLevel: (level: number) => void
   onRemoteSpeaking: (speaking: boolean) => void
+  onProgressUpdate: (data: ProgressUpdateMessage) => void
 }
 
 export interface Transport extends TransportEvents {
@@ -138,6 +155,10 @@ export interface Transport extends TransportEvents {
   publishAudioTrack: (stream: MediaStream) => Promise<boolean>
   unpublishAudioTrack: () => Promise<void>
   setUserName: (name: string) => void
+  // Connection state helpers
+  isConnectedToRoom: (roomName: string) => boolean
+  getConnectionState: () => 'idle' | 'connecting' | 'connected' | 'disconnecting'
+  getCurrentRoomName: () => string | undefined
 }
 
 export type EnvelopeType =
@@ -146,6 +167,7 @@ export type EnvelopeType =
   | 'heartbeat'
   | 'transcript'
   | 'transcript_chunk'
+  | 'agent_text'
   | 'system'
   | 'audio_data'
   | 'audio_stream_start'
@@ -156,6 +178,7 @@ export type EnvelopeType =
   | 'prompt_execution'
   | 'expert_status'
   | 'safety_check'
+  | 'debug'
   | 'tts_start'
   | 'tts_stop'
   | 'tts_end'
@@ -169,6 +192,7 @@ export type EnvelopeType =
   | 'state_change_notification'
   | 'task_progress_update'
   | 'llm_config'
+  | 'progress_update'
 
 export interface Envelope<T> {
   type: EnvelopeType
@@ -488,4 +512,75 @@ export interface StepChangeNotification {
   participant_id: string
   timestamp: string
   stream_id: string
+}
+
+// ============================================================================
+// Generic Progress Types (from SDK)
+// These are the new, agent-agnostic progress tracking types
+// ============================================================================
+
+export enum ExecutionMode {
+  SEQUENTIAL = "sequential",  // Tasks must be completed in order
+  FLEXIBLE = "flexible"       // Agent decides order based on conversation
+}
+
+export enum ProgressItemStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  SKIPPED = "skipped"
+}
+
+export enum ProgressGroupStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed"
+}
+
+export interface ProgressItem {
+  id: string
+  label: string
+  status: ProgressItemStatus | string
+  description?: string
+  required: boolean
+  value?: any
+  confidence?: number
+  collected_at?: string | null
+  metadata?: Record<string, any>
+}
+
+export interface ProgressGroup {
+  id: string
+  label: string
+  execution_mode: ExecutionMode | string
+  status: ProgressGroupStatus | string
+  items: ProgressItem[]
+  is_current: boolean
+  description?: string
+  completed_at?: string | null
+  metadata?: Record<string, any>
+}
+
+export interface ProgressState {
+  groups: ProgressGroup[]
+  current_group_id?: string
+  current_item_id?: string
+  progress_percentage: number
+  elapsed_minutes: number
+  started_at?: string
+  last_updated?: string
+  metadata?: Record<string, any>
+}
+
+export interface ProgressUpdateMessage {
+  groups: ProgressGroup[]
+  current_group_id?: string
+  current_item_id?: string
+  progress_percentage: number
+  elapsed_minutes: number
+  started_at?: string
+  last_updated?: string
+  update_trigger: string
+  timestamp: string
+  metadata?: Record<string, any>
 }

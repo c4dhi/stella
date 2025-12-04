@@ -1,4 +1,4 @@
-// Real Authentication Service
+// STELLA Authentication Service
 // Integrates with Session Management Server auth endpoints
 
 import { getRuntimeConfig } from '../config/runtime'
@@ -25,10 +25,43 @@ export interface SignupCredentials extends LoginCredentials {
   name: string
 }
 
-const AUTH_STORAGE_KEY = 'grace_auth_token'
-const USER_STORAGE_KEY = 'grace_user'
+// New STELLA storage keys
+const AUTH_STORAGE_KEY = 'stella_auth_token'
+const USER_STORAGE_KEY = 'stella_user'
+
+// Old keys for migration
+const OLD_AUTH_STORAGE_KEY = 'grace_auth_token'
+const OLD_USER_STORAGE_KEY = 'grace_user'
 
 class AuthService {
+  constructor() {
+    // Migrate old storage keys on initialization
+    this.migrateStorageKeys()
+  }
+
+  // One-time migration from grace_* to stella_* keys
+  private migrateStorageKeys(): void {
+    try {
+      // Check if old keys exist and new keys don't
+      const oldToken = localStorage.getItem(OLD_AUTH_STORAGE_KEY)
+      const oldUser = localStorage.getItem(OLD_USER_STORAGE_KEY)
+      const newToken = localStorage.getItem(AUTH_STORAGE_KEY)
+
+      // Only migrate if old data exists and new data doesn't
+      if (oldToken && !newToken) {
+        localStorage.setItem(AUTH_STORAGE_KEY, oldToken)
+        localStorage.removeItem(OLD_AUTH_STORAGE_KEY)
+      }
+
+      if (oldUser && !localStorage.getItem(USER_STORAGE_KEY)) {
+        localStorage.setItem(USER_STORAGE_KEY, oldUser)
+        localStorage.removeItem(OLD_USER_STORAGE_KEY)
+      }
+    } catch (error) {
+      console.warn('Failed to migrate storage keys:', error)
+    }
+  }
+
   // ============================================================================
   // Real Authentication with Backend
   // ============================================================================
@@ -176,6 +209,9 @@ class AuthService {
   logout(): void {
     localStorage.removeItem(AUTH_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
+    // Also clean up any old keys
+    localStorage.removeItem(OLD_AUTH_STORAGE_KEY)
+    localStorage.removeItem(OLD_USER_STORAGE_KEY)
   }
 
   getStoredUser(): User | null {

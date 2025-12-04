@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
+import { useThemeStore } from '../store/themeStore'
 import { startMicWithVu } from '../services/audio/capture'
 import TTSControlButton from './TTSControlButton'
 
@@ -14,6 +15,8 @@ export default function Composer() {
   const setIsMuted = useStore(s => s.setIsMuted)
   const setIsRecording = useStore(s => s.setIsRecording)
   const vu = useStore(s => s.vu)
+  const { resolvedTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -135,22 +138,30 @@ export default function Composer() {
 
   return (
     <motion.div
-      className="px-4 py-4 bg-white/90 backdrop-blur-xl shadow-sm rounded-xl border border-neutral-200/60"
+      className={`px-4 py-4 backdrop-blur-sm rounded-xl border ${isDark
+          ? 'bg-surface-dark-secondary/90 border-border-dark'
+          : 'bg-white/90 border-border shadow-sm'
+        }`}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
+      transition={{ duration: 0.3 }}
     >
       <div className="flex items-center gap-2">
         {/* Input Field Container */}
-        <motion.div
-          className="min-h-9 flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral-300/50 bg-neutral-50/40 backdrop-blur-sm focus-within:border-neutral-400/60 focus-within:bg-white/60 focus-within:shadow-[0_0_0_1px_rgba(0,0,0,0.08)] transition-all duration-300"
-          whileFocus={{ scale: 1.005 }}
+        <div
+          className={`min-h-9 flex-1 flex items-center gap-2 rounded-lg border transition-all duration-200 ${isDark
+              ? 'bg-surface-dark-tertiary border-border-dark focus-within:border-border-dark-secondary'
+              : 'bg-surface-secondary border-border focus-within:border-border-secondary focus-within:bg-white'
+            }`}
         >
           <input
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            className="flex-1 bg-transparent text-neutral-900 placeholder-neutral-400 border-none outline-none text-sm font-light tracking-wide"
+            className={`flex-1 bg-transparent px-3 py-2 rounded-lg outline-none text-body ${isDark
+                ? 'text-content-inverse placeholder:text-content-inverse-tertiary'
+                : 'text-content placeholder:text-content-tertiary'
+              }`}
             placeholder={status === 'connected' ? 'Type your message...' : 'Connect to start'}
             disabled={status !== 'connected'}
           />
@@ -170,7 +181,7 @@ export default function Composer() {
                   {[...Array(4)].map((_, i) => (
                     <motion.div
                       key={i}
-                      className="w-px bg-neutral-600 rounded-full"
+                      className={`w-px rounded-full ${isDark ? 'bg-content-inverse-secondary' : 'bg-content-secondary'}`}
                       animate={{
                         height: [2, 6, 2],
                         opacity: vu > 0.1 ? [0.3, 0.8, 0.3] : 0.25
@@ -187,14 +198,14 @@ export default function Composer() {
 
                 {/* Minimal Recording Indicator */}
                 <motion.div
-                  className="w-0.5 h-0.5 bg-neutral-700 rounded-full"
+                  className={`w-0.5 h-0.5 rounded-full ${isDark ? 'bg-content-inverse' : 'bg-content'}`}
                   animate={{ opacity: [0.3, 0.9, 0.3] }}
                   transition={{ duration: 1.8, repeat: Infinity }}
                 />
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.div>
+        </div>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1">
@@ -202,11 +213,17 @@ export default function Composer() {
           <motion.button
             onClick={toggleMute}
             disabled={status !== 'connected'}
-            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-300 ${status !== 'connected'
-              ? 'bg-neutral-100/60 text-neutral-400 cursor-not-allowed'
-              : isMuted
-                ? 'bg-red-100/80 text-red-600 hover:bg-red-200/80 border border-red-300/60'
-                : 'bg-green-100/80 text-green-600 hover:bg-green-200/80 border border-green-300/60'
+            className={`w-9 h-9 flex justify-center items-center p-2 rounded-lg transition-all duration-200 ${status !== 'connected'
+                ? isDark
+                  ? 'bg-surface-dark-tertiary text-content-inverse-tertiary cursor-not-allowed'
+                  : 'bg-surface-secondary text-content-tertiary cursor-not-allowed'
+                : isMuted
+                  ? isDark
+                    ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50 border border-red-500/30'
+                    : 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
+                  : isDark
+                    ? 'bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50 border border-emerald-500/30'
+                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200'
               }`}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
             whileHover={{ scale: 1.02 }}
@@ -235,21 +252,16 @@ export default function Composer() {
           <motion.button
             onClick={send}
             disabled={!text.trim() || status !== 'connected'}
-            className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider uppercase transition-all duration-300 ${!text.trim() || status !== 'connected'
-              ? 'bg-neutral-100/60 text-neutral-400 cursor-not-allowed'
-              : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.15)]'
+            className={`h-9 px-4 py-2 rounded-lg text-ui transition-all duration-200 ${!text.trim() || status !== 'connected'
+                ? isDark
+                  ? 'bg-surface-dark-tertiary text-content-inverse-tertiary cursor-not-allowed'
+                  : 'bg-surface-secondary text-content-tertiary cursor-not-allowed'
+                : 'btn-primary'
               }`}
-            whileHover={text.trim() && status === 'connected' ? { scale: 1.02, y: -0.5 } : {}}
+            whileHover={text.trim() && status === 'connected' ? { scale: 1.02 } : {}}
             whileTap={text.trim() && status === 'connected' ? { scale: 0.98 } : {}}
           >
-            <motion.span
-              key={text.trim() ? 'send' : 'disabled'}
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              Send
-            </motion.span>
+            Send
           </motion.button>
         </div>
       </div>

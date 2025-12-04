@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grace-ai-config
+  name: stella-ai-config
   namespace: ai-agents
 data:
   # Server Configuration
@@ -30,8 +30,49 @@ data:
   AGENT_IMAGE: "conversational-ai-server:latest"
   AGENT_IMAGE_PULL_POLICY: "IfNotPresent"
 
-  # TTS Provider
+  # STT Service (microservices architecture)
+  STT_SERVICE_URL: "stt-service:50051"
+
+  # TTS Service (microservices architecture)
+  TTS_SERVICE_URL: "tts-service:50052"
+
+  # DNS Configuration (production only)
+  # CUSTOM_DNS_SERVERS: External DNS to bypass SSL inspection for model downloads (STT/TTS init containers)
+  # KUBERNETES_DNS_IP: K8s CoreDNS IP for agent pods to resolve internal services
+  # Find K8s DNS IP with: kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
+  CUSTOM_DNS_SERVERS: "${CUSTOM_DNS_SERVERS}"
+  KUBERNETES_DNS_IP: "${KUBERNETES_DNS_IP}"
+
+  # ============================================================================
+  # AI Agent Configuration (Python conversational-ai-server)
+  # ============================================================================
+  # Speech-to-Text (STT) Provider
+  # Options: sherpa (lightweight CPU), whisper (GPU-accelerated)
+  STT_PROVIDER: "${STT_PROVIDER}"
+
+  # faster-whisper Configuration (when STT_PROVIDER=whisper)
+  WHISPER_MODEL: "${WHISPER_MODEL}"          # tiny.en, small.en, medium.en, large-v3
+  WHISPER_DEVICE: "${WHISPER_DEVICE}"        # cpu or cuda
+  WHISPER_COMPUTE_TYPE: "${WHISPER_COMPUTE_TYPE}"  # int8 (CPU) or float16 (GPU)
+  WHISPER_LANGUAGE: "${WHISPER_LANGUAGE}"    # en, de, etc. or empty for auto-detect
+  WHISPER_BEAM_SIZE: "${WHISPER_BEAM_SIZE}"  # 1=greedy (fastest), 5=beam search (more accurate)
+
+  # VAD Configuration (Silero VAD for whisper provider)
+  VAD_THRESHOLD: "${VAD_THRESHOLD}"          # Speech detection sensitivity (0.0-1.0, default 0.5)
+  VAD_MIN_SILENCE_MS: "${VAD_MIN_SILENCE_MS}"  # End-of-speech silence threshold (default 500ms)
+  PARTIAL_INTERVAL_MS: "${PARTIAL_INTERVAL_MS}"  # Partial transcript interval (default 1000ms)
+
+  # Text-to-Speech (TTS) Provider
+  # Options: kokoro (fast local), elevenlabs (best quality), edge_tts (free cloud), auto
   TTS_PROVIDER: "${TTS_PROVIDER}"
+  ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID}"
+  ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"
+
+  # ONNX Runtime Provider Configuration
+  # Set by start-k8s.sh based on ENABLE_GPU setting
+  # GPU mode: CUDAExecutionProvider,CPUExecutionProvider
+  # CPU mode: CPUExecutionProvider
+  ONNX_PROVIDER: "${ONNX_PROVIDER}"
 
   # ============================================================================
   # Public URLs for external access (injected by deployment scripts)
