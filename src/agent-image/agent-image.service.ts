@@ -24,17 +24,27 @@ export interface AgentTypeInfo {
   version: string;
   isBuiltIn: boolean;
   capabilities: string[];
+  defaultConfig: Record<string, unknown>;
 }
 
-// Metadata for each agent type
-const AGENT_TYPE_METADATA: Record<string, { name: string; description: string }> = {
+// Metadata for each agent type (fallback when database is empty)
+const AGENT_TYPE_METADATA: Record<string, {
+  name: string;
+  description: string;
+  icon: string;
+  defaultConfig: Record<string, unknown>;
+}> = {
   'grace-agent': {
     name: 'Grace Agent',
     description: 'Full-featured conversational AI with expert consultation',
+    icon: '👩‍⚕️',
+    defaultConfig: { plan_id: 'grace_smalltalk' },
   },
   'echo-agent': {
     name: 'Echo Agent',
     description: 'Simple test agent that echoes user input',
+    icon: '🔊',
+    defaultConfig: {},
   },
 };
 
@@ -156,16 +166,19 @@ export class AgentImageService {
       const metadata = AGENT_TYPE_METADATA[slug] || {
         name: slug,
         description: 'No description available',
+        icon: '🤖',
+        defaultConfig: {},
       };
       return {
         id: slug,  // Use slug as ID for backward compat
         slug,
         name: metadata.name,
         description: metadata.description,
-        icon: null,
+        icon: metadata.icon,
         version: '1.0.0',
         isBuiltIn: true,
         capabilities: [],
+        defaultConfig: metadata.defaultConfig,
       };
     });
   }

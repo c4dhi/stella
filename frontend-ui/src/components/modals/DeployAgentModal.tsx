@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import EmojiPicker from '../EmojiPicker'
 import AgentGalleryCard from '../agents/AgentGalleryCard'
+import { AgentUploadCard, MyAgentsSection } from '../agents'
 import { apiClient } from '../../services/ApiClient'
 import { useThemeStore } from '../../store/themeStore'
-import type { AgentType } from '../../lib/api-types'
+import type { AgentType, CustomAgentType, AgentUploadResponse } from '../../lib/api-types'
 
 interface DeployAgentModalProps {
   isOpen: boolean
@@ -12,7 +13,8 @@ interface DeployAgentModalProps {
   onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => Promise<void>
 }
 
-type Step = 'gallery' | 'configure' | 'advanced'
+type Step = 'gallery' | 'upload' | 'configure' | 'advanced'
+type GalleryTab = 'builtin' | 'myagents'
 
 export default function DeployAgentModal({
   isOpen,
@@ -20,6 +22,7 @@ export default function DeployAgentModal({
   onSubmit,
 }: DeployAgentModalProps) {
   const [step, setStep] = useState<Step>('gallery')
+  const [galleryTab, setGalleryTab] = useState<GalleryTab>('builtin')
   const [selectedType, setSelectedType] = useState<AgentType | null>(null)
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤖')
@@ -29,6 +32,7 @@ export default function DeployAgentModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingTypes, setIsLoadingTypes] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadRefreshTrigger, setUploadRefreshTrigger] = useState(0)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
@@ -36,6 +40,7 @@ export default function DeployAgentModal({
   useEffect(() => {
     if (isOpen) {
       setStep('gallery')
+      setGalleryTab('builtin')
       setSelectedType(null)
       setName('')
       setIcon('🤖')
@@ -87,6 +92,18 @@ export default function DeployAgentModal({
     setSelectedType(type)
   }
 
+  const handleSelectCustomAgent = (agent: CustomAgentType) => {
+    // Convert CustomAgentType to AgentType for selection
+    setSelectedType(agent as AgentType)
+  }
+
+  const handleUploadComplete = (result: AgentUploadResponse) => {
+    // Refresh the my-agents list and switch to that tab
+    setUploadRefreshTrigger(prev => prev + 1)
+    setGalleryTab('myagents')
+    setStep('gallery')
+  }
+
   const handleContinue = () => {
     if (step === 'gallery' && selectedType) {
       setStep('configure')
@@ -99,6 +116,8 @@ export default function DeployAgentModal({
     if (step === 'advanced') {
       setStep('configure')
     } else if (step === 'configure') {
+      setStep('gallery')
+    } else if (step === 'upload') {
       setStep('gallery')
     }
     setError(null)
@@ -171,6 +190,7 @@ export default function DeployAgentModal({
   const getStepNumber = (s: Step): number => {
     switch (s) {
       case 'gallery': return 1
+      case 'upload': return 1  // Upload is part of step 1
       case 'configure': return 2
       case 'advanced': return 3
     }
@@ -243,11 +263,13 @@ export default function DeployAgentModal({
                 </div>
 
                 <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                  {step === 'gallery' ? 'Choose an Agent' : step === 'configure' ? 'Configure Agent' : 'Advanced Config'}
+                  {step === 'gallery' ? 'Choose an Agent' : step === 'upload' ? 'Upload Agent' : step === 'configure' ? 'Configure Agent' : 'Advanced Config'}
                 </h2>
                 <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                   {step === 'gallery'
                     ? 'Select an agent type to deploy to this session'
+                    : step === 'upload'
+                    ? 'Upload a custom agent package (.zip)'
                     : step === 'configure'
                     ? `Set a name and icon for your ${selectedType?.name || 'agent'}`
                     : 'Customize agent-specific configuration (JSON)'
@@ -267,79 +289,123 @@ export default function DeployAgentModal({
                   transition={{ duration: 0.2 }}
                   className="p-6"
                 >
-                  {isLoadingTypes ? (
-                    <div className={`h-48 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        Loading agent types...
-                      </div>
-                    </div>
-                  ) : agentTypes.length === 0 ? (
-                    <div className={`h-48 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                      No agent types available
-                    </div>
+                  {/* Tab bar */}
+                  <div className={`flex gap-1 p-1 rounded-lg mb-4 ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-100'}`}>
+                    <button
+                      onClick={() => setGalleryTab('builtin')}
+                      className={`
+                        flex-1 py-2 px-3 rounded-md text-sm font-medium transition-all
+                        ${galleryTab === 'builtin'
+                          ? isDark ? 'bg-zinc-600 text-white' : 'bg-white text-neutral-900 shadow-sm'
+                          : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-neutral-500 hover:text-neutral-700'
+                        }
+                      `}
+                    >
+                      Built-in Agents
+                    </button>
+                    <button
+                      onClick={() => setGalleryTab('myagents')}
+                      className={`
+                        flex-1 py-2 px-3 rounded-md text-sm font-medium transition-all
+                        ${galleryTab === 'myagents'
+                          ? isDark ? 'bg-zinc-600 text-white' : 'bg-white text-neutral-900 shadow-sm'
+                          : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-neutral-500 hover:text-neutral-700'
+                        }
+                      `}
+                    >
+                      My Agents
+                    </button>
+                  </div>
+
+                  {galleryTab === 'builtin' ? (
+                    <>
+                      {isLoadingTypes ? (
+                        <div className={`h-48 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Loading agent types...
+                          </div>
+                        </div>
+                      ) : agentTypes.length === 0 ? (
+                        <div className={`h-48 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                          No agent types available
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3 max-h-[350px] overflow-y-auto pr-2">
+                          {agentTypes.map((type) => (
+                            <AgentGalleryCard
+                              key={type.id}
+                              agentType={type}
+                              isSelected={selectedType?.id === type.id}
+                              onClick={() => handleSelectType(type)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-2">
-                      {agentTypes.map((type) => (
-                        <AgentGalleryCard
-                          key={type.id}
-                          agentType={type}
-                          isSelected={selectedType?.id === type.id}
-                          onClick={() => handleSelectType(type)}
-                        />
-                      ))}
-                      {/* Upload custom agent placeholder */}
+                    <div className="space-y-4">
+                      {/* Upload button */}
                       <button
                         type="button"
-                        disabled
+                        onClick={() => setStep('upload')}
                         className={`
-                          relative w-full h-[160px] p-3 rounded-xl text-left transition-all duration-200
-                          border-2 border-dashed cursor-not-allowed opacity-60
+                          w-full p-4 rounded-xl text-left transition-all duration-200
+                          border-2 border-dashed hover:border-solid
                           ${isDark
-                            ? 'border-zinc-600 bg-zinc-800/30'
-                            : 'border-neutral-300 bg-neutral-50/50'
+                            ? 'border-zinc-600 hover:border-primary-500 bg-zinc-800/30 hover:bg-zinc-700/50'
+                            : 'border-neutral-300 hover:border-primary-500 bg-neutral-50/50 hover:bg-primary-50'
                           }
                         `}
                       >
-                        {/* Coming soon badge */}
-                        <div className={`
-                          absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide
-                          ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-neutral-200 text-neutral-500'}
-                        `}>
-                          Coming Soon
+                        <div className="flex items-center gap-3">
+                          <div className={`
+                            w-10 h-10 rounded-lg flex items-center justify-center
+                            ${isDark ? 'bg-zinc-700' : 'bg-neutral-100'}
+                          `}>
+                            <svg
+                              className={`w-5 h-5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                            >
+                              <path d="M12 16V4m0 0l-4 4m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M3 20h18" strokeLinecap="round" />
+                            </svg>
+                          </div>
+                          <div>
+                            <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}>
+                              Upload New Agent
+                            </h3>
+                            <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                              Upload a custom agent package (.zip)
+                            </p>
+                          </div>
                         </div>
-
-                        {/* Upload icon */}
-                        <div
-                          className={`
-                            w-10 h-10 rounded-lg flex items-center justify-center mb-2
-                            ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-100'}
-                          `}
-                        >
-                          <svg
-                            className={`w-5 h-5 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                          >
-                            <path d="M12 16V4m0 0l-4 4m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M3 20h18" strokeLinecap="round" />
-                          </svg>
-                        </div>
-
-                        {/* Title */}
-                        <h3 className={`text-sm font-medium mb-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                          Upload Your Agent
-                        </h3>
-
-                        {/* Description */}
-                        <p className={`text-xs font-light leading-relaxed ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                          Deploy custom agents using the STELLA Agent SDK
-                        </p>
                       </button>
+
+                      {/* My agents list */}
+                      <MyAgentsSection
+                        onSelectAgent={handleSelectCustomAgent}
+                        refreshTrigger={uploadRefreshTrigger}
+                      />
                     </div>
                   )}
+                </motion.div>
+              ) : step === 'upload' ? (
+                <motion.div
+                  key="upload"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <AgentUploadCard
+                    onUploadComplete={handleUploadComplete}
+                    onError={(err) => setError(err)}
+                  />
                 </motion.div>
               ) : step === 'configure' ? (
                 <motion.div
@@ -544,6 +610,26 @@ export default function DeployAgentModal({
                       Continue
                     </button>
                   </>
+                ) : step === 'upload' ? (
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    className={`
+                      w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                      transition-all duration-200
+                      ${isDark
+                        ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
+                        : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80'
+                      }
+                    `}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Back to Gallery
+                    </span>
+                  </button>
                 ) : step === 'configure' ? (
                   <>
                     <button
@@ -582,7 +668,7 @@ export default function DeployAgentModal({
                       Continue
                     </button>
                   </>
-                ) : (
+                ) : step === 'advanced' ? (
                   <>
                     <button
                       type="button"
@@ -620,7 +706,7 @@ export default function DeployAgentModal({
                       {isSubmitting ? 'Deploying...' : 'Deploy Agent'}
                     </button>
                   </>
-                )}
+                ) : null}
               </div>
             </div>
           </motion.div>

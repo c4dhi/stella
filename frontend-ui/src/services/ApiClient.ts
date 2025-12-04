@@ -20,6 +20,10 @@ import type {
   AgentWithPodStatus,
   CreateAgentDto,
   AgentType,
+  CustomAgentType,
+  AgentUploadResponse,
+  AgentBuildStatus,
+  AgentBuildResponse,
   SessionEvent,
   DeleteResponse,
   ApiError,
@@ -440,6 +444,111 @@ class SessionManagementClient {
     }
 
     // Return cleanup function
+    return () => {
+      eventSource.close()
+    }
+  }
+
+  // ============================================================================
+  // Custom Agent Upload API
+  // ============================================================================
+
+  /**
+   * Upload a custom agent package (zip file).
+   */
+  async uploadAgentPackage(file: File): Promise<AgentUploadResponse> {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${this.getBaseUrl()}/agent-types/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw error
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Get the current user's custom agents.
+   */
+  async getMyAgents(): Promise<CustomAgentType[]> {
+    return this.get<CustomAgentType[]>('/agent-types/my-agents')
+  }
+
+  /**
+   * Trigger a build for a custom agent.
+   */
+  async triggerAgentBuild(agentTypeId: string): Promise<AgentBuildResponse> {
+    return this.post<AgentBuildResponse>(`/agent-types/${agentTypeId}/build`)
+  }
+
+  /**
+   * Get build status for an agent.
+   */
+  async getAgentBuildStatus(agentTypeId: string): Promise<AgentBuildStatus | null> {
+    return this.get<AgentBuildStatus | null>(`/agent-types/${agentTypeId}/build-status`)
+  }
+
+  /**
+   * Get build history for an agent.
+   */
+  async getAgentBuildHistory(agentTypeId: string): Promise<AgentBuildStatus[]> {
+    return this.get<AgentBuildStatus[]>(`/agent-types/${agentTypeId}/build-history`)
+  }
+
+  /**
+   * Delete a custom agent.
+   */
+  async deleteCustomAgent(agentTypeId: string): Promise<{ success: boolean }> {
+    return this.post<{ success: boolean }>(`/agent-types/${agentTypeId}/delete`)
+  }
+
+  /**
+   * Subscribe to build logs via SSE.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToBuildLogs(
+    agentTypeId: string,
+    onLog: (data: { status: string; output?: string; errorMessage?: string }) => void,
+    onError?: (error: Event) => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/agent-types/${agentTypeId}/build-logs`
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onmessage = (e) => {
+      try {
+        if (e.data && e.data !== 'connected' && e.data !== 'no_build') {
+          const data = JSON.parse(e.data)
+          onLog(data)
+        }
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse build log event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Build log SSE connection error:', e)
+      if (onError) {
+        onError(e)
+      }
+    }
+
     return () => {
       eventSource.close()
     }

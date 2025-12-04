@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { AgentType } from '@prisma/client'
+import { AgentType, AgentValidationStatus } from '@prisma/client'
 
 export interface AgentTypeInfo {
   id: string
@@ -25,7 +25,7 @@ export class AgentTypeService {
    */
   async findAll(): Promise<AgentType[]> {
     return this.prisma.agentType.findMany({
-      where: { validationStatus: 'approved' },
+      where: { validationStatus: AgentValidationStatus.APPROVED },
       orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
     })
   }

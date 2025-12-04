@@ -45,7 +45,7 @@ spec:
           done
           echo "PostgreSQL is ready!"
 
-      # Step 2: Run database migrations (separate init container for clear failure signaling)
+      # Step 2: Run database migrations and seeding (separate init container for clear failure signaling)
       - name: run-migrations
         image: session-management-server:latest
         imagePullPolicy: IfNotPresent
@@ -55,13 +55,21 @@ spec:
           echo "Running Prisma migrations..."
           npx prisma migrate deploy
           RESULT=$?
-          if [ $RESULT -eq 0 ]; then
-            echo "✓ Migrations completed successfully"
-            exit 0
-          else
+          if [ $RESULT -ne 0 ]; then
             echo "✗ Migration failed with exit code: $RESULT"
             exit 1
           fi
+          echo "✓ Migrations completed successfully"
+
+          echo "Running database seed..."
+          npx prisma db seed
+          SEED_RESULT=$?
+          if [ $SEED_RESULT -ne 0 ]; then
+            echo "⚠ Seeding failed (may already be seeded) - continuing..."
+          else
+            echo "✓ Database seeded successfully"
+          fi
+          exit 0
         env:
         - name: DATABASE_URL
           valueFrom:

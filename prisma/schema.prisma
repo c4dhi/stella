@@ -22,6 +22,7 @@ model User {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   projectMemberships ProjectMembership[]
+  customAgentTypes   AgentType[]         // Custom agents uploaded by this user
 }
 
 enum MemberRole {
@@ -93,10 +94,16 @@ enum AgentStatus {
   FAILED
 }
 
-// Agent type registry - supports built-in and future custom agents
+enum AgentValidationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Agent type registry - supports built-in and custom agents
 model AgentType {
   id               String    @id @default(uuid())
-  slug             String    @unique  // e.g., "grace-agent", "echo-agent"
+  slug             String    @unique  // e.g., "grace-agent", "echo-agent", "memory-coach"
   name             String              // Display name: "Grace Agent"
   description      String              // Short description for gallery card
   icon             String?             // Default emoji or image URL
@@ -105,14 +112,42 @@ model AgentType {
   // Built-in vs custom
   isBuiltIn        Boolean   @default(true)
 
-  // Future custom agent support (not implemented yet)
-  imageUrl         String?             // Docker image URL for custom agents
-  author           String?             // Author name/email
-  validationStatus String?   @default("approved") // "pending", "approved", "rejected"
+  // Ownership (for custom agents)
+  userId           String?             // Owner of custom agent (null for built-in)
+  user             User?     @relation(fields: [userId], references: [id])
 
-  // Future filtering support
-  capabilities     Json?               // e.g., ["voice", "text", "plans"]
-  defaultConfig    Json?               // Default config for this agent type (e.g., { plan_id: "grace_smalltalk" })
+  // Package storage (for custom agents with uploaded zip)
+  packagePath      String?             // Local filesystem path to stored zip
+  packageSize      Int?                // Size in bytes
+  packageHash      String?             // SHA256 hash for integrity
+
+  // Image configuration
+  imageUrl         String?             // Pre-built Docker image URL (e.g., ghcr.io/org/agent:v1)
+  dockerfilePath   String?             // Path to Dockerfile within package (default: "Dockerfile")
+
+  // Validation workflow
+  validationStatus AgentValidationStatus @default(PENDING)
+  validationNotes  String?             // Reviewer notes (for rejection reasons)
+  validatedAt      DateTime?           // When validation decision was made
+  validatedBy      String?             // Admin user ID who validated
+
+  // Config schema (JSON Schema format for UI)
+  configSchema     Json?               // JSON Schema defining available config options
+  capabilities     Json?               // e.g., ["voice", "text", "progress"]
+  defaultConfig    Json?               // Default config for this agent type
+
+  // Resource limits
+  resourceMemory   String?   @default("512Mi")   // Memory limit (e.g., "512Mi", "2Gi")
+  resourceCpu      String?   @default("250m")    // CPU limit (e.g., "250m", "1000m")
+  resourceGpu      Boolean   @default(false)     // Whether GPU is required
+
+  // Author info (for custom agents)
+  authorName       String?             // Author display name
+  authorEmail      String?             // Author contact email
+  tags             Json?               // Array of tags for filtering
+
+  // SDK requirements
+  sdkMinVersion    String?             // Minimum grace-ai-agent-sdk version
 
   // Timestamps
   createdAt        DateTime  @default(now())
@@ -120,9 +155,12 @@ model AgentType {
 
   // Relations
   agents           AgentInstance[]
+  buildLogs        AgentBuildLog[]
 
   @@index([slug])
   @@index([isBuiltIn])
+  @@index([userId])
+  @@index([validationStatus])
 }
 
 model AgentInstance {
@@ -202,4 +240,27 @@ model RoomEvent {
   @@index([sessionId])
   @@index([eventType])
   @@index([timestamp])
+}
+
+// Build log for custom agent Docker image builds
+model AgentBuildLog {
+  id            String      @id @default(uuid())
+  agentTypeId   String
+  agentType     AgentType   @relation(fields: [agentTypeId], references: [id], onDelete: Cascade)
+
+  // Build status
+  status        String      // "pending", "building", "success", "failed"
+  imageName     String?     // Final image name (e.g., "memory-coach:1.0.0")
+
+  // Build output
+  buildOutput   String?     @db.Text  // Full build log output
+  errorMessage  String?               // Error message if failed
+
+  // Timing
+  startedAt     DateTime    @default(now())
+  completedAt   DateTime?
+
+  @@index([agentTypeId])
+  @@index([status])
+  @@index([startedAt])
 }

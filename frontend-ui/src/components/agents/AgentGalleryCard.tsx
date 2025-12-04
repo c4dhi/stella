@@ -20,7 +20,6 @@ export default function AgentGalleryCard({
     <motion.button
       type="button"
       onClick={onClick}
-      whileHover={{ scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
       className={`
         relative w-full h-[160px] p-3 rounded-xl text-left transition-all duration-200 border-2

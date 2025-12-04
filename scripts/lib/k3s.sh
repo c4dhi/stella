@@ -212,21 +212,39 @@ install_metrics_server() {
 # =============================================================================
 
 setup_gpu_support() {
-    [[ "$OS_TYPE" != "linux" ]] && return 0
-    [[ "$ENABLE_GPU" != "true" ]] && return 0
+    info "${EMOJI_GEAR} Checking GPU support..."
 
-    verbose "Checking GPU support..."
-
-    # Check for NVIDIA GPU
-    if ! command_exists nvidia-smi; then
-        warning "NVIDIA driver not found - GPU support disabled"
+    # macOS doesn't support NVIDIA GPUs in containers
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "   ${ARROW} GPU: ${DIM}not available (macOS)${NC}"
         export ENABLE_GPU="false"
         return 0
     fi
 
+    # Check if GPU is enabled in config
+    if [[ "$ENABLE_GPU" != "true" ]]; then
+        echo -e "   ${ARROW} GPU: ${DIM}disabled (ENABLE_GPU=false)${NC}"
+        return 0
+    fi
+
+    # Check for NVIDIA GPU driver
+    if ! command_exists nvidia-smi; then
+        echo -e "   ${ARROW} GPU: ${YELLOW}not detected${NC} (nvidia-smi not found)"
+        export ENABLE_GPU="false"
+        return 0
+    fi
+
+    # Get GPU information
+    local gpu_name
+    local gpu_memory
+    local driver_version
+    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    gpu_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs)
+
     # Check for nvidia-container-runtime
     if ! docker info 2>/dev/null | grep -q "nvidia"; then
-        warning "nvidia-container-runtime not configured"
+        echo -e "   ${ARROW} GPU: ${YELLOW}${gpu_name}${NC} (container runtime not configured)"
         echo -e "   ${DIM}Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html${NC}"
         export ENABLE_GPU="false"
         return 0
@@ -260,7 +278,9 @@ EOF
             kubectl apply -f - >/dev/null 2>&1
     fi
 
-    verbose "GPU support: enabled"
+    # Show GPU details
+    echo -e "   ${ARROW} GPU: ${GREEN}${gpu_name}${NC} (${gpu_memory}, driver ${driver_version})"
+    success "GPU support enabled"
 }
 
 # =============================================================================

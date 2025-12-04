@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, AgentValidationStatus } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -10,7 +10,7 @@ const builtInAgents = [
     icon: '🔊',
     version: '1.0.0',
     isBuiltIn: true,
-    validationStatus: 'approved',
+    validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text'],
     defaultConfig: {},  // Echo agent has no special config
   },
@@ -21,7 +21,7 @@ const builtInAgents = [
     icon: '👩‍⚕️',
     version: '1.0.0',
     isBuiltIn: true,
-    validationStatus: 'approved',
+    validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text', 'plans', 'experts'],
     defaultConfig: { plan_id: 'grace_smalltalk' },  // Default plan for Grace agent
   },

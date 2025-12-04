@@ -18,6 +18,12 @@ export enum AgentStatus {
   FAILED = 'FAILED'
 }
 
+export enum AgentValidationStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
+}
+
 export type MessageType = 'text' | 'transcript' | 'system' | 'task_update' | 'deliverable' | 'state_change' | 'participant_event'
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Unknown'
@@ -219,6 +225,55 @@ export interface AgentType {
   isBuiltIn: boolean
   capabilities: string[]
   defaultConfig: Record<string, unknown>  // Default config for this agent type
+  validationStatus?: AgentValidationStatus
+  configSchema?: Record<string, unknown>  // JSON Schema for config options
+  resourceGpu?: boolean
+  authorName?: string | null
+  authorEmail?: string | null
+  tags?: string[]
+  createdAt?: string
+}
+
+// Extended AgentType with build info (for my-agents endpoint)
+export interface CustomAgentType extends AgentType {
+  lastBuild: {
+    status: string
+    startedAt: string
+    completedAt: string | null
+  } | null
+}
+
+// Agent package upload response
+export interface AgentUploadResponse {
+  id: string
+  slug: string
+  name: string
+  version: string
+  validationStatus: AgentValidationStatus
+  warnings: string[]
+}
+
+// Agent build status
+export interface AgentBuildStatus {
+  id: string
+  status: 'pending' | 'building' | 'success' | 'failed'
+  imageName?: string
+  errorMessage?: string
+  startedAt: string
+  completedAt?: string
+}
+
+// Agent build trigger response
+export interface AgentBuildResponse {
+  buildLogId: string
+  message: string
+}
+
+// Package validation result (for showing errors before upload)
+export interface PackageValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
 }
 
 export interface SessionEvent {
