@@ -124,25 +124,75 @@ generate_session_server_manifest() {
 # =============================================================================
 
 generate_gpu_manifests() {
-    if [[ "$ENABLE_GPU" != "true" ]]; then
-        # Use standard manifests
-        export STT_MANIFEST="k8s/08-stt-service.yaml"
-        export TTS_MANIFEST="k8s/09-tts-service.yaml"
-        return 0
+    # Start with base manifests
+    cp k8s/08-stt-service.yaml "${TEMP_DIR}/08-stt-service.yaml"
+    cp k8s/09-tts-service.yaml "${TEMP_DIR}/09-tts-service.yaml"
+
+    # Enable GPU runtime class if requested
+    if [[ "$ENABLE_GPU" == "true" ]]; then
+        verbose "Enabling GPU runtime class..."
+        # macOS sed requires '' for in-place edit, Linux doesn't
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/08-stt-service.yaml"
+            sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/09-tts-service.yaml"
+        else
+            sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/08-stt-service.yaml"
+            sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/09-tts-service.yaml"
+        fi
     fi
 
-    verbose "Generating GPU-enabled manifests..."
+    # Add custom DNS configuration if CUSTOM_DNS_SERVERS is set
+    # This bypasses corporate SSL inspection proxies
+    if [[ -n "$CUSTOM_DNS_SERVERS" ]]; then
+        verbose "Configuring custom DNS: $CUSTOM_DNS_SERVERS"
+        add_dns_config_to_manifest "${TEMP_DIR}/08-stt-service.yaml"
+        add_dns_config_to_manifest "${TEMP_DIR}/09-tts-service.yaml"
+    fi
 
-    # Enable runtime class for GPU
-    sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        k8s/08-stt-service.yaml > "${TEMP_DIR}/08-stt-service-gpu.yaml"
-    export STT_MANIFEST="${TEMP_DIR}/08-stt-service-gpu.yaml"
+    export STT_MANIFEST="${TEMP_DIR}/08-stt-service.yaml"
+    export TTS_MANIFEST="${TEMP_DIR}/09-tts-service.yaml"
 
-    sed -e 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-        k8s/09-tts-service.yaml > "${TEMP_DIR}/09-tts-service-gpu.yaml"
-    export TTS_MANIFEST="${TEMP_DIR}/09-tts-service-gpu.yaml"
+    if [[ "$ENABLE_GPU" == "true" ]]; then
+        verbose "GPU manifests: enabled"
+    fi
+}
 
-    verbose "GPU manifests: enabled"
+# =============================================================================
+# DNS Configuration for Manifests
+# =============================================================================
+# Adds custom DNS configuration to bypass SSL inspection proxies.
+# Injects dnsPolicy: None and dnsConfig with nameservers from CUSTOM_DNS_SERVERS.
+
+add_dns_config_to_manifest() {
+    local manifest_file="$1"
+
+    # Convert space-separated DNS servers to YAML array format
+    local dns_yaml=""
+    for server in $CUSTOM_DNS_SERVERS; do
+        dns_yaml="${dns_yaml}        - \"${server}\"\n"
+    done
+
+    # Find the line with "initContainers:" or "containers:" (first occurrence after spec:)
+    # and insert dnsPolicy and dnsConfig before it
+    # This uses awk to inject the DNS config at the right indentation level
+    awk -v dns_servers="$dns_yaml" '
+    /^[[:space:]]*initContainers:/ && !dns_added {
+        # Get the indentation of initContainers
+        match($0, /^[[:space:]]*/)
+        indent = substr($0, RSTART, RLENGTH)
+        # Print DNS config with same indentation
+        print indent "dnsPolicy: None"
+        print indent "dnsConfig:"
+        print indent "  nameservers:"
+        printf "%s", dns_servers
+        dns_added = 1
+    }
+    { print }
+    ' "$manifest_file" > "${manifest_file}.tmp" && mv "${manifest_file}.tmp" "$manifest_file"
 }
 
 # =============================================================================
