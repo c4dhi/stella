@@ -2,7 +2,7 @@
 Main entry point for running the Echo Agent.
 
 This module provides the entry point for the Echo Agent using the
-Grace AI Agent SDK. All configuration comes from environment variables
+STELLA Agent SDK. All configuration comes from environment variables
 set by the session-management-server when deploying the agent pod.
 
 Environment Variables (set by session-management-server):
@@ -18,7 +18,7 @@ Environment Variables (set by session-management-server):
 import asyncio
 import logging
 
-from grace_agent_sdk import run_agent_from_env
+from stella_agent_sdk import run_agent_from_env
 from echo_agent import EchoAgent
 
 # Configure logging

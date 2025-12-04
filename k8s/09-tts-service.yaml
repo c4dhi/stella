@@ -45,13 +45,13 @@ spec:
         - name: TTS_PROVIDER
           valueFrom:
             configMapKeyRef:
-              name: grace-ai-config
+              name: stella-ai-config
               key: TTS_PROVIDER
               optional: true
         - name: ONNX_PROVIDER
           valueFrom:
             configMapKeyRef:
-              name: grace-ai-config
+              name: stella-ai-config
               key: ONNX_PROVIDER
               optional: true
         - name: KOKORO_CACHE_DIR

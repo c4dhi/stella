@@ -223,8 +223,8 @@ export class AgentsService {
       throw new NotFoundException('Session does not have an associated room');
     }
 
-    // Determine agent type (default to grace-agent)
-    const agentType = createAgentDto.agentType || 'grace-agent';
+    // Determine agent type (default to stella-agent)
+    const agentType = createAgentDto.agentType || 'stella-agent';
 
     // Agent config is passed directly from the request (plan_id, etc.)
     const agentConfig = createAgentDto.config || {};
@@ -358,8 +358,8 @@ export class AgentsService {
       throw new Error('Session does not have an associated room');
     }
 
-    // Determine agent type (default to grace-agent)
-    const agentType = createAgentDto.agentType || 'grace-agent';
+    // Determine agent type (default to stella-agent)
+    const agentType = createAgentDto.agentType || 'stella-agent';
 
     // Create agent record with gRPC address
     const agent = await this.prisma.agentInstance.create({
@@ -753,7 +753,7 @@ export class AgentsService {
         livekitApiSecret,
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
-        agentType: agent.agentType || 'grace-agent',  // Use stored agent type for image selection
+        agentType: agent.agentType || 'stella-agent',  // Use stored agent type for image selection
       });
 
       // Update agent with new pod info

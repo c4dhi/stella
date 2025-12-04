@@ -103,7 +103,7 @@ export class AgentPackageService {
       const sdkCheck = this.validateSdkDependency(requirementsContent)
 
       if (!sdkCheck.found) {
-        errors.push('requirements.txt must include grace-ai-agent-sdk')
+        errors.push('requirements.txt must include stella-ai-agent-sdk')
       } else if (sdkCheck.version && !this.isVersionCompatible(sdkCheck.version, MIN_SDK_VERSION)) {
         warnings.push(
           `SDK version ${sdkCheck.version} may not be compatible; minimum recommended: ${MIN_SDK_VERSION}`,
@@ -212,10 +212,10 @@ export class AgentPackageService {
       // Skip comments and empty lines
       if (!trimmed || trimmed.startsWith('#')) continue
 
-      // Check for grace-ai-agent-sdk
-      if (trimmed.includes('grace-ai-agent-sdk')) {
+      // Check for stella-ai-agent-sdk
+      if (trimmed.includes('stella-ai-agent-sdk')) {
         // Extract version if specified
-        const versionMatch = trimmed.match(/grace-ai-agent-sdk[><=!~]*=?\s*([\d.]+)/)
+        const versionMatch = trimmed.match(/stella-ai-agent-sdk[><=!~]*=?\s*([\d.]+)/)
         return {
           found: true,
           version: versionMatch ? versionMatch[1] : undefined,

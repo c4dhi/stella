@@ -9,7 +9,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}======================================${NC}"
-echo -e "${BLUE}Grace AI - Kubernetes Deployment${NC}"
+echo -e "${BLUE}STELLA - Kubernetes Deployment${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
 

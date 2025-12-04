@@ -1,6 +1,6 @@
 # Reverse Proxy Deployment Guide
 
-Complete guide for deploying the Grace AI backend with Nginx reverse proxy, supporting both path-based and subdomain-based routing.
+Complete guide for deploying the STELLA backend with Nginx reverse proxy, supporting both path-based and subdomain-based routing.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ Complete guide for deploying the Grace AI backend with Nginx reverse proxy, supp
 
 ## Overview
 
-The Grace AI backend supports flexible deployment modes:
+The STELLA backend supports flexible deployment modes:
 
 - **Development**: Direct port access (e.g., `http://localhost:3000`)
 - **Production**: Reverse proxy routing with Nginx
@@ -468,7 +468,7 @@ npm run build
 npm install -g serve pm2
 
 # Serve on port 8080
-pm2 start "serve -s dist -l 8080" --name "grace-frontend"
+pm2 start "serve -s dist -l 8080" --name "stella-frontend"
 pm2 save
 ```
 
@@ -572,10 +572,10 @@ sudo tail -f /var/log/nginx/access.log
 sudo tail -f /var/log/nginx/error.log
 
 # Backend logs
-pm2 logs grace-backend
+pm2 logs stella-backend
 
 # Frontend logs
-pm2 logs grace-frontend
+pm2 logs stella-frontend
 ```
 
 ---
@@ -593,7 +593,7 @@ pm2 status
 curl http://localhost:3000/health
 
 # Restart backend
-pm2 restart grace-backend
+pm2 restart stella-backend
 ```
 
 ### CORS Errors
@@ -609,7 +609,7 @@ cat .env | grep CORS_ORIGIN
 CORS_ORIGIN=https://yourdomain.com
 
 # Restart backend
-pm2 restart grace-backend
+pm2 restart stella-backend
 ```
 
 ### 404 Not Found (API routes)
@@ -622,7 +622,7 @@ pm2 restart grace-backend
 echo $NODE_ENV
 
 # Check logs for API prefix
-pm2 logs grace-backend | grep "API prefix"
+pm2 logs stella-backend | grep "API prefix"
 
 # Should show:
 # 🔧 API prefix enabled: /api

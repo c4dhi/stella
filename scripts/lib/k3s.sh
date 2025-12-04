@@ -288,7 +288,7 @@ EOF
 # =============================================================================
 
 stop_services() {
-    info "${EMOJI_STOP} Stopping Grace AI services..."
+    info "${EMOJI_STOP} Stopping STELLA services..."
 
     # Kill port-forward processes
     if [[ -f "${PID_DIR}/port-forward.pid" ]]; then

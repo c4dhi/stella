@@ -15,7 +15,7 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'grace.agent.v1',
+      package: 'stella.agent.v1',
       protoPath: join(__dirname, '../proto/agent.proto'),
       url: `0.0.0.0:${grpcPort}`,
     },

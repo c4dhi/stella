@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grace-ai-config
+  name: stella-ai-config
   namespace: ai-agents
 data:
   # Server Configuration

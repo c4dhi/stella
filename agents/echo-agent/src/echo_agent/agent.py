@@ -7,9 +7,9 @@ without requiring any external dependencies like LLMs.
 
 from typing import AsyncIterator, Dict, Any
 
-from grace_agent_sdk.agent.base import BaseAgent
-from grace_agent_sdk.messages.input import AgentInput
-from grace_agent_sdk.messages.output import AgentOutput
+from stella_agent_sdk.agent.base import BaseAgent
+from stella_agent_sdk.messages.input import AgentInput
+from stella_agent_sdk.messages.output import AgentOutput
 
 
 class EchoAgent(BaseAgent):

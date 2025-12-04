@@ -1,6 +1,6 @@
 # Kubernetes Deployment Guide
 
-This guide explains how to deploy the Grace AI Session Management System to Kubernetes.
+This guide explains how to deploy the STELLA Session Management System to Kubernetes.
 
 ## Architecture
 

@@ -156,7 +156,7 @@ create_secrets() {
 
     local db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 
-    kubectl create secret generic grace-ai-secrets -n ai-agents \
+    kubectl create secret generic stella-ai-secrets -n ai-agents \
         --from-literal=postgres-db="$POSTGRES_DB" \
         --from-literal=postgres-user="$POSTGRES_USER" \
         --from-literal=postgres-password="$POSTGRES_PASSWORD" \
@@ -266,32 +266,32 @@ apply_gpu_patches() {
 # =============================================================================
 
 restart_services() {
-    if [[ ${#REBUILT_SERVICES[@]} -eq 0 && "$SKIP_BUILD_MODE" != "true" ]]; then
-        verbose "No services rebuilt - skipping restarts"
-        return 0
-    fi
+    # Always verify all services, but only restart those that were rebuilt
+    SERVICES_TO_WAIT="$ALL_DEPLOYMENTS"
 
-    verbose "Restarting services..."
-
-    # Determine which services to restart
-    SERVICES_TO_WAIT=""
+    # Determine which services need restart
+    local services_to_restart=""
 
     if [[ "$REBUILD_MODE" == "true" || "$SKIP_BUILD_MODE" == "true" ]]; then
         # Restart all deployments
-        SERVICES_TO_WAIT="$ALL_DEPLOYMENTS"
-    else
+        services_to_restart="$ALL_DEPLOYMENTS"
+        verbose "Restarting all services..."
+    elif [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         # Restart only rebuilt services
         for service in $ALL_SERVICES; do
             if service_was_rebuilt "$service"; then
                 local deploy_name
                 deploy_name=$(get_deployment_name "$service")
-                SERVICES_TO_WAIT="$SERVICES_TO_WAIT $deploy_name"
+                services_to_restart="$services_to_restart $deploy_name"
             fi
         done
+        verbose "Restarting rebuilt services: $services_to_restart"
+    else
+        verbose "No services rebuilt - skipping restarts, will verify existing pods"
     fi
 
-    # Restart services
-    for deploy in $SERVICES_TO_WAIT; do
+    # Restart services that need it
+    for deploy in $services_to_restart; do
         kubectl rollout restart deployment "$deploy" -n ai-agents >/dev/null 2>&1 || true
     done
 
@@ -340,7 +340,7 @@ show_dry_run_deployment() {
     echo -e "   ${ARROW} Would apply: k8s/00-namespace.yaml"
     echo -e "   ${ARROW} Would apply: k8s/03-secrets.yaml"
     echo -e "   ${ARROW} Would apply: k8s/05-rbac.yaml"
-    echo -e "   ${ARROW} Would create: grace-ai-secrets"
+    echo -e "   ${ARROW} Would create: stella-ai-secrets"
     echo -e "   ${ARROW} Would apply: configmap"
     echo -e "   ${ARROW} Would apply: k8s/01-postgres.yaml"
     echo -e "   ${ARROW} Would apply: session-management-server"

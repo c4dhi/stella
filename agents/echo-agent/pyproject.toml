@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Grace AI Team"}
+    {name = "STELLA Team"}
 ]
 
 dependencies = [
-    "grace-ai-agent-sdk",
+    "stella-ai-agent-sdk",
 ]
 
 [project.optional-dependencies]

@@ -4,4 +4,4 @@ metadata:
   name: ai-agents
   labels:
     name: ai-agents
-    app: grace-ai
+    app: stella-ai

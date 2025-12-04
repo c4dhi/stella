@@ -13,10 +13,10 @@ export interface AgentPodConfig {
   livekitUrl: string;
   livekitApiKey: string;
   livekitApiSecret: string;
-  // openaiApiKey removed - now read from grace-ai-secrets
+  // openaiApiKey removed - now read from stella-ai-secrets
   ttsProvider: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
-  agentType?: string;       // Agent type (e.g., "grace-agent") - determines which image to use
+  agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
 }
 
@@ -35,7 +35,7 @@ export class KubernetesService {
     private agentImageService: AgentImageService,
   ) {
     this.namespace = this.configService.get<string>('KUBERNETES_NAMESPACE', 'default');
-    this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'grace-agent');
+    this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'stella-agent');
     this.imagePullPolicy = this.configService.get<string>('AGENT_IMAGE_PULL_POLICY', 'IfNotPresent');
     // Configurable gRPC server address for agent connections
     // Allows agents to connect from anywhere (K8s, external servers, etc.)
@@ -60,7 +60,7 @@ export class KubernetesService {
     const podName = `agent-${config.agentId}`;
     const secretName = `agent-secret-${config.agentId}`;
 
-    // Determine agent type (default to grace-agent)
+    // Determine agent type (default to stella-agent)
     const agentType = config.agentType || this.defaultAgentType;
 
     // Ensure agent image exists (builds on-demand if needed)
@@ -80,7 +80,7 @@ export class KubernetesService {
       metadata: {
         name: podName,
         labels: {
-          app: 'grace-ai-agent',
+          app: 'stella-ai-agent',
           agentId: config.agentId,
           sessionId: config.sessionId,
           projectId: config.projectId,
@@ -119,7 +119,7 @@ export class KubernetesService {
             image: agentImage,
             imagePullPolicy: this.imagePullPolicy as any,
             // Run agent module (config from environment variables)
-            // echo-agent -> echo_agent, grace-agent -> grace_agent
+            // echo-agent -> echo_agent, stella-agent -> stella_agent
             command: ['python', '-m', agentType.replace(/-/g, '_')],
             envFrom: [
               {
@@ -174,12 +174,12 @@ export class KubernetesService {
                 name: 'NODE_ENV',
                 value: process.env.NODE_ENV || 'local',
               },
-              // Shared API keys from central grace-ai-secrets
+              // Shared API keys from central stella-ai-secrets
               {
                 name: 'OPENAI_API_KEY',
                 valueFrom: {
                   secretKeyRef: {
-                    name: 'grace-ai-secrets',
+                    name: 'stella-ai-secrets',
                     key: 'openai-api-key',
                   },
                 },
@@ -188,7 +188,7 @@ export class KubernetesService {
                 name: 'ELEVENLABS_API_KEY',
                 valueFrom: {
                   secretKeyRef: {
-                    name: 'grace-ai-secrets',
+                    name: 'stella-ai-secrets',
                     key: 'elevenlabs-api-key',
                   },
                 },
@@ -248,8 +248,8 @@ export class KubernetesService {
         ROOM_NAME: config.roomName,
         IDENTITY: `agent-${config.agentId}`,
         TTS_PROVIDER: config.ttsProvider,
-        // OPENAI_API_KEY removed - now from grace-ai-secrets
-        // ELEVENLABS_API_KEY removed - now from grace-ai-secrets
+        // OPENAI_API_KEY removed - now from stella-ai-secrets
+        // ELEVENLABS_API_KEY removed - now from stella-ai-secrets
         // Agent-specific config as JSON string (each agent interprets as needed)
         AGENT_CONFIG: JSON.stringify(config.agentConfig || {}),
       },

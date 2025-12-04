@@ -44,7 +44,7 @@ export interface AgentManifest {
   defaultConfig?: Record<string, unknown>
 
   sdk?: {
-    minVersion?: string     // Minimum grace-ai-agent-sdk version
+    minVersion?: string     // Minimum stella-ai-agent-sdk version
   }
 }
 

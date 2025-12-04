@@ -1,6 +1,6 @@
 # Nginx Configuration for Production Deployment
 
-This guide explains how to use nginx with Grace AI in production. **Good news: Your existing nginx configuration works as-is!**
+This guide explains how to use nginx with STELLA in production. **Good news: Your existing nginx configuration works as-is!**
 
 ## Overview - Recommended Approach
 
@@ -97,7 +97,7 @@ This is recommended but not required. The default timeouts usually work fine.
 **1. Deploy Kubernetes Services:**
 
 ```bash
-cd grace-ai-backend
+cd stella-backend
 
 # Switch to production mode
 ./scripts/switch-env.sh production
@@ -137,23 +137,23 @@ curl https://backend.c4dhi.moserfelix.com/health
 
 ```bash
 # Edit the service file with your paths
-nano scripts/systemd/grace-ai-port-forwards.service
+nano scripts/systemd/stella-ai-port-forwards.service
 
 # Replace:
 # - YOUR_USERNAME with your actual username
-# - /path/to/grace-ai-backend with actual path
+# - /path/to/stella-backend with actual path
 
 # Install the service
-sudo cp scripts/systemd/grace-ai-port-forwards.service /etc/systemd/system/
+sudo cp scripts/systemd/stella-ai-port-forwards.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable grace-ai-port-forwards
-sudo systemctl start grace-ai-port-forwards
+sudo systemctl enable stella-ai-port-forwards
+sudo systemctl start stella-ai-port-forwards
 
 # Check status
-sudo systemctl status grace-ai-port-forwards
+sudo systemctl status stella-ai-port-forwards
 
 # View logs
-sudo journalctl -u grace-ai-port-forwards -f
+sudo journalctl -u stella-ai-port-forwards -f
 ```
 
 **Option B: Using Cron (Simple Alternative)**
@@ -163,7 +163,7 @@ sudo journalctl -u grace-ai-port-forwards -f
 crontab -e
 
 # Add this line:
-* * * * * /path/to/grace-ai-backend/scripts/monitor-port-forwards.sh --once >> /tmp/grace-ai-k8s/cron.log 2>&1
+* * * * * /path/to/stella-backend/scripts/monitor-port-forwards.sh --once >> /tmp/stella-ai-k8s/cron.log 2>&1
 ```
 
 **Option C: Manual Monitoring**
@@ -186,12 +186,12 @@ crontab -e
 ./scripts/monitor-port-forwards.sh --once
 
 # View monitor logs
-tail -f /tmp/grace-ai-k8s/monitor.log
+tail -f /tmp/stella-ai-k8s/monitor.log
 
 # If using systemd
-sudo systemctl status grace-ai-port-forwards
-sudo systemctl restart grace-ai-port-forwards
-sudo journalctl -u grace-ai-port-forwards -f
+sudo systemctl status stella-ai-port-forwards
+sudo systemctl restart stella-ai-port-forwards
+sudo journalctl -u stella-ai-port-forwards -f
 ```
 
 ### Why This Approach?
@@ -238,10 +238,10 @@ kubectl get pods -n ai-agents
 **After server restart:**
 ```bash
 # If using systemd - automatic restart
-sudo systemctl start grace-ai-port-forwards
+sudo systemctl start stella-ai-port-forwards
 
 # If not using systemd - manual restart
-cd grace-ai-backend
+cd stella-backend
 ./scripts/start-k8s.sh --daemon
 ```
 
@@ -322,7 +322,7 @@ Here's your complete updated configuration file:
 
 ```nginx
 # ============================================================================
-# Grace AI - Production Nginx Configuration
+# STELLA - Production Nginx Configuration
 # ============================================================================
 # This configuration proxies HTTPS/WSS traffic to Kubernetes NodePort services
 #
@@ -514,7 +514,7 @@ sudo systemctl reload nginx
 
 ```bash
 # Switch to production environment
-cd /path/to/grace-ai-backend
+cd /path/to/stella-backend
 ./scripts/switch-env.sh production
 
 # Deploy services with NodePorts
@@ -696,7 +696,7 @@ kubectl logs -f -n ai-agents deployment/livekit
 ✅ **Management:**
 - Status: `./scripts/monitor-port-forwards.sh --status`
 - Restart: `./scripts/monitor-port-forwards.sh --restart`
-- Logs: `tail -f /tmp/grace-ai-k8s/monitor.log`
+- Logs: `tail -f /tmp/stella-ai-k8s/monitor.log`
 
 ---
 
@@ -781,7 +781,7 @@ sudo systemctl reload nginx
 ## Deployment for NodePort
 
 ```bash
-cd grace-ai-backend
+cd stella-backend
 
 # Switch to production
 ./scripts/switch-env.sh production

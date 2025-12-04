@@ -34,11 +34,11 @@ const AGENT_TYPE_METADATA: Record<string, {
   icon: string;
   defaultConfig: Record<string, unknown>;
 }> = {
-  'grace-agent': {
-    name: 'Grace Agent',
+  'stella-agent': {
+    name: 'Stella Agent',
     description: 'Full-featured conversational AI with expert consultation',
     icon: '👩‍⚕️',
-    defaultConfig: { plan_id: 'grace_smalltalk' },
+    defaultConfig: { plan_id: 'stella_smalltalk' },
   },
   'echo-agent': {
     name: 'Echo Agent',
@@ -57,11 +57,11 @@ export class AgentImageService {
   private readonly hasDockerSocket: boolean;
 
   // Registry of known agent types and their build contexts
-  // Paths are relative to grace-ai-backend/ directory (the new context)
+  // Paths are relative to stella-backend/ directory (the new context)
   private readonly agentRegistry: Map<string, AgentImageConfig> = new Map([
-    ['grace-agent', {
-      imageName: 'grace-agent',
-      dockerfilePath: 'agents/grace-agent/Dockerfile',
+    ['stella-agent', {
+      imageName: 'stella-agent',
+      dockerfilePath: 'agents/stella-agent/Dockerfile',
       contextPath: '.',
       tag: 'latest',
     }],
@@ -94,8 +94,8 @@ export class AgentImageService {
     if (this.isRunningInK8s && process.env.AGENT_WORKSPACE_ROOT) {
       this.workspaceRoot = process.env.AGENT_WORKSPACE_ROOT;
     } else {
-      // Local development: workspace root is grace-ai-backend/ directory
-      // (agents are now inside grace-ai-backend/agents/)
+      // Local development: workspace root is stella-backend/ directory
+      // (agents are now inside stella-backend/agents/)
       this.workspaceRoot = path.resolve(__dirname, '../../../');
     }
 
@@ -185,7 +185,7 @@ export class AgentImageService {
 
   /**
    * Ensure agent image exists, building if necessary.
-   * Returns the full image name (e.g., "grace-agent:latest")
+   * Returns the full image name (e.g., "stella-agent:latest")
    *
    * When running inside K8s with Docker socket mounted, we can build images.
    * Without Docker socket, we assume images are pre-built on the host.

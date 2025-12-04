@@ -103,8 +103,8 @@ enum AgentValidationStatus {
 // Agent type registry - supports built-in and custom agents
 model AgentType {
   id               String    @id @default(uuid())
-  slug             String    @unique  // e.g., "grace-agent", "echo-agent", "memory-coach"
-  name             String              // Display name: "Grace Agent"
+  slug             String    @unique  // e.g., "stella-agent", "echo-agent", "memory-coach"
+  name             String              // Display name: "Stella Agent"
   description      String              // Short description for gallery card
   icon             String?             // Default emoji or image URL
   version          String    @default("1.0.0")
@@ -147,7 +147,7 @@ model AgentType {
   tags             Json?               // Array of tags for filtering
 
   // SDK requirements
-  sdkMinVersion    String?             // Minimum grace-ai-agent-sdk version
+  sdkMinVersion    String?             // Minimum stella-ai-agent-sdk version
 
   // Timestamps
   createdAt        DateTime  @default(now())
@@ -173,8 +173,8 @@ model AgentInstance {
   podName       String?
   secretName    String?
   configMapName String?
-  agentConfig   Json?        // Agent-specific config (e.g., { plan_id: "grace_smalltalk" })
-  agentType     String?      @default("grace-agent")  // Agent type slug for backward compat
+  agentConfig   Json?        // Agent-specific config (e.g., { plan_id: "stella_smalltalk" })
+  agentType     String?      @default("stella-agent")  // Agent type slug for backward compat
   agentTypeId   String?                               // FK to AgentType (optional for backward compat)
   agentTypeRef  AgentType?   @relation(fields: [agentTypeId], references: [id])
   createdAt     DateTime     @default(now())

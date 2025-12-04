@@ -306,9 +306,9 @@ build_images() {
     # Build message recorder
     smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" || true
 
-    # Build grace-agent (pre-build to avoid on-demand building in production)
+    # Build stella-agent (pre-build to avoid on-demand building in production)
     # The agent images are built from the agents/ directory
-    smart_build "grace-agent" "grace-agent:latest" "." "" "agents/grace-agent/Dockerfile" || true
+    smart_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile" || true
 
     # Build echo-agent
     smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile" || true
@@ -369,7 +369,7 @@ cleanup_for_rebuild() {
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
 
     # Remove old Docker images
-    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "grace-agent" "echo-agent")
+    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent")
     for img in "${images[@]}"; do
         docker rmi "${img}:latest" 2>/dev/null || true
     done

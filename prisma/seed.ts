@@ -15,15 +15,15 @@ const builtInAgents = [
     defaultConfig: {},  // Echo agent has no special config
   },
   {
-    slug: 'grace-agent',
-    name: 'Grace Agent',
+    slug: 'stella-agent',
+    name: 'Stella Agent',
     description: 'Full-featured conversational AI with expert consultation and plan execution.',
     icon: '👩‍⚕️',
     version: '1.0.0',
     isBuiltIn: true,
     validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text', 'plans', 'experts'],
-    defaultConfig: { plan_id: 'grace_smalltalk' },  // Default plan for Grace agent
+    defaultConfig: { plan_id: 'stella_smalltalk' },  // Default plan for Stella agent
   },
 ]
 
