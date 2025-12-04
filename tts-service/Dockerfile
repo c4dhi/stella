@@ -51,10 +51,11 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
-# Pre-download Kokoro models (~500MB)
-# This bakes models into the image to avoid runtime downloads
+# Model download script (models are downloaded at runtime via init container)
+# Models are stored on PersistentVolume, not in the image.
+# This keeps the image slim (~400MB instead of ~1GB).
+# The init container runs this script to populate the PV on first startup.
 COPY download_kokoro_models.py .
-RUN python download_kokoro_models.py || echo "Kokoro models download failed - will use Edge TTS as fallback"
 
 # Generate gRPC code from proto
 COPY proto/ ./proto/

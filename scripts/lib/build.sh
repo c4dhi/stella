@@ -324,6 +324,12 @@ build_images() {
     if [[ "$OS_TYPE" == "linux" && ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         import_images_to_k3s
     fi
+
+    # Always sync images to K3s on Linux (ensure all images are available)
+    # This catches cases where images exist in Docker but not in K3s containerd
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        sync_images_to_k3s
+    fi
 }
 
 # =============================================================================
@@ -346,6 +352,44 @@ import_images_to_k3s() {
             warning "Failed to import ${service} to K3s"
         fi
     done
+}
+
+# =============================================================================
+# K3s Image Sync (Linux only)
+# =============================================================================
+# Ensures all images that exist in Docker are also available in K3s containerd.
+# This handles cases where images exist in Docker but not K3s (e.g., after
+# a partial deploy or when images were built outside of start-k8s.sh).
+
+sync_images_to_k3s() {
+    [[ "$DRY_RUN_MODE" == "true" ]] && return 0
+
+    local all_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent")
+    local images_to_sync=()
+
+    # Find images that exist in Docker but not in K3s
+    for img in "${all_images[@]}"; do
+        # Check if image exists in Docker
+        if docker images -q "${img}:latest" 2>/dev/null | grep -q .; then
+            # Check if image exists in K3s containerd
+            if ! sudo k3s ctr images ls -q 2>/dev/null | grep -q "docker.io/library/${img}:latest"; then
+                images_to_sync+=("$img")
+            fi
+        fi
+    done
+
+    # Sync missing images
+    if [[ ${#images_to_sync[@]} -gt 0 ]]; then
+        info "${EMOJI_GEAR} Syncing missing images to K3s..."
+        for img in "${images_to_sync[@]}"; do
+            echo -ne "   ${ARROW} ${img}... "
+            if docker save "${img}:latest" | sudo k3s ctr images import - >/dev/null 2>&1; then
+                echo -e "${GREEN}${CHECK}${NC}"
+            else
+                echo -e "${RED}${CROSS}${NC}"
+            fi
+        done
+    fi
 }
 
 # =============================================================================

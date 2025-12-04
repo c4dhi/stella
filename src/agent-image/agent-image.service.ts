@@ -242,8 +242,9 @@ export class AgentImageService {
    * Check if Docker image exists locally.
    *
    * On macOS: Checks Docker daemon
-   * On Linux (K3s): Checks both Docker daemon AND K3s containerd
-   *                 (image must exist in containerd for K8s to use it)
+   * On Linux (K3s): Checks Docker daemon only when running inside K8s pod
+   *                 (k3s ctr requires sudo which pods don't have)
+   *                 The deployment script's sync_images_to_k3s ensures containerd has the images.
    */
   private async imageExists(imageName: string): Promise<boolean> {
     try {
@@ -251,8 +252,14 @@ export class AgentImageService {
       const { stdout } = await execAsync(`docker images -q ${imageName}`);
       const existsInDocker = stdout.trim().length > 0;
 
-      // On Linux with K3s, we also need to check containerd
-      // because K3s pulls from containerd, not Docker
+      // When running inside K8s pod, we can't check K3s containerd (requires sudo)
+      // Trust that the deployment script has synced images to K3s containerd
+      if (this.isRunningInK8s) {
+        this.logger.debug(`Running in K8s pod - checking Docker only (k3s ctr requires sudo)`);
+        return existsInDocker;
+      }
+
+      // On Linux with K3s (running outside of K8s, e.g., direct CLI), check containerd too
       if (this.isProduction) {
         const existsInK3s = await this.imageExistsInK3s(imageName);
         // Return true only if image exists in BOTH Docker and K3s

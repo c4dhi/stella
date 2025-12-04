@@ -21,13 +21,14 @@ get_deployment_name() {
 }
 
 # Get timeout for a deployment
+# Note: STT/TTS have longer timeouts for first-time model downloads (init containers)
 get_service_timeout() {
     local deploy="$1"
     case "$deploy" in
         "session-management-server") echo 180 ;;
         "frontend-ui") echo 120 ;;
-        "stt-service") echo 120 ;;
-        "tts-service") echo 120 ;;
+        "stt-service") echo 600 ;;  # 10 min for model downloads
+        "tts-service") echo 300 ;;  # 5 min for model downloads
         "message-recorder") echo 60 ;;
         *) echo 120 ;;
     esac
@@ -202,6 +203,12 @@ deploy_services() {
 
     status "ConfigMap"
     kubectl apply -f "${TEMP_DIR}/04-configmap-updated.yaml" >/dev/null
+    status_ok
+
+    # Phase 1.5: Model Storage PVCs (for STT/TTS models)
+    status "Model Storage PVCs"
+    kubectl apply -f k8s/02-stt-models-pvc.yaml >/dev/null
+    kubectl apply -f k8s/02-tts-models-pvc.yaml >/dev/null
     status_ok
 
     # Phase 2: PostgreSQL

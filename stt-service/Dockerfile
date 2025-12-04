@@ -76,31 +76,17 @@ RUN python -m grpc_tools.protoc \
     proto/stt.proto
 
 # ============================================================================
-# Model pre-download
+# Model download scripts (models are downloaded at runtime via init container)
 # ============================================================================
-
-# Copy all download scripts
+# Models are stored on PersistentVolume, not in the image.
+# This keeps the image slim (~500MB instead of ~4GB for GPU builds).
+# The init container runs these scripts to populate the PV on first startup.
 COPY download_sherpa_model.py download_whisper_model.py download_silero_vad.py ./
 
-# Always download Sherpa model (lightweight, ~180MB)
-RUN python download_sherpa_model.py
-
-# Download Whisper + Silero models for GPU builds (~3GB+ for large-v3)
-ARG ENABLE_GPU
-ARG WHISPER_MODEL=large-v3
-ENV WHISPER_MODEL=${WHISPER_MODEL}
+# Environment defaults for cache directories (mounted from PV at runtime)
+ENV WHISPER_MODEL=large-v3
 ENV WHISPER_CACHE_DIR=/root/.cache/whisper
 ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
-
-RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[STT] Pre-downloading faster-whisper model: ${WHISPER_MODEL}..." && \
-        python download_whisper_model.py && \
-        echo "[STT] Pre-downloading Silero VAD model to ${SILERO_VAD_CACHE_DIR}..." && \
-        python download_silero_vad.py && \
-        echo "[STT] All GPU models downloaded successfully"; \
-    else \
-        echo "[STT] Skipping GPU model downloads (ENABLE_GPU=false)"; \
-    fi
 
 # ============================================================================
 # Application code

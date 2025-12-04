@@ -32,6 +32,61 @@ spec:
         app: tts-service
     spec:
       # GPU: runtimeClassName: nvidia
+      # ======================================================================
+      # Init Container: Download Kokoro models to PersistentVolume
+      # ======================================================================
+      initContainers:
+      - name: download-models
+        image: tts-service:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "[TTS Init] Starting model download check..."
+
+          # Get provider from env (default: edge_tts)
+          TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
+
+          # ================================================================
+          # Kokoro Model (only when TTS_PROVIDER=kokoro)
+          # ================================================================
+          if [ "$TTS_PROVIDER" = "kokoro" ]; then
+            KOKORO_VERSION_FILE="/models/kokoro/.version"
+            KOKORO_VERSION="v1.0"
+
+            if [ -f "$KOKORO_VERSION_FILE" ] && [ "$(cat $KOKORO_VERSION_FILE)" = "$KOKORO_VERSION" ]; then
+              echo "[TTS Init] Kokoro model already downloaded (version: $KOKORO_VERSION)"
+            else
+              echo "[TTS Init] Downloading Kokoro model..."
+              mkdir -p /models/kokoro
+              KOKORO_CACHE_DIR=/models/kokoro python download_kokoro_models.py
+              echo "$KOKORO_VERSION" > "$KOKORO_VERSION_FILE"
+              echo "[TTS Init] Kokoro model download complete"
+            fi
+          else
+            echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
+          fi
+
+          echo "[TTS Init] Model initialization complete!"
+        env:
+        - name: TTS_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: TTS_PROVIDER
+              optional: true
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
       containers:
       - name: tts-service
         image: tts-service:latest
@@ -39,6 +94,11 @@ spec:
         ports:
         - containerPort: 50052
           name: grpc
+        # Mount PV with models at cache directory
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/kokoro
+          subPath: kokoro
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -83,3 +143,10 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 10
+      # ======================================================================
+      # Volumes: PersistentVolume for model storage
+      # ======================================================================
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: tts-models-pvc
