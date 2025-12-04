@@ -56,6 +56,52 @@ export class KubernetesService {
     this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
   }
 
+  /**
+   * Get DNS configuration for production environment.
+   * Uses CUSTOM_DNS_SERVERS to bypass corporate SSL inspection while keeping
+   * K8s search domains for internal service discovery.
+   */
+  private getProductionDnsConfig(): object {
+    if (process.env.NODE_ENV !== 'production') {
+      return {}; // Use default K8s DNS in non-production
+    }
+
+    // Get custom DNS servers from environment (space-separated, e.g., "8.8.8.8 8.8.4.4")
+    const customDns = this.configService.get<string>('CUSTOM_DNS_SERVERS', '');
+    if (!customDns || customDns.trim() === '') {
+      this.logger.warn('CUSTOM_DNS_SERVERS not set in production - using default DNS (may hit SSL inspection issues)');
+      return {}; // Use default K8s DNS if not configured
+    }
+
+    // Parse space-separated DNS servers
+    const nameservers = customDns.split(/\s+/).filter(s => s.length > 0);
+    if (nameservers.length === 0) {
+      this.logger.warn('CUSTOM_DNS_SERVERS is empty - using default DNS');
+      return {};
+    }
+
+    this.logger.debug(`Using custom DNS servers for agent pod: ${nameservers.join(', ')}`);
+
+    return {
+      dnsPolicy: 'None',
+      dnsConfig: {
+        nameservers: nameservers,
+        searches: [
+          `${this.namespace}.svc.cluster.local`,
+          'svc.cluster.local',
+          'cluster.local',
+          // Note: UZH's cloud.science-it.uzh.ch is intentionally excluded to avoid SSL interception
+        ],
+        options: [
+          {
+            name: 'ndots',
+            value: '2', // Try absolute resolution for names with 2+ dots (like api.openai.com)
+          },
+        ],
+      },
+    };
+  }
+
   async createAgentPod(config: AgentPodConfig): Promise<{ podName: string; secretName: string }> {
     const podName = `agent-${config.agentId}`;
     const secretName = `agent-secret-${config.agentId}`;
@@ -90,29 +136,9 @@ export class KubernetesService {
       },
       spec: {
         restartPolicy: 'Never',
-        // Production-only: Override DNS configuration to avoid UZH search domain issues
-        // UZH has a wildcard DNS record (*.cloud.science-it.uzh.ch) that intercepts external domains
-        // By excluding this search domain and lowering ndots, we ensure external APIs resolve correctly
-        ...(process.env.NODE_ENV === 'production' && {
-          dnsPolicy: 'None',
-          dnsConfig: {
-            nameservers: [
-              this.configService.get<string>('KUBERNETES_DNS_NAMESERVER', '10.96.0.10'),
-            ],
-            searches: [
-              `${this.namespace}.svc.cluster.local`,
-              'svc.cluster.local',
-              'cluster.local',
-              // Note: cloud.science-it.uzh.ch is intentionally excluded
-            ],
-            options: [
-              {
-                name: 'ndots',
-                value: '2', // Try absolute resolution for names with 2+ dots (like api.openai.com)
-              },
-            ],
-          },
-        }),
+        // Production-only: Override DNS to bypass corporate SSL inspection (UZH network)
+        // Uses CUSTOM_DNS_SERVERS (e.g., 8.8.8.8) with K8s search domains for service discovery
+        ...(this.getProductionDnsConfig()),
         containers: [
           {
             name: 'agent',

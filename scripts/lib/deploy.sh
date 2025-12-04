@@ -89,7 +89,7 @@ generate_configmap() {
         -e "s|\${LIVEKIT_TURN_DOMAIN}|${LIVEKIT_TURN_DOMAIN:-localhost}|g" \
         -e "s|\${ELEVENLABS_VOICE_ID}|${ELEVENLABS_VOICE_ID:-}|g" \
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
-        -e "s|\${KUBERNETES_DNS_NAMESERVER}|${KUBERNETES_DNS_NAMESERVER:-}|g" \
+        -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         k8s/04-configmap.yaml > "$output_file"
 
     # Generate message-recorder manifest with host gateway

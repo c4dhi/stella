@@ -36,10 +36,10 @@ data:
   # TTS Service (microservices architecture)
   TTS_SERVICE_URL: "tts-service:50052"
 
-  # Kubernetes DNS Configuration (production only)
-  # Auto-detected at deployment time or from .env
-  # K3s: 10.43.0.10, Minikube: 10.96.0.10
-  KUBERNETES_DNS_NAMESERVER: "${KUBERNETES_DNS_NAMESERVER}"
+  # DNS Configuration (production only)
+  # Custom DNS servers to bypass corporate SSL inspection (e.g., "8.8.8.8 8.8.4.4")
+  # Used by agent pods to resolve external APIs (OpenAI, GitHub, etc.)
+  CUSTOM_DNS_SERVERS: "${CUSTOM_DNS_SERVERS}"
 
   # ============================================================================
   # AI Agent Configuration (Python conversational-ai-server)
