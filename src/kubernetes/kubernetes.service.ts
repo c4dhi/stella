@@ -58,34 +58,35 @@ export class KubernetesService {
 
   /**
    * Get DNS configuration for production environment.
-   * Uses CUSTOM_DNS_SERVERS to bypass corporate SSL inspection while keeping
-   * K8s search domains for internal service discovery.
+   * Agent pods use K8s internal DNS for service discovery (stt-service, tts-service).
+   *
+   * Configuration via .env.production:
+   *   KUBERNETES_DNS_IP=10.43.0.10  (K8s CoreDNS IP for service discovery)
+   *
+   * Note: CUSTOM_DNS_SERVERS (8.8.8.8) is used by STT/TTS init containers for model downloads.
+   *       Agent pods use K8s DNS because they need to resolve internal services.
    */
   private getProductionDnsConfig(): object {
     if (process.env.NODE_ENV !== 'production') {
       return {}; // Use default K8s DNS in non-production
     }
 
-    // Get custom DNS servers from environment (space-separated, e.g., "8.8.8.8 8.8.4.4")
-    const customDns = this.configService.get<string>('CUSTOM_DNS_SERVERS', '');
-    if (!customDns || customDns.trim() === '') {
-      this.logger.warn('CUSTOM_DNS_SERVERS not set in production - using default DNS (may hit SSL inspection issues)');
-      return {}; // Use default K8s DNS if not configured
+    // K8s CoreDNS IP - required for agent pods to resolve internal services
+    // Configure via KUBERNETES_DNS_IP in .env.production
+    // Find with: kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
+    const k8sDnsIp = this.configService.get<string>('KUBERNETES_DNS_IP', '');
+
+    if (!k8sDnsIp || k8sDnsIp.trim() === '') {
+      this.logger.warn('KUBERNETES_DNS_IP not set in production - using default K8s DNS');
+      return {}; // Fall back to default K8s DNS
     }
 
-    // Parse space-separated DNS servers
-    const nameservers = customDns.split(/\s+/).filter(s => s.length > 0);
-    if (nameservers.length === 0) {
-      this.logger.warn('CUSTOM_DNS_SERVERS is empty - using default DNS');
-      return {};
-    }
-
-    this.logger.debug(`Using custom DNS servers for agent pod: ${nameservers.join(', ')}`);
+    this.logger.debug(`Using K8s DNS for agent pod: ${k8sDnsIp}`);
 
     return {
       dnsPolicy: 'None',
       dnsConfig: {
-        nameservers: nameservers,
+        nameservers: [k8sDnsIp],
         searches: [
           `${this.namespace}.svc.cluster.local`,
           'svc.cluster.local',

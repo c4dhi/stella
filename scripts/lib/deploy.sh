@@ -50,6 +50,18 @@ generate_configmap() {
         return 0
     fi
 
+    # Auto-detect K8s DNS IP in production (if not already set)
+    if [[ "$NODE_ENV" == "production" && -z "$KUBERNETES_DNS_IP" ]]; then
+        local detected_dns
+        detected_dns=$(kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+        if [[ -n "$detected_dns" ]]; then
+            export KUBERNETES_DNS_IP="$detected_dns"
+            verbose "Auto-detected K8s DNS IP: $KUBERNETES_DNS_IP"
+        else
+            warning "Could not auto-detect K8s DNS IP - agent pods may fail to resolve internal services"
+        fi
+    fi
+
     # Detect host gateway IP for message-recorder
     local host_gateway_ip
     if [[ "$OS_TYPE" == "macos" ]]; then
@@ -90,6 +102,7 @@ generate_configmap() {
         -e "s|\${ELEVENLABS_VOICE_ID}|${ELEVENLABS_VOICE_ID:-}|g" \
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
+        -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
         k8s/04-configmap.yaml > "$output_file"
 
     # Generate message-recorder manifest with host gateway

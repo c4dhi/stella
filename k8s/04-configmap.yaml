@@ -37,9 +37,11 @@ data:
   TTS_SERVICE_URL: "tts-service:50052"
 
   # DNS Configuration (production only)
-  # Custom DNS servers to bypass corporate SSL inspection (e.g., "8.8.8.8 8.8.4.4")
-  # Used by agent pods to resolve external APIs (OpenAI, GitHub, etc.)
+  # CUSTOM_DNS_SERVERS: External DNS to bypass SSL inspection for model downloads (STT/TTS init containers)
+  # KUBERNETES_DNS_IP: K8s CoreDNS IP for agent pods to resolve internal services
+  # Find K8s DNS IP with: kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
   CUSTOM_DNS_SERVERS: "${CUSTOM_DNS_SERVERS}"
+  KUBERNETES_DNS_IP: "${KUBERNETES_DNS_IP}"
 
   # ============================================================================
   # AI Agent Configuration (Python conversational-ai-server)
