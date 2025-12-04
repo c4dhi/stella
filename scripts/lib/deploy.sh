@@ -51,7 +51,7 @@ generate_configmap() {
     fi
 
     # Auto-detect K8s DNS IP in production (if not already set)
-    if [[ "$NODE_ENV" == "production" && -z "$KUBERNETES_DNS_IP" ]]; then
+    if [[ "$NODE_ENV" == "production" && -z "${KUBERNETES_DNS_IP:-}" ]]; then
         local detected_dns
         detected_dns=$(kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
         if [[ -n "$detected_dns" ]]; then
