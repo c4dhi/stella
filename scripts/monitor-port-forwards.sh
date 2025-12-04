@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PID_DIR="/tmp/grace-ai-k8s"
+PID_DIR="/tmp/stella-ai-k8s"
 LOG_FILE="$PID_DIR/monitor.log"
 CHECK_INTERVAL=30  # Check every 30 seconds
 

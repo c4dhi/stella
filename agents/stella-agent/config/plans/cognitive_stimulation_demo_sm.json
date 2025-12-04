@@ -1,0 +1,310 @@
+{
+  "id": "cognitive_stimulation_demo_sm",
+  "title": "STELLA Cognitive Stimulation Exercise (State Machine)",
+  "description": "An engaging cognitive stimulation exercise featuring conversational interaction and a progressive memory game using state machine architecture",
+  "initial_state_id": "introduction",
+  "states": [
+    {
+      "id": "introduction",
+      "title": "Introduction and Getting to Know You",
+      "type": "loose",
+      "description": "Warmly introduce myself as STELLA and get to know the user through natural conversation. Collect basic information about them in any order that feels natural.",
+      "tasks": [
+        {
+          "id": "collect_name",
+          "description": "Learn the user's name",
+          "instruction": "Introduce yourself as STELLA warmly and learn the user's name through natural conversation. Make them feel comfortable and welcome.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_name",
+              "type": "string",
+              "description": "The user's name",
+              "required": true,
+              "acceptance_criteria": "Should be the name the user prefers to be called.",
+              "examples": ["Sarah", "John", "Alex", "Maria", "David"]
+            }
+          ]
+        },
+        {
+          "id": "collect_age",
+          "description": "Find out the user's age",
+          "instruction": "Express genuine interest in getting to know the user better. Find out their age naturally as part of the conversation. You can share something lighthearted about yourself too.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_age",
+              "type": "number",
+              "description": "The user's age",
+              "required": true,
+              "acceptance_criteria": "Should be a reasonable age between 1 and 120.",
+              "examples": ["25", "34", "67", "42"]
+            }
+          ]
+        },
+        {
+          "id": "collect_location",
+          "description": "Learn where the user is from",
+          "instruction": "Continue building rapport by learning where they're from. Show genuine interest in their location and what it might be like there.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_location",
+              "type": "string",
+              "description": "Where the user is from",
+              "required": true,
+              "acceptance_criteria": "Should be a place name - city, state, country, or region.",
+              "examples": ["New York", "California", "London", "Paris", "Tokyo"]
+            }
+          ]
+        },
+        {
+          "id": "collect_hobbies",
+          "description": "Discover the user's interests and hobbies",
+          "instruction": "Discover what they enjoy doing in their free time. Share your own interests naturally to keep the conversation balanced and engaging.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_hobbies",
+              "type": "string",
+              "description": "The user's hobbies and interests",
+              "required": true,
+              "acceptance_criteria": "Should mention activities, interests, or pastimes the user enjoys.",
+              "examples": ["reading and hiking", "cooking, gaming", "painting and music", "sports and movies"]
+            }
+          ]
+        },
+        {
+          "id": "collect_siblings",
+          "description": "Learn about the user's family situation",
+          "instruction": "Learn about their family situation, specifically siblings. Keep the tone light and conversational, sharing your own perspective if it feels natural.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_siblings",
+              "type": "string",
+              "description": "Information about the user's siblings",
+              "required": true,
+              "acceptance_criteria": "Should indicate whether they have siblings and basic info about them.",
+              "examples": ["Yes, two brothers", "One sister", "No siblings", "Three sisters and a brother"]
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "memory_game",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "memory_game",
+      "title": "Progressive Memory Challenge",
+      "type": "strict",
+      "description": "A progressive shopping list memory game that starts simple and gradually increases in difficulty. Each level must be completed in sequence.",
+      "tasks": [
+        {
+          "id": "memory_level_1",
+          "description": "Shopping List Game - Level 1 (1 item)",
+          "instruction": "Transition naturally to the memory exercise. Explain it's a shopping list game where you'll add items one at a time and they repeat the growing list back. Start with just 'milk'. Ask: 'The first item is milk. What is on your list so far?'",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "shopping_list_1",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": true,
+              "acceptance_criteria": "Should contain the word 'milk'.",
+              "examples": ["milk", "Milk", "The item is milk"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_2",
+          "description": "Shopping List Game - Level 2 (2 items)",
+          "instruction": "Praise their success warmly. Add one more item: 'Now we're adding bread.' Ask: 'What is on your list now?' Keep the tone encouraging and supportive.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "shopping_list_2",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": true,
+              "acceptance_criteria": "Should contain both 'milk' and 'bread'.",
+              "examples": ["milk, bread", "milk and bread", "The items are milk and bread"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_3",
+          "description": "Shopping List Game - Level 3 (3 items)",
+          "instruction": "Celebrate their success. Add one more item: 'Great! Now we're also adding eggs.' Ask: 'How does your list look now?' Maintain enthusiasm and encouragement.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "shopping_list_3",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": true,
+              "acceptance_criteria": "Should contain 'milk', 'bread', and 'eggs'.",
+              "examples": ["milk, bread, eggs", "milk bread and eggs"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_4",
+          "description": "Shopping List Game - Level 4 (4 items)",
+          "instruction": "Express excitement about their progress. Add one more item: 'Excellent! Let's add apples to the list.' Ask: 'Can you tell me all the items now?' Keep the energy positive and game-like.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "shopping_list_4",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": true,
+              "acceptance_criteria": "Should contain 'milk', 'bread', 'eggs', and 'apples'.",
+              "examples": ["milk, bread, eggs, apples"]
+            }
+          ]
+        },
+        {
+          "id": "check_continuation",
+          "description": "Ask if user wants to continue the game",
+          "instruction": "Acknowledge their excellent progress so far. Ask if they would like to continue with more challenging levels or if they'd prefer to wrap up here. Be warm and supportive regardless of their choice.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "wants_to_continue",
+              "type": "boolean",
+              "description": "Whether the user wants to continue to levels 5-7",
+              "required": true,
+              "acceptance_criteria": "Should clearly indicate yes (true) or no (false) for continuing.",
+              "examples": ["true", "false"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_5",
+          "description": "Shopping List Game - Level 5 (5 items)",
+          "instruction": "Since they want to continue, celebrate their commitment! Add one more item: 'Wonderful! Now we're adding cheese.' Ask: 'What's your complete list now?' Personalize with their name when encouraging.",
+          "required": false,
+          "deliverables": [
+            {
+              "key": "shopping_list_5",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": false,
+              "acceptance_criteria": "Should contain all five items: 'milk', 'bread', 'eggs', 'apples', and 'cheese'.",
+              "examples": ["milk, bread, eggs, apples, cheese"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_6",
+          "description": "Shopping List Game - Level 6 (6 items)",
+          "instruction": "Show genuine amazement at their memory. Add one more item: 'You're doing so well! Let's add butter.' Ask: 'Can you recite the whole list for me?' Express genuine amazement at their progress.",
+          "required": false,
+          "deliverables": [
+            {
+              "key": "shopping_list_6",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": false,
+              "acceptance_criteria": "Should contain all six items: 'milk', 'bread', 'eggs', 'apples', 'cheese', and 'butter'.",
+              "examples": ["milk, bread, eggs, apples, cheese, butter"]
+            }
+          ]
+        },
+        {
+          "id": "memory_level_7",
+          "description": "Shopping List Game - Final Level 7 (7 items)",
+          "instruction": "Build excitement for the final challenge. Add one more item: 'This is the final level! Let's add chicken.' Ask: 'Can you remember all seven items?' Show genuine enthusiasm for their amazing performance.",
+          "required": false,
+          "deliverables": [
+            {
+              "key": "shopping_list_7",
+              "type": "string",
+              "description": "User's attempt at the shopping list",
+              "required": false,
+              "acceptance_criteria": "Should contain all seven items: 'milk', 'bread', 'eggs', 'apples', 'cheese', 'butter', and 'chicken'.",
+              "examples": ["milk, bread, eggs, apples, cheese, butter, chicken"]
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "feedback_and_closure",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "feedback_and_closure",
+      "title": "Feedback and Farewell",
+      "type": "loose",
+      "description": "Celebrate their achievement and gather feedback about the experience. End with a warm farewell.",
+      "tasks": [
+        {
+          "id": "celebrate_achievement",
+          "description": "Celebrate the user's performance",
+          "instruction": "Celebrate their achievement enthusiastically, regardless of how far they got. Emphasize the cognitive benefits of such exercises and express pride in their effort.",
+          "required": true,
+          "deliverables": []
+        },
+        {
+          "id": "collect_positive_feedback",
+          "description": "Gather what they enjoyed",
+          "instruction": "Gather feedback about what they enjoyed in the session. Show genuine interest in their experience and perspective.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "feedback_liked",
+              "type": "string",
+              "description": "What the user liked about the interaction",
+              "required": true,
+              "acceptance_criteria": "Should mention aspects of the interaction they enjoyed.",
+              "examples": ["The memory game was fun", "I liked getting to know STELLA", "The challenge was engaging"]
+            }
+          ]
+        },
+        {
+          "id": "collect_improvement_feedback",
+          "description": "Ask about areas for improvement",
+          "instruction": "Ask constructively about areas for improvement. Be open and receptive to their feedback without being defensive.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "feedback_improvement",
+              "type": "string",
+              "description": "What the user thinks could be improved",
+              "required": false,
+              "acceptance_criteria": "Should mention areas for improvement or indicate no issues.",
+              "examples": ["Maybe make it easier", "It was perfect", "Could be more challenging", "Nothing to improve"]
+            }
+          ]
+        },
+        {
+          "id": "provide_closure",
+          "description": "End with a joke and warm goodbye",
+          "instruction": "End on a light note with a fun joke, then warmly thank them for the conversation. Express hope to interact again, making the farewell personal and positive.",
+          "required": true,
+          "deliverables": []
+        }
+      ],
+      "transitions": []
+    }
+  ],
+  "metadata": {
+    "version": "2.1",
+    "architecture": "state_machine",
+    "conversion_from": "cognitive_stimulation_demo",
+    "states_count": 3,
+    "tasks_count": 14,
+    "deliverables_count": 13,
+    "notes": "Reduced memory game from 10 to 7 levels. Added continuation check after level 4. Levels 5-7 can be skipped if user declines."
+  }
+}

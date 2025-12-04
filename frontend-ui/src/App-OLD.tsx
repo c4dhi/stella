@@ -150,7 +150,7 @@ export default function App() {
         <div className={`flex flex-col gap-3 transition-all duration-300 ${showTaskPanel ? 'flex-1' : 'w-full max-w-3xl mx-auto'
           }`}>
           <header className="pt-2 pb-1">
-            <h1 className="text-xl font-light text-neutral-800 tracking-wide">Grace AI</h1>
+            <h1 className="text-xl font-light text-neutral-800 tracking-wide">STELLA</h1>
           </header>
 
           <ConnectPanel />

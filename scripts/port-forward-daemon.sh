@@ -19,7 +19,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Configuration
-PID_DIR="/tmp/grace-ai-k8s"
+PID_DIR="/tmp/stella-ai-k8s"
 NAMESPACE="ai-agents"
 FOREGROUND=true  # Default to foreground mode
 mkdir -p "$PID_DIR"

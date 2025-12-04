@@ -43,7 +43,7 @@ nano .env  # Set OPENAI_API_KEY and database credentials
 ./scripts/start-k8s.sh --stop
 
 # View logs
-tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 ```
 
 📖 **Full Kubernetes Guide**: See [K8S_DEPLOYMENT.md](./K8S_DEPLOYMENT.md) or [KUBERNETES_QUICK_START.md](../KUBERNETES_QUICK_START.md)
@@ -217,7 +217,7 @@ chmod +x scripts/start-k8s.sh
 | Feature | Foreground Mode | Background Mode (Daemon) |
 |---------|----------------|--------------------------|
 | **Command** | `./scripts/start-k8s.sh` | `./scripts/start-k8s.sh --daemon` |
-| **Output** | Live to terminal | Logged to `/tmp/grace-ai-k8s/` |
+| **Output** | Live to terminal | Logged to `/tmp/stella-ai-k8s/` |
 | **SSH Logout** | ❌ Stops services | ✅ Services continue |
 | **Stop Method** | Ctrl+C | `./scripts/start-k8s.sh --stop` |
 | **Best For** | Local development | Remote servers, production |
@@ -239,7 +239,7 @@ chmod +x scripts/start-k8s.sh
 
    # Services continue running after SSH logout ✓
    # View logs
-   tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+   tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 
    # Stop services
    ./scripts/start-k8s.sh --stop
@@ -247,12 +247,12 @@ chmod +x scripts/start-k8s.sh
    - Runs as background processes using `nohup`
    - Survives SSH disconnections
    - Perfect for remote servers and production
-   - All logs saved to `/tmp/grace-ai-k8s/`
+   - All logs saved to `/tmp/stella-ai-k8s/`
 
 **Log Files (Daemon Mode):**
 ```
-/tmp/grace-ai-k8s/
-├── grace-ai-k8s.log          # Main deployment log
+/tmp/stella-ai-k8s/
+├── stella-ai-k8s.log          # Main deployment log
 ├── port-forwards.pid          # PIDs of port-forward processes
 ├── pf-frontend.log            # Frontend port-forward logs
 ├── pf-backend.log             # Backend port-forward logs
@@ -272,11 +272,11 @@ kubectl get pods -n ai-agents -l app=conversational-ai-agent
 kubectl logs -f -n ai-agents -l app=session-management-server
 
 # Monitor daemon mode logs
-tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 
 # Check port-forward processes (daemon mode)
-cat /tmp/grace-ai-k8s/port-forwards.pid
-ps -p $(cat /tmp/grace-ai-k8s/port-forwards.pid)
+cat /tmp/stella-ai-k8s/port-forwards.pid
+ps -p $(cat /tmp/stella-ai-k8s/port-forwards.pid)
 
 # Stop cluster (foreground mode)
 # Press Ctrl+C
@@ -729,8 +729,8 @@ These are automatically applied by `./scripts/start-k8s.sh`.
 **Port forwards not working after SSH logout:**
 ```bash
 # Check if processes are still running
-cat /tmp/grace-ai-k8s/port-forwards.pid
-ps -p $(cat /tmp/grace-ai-k8s/port-forwards.pid)
+cat /tmp/stella-ai-k8s/port-forwards.pid
+ps -p $(cat /tmp/stella-ai-k8s/port-forwards.pid)
 
 # If not running, restart daemon mode
 ./scripts/start-k8s.sh --daemon
@@ -739,13 +739,13 @@ ps -p $(cat /tmp/grace-ai-k8s/port-forwards.pid)
 **View daemon mode logs:**
 ```bash
 # Main deployment log
-tail -f /tmp/grace-ai-k8s/grace-ai-k8s.log
+tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 
 # Individual port-forward logs
-tail -f /tmp/grace-ai-k8s/pf-frontend.log
-tail -f /tmp/grace-ai-k8s/pf-backend.log
-tail -f /tmp/grace-ai-k8s/pf-livekit.log
-tail -f /tmp/grace-ai-k8s/pf-postgres.log
+tail -f /tmp/stella-ai-k8s/pf-frontend.log
+tail -f /tmp/stella-ai-k8s/pf-backend.log
+tail -f /tmp/stella-ai-k8s/pf-livekit.log
+tail -f /tmp/stella-ai-k8s/pf-postgres.log
 ```
 
 **Clean up stale daemon processes:**
@@ -754,8 +754,8 @@ tail -f /tmp/grace-ai-k8s/pf-postgres.log
 ./scripts/start-k8s.sh --stop
 
 # Or manually kill port-forwards
-kill $(cat /tmp/grace-ai-k8s/port-forwards.pid)
-rm -rf /tmp/grace-ai-k8s/
+kill $(cat /tmp/stella-ai-k8s/port-forwards.pid)
+rm -rf /tmp/stella-ai-k8s/
 
 # Restart
 ./scripts/start-k8s.sh --daemon

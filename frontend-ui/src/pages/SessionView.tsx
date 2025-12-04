@@ -246,7 +246,7 @@ export default function SessionView() {
       }
 
       // For agents, use the display name from LiveKit (set via AGENT_NAME env var)
-      // The participantName will be the agent's configured name (e.g., "Grace", "Echo")
+      // The participantName will be the agent's configured name (e.g., "Stella", "Echo")
       const displayName = participantName || participantId
       const event: ParticipantEvent = {
         id: generateUUID(),

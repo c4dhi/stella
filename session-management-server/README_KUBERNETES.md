@@ -1,6 +1,6 @@
 # Session Management Server - Kubernetes Edition
 
-This directory contains everything needed to run the Grace AI Session Management System on Kubernetes.
+This directory contains everything needed to run the STELLA Session Management System on Kubernetes.
 
 ## Quick Start
 

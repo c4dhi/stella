@@ -160,6 +160,7 @@ build_with_progress() {
     local tag="$2"
     local context="$3"
     local build_args="${4:-}"
+    local dockerfile="${5:-Dockerfile}"
 
     local log_file="${LOG_DIR}/docker-build-${image_name}.log"
 
@@ -176,10 +177,10 @@ build_with_progress() {
     # Start build in background
     if [[ "$USE_BUILDKIT" == "true" ]]; then
         DOCKER_BUILDKIT=1 docker build --progress=plain ${no_cache} ${build_args} \
-            --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
+            -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
     else
         docker build ${no_cache} ${build_args} \
-            --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
+            -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
     fi
 
     local build_pid=$!
@@ -242,7 +243,7 @@ smart_build() {
 
     # Rebuild mode: always build
     if [[ "$REBUILD_MODE" == "true" ]]; then
-        build_with_progress "$image_name" "$tag" "$context" "$build_args"
+        build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
         update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
         REBUILT_SERVICES+=("$image_name")
         return 0
@@ -250,7 +251,7 @@ smart_build() {
 
     # Smart mode: check if rebuild needed
     if service_needs_rebuild "$image_name" "$service_dir" "$dockerfile_path"; then
-        build_with_progress "$image_name" "$tag" "$context" "$build_args"
+        build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
         update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
         REBUILT_SERVICES+=("$image_name")
         return 0
@@ -304,6 +305,13 @@ build_images() {
 
     # Build message recorder
     smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" || true
+
+    # Build stella-agent (pre-build to avoid on-demand building in production)
+    # The agent images are built from the agents/ directory
+    smart_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile" || true
+
+    # Build echo-agent
+    smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile" || true
 
     # Summary
     if [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
@@ -361,7 +369,7 @@ cleanup_for_rebuild() {
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
 
     # Remove old Docker images
-    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "grace-agent")
+    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent")
     for img in "${images[@]}"; do
         docker rmi "${img}:latest" 2>/dev/null || true
     done

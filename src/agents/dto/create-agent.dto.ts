@@ -14,11 +14,11 @@ export class CreateAgentDto {
   @IsString()
   @IsOptional()
   @MaxLength(255)
-  agentType?: string;  // Agent type identifier (e.g., "grace-agent") for gRPC orchestrator
+  agentType?: string;  // Agent type identifier (e.g., "stella-agent") for gRPC orchestrator
 
   @IsObject()
   @IsOptional()
-  config?: Record<string, unknown>;  // Agent-specific config (e.g., { plan_id: "grace_smalltalk" })
+  config?: Record<string, unknown>;  // Agent-specific config (e.g., { plan_id: "stella_smalltalk" })
 
   @IsBoolean()
   @IsOptional()

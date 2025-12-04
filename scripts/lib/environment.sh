@@ -50,11 +50,11 @@ setup_directories() {
     export PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
     export WORKSPACE_ROOT="$(dirname "$PROJECT_DIR")"
 
-    # Temp directory (can be overridden by GRACE_AI_TEMP_DIR in .env)
-    export TEMP_DIR="${GRACE_AI_TEMP_DIR:-/tmp}"
-    export PID_DIR="${TEMP_DIR}/grace-ai-k8s"
-    export LOG_DIR="${TEMP_DIR}/grace-ai-logs"
-    export CHECKSUM_DIR="${TEMP_DIR}/grace-ai-checksums"
+    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in .env)
+    export TEMP_DIR="${STELLA_AI_TEMP_DIR:-/tmp}"
+    export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
+    export LOG_DIR="${TEMP_DIR}/stella-ai-logs"
+    export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums"
 
     # Create required directories
     ensure_dir "$PID_DIR"
@@ -109,11 +109,11 @@ load_environment() {
     fi
 
     # Update temp directory after loading env (may be set in .env)
-    if [[ -n "${GRACE_AI_TEMP_DIR:-}" ]]; then
-        export TEMP_DIR="$GRACE_AI_TEMP_DIR"
-        export PID_DIR="${TEMP_DIR}/grace-ai-k8s"
-        export LOG_DIR="${TEMP_DIR}/grace-ai-logs"
-        export CHECKSUM_DIR="${TEMP_DIR}/grace-ai-checksums"
+    if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
+        export TEMP_DIR="$STELLA_AI_TEMP_DIR"
+        export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
+        export LOG_DIR="${TEMP_DIR}/stella-ai-logs"
+        export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums"
         ensure_dir "$PID_DIR"
         ensure_dir "$LOG_DIR"
         ensure_dir "$CHECKSUM_DIR"
@@ -168,7 +168,7 @@ set_defaults() {
 
     # Kubernetes configuration
     export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
-    export DEFAULT_AGENT_TYPE="${DEFAULT_AGENT_TYPE:-grace-agent}"
+    export DEFAULT_AGENT_TYPE="${DEFAULT_AGENT_TYPE:-stella-agent}"
     export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
 
     # Legacy compatibility

@@ -1,6 +1,6 @@
 /**
  * User Transcript Overlay
- * Displays real-time partial transcription of user speech underneath the GRACE face
+ * Displays real-time partial transcription of user speech underneath the STELLA face
  * Only visible during active speech, disappears when transcript is finalized
  */
 

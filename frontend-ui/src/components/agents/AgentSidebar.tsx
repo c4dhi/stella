@@ -771,7 +771,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className={`
-                backdrop-blur-xl rounded-[20px] w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto
+                backdrop-blur-xl rounded-[20px] w-full max-w-2xl p-6 max-h-[80vh] overflow-y-auto
                 ${isDark
                   ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
                   : 'bg-white/95 border border-neutral-200/60 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
@@ -779,10 +779,33 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
               `}
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className={`text-2xl font-light mb-4 ${isDark ? 'text-content-inverse' : 'text-neutral-900'}`}>
-                Agent Details
-              </h2>
-              <pre className={`text-xs font-mono p-4 rounded-xl overflow-x-auto ${
+              <div className="flex items-center justify-between mb-4">
+                <h2 className={`text-2xl font-light ${isDark ? 'text-content-inverse' : 'text-neutral-900'}`}>
+                  Agent Details
+                </h2>
+                <button
+                  onClick={() => setSelectedAgent(null)}
+                  className={`
+                    p-2 rounded-lg transition-all duration-200
+                    ${isDark
+                      ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-white/10'
+                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                    }
+                  `}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <pre className={`text-xs font-mono p-4 rounded-xl whitespace-pre-wrap break-words ${
                 isDark
                   ? 'bg-white/5 border border-white/10 text-content-inverse'
                   : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900'

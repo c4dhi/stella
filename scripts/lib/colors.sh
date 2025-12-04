@@ -140,7 +140,7 @@ summary_box() {
     echo ""
     separator
     echo ""
-    echo -e "${EMOJI_SUCCESS} ${BOLD}Grace AI is running!${NC}"
+    echo -e "${EMOJI_SUCCESS} ${BOLD}STELLA is running!${NC}"
     echo ""
     echo -e "   Frontend:  ${CYAN}${frontend_url}${NC}"
     echo -e "   Backend:   ${CYAN}${backend_url}${NC}"

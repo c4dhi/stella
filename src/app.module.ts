@@ -14,6 +14,10 @@ import { MessageRecorderModule } from './message-recorder/message-recorder.modul
 import { AgentServerModule } from './agent-server/agent-server.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { StorageModule } from './storage/storage.module';
+import { AgentPackageModule } from './agent-package/agent-package.module';
+import { AgentBuildModule } from './agent-build/agent-build.module';
+import { AgentUploadModule } from './agent-upload/agent-upload.module';
 
 @Module({
   imports: [
@@ -31,6 +35,10 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     MessageRecorderModule,
     AgentServerModule,
     WebhooksModule,
+    StorageModule,
+    AgentPackageModule,
+    AgentBuildModule,
+    AgentUploadModule,
   ],
   controllers: [AppController],
   providers: [

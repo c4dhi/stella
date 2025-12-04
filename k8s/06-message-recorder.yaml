@@ -28,7 +28,7 @@ spec:
         - name: LIVEKIT_URL
           valueFrom:
             configMapKeyRef:
-              name: grace-ai-config
+              name: stella-ai-config
               key: LIVEKIT_URL
         - name: SESSION_SERVER_URL
           value: "http://session-management-server:3000"
@@ -37,12 +37,12 @@ spec:
         - name: LIVEKIT_API_KEY
           valueFrom:
             secretKeyRef:
-              name: grace-ai-secrets
+              name: stella-ai-secrets
               key: livekit-api-key
         - name: LIVEKIT_API_SECRET
           valueFrom:
             secretKeyRef:
-              name: grace-ai-secrets
+              name: stella-ai-secrets
               key: livekit-api-secret
         command: ["python", "-u", "main.py"]
         resources:

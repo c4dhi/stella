@@ -1,4 +1,4 @@
-# Grace AI Session Management Dashboard
+# STELLA Session Management Dashboard
 
 Complete frontend application for managing AI-powered conversational sessions with the Session Management Server.
 

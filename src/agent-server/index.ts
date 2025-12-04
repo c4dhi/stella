@@ -2,7 +2,7 @@
  * Agent Server Module Exports
  *
  * This module provides gRPC server functionality for agent connections.
- * Agents use the Grace AI Agent SDK to connect to this server.
+ * Agents use the STELLA Agent SDK to connect to this server.
  */
 
 export * from './agent-server.module';

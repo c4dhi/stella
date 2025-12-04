@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Grace AI - Kubernetes Deployment Script
+# STELLA - Kubernetes Deployment Script
 # =============================================================================
 # Unified deployment for local development (macOS/OrbStack) and production (Ubuntu/K3s)
 #
@@ -135,7 +135,7 @@ main() {
     local mode_suffix=""
     [[ "$DRY_RUN_MODE" == "true" ]] && mode_suffix=" ${YELLOW}(DRY RUN)${NC}"
     echo ""
-    echo -e "${EMOJI_ROCKET} ${BOLD}Grace AI - Kubernetes Deployment${NC}${mode_suffix}"
+    echo -e "${EMOJI_ROCKET} ${BOLD}STELLA - Kubernetes Deployment${NC}${mode_suffix}"
     echo ""
 
     # Phase 1: Environment Detection (fast, no I/O)

@@ -34,7 +34,7 @@ spec:
         - containerPort: 8080
         envFrom:
         - configMapRef:
-            name: grace-ai-config
+            name: stella-ai-config
         resources:
           requests:
             memory: "128Mi"

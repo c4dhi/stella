@@ -66,8 +66,6 @@ export interface StellaFaceProps {
   className?: string;
 }
 
-// Legacy alias for backward compatibility
-export type GraceFaceProps = StellaFaceProps;
 
 export interface FaceRendererProps {
   size: number;
