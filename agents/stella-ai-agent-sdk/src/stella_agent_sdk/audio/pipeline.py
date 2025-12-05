@@ -179,7 +179,57 @@ class AudioPipeline:
 
     async def _run_stt_stream(self) -> None:
         """
-        Run the STT streaming loop in the background.
+        Run the STT streaming loop in the background with automatic reconnection.
+
+        On recoverable errors (socket closed, unavailable), it will retry with
+        exponential backoff up to max_retries times.
+        """
+        max_retries = 5
+        base_delay = 1.0  # seconds
+        retry_count = 0
+
+        while self._is_listening and retry_count < max_retries:
+            try:
+                await self._run_stt_stream_inner()
+                # If we exit cleanly (pipeline stopped), don't retry
+                if not self._is_listening:
+                    break
+                # If inner completed without error but we're still listening,
+                # it means the stream ended unexpectedly - retry
+                retry_count += 1
+                logger.warning(f"STT stream ended unexpectedly, retrying ({retry_count}/{max_retries})...")
+                await asyncio.sleep(base_delay)
+            except asyncio.CancelledError:
+                logger.debug("STT stream task cancelled")
+                break
+            except Exception as e:
+                error_str = str(e)
+                # Check for recoverable gRPC errors
+                is_recoverable = any(x in error_str for x in [
+                    "Socket closed",
+                    "UNAVAILABLE",
+                    "Connection reset",
+                    "Stream removed",
+                ])
+
+                if is_recoverable and self._is_listening:
+                    retry_count += 1
+                    delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
+                    logger.warning(
+                        f"STT stream error (attempt {retry_count}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"STT stream fatal error: {e}", exc_info=True)
+                    break
+
+        if retry_count >= max_retries:
+            logger.error(f"STT stream failed after {max_retries} retries, giving up")
+
+    async def _run_stt_stream_inner(self) -> None:
+        """
+        Inner STT streaming logic.
 
         This method:
         1. Subscribes to LiveKit audio
@@ -190,70 +240,64 @@ class AudioPipeline:
         logger.info("STT stream task started, waiting for audio...")
         chunk_count = 0
 
-        try:
-            async def audio_generator():
-                """Generate audio chunks from LiveKit room."""
-                nonlocal chunk_count
-                logger.info("Audio generator started, subscribing to LiveKit audio...")
-                async for audio_data in self._room.subscribe_to_audio():
-                    if not self._is_listening:
-                        logger.info("Pipeline stopped listening, ending audio generator")
-                        break
-                    chunk_count += 1
-                    if chunk_count == 1:
-                        logger.info(f"First audio chunk received ({len(audio_data)} bytes)")
-                    elif chunk_count % 100 == 0:
-                        logger.debug(f"Streamed {chunk_count} audio chunks to STT")
-                    yield audio_data
-                logger.info(f"Audio generator ended after {chunk_count} chunks")
+        async def audio_generator():
+            """Generate audio chunks from LiveKit room."""
+            nonlocal chunk_count
+            logger.info("Audio generator started, subscribing to LiveKit audio...")
+            async for audio_data in self._room.subscribe_to_audio():
+                if not self._is_listening:
+                    logger.info("Pipeline stopped listening, ending audio generator")
+                    break
+                chunk_count += 1
+                if chunk_count == 1:
+                    logger.info(f"First audio chunk received ({len(audio_data)} bytes)")
+                elif chunk_count % 100 == 0:
+                    logger.debug(f"Streamed {chunk_count} audio chunks to STT")
+                yield audio_data
+            logger.info(f"Audio generator ended after {chunk_count} chunks")
 
-            # Stream to STT service and process events
-            # Pass sample_rate from LiveKit (STT service will resample if needed)
-            sample_rate = self._room.audio_sample_rate
-            logger.info(f"Starting STT stream_transcribe with sample_rate={sample_rate}Hz...")
-            async for event in self._stt.stream_transcribe(
-                audio_generator(),
-                session_id=self._session_id,
-                participant_id=self._participant_id,
-                sample_rate=sample_rate,
-            ):
-                logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
+        # Stream to STT service and process events
+        # Pass sample_rate from LiveKit (STT service will resample if needed)
+        sample_rate = self._room.audio_sample_rate
+        logger.info(f"Starting STT stream_transcribe with sample_rate={sample_rate}Hz...")
+        async for event in self._stt.stream_transcribe(
+            audio_generator(),
+            session_id=self._session_id,
+            participant_id=self._participant_id,
+            sample_rate=sample_rate,
+        ):
+            logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
-                # 1. Publish ALL transcripts to LiveKit for frontend display
-                # Include speaker attribution so frontend knows this is user speech
-                # Use Envelope format: { type, data: { ... } }
-                speaker_id = event.participant_id or self._participant_id
-                # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
-                speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
-                logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}")
-                await self._room.publish_data({
-                    "type": "transcript",
-                    "data": {
-                        "text": event.text,
-                        "is_final": event.is_final,
-                        "transcript_id": event.transcript_id,
-                        # Speaker attribution (who spoke)
-                        "speaker_id": speaker_id,
-                        "speaker_name": speaker_name,
-                        "source": "user_speech",
-                        # Backwards compat
-                        "participant_id": speaker_id,
-                    },
-                })
+            # 1. Publish ALL transcripts to LiveKit for frontend display
+            # Include speaker attribution so frontend knows this is user speech
+            # Use Envelope format: { type, data: { ... } }
+            speaker_id = event.participant_id or self._participant_id
+            # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
+            speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
+            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}")
+            await self._room.publish_data({
+                "type": "transcript",
+                "data": {
+                    "text": event.text,
+                    "is_final": event.is_final,
+                    "transcript_id": event.transcript_id,
+                    # Speaker attribution (who spoke)
+                    "speaker_id": speaker_id,
+                    "speaker_name": speaker_name,
+                    "source": "user_speech",
+                    # Backwards compat
+                    "participant_id": speaker_id,
+                },
+            })
 
-                # 2. Handle speech_started for barge-in
-                if event.speech_started:
-                    await self._handle_speech_started()
+            # 2. Handle speech_started for barge-in
+            if event.speech_started:
+                await self._handle_speech_started()
 
-                # 3. Queue ONLY final transcripts for agent
-                if event.is_final and event.text.strip():
-                    logger.info(f"Final transcript: '{event.text}'")
-                    await self._transcript_queue.put(event)
-
-        except asyncio.CancelledError:
-            logger.debug("STT stream task cancelled")
-        except Exception as e:
-            logger.error(f"STT stream error: {e}", exc_info=True)
+            # 3. Queue ONLY final transcripts for agent
+            if event.is_final and event.text.strip():
+                logger.info(f"Final transcript: '{event.text}'")
+                await self._transcript_queue.put(event)
 
     async def _handle_speech_started(self) -> None:
         """Handle VAD speech_started signal (potential barge-in)."""
@@ -544,7 +588,7 @@ class AudioPipeline:
         speed: float = 1.0,
     ) -> None:
         """
-        Send a sentence to TTS and publish audio to LiveKit.
+        Send a sentence to TTS and publish audio to LiveKit with retry logic.
 
         Args:
             sentence: Complete sentence to speak
@@ -556,21 +600,45 @@ class AudioPipeline:
 
         logger.debug(f"Speaking sentence: {sentence[:50]}...")
 
-        try:
-            async for chunk in self._tts.synthesize_stream(
-                text=sentence,
-                session_id=self._session_id,
-                voice=voice,
-                speed=speed,
-            ):
-                if self._stop_speaking_event.is_set():
-                    logger.info("TTS interrupted mid-sentence")
-                    break
+        max_retries = 3
+        base_delay = 0.5  # seconds
 
-                await self._room.publish_audio(chunk.audio_data)
+        for attempt in range(max_retries):
+            try:
+                async for chunk in self._tts.synthesize_stream(
+                    text=sentence,
+                    session_id=self._session_id,
+                    voice=voice,
+                    speed=speed,
+                ):
+                    if self._stop_speaking_event.is_set():
+                        logger.info("TTS interrupted mid-sentence")
+                        return  # Don't retry if intentionally interrupted
 
-        except Exception as e:
-            logger.error(f"Error speaking sentence: {e}")
+                    await self._room.publish_audio(chunk.audio_data)
+
+                # Success - exit retry loop
+                return
+
+            except Exception as e:
+                error_str = str(e)
+                is_recoverable = any(x in error_str for x in [
+                    "Socket closed",
+                    "UNAVAILABLE",
+                    "Connection reset",
+                    "Stream removed",
+                ])
+
+                if is_recoverable and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"TTS error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"TTS error speaking sentence: {e}")
+                    return
 
     async def stop_speaking(self) -> None:
         """

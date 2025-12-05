@@ -83,24 +83,62 @@ class STTClient:
         """Whether connected to the STT service."""
         return self._connected
 
-    async def connect(self) -> None:
-        """Connect to the STT service."""
+    async def connect(self, max_retries: int = 5, base_delay: float = 2.0) -> None:
+        """
+        Connect to the STT service with retry logic.
+
+        Args:
+            max_retries: Maximum number of connection attempts
+            base_delay: Base delay between retries (exponential backoff)
+        """
         if self._connected:
             return
 
         logger.info(f"Connecting to STT service at {self.stt_address}")
 
-        # Create gRPC channel
-        self._channel = grpc.aio.insecure_channel(self.stt_address)
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Create gRPC channel
+                if self._channel:
+                    await self._channel.close()
+                self._channel = grpc.aio.insecure_channel(self.stt_address)
 
-        # Wait for channel to be ready
-        try:
-            await asyncio.wait_for(
-                self._channel.channel_ready(),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            raise ConnectionError(f"Timeout connecting to STT service at {self.stt_address}")
+                # Wait for channel to be ready
+                await asyncio.wait_for(
+                    self._channel.channel_ready(),
+                    timeout=10.0,
+                )
+                # Success - exit retry loop
+                break
+
+            except asyncio.TimeoutError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"STT connection attempt {attempt + 1}/{max_retries} timed out. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise ConnectionError(
+                        f"Timeout connecting to STT service at {self.stt_address} "
+                        f"after {max_retries} attempts"
+                    )
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"STT connection attempt {attempt + 1}/{max_retries} failed: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise ConnectionError(
+                        f"Failed to connect to STT service at {self.stt_address}: {last_error}"
+                    )
 
         # Import and create stub dynamically (proto files may not be compiled yet)
         try:
