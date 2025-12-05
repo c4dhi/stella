@@ -102,30 +102,53 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
     return theme;
   }, [theme]);
 
-  // Calculate audio-reactive scale
+  // Calculate audio-reactive scale (more dramatic when speaking)
   const audioScale = useMemo(() => {
     if (!isRemoteSpeaking) return 1;
-    return 1 + audioLevel * 0.12;
+    // Scale from 1.0 to 1.15 based on audio level
+    return 1 + audioLevel * 0.15;
   }, [audioLevel, isRemoteSpeaking]);
 
-  // Build the sphere gradient style
-  const sphereStyle: CSSProperties = useMemo(() => ({
-    width: size,
-    height: size,
-    background: `
-      radial-gradient(circle at 30% 30%, ${colors.primary} 0%, transparent 50%),
-      radial-gradient(circle at 70% 60%, ${colors.secondary} 0%, transparent 40%),
-      radial-gradient(circle at 50% 80%, ${colors.tertiary} 0%, transparent 40%),
-      radial-gradient(circle at 50% 50%, ${colors.core} 0%, rgba(10, 10, 20, 1) 100%)
-    `,
-    boxShadow: `
-      0 0 ${size * 0.35}px ${colors.glow},
-      0 0 ${size * 0.7}px ${colors.secondary.replace(/[\d.]+\)$/, '0.3)')},
-      inset 0 0 ${size * 0.35}px rgba(0, 0, 0, 0.5),
-      inset 0 -${size * 0.18}px ${size * 0.35}px ${colors.primary.replace(/[\d.]+\)$/, '0.3)')}
-    `,
-    '--sphere-glow-color': colors.glow,
-  } as CSSProperties), [colors, size]);
+  // Calculate dynamic glow intensity based on audio level
+  const glowIntensity = useMemo(() => {
+    if (!isRemoteSpeaking) return 1;
+    // Increase glow by up to 80% when speaking loudly
+    return 1 + audioLevel * 0.8;
+  }, [audioLevel, isRemoteSpeaking]);
+
+  // Helper to boost color opacity
+  const boostOpacity = (color: string, multiplier: number) => {
+    return color.replace(/[\d.]+\)$/, (match) => {
+      const opacity = Math.min(1, parseFloat(match) * multiplier);
+      return `${opacity.toFixed(2)})`;
+    });
+  };
+
+  // Build the sphere gradient style with dynamic glow
+  const sphereStyle: CSSProperties = useMemo(() => {
+    const baseGlowSize = size * 0.35;
+    const outerGlowSize = size * 0.7;
+    const dynamicGlowSize = baseGlowSize * glowIntensity;
+    const dynamicOuterGlowSize = outerGlowSize * glowIntensity;
+
+    return {
+      width: size,
+      height: size,
+      background: `
+        radial-gradient(circle at 30% 30%, ${isRemoteSpeaking ? boostOpacity(colors.primary, 1 + audioLevel * 0.3) : colors.primary} 0%, transparent 50%),
+        radial-gradient(circle at 70% 60%, ${isRemoteSpeaking ? boostOpacity(colors.secondary, 1 + audioLevel * 0.3) : colors.secondary} 0%, transparent 40%),
+        radial-gradient(circle at 50% 80%, ${isRemoteSpeaking ? boostOpacity(colors.tertiary, 1 + audioLevel * 0.3) : colors.tertiary} 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, ${colors.core} 0%, rgba(10, 10, 20, 1) 100%)
+      `,
+      boxShadow: `
+        0 0 ${dynamicGlowSize}px ${boostOpacity(colors.glow, glowIntensity)},
+        0 0 ${dynamicOuterGlowSize}px ${boostOpacity(colors.secondary, 0.3 * glowIntensity)},
+        inset 0 0 ${baseGlowSize}px rgba(0, 0, 0, 0.5),
+        inset 0 -${size * 0.18}px ${baseGlowSize}px ${colors.primary.replace(/[\d.]+\)$/, '0.3)')}
+      `,
+      '--sphere-glow-color': colors.glow,
+    };
+  }, [colors, size, glowIntensity, isRemoteSpeaking, audioLevel]);
 
   return (
     <motion.div
@@ -164,6 +187,24 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
           filter: 'blur(4px)',
         }}
       />
+
+      {/* Audio-reactive inner glow overlay */}
+      {isRemoteSpeaking && (
+        <motion.div
+          className="absolute inset-0 rounded-full pointer-events-none"
+          style={{
+            background: `radial-gradient(circle at 50% 50%, ${colors.glow.replace(/[\d.]+\)$/, `${0.15 + audioLevel * 0.25})`)} 0%, transparent 60%)`,
+          }}
+          animate={{
+            opacity: [0.7 + audioLevel * 0.3, 0.5 + audioLevel * 0.2, 0.7 + audioLevel * 0.3],
+          }}
+          transition={{
+            duration: 0.15,
+            repeat: Infinity,
+            ease: 'easeInOut',
+          }}
+        />
+      )}
 
       {/* Pulse rings when speaking */}
       {isRemoteSpeaking && (

@@ -162,11 +162,20 @@ class RoomManager:
         # Connect to room
         await self._room.connect(self.livekit_url, token)
 
-        # Capture existing participants' names (they won't trigger participant_connected event)
+        # Capture existing participants and their tracks
+        # (they won't trigger participant_connected or track_subscribed events)
         for identity, participant in self._room.remote_participants.items():
             if participant.name:
                 self._participant_names[identity] = participant.name
                 logger.debug(f"Captured existing participant: {identity} -> {participant.name}")
+
+            # Process any existing subscribed audio tracks
+            for publication in participant.track_publications.values():
+                if (publication.track and
+                    publication.track.kind == rtc.TrackKind.KIND_AUDIO and
+                    publication.subscribed):
+                    logger.info(f"Found existing subscribed audio track from {identity}")
+                    self._handle_existing_audio_track(identity, publication.track)
 
         # Set up audio publishing
         await self._setup_audio_publishing()
@@ -226,6 +235,30 @@ class RoomManager:
 
         logger.info("Published agent audio track")
 
+    def _handle_existing_audio_track(self, identity: str, track: rtc.Track) -> None:
+        """
+        Handle an existing audio track that was already subscribed when we joined.
+
+        This is called during connect() for tracks that existed before our event
+        handlers were set up.
+        """
+        if identity in self._subscribed_tracks:
+            logger.debug(f"Already tracking audio from {identity}, skipping")
+            return
+
+        logger.info(f"Setting up audio stream for existing track from {identity}")
+        self._subscribed_tracks[identity] = track
+
+        # Create audio stream for this track
+        audio_stream = rtc.AudioStream(track)
+        self._audio_streams[identity] = audio_stream
+
+        # Start a task to read from this stream and put frames into the queue
+        task = asyncio.create_task(
+            self._read_audio_stream(identity, audio_stream)
+        )
+        self._stream_tasks[identity] = task
+
     def _on_track_subscribed(
         self,
         track: rtc.Track,
@@ -234,6 +267,11 @@ class RoomManager:
     ) -> None:
         """Handle track subscription."""
         if track.kind == rtc.TrackKind.KIND_AUDIO:
+            # Skip if we already set this up (e.g., from existing track handling)
+            if participant.identity in self._subscribed_tracks:
+                logger.debug(f"Track subscription event for {participant.identity}, but already tracking")
+                return
+
             logger.info(f"Subscribed to audio track from {participant.identity}")
             self._subscribed_tracks[participant.identity] = track
 

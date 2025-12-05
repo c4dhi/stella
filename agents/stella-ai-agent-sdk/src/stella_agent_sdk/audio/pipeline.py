@@ -183,6 +183,8 @@ class AudioPipeline:
 
         On recoverable errors (socket closed, unavailable), it will retry with
         exponential backoff up to max_retries times.
+
+        Also handles stale connections by reconnecting STT if needed.
         """
         max_retries = 5
         base_delay = 1.0  # seconds
@@ -190,6 +192,35 @@ class AudioPipeline:
 
         while self._is_listening and retry_count < max_retries:
             try:
+                # Always check STT health before starting/restarting stream
+                # This catches stale connections from service restarts (e.g., cluster restart)
+                should_reconnect = retry_count > 0 or not self._stt.is_connected
+
+                if not should_reconnect:
+                    try:
+                        logger.debug("Checking STT health before starting stream...")
+                        is_healthy = await asyncio.wait_for(
+                            self._stt.health_check(),
+                            timeout=5.0
+                        )
+                        if not is_healthy:
+                            logger.warning("STT health check returned unhealthy, will reconnect")
+                            should_reconnect = True
+                        else:
+                            logger.debug("STT health check passed")
+                    except Exception as e:
+                        logger.warning(f"STT health check failed: {e}, will reconnect")
+                        should_reconnect = True
+
+                if should_reconnect:
+                    logger.info("Reconnecting to STT service...")
+                    try:
+                        await self._stt.disconnect()
+                    except Exception:
+                        pass
+                    await self._stt.connect()
+                    logger.info("STT reconnection successful")
+
                 await self._run_stt_stream_inner()
                 # If we exit cleanly (pipeline stopped), don't retry
                 if not self._is_listening:
@@ -210,6 +241,8 @@ class AudioPipeline:
                     "UNAVAILABLE",
                     "Connection reset",
                     "Stream removed",
+                    "EOF",
+                    "Received RST_STREAM",
                 ])
 
                 if is_recoverable and self._is_listening:
@@ -217,7 +250,7 @@ class AudioPipeline:
                     delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
                     logger.warning(
                         f"STT stream error (attempt {retry_count}/{max_retries}): {e}. "
-                        f"Retrying in {delay:.1f}s..."
+                        f"Reconnecting in {delay:.1f}s..."
                     )
                     await asyncio.sleep(delay)
                 else:

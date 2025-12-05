@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Assistant - Complete with Snowy Theme</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    animation: {
+                        'breathe': 'breathe 4s ease-in-out infinite',
+                        'breathe-glow': 'breathe-glow 4s ease-in-out infinite',
+                        'morph-scale': 'morph-scale 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                        'glow-pulse': 'glow-pulse 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                        'wave-surge': 'wave-surge 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                        'wave-surge-2': 'wave-surge-2 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                    },
+                    keyframes: {
+                        breathe: {
+                            '0%, 100%': { transform: 'scale(1)' },
+                            '50%': { transform: 'scale(1.05)' },
+                        },
+                        'breathe-glow': {
+                            '0%, 100%': { 
+                                filter: 'brightness(1)',
+                                boxShadow: '0 0 60px rgba(139,92,246,0.6), 0 0 120px rgba(99,102,241,0.4)'
+                            },
+                            '50%': { 
+                                filter: 'brightness(1.1)',
+                                boxShadow: '0 0 70px rgba(139,92,246,0.7), 0 0 140px rgba(99,102,241,0.5)'
+                            },
+                        },
+                        'morph-scale': {
+                            '0%': { 
+                                transform: 'scale(1)',
+                            },
+                            '50%': { 
+                                transform: 'scale(1.08)',
+                            },
+                            '100%': { 
+                                transform: 'scale(1)',
+                            },
+                        },
+                        'glow-pulse': {
+                            '0%': { 
+                                filter: 'brightness(1)',
+                            },
+                            '50%': { 
+                                filter: 'brightness(1.3)',
+                            },
+                            '100%': { 
+                                filter: 'brightness(1)',
+                            },
+                        },
+                        'wave-surge': {
+                            '0%': { transform: 'translate(0, 0) rotate(0deg) scale(1)' },
+                            '50%': { transform: 'translate(8%, 8%) rotate(20deg) scale(1.1)' },
+                            '100%': { transform: 'translate(0, 0) rotate(0deg) scale(1)' },
+                        },
+                        'wave-surge-2': {
+                            '0%': { transform: 'translate(0, 0) rotate(0deg) scale(1)' },
+                            '50%': { transform: 'translate(-6%, 6%) rotate(-15deg) scale(1.15)' },
+                            '100%': { transform: 'translate(0, 0) rotate(0deg) scale(1)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Hard-coded speech profile
+        const SPEECH_PROFILE = [
+            0.0, 0.0, 0.1,
+            0.3, 0.7, 0.9, 0.8, 0.6,
+            0.5, 0.7, 0.8, 0.6, 0.4, 0.2,
+            0.1, 0.0, 0.1,
+            0.4, 0.6, 0.5, 0.3,
+            0.5, 0.8, 0.9, 0.7, 0.5,
+            0.4, 0.5, 0.3,
+            0.1, 0.2,
+            0.4, 0.6, 0.7, 0.6,
+            0.5, 0.7, 0.8, 0.6, 0.4,
+            0.5, 0.7, 0.8, 0.7,
+            0.6, 0.5, 0.4, 0.2,
+            0.1, 0.0, 0.1,
+            0.6, 0.9, 1.0, 0.9, 0.8,
+            0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1,
+            0.0, 0.0, 0.0, 0.0
+        ];
+
+        function VoiceAssistant() {
+            const [isSpeaking, setIsSpeaking] = useState(false);
+            const [amplitude, setAmplitude] = useState(0);
+            const [isFullscreen, setIsFullscreen] = useState(false);
+            const [isTransitioning, setIsTransitioning] = useState(false);
+            const [currentTheme, setCurrentTheme] = useState('sunny');
+            const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+            const animationRef = useRef(null);
+            const indexRef = useRef(0);
+
+            // Generate stable stars
+            const stars = React.useMemo(() => {
+                return Array.from({ length: 80 }).map((_, i) => ({
+                    id: i,
+                    left: Math.random() * 100,
+                    top: Math.random() * 100,
+                    size: Math.random() < 0.7 ? 2 : Math.random() < 0.9 ? 3 : 4,
+                    opacity: 0.2 + Math.random() * 0.4,
+                    twinkleDuration: 2 + Math.random() * 4,
+                    twinkleDelay: Math.random() * 5
+                }));
+            }, []);
+
+            // Gallery preview particles
+            const galleryStars = React.useMemo(() => {
+                return Array.from({ length: 20 }).map((_, i) => ({
+                    id: i,
+                    left: Math.random() * 100,
+                    top: Math.random() * 100,
+                    opacity: 0.3 + Math.random() * 0.5
+                }));
+            }, []);
+
+            const galleryRain = React.useMemo(() => {
+                return Array.from({ length: 15 }).map((_, i) => ({
+                    id: i,
+                    left: Math.random() * 100,
+                    top: Math.random() * 80
+                }));
+            }, []);
+
+            const gallerySnow = React.useMemo(() => {
+                return Array.from({ length: 20 }).map((_, i) => ({
+                    id: i,
+                    left: Math.random() * 100,
+                    top: Math.random() * 80,
+                    size: 2 + Math.random() * 3
+                }));
+            }, []);
+
+            // Dynamic particles
+            const [shootingStars, setShootingStars] = React.useState([]);
+            const [rainDrops, setRainDrops] = React.useState([]);
+            const [splashes, setSplashes] = React.useState([]);
+            const [snowflakes, setSnowflakes] = React.useState([]);
+            const [snowAccumulation, setSnowAccumulation] = React.useState([]);
+            const [bokehLights, setBokehLights] = React.useState([]);
+            const [sunRays, setSunRays] = React.useState([]);
+
+            // Generate stable gallery preview Christmas lights
+            const galleryChristmasLights = React.useMemo(() => {
+                return Array.from({ length: 12 }).map((_, i) => ({
+                    id: i,
+                    left: Math.random() * 100,
+                    top: Math.random() * 100,
+                    size: 8 + Math.random() * 12,
+                    color: ['#fbbf24', '#dc2626', '#22c55e', '#ef4444'][Math.floor(Math.random() * 4)],
+                    opacity: 0.4 + Math.random() * 0.3
+                }));
+            }, []);
+
+            // Generate stable gallery preview sun rays
+            const gallerySunRays = React.useMemo(() => {
+                return Array.from({ length: 8 }).map((_, i) => ({
+                    id: i,
+                    angle: (i * 45) // Evenly spaced rays
+                }));
+            }, []);
+
+            // Shooting stars for galaxy theme
+            useEffect(() => {
+                if (currentTheme !== 'galaxy') return;
+                
+                const createShootingStar = () => {
+                    const star = {
+                        id: Date.now(),
+                        startX: Math.random() * 100,
+                        startY: Math.random() * 50,
+                        angle: 30 + Math.random() * 30
+                    };
+                    
+                    setShootingStars(prev => [...prev, star]);
+                    setTimeout(() => {
+                        setShootingStars(prev => prev.filter(s => s.id !== star.id));
+                    }, 2000);
+                };
+
+                const interval = setInterval(() => {
+                    if (Math.random() > 0.3) createShootingStar();
+                }, 5000 + Math.random() * 10000);
+
+                return () => clearInterval(interval);
+            }, [currentTheme]);
+
+            // Rain for rainy theme with sphere collision
+            useEffect(() => {
+                if (currentTheme !== 'rainy') return;
+
+                const createRainDrop = () => {
+                    const startX = Math.random() * 100;
+                    const drop = {
+                        id: Date.now() + Math.random(),
+                        startX: startX,
+                        duration: 0.8 + Math.random() * 0.4,
+                    };
+                    
+                    setRainDrops(prev => [...prev.slice(-80), drop]);
+                    
+                    // Check for collision with sphere
+                    const dropX = (startX / 100) * window.innerWidth;
+                    const sphereCenterX = window.innerWidth / 2;
+                    const sphereCenterY = window.innerHeight / 2;
+                    const sphereRadius = 150; // 300px diameter / 2
+                    
+                    const dropSpeed = window.innerHeight / (drop.duration * 1000); // pixels per ms
+                    let collisionDetected = false;
+                    
+                    const checkInterval = setInterval(() => {
+                        const elapsed = Date.now() - drop.id;
+                        const currentY = elapsed * dropSpeed;
+                        
+                        // Check distance from sphere center
+                        const distX = dropX - sphereCenterX;
+                        const distY = currentY - sphereCenterY;
+                        const distance = Math.sqrt(distX * distX + distY * distY);
+                        
+                        if (distance <= sphereRadius + 10 && !collisionDetected) {
+                            collisionDetected = true;
+                            clearInterval(checkInterval);
+                            
+                            // Calculate angle from sphere center to drop
+                            const angle = Math.atan2(distY, distX);
+                            
+                            // Create 2-3 small, subtle arcing splash droplets
+                            const numDroplets = 2 + Math.floor(Math.random() * 2);
+                            for (let i = 0; i < numDroplets; i++) {
+                                const angleVariation = (Math.random() - 0.5) * 0.4; // Less spread
+                                const dropletAngle = angle + angleVariation;
+                                const velocity = 35 + Math.random() * 25; // Slower, more subtle velocity
+                                
+                                const droplet = {
+                                    id: drop.id + '_arc_' + i,
+                                    startX: (dropX / window.innerWidth) * 100,
+                                    startY: (currentY / window.innerHeight) * 100,
+                                    velocityX: Math.cos(dropletAngle) * velocity,
+                                    velocityY: Math.sin(dropletAngle) * velocity,
+                                    startTime: Date.now(),
+                                    isArcing: true
+                                };
+                                setSplashes(prev => [...prev, droplet]);
+                                
+                                // Remove after shorter arc (faster fall)
+                                setTimeout(() => {
+                                    setSplashes(prev => prev.filter(s => s.id !== droplet.id));
+                                }, 600); // Shorter duration
+                            }
+                            
+                            // Remove the original drop
+                            setRainDrops(prev => prev.filter(d => d.id !== drop.id));
+                        }
+                        
+                        if (elapsed > drop.duration * 1000 || currentY > window.innerHeight) {
+                            clearInterval(checkInterval);
+                        }
+                    }, 16); // Check every frame (~60fps)
+                    
+                    // Create ground splash if drop reaches bottom (and wasn't removed by collision)
+                    setTimeout(() => {
+                        setRainDrops(prev => {
+                            if (prev.find(d => d.id === drop.id)) {
+                                const splash = {
+                                    id: drop.id + '_ground',
+                                    x: drop.startX,
+                                    isGround: true
+                                };
+                                setSplashes(prev => [...prev, splash]);
+                                
+                                setTimeout(() => {
+                                    setSplashes(prev => prev.filter(s => s.id !== splash.id));
+                                }, 600);
+                                
+                                return prev.filter(d => d.id !== drop.id);
+                            }
+                            return prev;
+                        });
+                    }, drop.duration * 1000);
+                };
+
+                const interval = setInterval(() => {
+                    createRainDrop();
+                }, 50);
+
+                return () => clearInterval(interval);
+            }, [currentTheme]);
+
+            // Snowflakes for snowy theme
+            useEffect(() => {
+                if (currentTheme !== 'snowy') return;
+
+                const createSnowflake = () => {
+                    const startX = Math.random() * 100;
+                    const size = 2 + Math.random() * 4;
+                    const flake = {
+                        id: Date.now() + Math.random(),
+                        startX: startX,
+                        drift: (Math.random() - 0.5) * 30,
+                        duration: 8 + Math.random() * 6,
+                        size: size,
+                        rotation: Math.random() * 360
+                    };
+                    
+                    setSnowflakes(prev => [...prev.slice(-60), flake]);
+                    
+                    setTimeout(() => {
+                        const accumulation = {
+                            id: flake.id,
+                            x: startX + (flake.drift / window.innerWidth * 100),
+                            size: size,
+                            createdAt: Date.now()
+                        };
+                        setSnowAccumulation(prev => [...prev.slice(-100), accumulation]);
+                        
+                        const meltTime = 15000 + Math.random() * 10000;
+                        setTimeout(() => {
+                            setSnowAccumulation(prev => prev.filter(s => s.id !== accumulation.id));
+                        }, meltTime);
+                        
+                        setSnowflakes(prev => prev.filter(f => f.id !== flake.id));
+                    }, flake.duration * 1000);
+                };
+
+                const interval = setInterval(() => {
+                    createSnowflake();
+                }, 200);
+
+                return () => clearInterval(interval);
+            }, [currentTheme]);
+
+            // Bokeh lights for Christmas theme
+            useEffect(() => {
+                if (currentTheme !== 'christmas') return;
+
+                // Create initial bokeh lights
+                const initialLights = Array.from({ length: 25 }).map((_, i) => ({
+                    id: Date.now() + i,
+                    x: Math.random() * 100,
+                    y: Math.random() * 100,
+                    size: 12 + Math.random() * 25,
+                    color: ['#fbbf24', '#dc2626', '#22c55e', '#ef4444', '#fcd34d'][Math.floor(Math.random() * 5)],
+                    opacity: 0.3 + Math.random() * 0.4,
+                    duration: 3 + Math.random() * 4
+                }));
+                setBokehLights(initialLights);
+
+                // Occasionally add new twinkling lights
+                const interval = setInterval(() => {
+                    if (Math.random() > 0.5) {
+                        const newLight = {
+                            id: Date.now(),
+                            x: Math.random() * 100,
+                            y: Math.random() * 100,
+                            size: 12 + Math.random() * 25,
+                            color: ['#fbbf24', '#dc2626', '#22c55e', '#ef4444', '#fcd34d'][Math.floor(Math.random() * 5)],
+                            opacity: 0.3 + Math.random() * 0.4,
+                            duration: 3 + Math.random() * 4
+                        };
+                        setBokehLights(prev => [...prev.slice(-24), newLight]);
+                    }
+                }, 3000);
+
+                return () => clearInterval(interval);
+            }, [currentTheme]);
+
+            // Sun rays for sunny theme
+            useEffect(() => {
+                if (currentTheme !== 'sunny') return;
+
+                // Create sun rays emanating from top
+                const rays = Array.from({ length: 12 }).map((_, i) => ({
+                    id: i,
+                    angle: i * 30, // 12 rays at 30-degree intervals
+                    opacity: 0.15 + Math.random() * 0.15,
+                    length: 60 + Math.random() * 40
+                }));
+                setSunRays(rays);
+            }, [currentTheme]);
+
+            // Fullscreen toggle
+            const toggleFullscreen = () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().then(() => {
+                        setIsFullscreen(true);
+                    }).catch(err => {
+                        console.error('Error enabling fullscreen:', err);
+                    });
+                } else {
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen().then(() => {
+                            setIsFullscreen(false);
+                        });
+                    }
+                }
+            };
+
+            useEffect(() => {
+                const handleFullscreenChange = () => {
+                    setIsFullscreen(!!document.fullscreenElement);
+                };
+                document.addEventListener('fullscreenchange', handleFullscreenChange);
+                return () => {
+                    document.removeEventListener('fullscreenchange', handleFullscreenChange);
+                };
+            }, []);
+
+            // Speech animation
+            const startSpeaking = () => {
+                if (isSpeaking) return;
+                setIsTransitioning(true);
+                setTimeout(() => setIsTransitioning(false), 800);
+                setIsSpeaking(true);
+                indexRef.current = 0;
+
+                const animate = () => {
+                    const currentAmplitude = SPEECH_PROFILE[indexRef.current];
+                    setAmplitude(currentAmplitude);
+                    indexRef.current++;
+                    
+                    if (indexRef.current < SPEECH_PROFILE.length) {
+                        animationRef.current = setTimeout(animate, 50);
+                    } else {
+                        indexRef.current = 0;
+                        animationRef.current = setTimeout(animate, 50);
+                    }
+                };
+                animate();
+            };
+
+            const stopSpeaking = () => {
+                setIsTransitioning(true);
+                setTimeout(() => setIsTransitioning(false), 800);
+                setIsSpeaking(false);
+                
+                const fadeOut = () => {
+                    setAmplitude(prev => {
+                        const newAmp = prev * 0.85;
+                        if (newAmp > 0.01) {
+                            setTimeout(fadeOut, 50);
+                            return newAmp;
+                        }
+                        return 0;
+                    });
+                };
+                fadeOut();
+                
+                if (animationRef.current) {
+                    clearTimeout(animationRef.current);
+                }
+            };
+
+            const handleInteract = () => {
+                if (isSpeaking) {
+                    stopSpeaking();
+                } else {
+                    startSpeaking();
+                }
+            };
+
+            useEffect(() => {
+                return () => {
+                    if (animationRef.current) {
+                        clearTimeout(animationRef.current);
+                    }
+                };
+            }, []);
+
+            // Dynamic styles
+            const sphereScale = 1 + (amplitude * 0.15);
+            const ringScale = 1 + (amplitude * 0.3);
+            const glowIntensity = 0.6 + (amplitude * 0.4);
+
+            // Theme configs
+            const themeConfig = {
+                galaxy: {
+                    bg: 'bg-black',
+                    sphereIdle: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.4), transparent 50%), radial-gradient(circle at 70% 70%, rgba(139,92,246,0.3), transparent 50%), radial-gradient(circle at 50% 80%, rgba(6,182,212,0.4), transparent 60%), linear-gradient(135deg, #8b5cf6, #6366f1 30%, #4f46e5 60%, #3730a3)',
+                    sphereSpeaking: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6), transparent 50%), radial-gradient(circle at 70% 70%, rgba(6,182,212,0.5), transparent 50%), radial-gradient(circle at 50% 80%, rgba(14,165,233,0.6), transparent 60%), linear-gradient(135deg, #06b6d4, #0ea5e9 30%, #3b82f6 60%, #2563eb)',
+                    ringIdle: 'border-purple-400/30',
+                    ringSpeaking: 'border-cyan-400/50',
+                    shadowIdle: '0 0 60px rgba(139,92,246,0.6), 0 0 120px rgba(99,102,241,0.4), inset 0 0 60px rgba(255,255,255,0.1), inset 20px 20px 60px rgba(139,92,246,0.3), inset -20px -20px 60px rgba(99,102,241,0.3)'
+                },
+                rainy: {
+                    bg: 'bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900',
+                    sphereIdle: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.3), transparent 50%), radial-gradient(circle at 70% 70%, rgba(100,116,139,0.4), transparent 50%), radial-gradient(circle at 50% 80%, rgba(71,85,105,0.5), transparent 60%), linear-gradient(135deg, #64748b, #475569 30%, #334155 60%, #1e293b)',
+                    sphereSpeaking: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.5), transparent 50%), radial-gradient(circle at 70% 70%, rgba(148,163,184,0.5), transparent 50%), radial-gradient(circle at 50% 80%, rgba(100,116,139,0.6), transparent 60%), linear-gradient(135deg, #94a3b8, #64748b 30%, #475569 60%, #334155)',
+                    ringIdle: 'border-slate-400/30',
+                    ringSpeaking: 'border-slate-300/50',
+                    shadowIdle: '0 0 60px rgba(100,116,139,0.5), 0 0 120px rgba(71,85,105,0.3), inset 0 0 60px rgba(255,255,255,0.1), inset 20px 20px 60px rgba(100,116,139,0.3), inset -20px -20px 60px rgba(71,85,105,0.3)'
+                },
+                snowy: {
+                    bg: 'bg-gradient-to-b from-slate-300 via-slate-200 to-slate-100',
+                    sphereIdle: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6), transparent 50%), radial-gradient(circle at 70% 70%, rgba(203,213,225,0.5), transparent 50%), radial-gradient(circle at 50% 80%, rgba(226,232,240,0.6), transparent 60%), linear-gradient(135deg, #cbd5e1, #94a3b8 30%, #64748b 60%, #475569)',
+                    sphereSpeaking: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.7), transparent 50%), radial-gradient(circle at 70% 70%, rgba(226,232,240,0.6), transparent 50%), radial-gradient(circle at 50% 80%, rgba(241,245,249,0.7), transparent 60%), linear-gradient(135deg, #e2e8f0, #cbd5e1 30%, #94a3b8 60%, #64748b)',
+                    ringIdle: 'border-slate-300/40',
+                    ringSpeaking: 'border-slate-400/60',
+                    shadowIdle: '0 0 60px rgba(203,213,225,0.6), 0 0 120px rgba(148,163,184,0.4), inset 0 0 60px rgba(255,255,255,0.2), inset 20px 20px 60px rgba(203,213,225,0.4), inset -20px -20px 60px rgba(148,163,184,0.4)'
+                },
+                christmas: {
+                    bg: 'bg-gradient-to-b from-slate-900 via-green-950 to-red-950',
+                    sphereIdle: 'radial-gradient(circle at 30% 30%, rgba(255,215,0,0.4), transparent 50%), radial-gradient(circle at 70% 70%, rgba(220,38,38,0.3), transparent 50%), radial-gradient(circle at 50% 80%, rgba(34,197,94,0.4), transparent 60%), linear-gradient(135deg, #dc2626, #16a34a 30%, #ca8a04 60%, #b91c1c)',
+                    sphereSpeaking: 'radial-gradient(circle at 30% 30%, rgba(255,215,0,0.6), transparent 50%), radial-gradient(circle at 70% 70%, rgba(248,113,113,0.5), transparent 50%), radial-gradient(circle at 50% 80%, rgba(74,222,128,0.6), transparent 60%), linear-gradient(135deg, #fbbf24, #22c55e 30%, #ef4444 60%, #dc2626)',
+                    ringIdle: 'border-yellow-500/40',
+                    ringSpeaking: 'border-yellow-400/60',
+                    shadowIdle: '0 0 60px rgba(220,38,38,0.6), 0 0 120px rgba(34,197,94,0.4), inset 0 0 60px rgba(255,215,0,0.2), inset 20px 20px 60px rgba(220,38,38,0.3), inset -20px -20px 60px rgba(34,197,94,0.3)'
+                },
+                sunny: {
+                    bg: 'bg-gradient-to-b from-sky-200 via-sky-100 to-emerald-100',
+                    sphereIdle: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.7), transparent 50%), radial-gradient(circle at 70% 70%, rgba(14,165,233,0.5), transparent 50%), radial-gradient(circle at 50% 80%, rgba(6,182,212,0.6), transparent 60%), linear-gradient(135deg, #06b6d4, #0ea5e9 30%, #3b82f6 60%, #1e40af)',
+                    sphereSpeaking: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.8), transparent 50%), radial-gradient(circle at 70% 70%, rgba(56,189,248,0.6), transparent 50%), radial-gradient(circle at 50% 80%, rgba(14,165,233,0.7), transparent 60%), linear-gradient(135deg, #38bdf8, #0ea5e9 30%, #0284c7 60%, #0369a1)',
+                    ringIdle: 'border-cyan-400/50',
+                    ringSpeaking: 'border-sky-300/70',
+                    shadowIdle: '0 0 80px rgba(6,182,212,0.6), 0 0 140px rgba(14,165,233,0.4), inset 0 0 60px rgba(255,255,255,0.3), inset 20px 20px 60px rgba(6,182,212,0.4), inset -20px -20px 60px rgba(59,130,246,0.4)'
+                }
+            };
+
+            const theme = themeConfig[currentTheme];
+
+            return (
+                <div className={`relative w-screen h-screen overflow-hidden flex items-center justify-center ${theme.bg}`}>
+                    
+                    {/* Theme Gallery Toggle */}
+                    <button
+                        onClick={() => setIsGalleryOpen(!isGalleryOpen)}
+                        className="absolute top-6 right-20 z-50 p-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-full text-white transition-all duration-300 hover:bg-white/20 hover:scale-110"
+                        title="Theme Gallery"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </button>
+
+                    {/* Theme Gallery Panel */}
+                    <div className={`absolute top-0 right-0 h-full w-80 bg-black/80 backdrop-blur-md border-l border-white/10 transition-transform duration-300 ease-out z-40 ${
+                        isGalleryOpen ? 'translate-x-0' : 'translate-x-full'
+                    }`}>
+                        <div className="p-6 flex flex-col gap-6">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-white text-xl font-light">Theme Gallery</h3>
+                                <button
+                                    onClick={() => setIsGalleryOpen(false)}
+                                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                >
+                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            {/* Galaxy Theme Card */}
+                            <button
+                                onClick={() => setCurrentTheme('galaxy')}
+                                className={`relative w-full h-32 rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+                                    currentTheme === 'galaxy' ? 'border-purple-400 scale-105' : 'border-white/20 hover:border-white/40'
+                                }`}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950">
+                                    {galleryStars.map((star) => (
+                                        <div
+                                            key={star.id}
+                                            className="absolute bg-white rounded-full"
+                                            style={{
+                                                width: '2px',
+                                                height: '2px',
+                                                left: `${star.left}%`,
+                                                top: `${star.top}%`,
+                                                opacity: star.opacity
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="absolute bottom-3 left-3 text-white font-light text-sm">Galaxy</div>
+                                {currentTheme === 'galaxy' && (
+                                    <div className="absolute top-3 right-3 w-6 h-6 bg-purple-400 rounded-full flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </button>
+
+                            {/* Rainy Theme Card */}
+                            <button
+                                onClick={() => setCurrentTheme('rainy')}
+                                className={`relative w-full h-32 rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+                                    currentTheme === 'rainy' ? 'border-slate-400 scale-105' : 'border-white/20 hover:border-white/40'
+                                }`}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900">
+                                    {galleryRain.map((drop) => (
+                                        <div
+                                            key={drop.id}
+                                            className="absolute w-px h-3 bg-white/40"
+                                            style={{
+                                                left: `${drop.left}%`,
+                                                top: `${drop.top}%`,
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="absolute bottom-3 left-3 text-white font-light text-sm">Rainy</div>
+                                {currentTheme === 'rainy' && (
+                                    <div className="absolute top-3 right-3 w-6 h-6 bg-slate-400 rounded-full flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </button>
+
+                            {/* Snowy Theme Card */}
+                            <button
+                                onClick={() => setCurrentTheme('snowy')}
+                                className={`relative w-full h-32 rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+                                    currentTheme === 'snowy' ? 'border-slate-300 scale-105' : 'border-white/20 hover:border-white/40'
+                                }`}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-b from-slate-300 via-slate-200 to-slate-100">
+                                    {gallerySnow.map((flake) => (
+                                        <div
+                                            key={flake.id}
+                                            className="absolute bg-white rounded-full"
+                                            style={{
+                                                width: `${flake.size}px`,
+                                                height: `${flake.size}px`,
+                                                left: `${flake.left}%`,
+                                                top: `${flake.top}%`,
+                                                opacity: 0.7
+                                            }}
+                                        />
+                                    ))}
+                                    <div className="absolute bottom-0 left-0 right-0 h-3 bg-gradient-to-t from-white/80 to-transparent" />
+                                </div>
+                                <div className="absolute bottom-3 left-3 text-slate-700 font-light text-sm">Snowy</div>
+                                {currentTheme === 'snowy' && (
+                                    <div className="absolute top-3 right-3 w-6 h-6 bg-slate-400 rounded-full flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </button>
+
+                            {/* Christmas Theme Card */}
+                            <button
+                                onClick={() => setCurrentTheme('christmas')}
+                                className={`relative w-full h-32 rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+                                    currentTheme === 'christmas' ? 'border-yellow-400 scale-105' : 'border-white/20 hover:border-white/40'
+                                }`}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-green-950 to-red-950">
+                                    {/* Bokeh lights preview */}
+                                    {galleryChristmasLights.map((light) => (
+                                        <div
+                                            key={light.id}
+                                            className="absolute rounded-full blur-sm"
+                                            style={{
+                                                width: `${light.size}px`,
+                                                height: `${light.size}px`,
+                                                left: `${light.left}%`,
+                                                top: `${light.top}%`,
+                                                backgroundColor: light.color,
+                                                opacity: light.opacity,
+                                                boxShadow: `0 0 ${light.size * 2}px ${light.color}`
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="absolute bottom-3 left-3 text-yellow-300 font-light text-sm">Christmas</div>
+                                {currentTheme === 'christmas' && (
+                                    <div className="absolute top-3 right-3 w-6 h-6 bg-yellow-400 rounded-full flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-red-900" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </button>
+
+                            {/* Sunny Theme Card */}
+                            <button
+                                onClick={() => setCurrentTheme('sunny')}
+                                className={`relative w-full h-32 rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+                                    currentTheme === 'sunny' ? 'border-amber-400 scale-105' : 'border-white/20 hover:border-white/40'
+                                }`}
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-b from-sky-200 via-sky-100 to-emerald-100">
+                                    {/* Sun rays preview */}
+                                    <div className="absolute top-1/4 left-1/2 -translate-x-1/2">
+                                        {gallerySunRays.map((ray) => (
+                                            <div
+                                                key={ray.id}
+                                                className="absolute w-0.5 bg-gradient-to-b from-yellow-200/60 to-transparent"
+                                                style={{
+                                                    height: '40px',
+                                                    transformOrigin: 'top center',
+                                                    transform: `rotate(${ray.angle}deg)`,
+                                                    left: '0',
+                                                    top: '0'
+                                                }}
+                                            />
+                                        ))}
+                                        {/* Sun circle */}
+                                        <div className="absolute w-8 h-8 rounded-full bg-yellow-300 -translate-x-1/2 -translate-y-1/2 blur-sm opacity-80" />
+                                    </div>
+                                </div>
+                                <div className="absolute bottom-3 left-3 text-slate-700 font-light text-sm">Sunny</div>
+                                {currentTheme === 'sunny' && (
+                                    <div className="absolute top-3 right-3 w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center">
+                                        <svg className="w-4 h-4 text-amber-900" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {/* Fullscreen Toggle */}
+                    <button
+                        onClick={toggleFullscreen}
+                        className="absolute top-6 right-6 z-50 p-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-full text-white transition-all duration-300 hover:bg-white/20 hover:scale-110"
+                        title={isFullscreen ? 'Fullscreen beenden' : 'Fullscreen'}
+                    >
+                        {isFullscreen ? (
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        ) : (
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                            </svg>
+                        )}
+                    </button>
+                    
+                    {/* Galaxy Background */}
+                    {currentTheme === 'galaxy' && (
+                        <>
+                            <div className="absolute inset-0 pointer-events-none">
+                                {stars.map((star) => (
+                                    <div
+                                        key={star.id}
+                                        className="absolute bg-white rounded-full"
+                                        style={{
+                                            left: `${star.left}%`,
+                                            top: `${star.top}%`,
+                                            width: `${star.size}px`,
+                                            height: `${star.size}px`,
+                                            opacity: star.opacity,
+                                            boxShadow: `0 0 ${star.size * 2}px rgba(255, 255, 255, ${star.opacity * 0.8})`,
+                                            animation: `twinkle ${star.twinkleDuration}s ease-in-out infinite ${star.twinkleDelay}s`
+                                        }}
+                                    />
+                                ))}
+                            </div>
+
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {shootingStars.map((star) => {
+                                    const dx = 400;
+                                    const dy = 300;
+                                    const moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+                                    const tailAngle = moveAngle + 180;
+                                    
+                                    return (
+                                        <div
+                                            key={star.id}
+                                            className="absolute"
+                                            style={{
+                                                left: `${star.startX}%`,
+                                                top: `${star.startY}%`,
+                                                animation: `shoot-move 1.8s ease-out forwards`
+                                            }}
+                                        >
+                                            <div
+                                                className="absolute bg-white rounded-full"
+                                                style={{
+                                                    width: '2px',
+                                                    height: '2px',
+                                                    left: '-1px',
+                                                    top: '-1px',
+                                                    boxShadow: '0 0 8px 2px rgba(255, 255, 255, 0.8)',
+                                                    animation: `shoot-head 1.8s ease-out forwards`
+                                                }}
+                                            />
+                                            <div
+                                                className="absolute"
+                                                style={{
+                                                    left: '0px',
+                                                    top: '0px',
+                                                    transformOrigin: 'left center',
+                                                    transform: `rotate(${tailAngle}deg)`,
+                                                }}
+                                            >
+                                                <div
+                                                    className="bg-gradient-to-r from-white via-white/50 to-transparent"
+                                                    style={{
+                                                        width: '0px',
+                                                        height: '2px',
+                                                        animation: `shoot-tail 1.8s ease-out forwards`
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Rainy Background */}
+                    {currentTheme === 'rainy' && (
+                        <>
+                            {/* Falling rain drops */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {rainDrops.map((drop) => (
+                                    <div
+                                        key={drop.id}
+                                        className="absolute w-px bg-white/60"
+                                        style={{
+                                            left: `${drop.startX}%`,
+                                            top: '0',
+                                            height: '30px',
+                                            animation: `rain-fall ${drop.duration}s linear forwards`,
+                                            boxShadow: '0 0 2px rgba(255, 255, 255, 0.5)'
+                                        }}
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Water splashes - both ground and arcing droplets */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {splashes.map((splash) => {
+                                    const isGroundSplash = splash.isGround === true;
+                                    const isArcingSplash = splash.isArcing === true;
+                                    
+                                    return (
+                                        <div
+                                            key={splash.id}
+                                            className="absolute"
+                                            style={{
+                                                left: isArcingSplash ? `${splash.startX}%` : `${splash.x}%`,
+                                                top: isArcingSplash ? `${splash.startY}%` : 'auto',
+                                                bottom: isGroundSplash ? '0' : 'auto',
+                                            }}
+                                        >
+                                            {isArcingSplash ? (
+                                                // Small, subtle arcing droplet with gravity
+                                                <div
+                                                    className="bg-white/40 rounded-full"
+                                                    style={{
+                                                        width: '2px',
+                                                        height: '3px',
+                                                        animation: `droplet-arc 0.6s cubic-bezier(0.33, 0.66, 0.66, 1) forwards`,
+                                                        '--arc-vx': `${splash.velocityX}px`,
+                                                        '--arc-vy': `${splash.velocityY}px`,
+                                                        boxShadow: '0 0 1px rgba(255, 255, 255, 0.3)'
+                                                    }}
+                                                />
+                                            ) : isGroundSplash ? (
+                                                // Horizontal ground splash
+                                                <div 
+                                                    className="w-8 h-1 bg-white/40 rounded-full"
+                                                    style={{
+                                                        animation: 'splash 0.6s ease-out forwards'
+                                                    }}
+                                                />
+                                            ) : null}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Ground water line */}
+                            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+                        </>
+                    )}
+
+                    {/* Snowy Background - COMPLETED */}
+                    {currentTheme === 'snowy' && (
+                        <>
+                            {/* Falling snowflakes */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {snowflakes.map((flake) => (
+                                    <div
+                                        key={flake.id}
+                                        className="absolute bg-white rounded-full shadow-lg"
+                                        style={{
+                                            left: `${flake.startX}%`,
+                                            top: '-10px',
+                                            width: `${flake.size}px`,
+                                            height: `${flake.size}px`,
+                                            animation: `snowfall ${flake.duration}s linear forwards`,
+                                            '--drift': `${flake.drift}px`,
+                                            '--rotation': `${flake.rotation}deg`,
+                                            boxShadow: `0 0 ${flake.size * 2}px rgba(255, 255, 255, 0.8)`,
+                                            opacity: 0.9
+                                        }}
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Snow accumulation at bottom */}
+                            <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none">
+                                {/* Base snow layer */}
+                                <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white/90 via-white/70 to-transparent" />
+                                
+                                {/* Individual accumulated snowflakes */}
+                                {snowAccumulation.map((snow) => {
+                                    const age = Date.now() - snow.createdAt;
+                                    const maxAge = 25000;
+                                    const opacity = Math.max(0, 1 - (age / maxAge));
+                                    
+                                    return (
+                                        <div
+                                            key={snow.id}
+                                            className="absolute bg-white rounded-full"
+                                            style={{
+                                                left: `${snow.x}%`,
+                                                bottom: `${Math.random() * 4}px`,
+                                                width: `${snow.size}px`,
+                                                height: `${snow.size}px`,
+                                                opacity: opacity * 0.8,
+                                                boxShadow: `0 0 ${snow.size}px rgba(255, 255, 255, ${opacity * 0.5})`,
+                                                transition: 'opacity 2s ease-out'
+                                            }}
+                                        />
+                                    );
+                                })}
+                            </div>
+
+                            {/* Foreground snow drifts */}
+                            <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
+                                <svg className="w-full h-20" preserveAspectRatio="none" viewBox="0 0 1200 80">
+                                    <path
+                                        d="M0,60 Q100,45 200,50 T400,55 T600,50 T800,55 T1000,50 T1200,55 L1200,80 L0,80 Z"
+                                        fill="white"
+                                        fillOpacity="0.95"
+                                    />
+                                    <path
+                                        d="M0,70 Q150,60 300,65 T600,70 T900,65 T1200,70 L1200,80 L0,80 Z"
+                                        fill="white"
+                                        fillOpacity="0.85"
+                                    />
+                                </svg>
+                            </div>
+                        </>
+                    )}
+
+                    {/* Christmas Background - Festive bokeh lights */}
+                    {currentTheme === 'christmas' && (
+                        <>
+                            {/* Bokeh lights - warm Christmas glow */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {bokehLights.map((light) => (
+                                    <div
+                                        key={light.id}
+                                        className="absolute rounded-full blur-md"
+                                        style={{
+                                            left: `${light.x}%`,
+                                            top: `${light.y}%`,
+                                            width: `${light.size}px`,
+                                            height: `${light.size}px`,
+                                            backgroundColor: light.color,
+                                            opacity: light.opacity,
+                                            boxShadow: `0 0 ${light.size * 3}px ${light.color}`,
+                                            animation: `twinkle ${light.duration}s ease-in-out infinite`
+                                        }}
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Gentle falling sparkles */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                                {Array.from({ length: 15 }).map((_, i) => (
+                                    <div
+                                        key={i}
+                                        className="absolute w-1 h-1 bg-yellow-300 rounded-full"
+                                        style={{
+                                            left: `${(i * 7) % 100}%`,
+                                            top: '-10px',
+                                            opacity: 0.6,
+                                            animation: `gentle-fall ${8 + (i % 5)}s linear infinite`,
+                                            animationDelay: `${i * 0.5}s`,
+                                            boxShadow: '0 0 4px #fcd34d'
+                                        }}
+                                    />
+                                ))}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Sunny Background - Bright and cheerful */}
+                    {currentTheme === 'sunny' && (
+                        <>
+                            {/* Realistic sun in top left */}
+                            <div className="absolute top-16 left-16 pointer-events-none">
+                                {/* Sun core */}
+                                <div 
+                                    className="relative w-24 h-24 rounded-full"
+                                    style={{
+                                        background: 'radial-gradient(circle at center, #fef08a 0%, #fde047 30%, #facc15 60%, #eab308 100%)',
+                                        boxShadow: '0 0 40px rgba(250,204,21,0.8), 0 0 80px rgba(234,179,8,0.6), 0 0 120px rgba(234,179,8,0.4)',
+                                        animation: 'sun-pulse 4s ease-in-out infinite'
+                                    }}
+                                />
+                                
+                                {/* Sun outer glow */}
+                                <div 
+                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full blur-2xl"
+                                    style={{
+                                        background: 'radial-gradient(circle, rgba(254,240,138,0.4) 0%, rgba(253,224,71,0.2) 50%, transparent 70%)',
+                                        animation: 'sun-glow 4s ease-in-out infinite'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Realistic sun rays from top left */}
+                            <div className="absolute top-16 left-16 pointer-events-none" style={{ transformOrigin: 'center' }}>
+                                {sunRays.map((ray) => (
+                                    <div
+                                        key={ray.id}
+                                        className="absolute origin-left"
+                                        style={{
+                                            left: '48px', // Center of sun
+                                            top: '48px',
+                                            width: `${300 + ray.length * 5}px`,
+                                            height: '3px',
+                                            background: `linear-gradient(to right, rgba(254,240,138,${ray.opacity * 0.6}) 0%, rgba(253,224,71,${ray.opacity * 0.4}) 20%, transparent 60%)`,
+                                            transform: `rotate(${ray.angle}deg)`,
+                                            transformOrigin: 'left center',
+                                            animation: `ray-shimmer ${3 + (ray.id % 3)}s ease-in-out infinite`,
+                                            animationDelay: `${ray.id * 0.15}s`,
+                                            filter: 'blur(1px)'
+                                        }}
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Subtle clouds */}
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-30">
+                                <div 
+                                    className="absolute w-40 h-16 bg-white rounded-full blur-xl"
+                                    style={{
+                                        top: '20%',
+                                        left: '10%',
+                                        animation: 'drift-cloud 40s linear infinite'
+                                    }}
+                                />
+                                <div 
+                                    className="absolute w-32 h-12 bg-white rounded-full blur-xl"
+                                    style={{
+                                        top: '60%',
+                                        left: '70%',
+                                        animation: 'drift-cloud 50s linear infinite',
+                                        animationDelay: '5s'
+                                    }}
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    {/* Sphere and Ring */}
+                    <div className="relative w-96 h-96 flex items-center justify-center">
+                        
+                        {/* Outer ring */}
+                        <div 
+                            className={`absolute inset-0 flex items-center justify-center ${
+                                isSpeaking ? 'transition-all duration-200 ease-out' : 'transition-all duration-500 ease-out'
+                            } ${
+                                !isSpeaking ? 'animate-breathe' : ''
+                            } ${
+                                isTransitioning ? 'animate-morph-scale' : ''
+                            }`}
+                            style={{
+                                transform: `scale(${ringScale})`,
+                                opacity: isSpeaking ? 0.3 + (amplitude * 0.5) : 0.3
+                            }}
+                        >
+                            <div 
+                                className={`w-80 h-80 rounded-full border-2 transition-all duration-500 ease-out ${
+                                    isSpeaking ? theme.ringSpeaking : theme.ringIdle
+                                }`}
+                            />
+                        </div>
+
+                        {/* Main sphere */}
+                        <div 
+                            className={`absolute inset-0 flex items-center justify-center ${
+                                isSpeaking ? 'transition-all duration-200 ease-out' : 'transition-all duration-500 ease-out'
+                            } cursor-pointer ${
+                                !isSpeaking ? 'animate-breathe' : ''
+                            }`}
+                            style={{
+                                transform: `scale(${sphereScale})`
+                            }}
+                            onClick={handleInteract}
+                        >
+                            <div 
+                                className={`w-72 h-72 rounded-full relative overflow-hidden transition-all duration-500 ease-out ${
+                                    isTransitioning ? 'animate-glow-pulse' : ''
+                                }`}
+                                style={{
+                                    background: isSpeaking ? theme.sphereSpeaking : theme.sphereIdle,
+                                    boxShadow: isSpeaking
+                                        ? `0 0 ${100 + amplitude * 100}px rgba(6,182,212,${glowIntensity}), 0 0 ${200 + amplitude * 100}px rgba(14,165,233,${glowIntensity * 0.8}), inset 0 0 60px rgba(255,255,255,${0.2 + amplitude * 0.2}), inset 20px 20px 60px rgba(6,182,212,${0.4 + amplitude * 0.1}), inset -20px -20px 60px rgba(14,165,233,${0.4 + amplitude * 0.1})`
+                                        : theme.shadowIdle,
+                                    transition: 'background 0.5s ease-out, box-shadow 0.3s ease-out'
+                                }}
+                            >
+                                <div 
+                                    className={`absolute -top-1/2 -left-1/2 w-[200%] h-[200%] rounded-[40%] opacity-70`}
+                                    style={{
+                                        background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.4), transparent 30%), radial-gradient(circle at 70% 40%, rgba(139,92,246,0.3), transparent 40%)',
+                                        animation: isTransitioning ? 'wave-surge 0.8s cubic-bezier(0.4, 0, 0.2, 1)' : 'wave1 8s ease-in-out infinite'
+                                    }}
+                                />
+                                <div 
+                                    className={`absolute -top-[30%] -left-[30%] w-[160%] h-[160%] rounded-[45%] opacity-60 blur-[15px]`}
+                                    style={{
+                                        background: 'radial-gradient(ellipse at 50% 50%, rgba(255,255,255,0.15), transparent 50%)',
+                                        animation: isTransitioning ? 'wave-surge-2 0.8s cubic-bezier(0.4, 0, 0.2, 1)' : 'wave2 10s ease-in-out infinite'
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* UI Controls */}
+                    <div className="absolute bottom-12 left-0 right-0 flex flex-col items-center space-y-6">
+                        
+                        {/* Status indicator */}
+                        <div className="flex items-center space-x-3">
+                            <div 
+                                className={`w-3 h-3 rounded-full transition-all duration-500 ease-in-out ${
+                                    isSpeaking 
+                                        ? 'bg-cyan-400 shadow-[0_0_20px_currentColor] animate-pulse' 
+                                        : 'bg-purple-400 shadow-[0_0_10px_currentColor]'
+                                }`}
+                            />
+                            <span className={`font-light text-lg transition-all duration-500 ease-in-out ${
+                                currentTheme === 'snowy' ? 'text-slate-700' : 
+                                currentTheme === 'christmas' ? 'text-yellow-200' : 
+                                currentTheme === 'sunny' ? 'text-slate-800' : 'text-white'
+                            }`}>
+                                {isSpeaking ? 'Ich spreche...' : 'Bereit zum Sprechen'}
+                            </span>
+                        </div>
+
+                        {/* Interact button */}
+                        <button
+                            onClick={handleInteract}
+                            className={`px-8 py-3 backdrop-blur-sm border rounded-full font-light tracking-wide transition-all duration-500 ease-in-out hover:scale-105 ${
+                                currentTheme === 'snowy' 
+                                    ? 'bg-white/40 border-slate-300 text-slate-700 hover:bg-white/60 shadow-[0_0_40px_rgba(71,85,105,0.3)]'
+                                    : currentTheme === 'christmas'
+                                    ? 'bg-red-900/40 border-yellow-500/40 text-yellow-200 hover:bg-red-900/60 shadow-[0_0_40px_rgba(220,38,38,0.4)]'
+                                    : currentTheme === 'sunny'
+                                    ? 'bg-white/50 border-sky-400/60 text-slate-800 hover:bg-white/70 shadow-[0_0_40px_rgba(14,165,233,0.4)]'
+                                    : 'bg-white/10 border-white/20 text-white hover:bg-white/20 shadow-[0_0_40px_rgba(99,102,241,0.3)]'
+                            }`}
+                        >
+                            {isSpeaking ? 'Stoppen' : 'Interagieren'}
+                        </button>
+
+                        <p className={`text-xs font-light ${
+                            currentTheme === 'snowy' ? 'text-slate-500' : 
+                            currentTheme === 'christmas' ? 'text-yellow-300/60' : 
+                            currentTheme === 'sunny' ? 'text-slate-600' : 'text-indigo-300/60'
+                        }`}>
+                            Klicken Sie auf die Sphäre oder den Button
+                        </p>
+                    </div>
+
+                    {/* Animations */}
+                    <style>{`
+                        @keyframes twinkle {
+                            0%, 100% { opacity: var(--star-opacity, 0.5); }
+                            50% { opacity: calc(var(--star-opacity, 0.5) * 0.3); }
+                        }
+
+                        @keyframes shoot-move {
+                            0% { transform: translate(0, 0); }
+                            100% { transform: translate(400px, 300px); }
+                        }
+
+                        @keyframes shoot-head {
+                            0% {
+                                opacity: 0.3;
+                                transform: scale(0.5);
+                                box-shadow: 0 0 4px 1px rgba(255, 255, 255, 0.4);
+                            }
+                            15% {
+                                opacity: 1;
+                                transform: scale(1.5);
+                                box-shadow: 0 0 12px 4px rgba(255, 255, 255, 1);
+                            }
+                            50% {
+                                opacity: 1;
+                                transform: scale(2);
+                                box-shadow: 0 0 16px 5px rgba(255, 255, 255, 1);
+                            }
+                            80% {
+                                opacity: 0.8;
+                                transform: scale(1.8);
+                                box-shadow: 0 0 14px 4px rgba(255, 255, 255, 0.8);
+                            }
+                            100% {
+                                opacity: 0;
+                                transform: scale(1);
+                                box-shadow: 0 0 6px 2px rgba(255, 255, 255, 0.3);
+                            }
+                        }
+
+                        @keyframes shoot-tail {
+                            0% {
+                                width: 0px;
+                                opacity: 0;
+                            }
+                            15% {
+                                width: 20px;
+                                opacity: 0.6;
+                            }
+                            40% {
+                                width: 80px;
+                                opacity: 0.9;
+                            }
+                            65% {
+                                width: 100px;
+                                opacity: 0.8;
+                            }
+                            85% {
+                                width: 80px;
+                                opacity: 0.4;
+                            }
+                            100% {
+                                width: 40px;
+                                opacity: 0;
+                            }
+                        }
+
+                        @keyframes wave1 {
+                            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+                            25% { transform: translate(5%, 5%) rotate(90deg); }
+                            50% { transform: translate(0, 10%) rotate(180deg); }
+                            75% { transform: translate(-5%, 5%) rotate(270deg); }
+                        }
+
+                        @keyframes wave2 {
+                            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+                            33% { transform: translate(-3%, 7%) rotate(120deg); }
+                            66% { transform: translate(3%, -3%) rotate(240deg); }
+                        }
+
+                        @keyframes rain-fall {
+                            0% {
+                                transform: translateY(-30px);
+                                opacity: 0;
+                            }
+                            10% {
+                                opacity: 0.6;
+                            }
+                            90% {
+                                opacity: 0.4;
+                            }
+                            100% {
+                                transform: translateY(100vh);
+                                opacity: 0;
+                            }
+                        }
+
+                        @keyframes splash {
+                            0% {
+                                transform: scaleX(0) scaleY(1);
+                                opacity: 0.8;
+                            }
+                            50% {
+                                transform: scaleX(1.5) scaleY(0.5);
+                                opacity: 0.6;
+                            }
+                            100% {
+                                transform: scaleX(2) scaleY(0.2);
+                                opacity: 0;
+                            }
+                        }
+
+                        @keyframes snowfall {
+                            0% {
+                                transform: translateY(-10px) translateX(0) rotate(0deg);
+                                opacity: 0;
+                            }
+                            10% {
+                                opacity: 0.9;
+                            }
+                            90% {
+                                opacity: 0.9;
+                            }
+                            100% {
+                                transform: translateY(100vh) translateX(var(--drift)) rotate(var(--rotation));
+                                opacity: 0.7;
+                            }
+                        }
+
+                        @keyframes droplet-arc {
+                            0% {
+                                transform: translate(0, 0);
+                                opacity: 0.5;
+                            }
+                            15% {
+                                transform: translate(calc(var(--arc-vx) * 0.15), calc(var(--arc-vy) * 0.15 + 3px));
+                                opacity: 0.45;
+                            }
+                            30% {
+                                transform: translate(calc(var(--arc-vx) * 0.3), calc(var(--arc-vy) * 0.3 + 12px));
+                                opacity: 0.4;
+                            }
+                            45% {
+                                transform: translate(calc(var(--arc-vx) * 0.45), calc(var(--arc-vy) * 0.45 + 27px));
+                                opacity: 0.35;
+                            }
+                            60% {
+                                transform: translate(calc(var(--arc-vx) * 0.6), calc(var(--arc-vy) * 0.6 + 48px));
+                                opacity: 0.25;
+                            }
+                            75% {
+                                transform: translate(calc(var(--arc-vx) * 0.75), calc(var(--arc-vy) * 0.75 + 75px));
+                                opacity: 0.15;
+                            }
+                            90% {
+                                transform: translate(calc(var(--arc-vx) * 0.9), calc(var(--arc-vy) * 0.9 + 108px));
+                                opacity: 0.05;
+                            }
+                            100% {
+                                transform: translate(var(--arc-vx), calc(var(--arc-vy) + 150px));
+                                opacity: 0;
+                            }
+                        }
+
+                        @keyframes gentle-fall {
+                            0% {
+                                transform: translateY(-10px) translateX(0);
+                                opacity: 0;
+                            }
+                            10% {
+                                opacity: 0.6;
+                            }
+                            90% {
+                                opacity: 0.6;
+                            }
+                            100% {
+                                transform: translateY(100vh) translateX(20px);
+                                opacity: 0;
+                            }
+                        }
+
+                        @keyframes sun-pulse {
+                            0%, 100% {
+                                transform: scale(1);
+                            }
+                            50% {
+                                transform: scale(1.05);
+                            }
+                        }
+
+                        @keyframes sun-glow {
+                            0%, 100% {
+                                transform: scale(1);
+                                opacity: 0.4;
+                            }
+                            50% {
+                                transform: scale(1.15);
+                                opacity: 0.6;
+                            }
+                        }
+
+                        @keyframes ray-shimmer {
+                            0%, 100% {
+                                opacity: 0.3;
+                            }
+                            50% {
+                                opacity: 0.6;
+                            }
+                        }
+
+                        @keyframes drift-cloud {
+                            0% {
+                                transform: translateX(-10%);
+                            }
+                            100% {
+                                transform: translateX(110%);
+                            }
+                        }
+                    `}</style>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<VoiceAssistant />, document.getElementById('root'));
+    </script>
+</body>
+</html>

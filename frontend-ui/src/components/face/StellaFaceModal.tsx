@@ -5,9 +5,9 @@
 
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, LayoutGrid, Maximize2, Minimize2 } from 'lucide-react';
+import { X, LayoutGrid, Maximize2, Minimize2, Subtitles } from 'lucide-react';
 import StellaFace from './StellaFace';
-import UserTranscriptOverlay from './UserTranscriptOverlay';
+import TranscriptOverlay from './TranscriptOverlay';
 import VisualizerGallery from './VisualizerGallery';
 import SphereVisualizer from './visualizers/SphereVisualizer';
 import WeatherVisualizer from './visualizers/WeatherVisualizer';
@@ -38,7 +38,7 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
   const setIsMuted = useStore(s => s.setIsMuted);
   const setIsRecording = useStore(s => s.setIsRecording);
 
-  // Store state for user transcript (partial only)
+  // Store state for user transcript (partial only - for real-time display)
   const userPartialTranscript = useStore(s =>
     s.turns.find(t => t.role === 'user' && t.status === 'partial')?.text || ''
   );
@@ -47,6 +47,7 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
   const [currentVisualizer, setCurrentVisualizer] = useState<VisualizerType>('face');
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showSubtitles, setShowSubtitles] = useState(true);
 
   // Control visibility state (fade after inactivity)
   const [showControls, setShowControls] = useState(true);
@@ -96,6 +97,14 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
       setShowControls(true);
     }
   }, [isGalleryOpen]);
+
+  // Resume audio analysis when modal opens (user interaction enables AudioContext)
+  useEffect(() => {
+    if (isOpen && transport) {
+      // Opening the modal is a user interaction, so we can resume AudioContext
+      transport.resumeAudioAnalysis();
+    }
+  }, [isOpen, transport]);
 
   // Fullscreen toggle function
   const toggleFullscreen = useCallback(async () => {
@@ -207,6 +216,25 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
     }
   }, [isMuted, transport, status, setIsMuted, setIsRecording]);
 
+  // Handle spacebar to toggle mute
+  useEffect(() => {
+    const handleSpacebar = (event: KeyboardEvent) => {
+      if (!isOpen) return;
+
+      // Space key - toggle mute (prevent default to avoid scrolling)
+      if (event.key === ' ' || event.code === 'Space') {
+        event.preventDefault();
+        toggleMute();
+      }
+    };
+
+    document.addEventListener('keydown', handleSpacebar);
+
+    return () => {
+      document.removeEventListener('keydown', handleSpacebar);
+    };
+  }, [isOpen, toggleMute]);
+
   // Clean up on component unmount
   useEffect(() => {
     return () => {
@@ -301,6 +329,21 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
               showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
+            {/* Subtitles Toggle Button */}
+            <motion.button
+              className={`p-3 rounded-full backdrop-blur-sm border transition-all duration-300 hover:scale-110 ${
+                showSubtitles
+                  ? 'bg-white/20 border-white/30 text-white'
+                  : 'bg-white/10 border-white/20 text-white/40'
+              }`}
+              onClick={() => setShowSubtitles(!showSubtitles)}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              title={showSubtitles ? 'Hide Subtitles' : 'Show Subtitles'}
+            >
+              <Subtitles className={`w-5 h-5 ${!showSubtitles ? 'opacity-50' : ''}`} />
+            </motion.button>
+
             {/* Gallery Button */}
             <motion.button
               className="p-3 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white transition-all duration-300 hover:bg-white/20 hover:scale-110"
@@ -347,10 +390,11 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
             onSelect={setCurrentVisualizer}
           />
 
-          {/* User Transcript Overlay */}
-          <UserTranscriptOverlay
+          {/* Transcript Overlay (works with all themes) */}
+          <TranscriptOverlay
             transcript={userPartialTranscript}
-            isVisible={!!userPartialTranscript}
+            theme={currentVisualizer}
+            isVisible={showSubtitles}
           />
 
           {/* Bottom controls (also fade on inactivity) */}

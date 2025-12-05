@@ -51,6 +51,18 @@ export class PeerTransport implements Transport {
     this.userName = name
   }
 
+  // Resume audio analysis - call this after user interaction (e.g., opening face modal)
+  async resumeAudioAnalysis(): Promise<void> {
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume()
+        console.log('🎙️ [AUDIO] AudioContext resumed via resumeAudioAnalysis(), state:', this.audioContext.state)
+      } catch (err) {
+        console.warn('⚠️ [AUDIO] Could not resume AudioContext:', err)
+      }
+    }
+  }
+
   // Check if connected to a specific room
   isConnectedToRoom(roomName: string): boolean {
     return this.connectionState === 'connected' && this.currentRoomName === roomName
@@ -968,11 +980,18 @@ export class PeerTransport implements Transport {
   }
 
   // Set up Web Audio API for accurate speech detection from remote audio
-  private setupWebAudioAnalysis(audioTrack: RemoteAudioTrack) {
+  private async setupWebAudioAnalysis(audioTrack: RemoteAudioTrack) {
     try {
       // Create AudioContext if not exists
       if (!this.audioContext) {
         this.audioContext = new AudioContext()
+      }
+
+      // Resume AudioContext if suspended (browsers require user interaction)
+      if (this.audioContext.state === 'suspended') {
+        console.log('🎙️ [AUDIO] AudioContext is suspended, attempting to resume...')
+        await this.audioContext.resume()
+        console.log('🎙️ [AUDIO] AudioContext resumed successfully, state:', this.audioContext.state)
       }
 
       // Create source from remote track's MediaStreamTrack
@@ -1009,14 +1028,26 @@ export class PeerTransport implements Transport {
   // Start monitoring audio levels for face animation with RMS analysis
   private startAudioLevelMonitoring() {
     let lastSpeakingState = false
+    let resumeAttempted = false
 
-    const analyzeAudio = () => {
+    const analyzeAudio = async () => {
       if (!this.remoteAudioTrack) return
 
       let audioLevel = 0
       let isSpeaking = false
 
-      if (this.audioAnalyser) {
+      // Try to resume AudioContext if it's suspended (user interaction may have happened)
+      if (this.audioContext && this.audioContext.state === 'suspended' && !resumeAttempted) {
+        resumeAttempted = true
+        try {
+          await this.audioContext.resume()
+          console.log('🎙️ [AUDIO] AudioContext resumed during monitoring, state:', this.audioContext.state)
+        } catch (err) {
+          console.warn('⚠️ [AUDIO] Could not resume AudioContext:', err)
+        }
+      }
+
+      if (this.audioAnalyser && this.audioContext?.state === 'running') {
         // Use Web Audio API for accurate audio content analysis
         const bufferLength = this.audioAnalyser.frequencyBinCount
         const dataArray = new Uint8Array(bufferLength)
@@ -1033,7 +1064,7 @@ export class PeerTransport implements Transport {
         // Speech detection: RMS threshold of 0.02 (empirically tuned)
         isSpeaking = rms > 0.02
       } else {
-        // Fallback: use basic volume detection if Web Audio failed
+        // Fallback: use basic volume detection if Web Audio failed or not running
         audioLevel = this.remoteAudioTrack.getVolume() || 0
         isSpeaking = audioLevel > 0.05
       }

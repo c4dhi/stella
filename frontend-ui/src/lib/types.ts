@@ -159,6 +159,8 @@ export interface Transport extends TransportEvents {
   isConnectedToRoom: (roomName: string) => boolean
   getConnectionState: () => 'idle' | 'connecting' | 'connected' | 'disconnecting'
   getCurrentRoomName: () => string | undefined
+  // Audio analysis control (for face modal reactivity)
+  resumeAudioAnalysis: () => Promise<void>
 }
 
 export type EnvelopeType =
