@@ -25,6 +25,17 @@ const builtInAgents = [
     capabilities: ['voice', 'text', 'plans', 'experts'],
     defaultConfig: { plan_id: 'stella_smalltalk' },  // Default plan for Stella agent
   },
+  {
+    slug: 'stella-light-agent',
+    name: 'Stella Light',
+    description: 'Lightweight conversational AI with prompt-based guardrails. Faster responses, lower cost.',
+    icon: '💡',
+    version: '1.0.0',
+    isBuiltIn: true,
+    validationStatus: AgentValidationStatus.APPROVED,
+    capabilities: ['voice', 'text', 'plans'],
+    defaultConfig: { plan_id: 'stella_smalltalk' },  // Default plan
+  },
 ]
 
 async function main() {

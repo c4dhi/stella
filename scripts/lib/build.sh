@@ -313,6 +313,9 @@ build_images() {
     # Build echo-agent
     smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile" || true
 
+    # Build stella-light-agent
+    smart_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile" || true
+
     # Summary
     if [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         success "Built ${#REBUILT_SERVICES[@]} image(s): ${REBUILT_SERVICES[*]}"
@@ -364,7 +367,7 @@ import_images_to_k3s() {
 sync_images_to_k3s() {
     [[ "$DRY_RUN_MODE" == "true" ]] && return 0
 
-    local all_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent")
+    local all_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent" "stella-light-agent")
     local images_to_sync=()
 
     # Find images that exist in Docker but not in K3s
@@ -413,7 +416,7 @@ cleanup_for_rebuild() {
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
 
     # Remove old Docker images
-    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent")
+    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent" "stella-light-agent")
     for img in "${images[@]}"; do
         docker rmi "${img}:latest" 2>/dev/null || true
     done
