@@ -74,6 +74,9 @@ class RoomManager:
         # Audio sample rate tracking (updated from first frame received from LiveKit)
         self._audio_sample_rate: int = 48000  # Default to 48kHz (WebRTC standard)
 
+        # Participant name tracking (identity -> display name)
+        self._participant_names: Dict[str, str] = {}
+
         # Callbacks
         self._on_participant_joined: Optional[Callable[[str], None]] = None
         self._on_participant_left: Optional[Callable[[str], None]] = None
@@ -93,6 +96,18 @@ class RoomManager:
     def audio_sample_rate(self) -> int:
         """Sample rate of incoming audio from LiveKit (updated on first frame)."""
         return self._audio_sample_rate
+
+    def get_participant_name(self, identity: str) -> Optional[str]:
+        """
+        Get the display name for a participant by their identity.
+
+        Args:
+            identity: The LiveKit participant identity (e.g., 'human')
+
+        Returns:
+            The participant's display name, or None if not found
+        """
+        return self._participant_names.get(identity)
 
     def _generate_token(self, room_name: str, identity: str, name: Optional[str] = None) -> str:
         """Generate a JWT token for LiveKit authentication."""
@@ -146,6 +161,12 @@ class RoomManager:
 
         # Connect to room
         await self._room.connect(self.livekit_url, token)
+
+        # Capture existing participants' names (they won't trigger participant_connected event)
+        for identity, participant in self._room.remote_participants.items():
+            if participant.name:
+                self._participant_names[identity] = participant.name
+                logger.debug(f"Captured existing participant: {identity} -> {participant.name}")
 
         # Set up audio publishing
         await self._setup_audio_publishing()
@@ -269,7 +290,10 @@ class RoomManager:
 
     def _on_participant_connected(self, participant: rtc.RemoteParticipant) -> None:
         """Handle participant joining."""
-        logger.info(f"Participant joined: {participant.identity}")
+        logger.info(f"Participant joined: {participant.identity} (name: {participant.name})")
+        # Store participant name for speaker attribution
+        if participant.name:
+            self._participant_names[participant.identity] = participant.name
         if self._on_participant_joined:
             self._on_participant_joined(participant.identity)
 

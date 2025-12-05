@@ -201,8 +201,23 @@ class RoomManager:
 
             # === FILTERING LOGIC ===
             should_store = False
-            participant_identity = envelope_participant_id or packet_participant_identity
-            participant_name = packet_participant_name
+
+            # Extract speaker info from nested data (for transcripts sent by agent)
+            nested_speaker_id = message_data.get('speaker_id') if isinstance(message_data, dict) else None
+            nested_speaker_name = message_data.get('speaker_name') if isinstance(message_data, dict) else None
+            nested_participant_id = message_data.get('participant_id') if isinstance(message_data, dict) else None
+
+            # Determine participant identity for storage
+            # Priority: envelope.participant_id > nested speaker_id > packet identity
+            participant_identity = envelope_participant_id or nested_speaker_id or nested_participant_id or packet_participant_identity
+
+            # Determine participant display name for storage
+            # Priority: nested speaker_name > envelope.participant_id > packet name
+            participant_name = nested_speaker_name or envelope_participant_id or packet_participant_name
+
+            # Debug logging for attribution
+            if message_type in ('transcript', 'transcript_chunk', 'user_text'):
+                print(f"   📋 Attribution: identity={participant_identity}, name={participant_name}, nested_speaker={nested_speaker_name}")
 
             if message_type == 'user_text':
                 # STORE: Only if sent by actual user (human), NOT echoed by agent

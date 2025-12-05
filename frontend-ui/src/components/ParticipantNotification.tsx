@@ -22,10 +22,10 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
     >
       <motion.div
         className={`
-          inline-flex items-center gap-2 px-3 py-1.5 rounded-full
-          text-xs font-light tracking-wide backdrop-blur-sm
+          inline-flex items-center gap-2 px-4 py-2 rounded-full
+          text-caption font-light tracking-wide backdrop-blur-sm
           ${isDark
-            ? 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+            ? 'bg-zinc-800 text-zinc-300 border border-zinc-700'
             : 'bg-neutral-100 text-neutral-500 border border-neutral-200'
           }
         `}

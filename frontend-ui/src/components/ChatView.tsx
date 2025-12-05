@@ -81,10 +81,12 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   // Convert historical DB messages to display format and merge with real-time messages
   const allMessages = useMemo(() => {
     // Helper to extract participant name from various sources
-    // Priority: envelope.participant_id (logical sender) > display_name > LiveKit participant info > role
+    // Priority: speaker_name > envelope fields > display_name > LiveKit participant info > role
     const getParticipantName = (msg: any) => {
-      return msg.metadata?.envelope?.participant_id  // Logical sender from message envelope
-        || msg.metadata?.display_name                // Stored display name (fallback)
+      return msg.metadata?.speaker_name               // Speaker name (for transcripts)
+        || msg.metadata?.envelope?.participant_id     // Logical sender from message envelope
+        || msg.metadata?.envelope?.data?.speaker_name // Nested speaker name in envelope data
+        || msg.metadata?.display_name                 // Stored display name (fallback)
         || msg.metadata?.participant_name             // LiveKit participant name
         || msg.metadata?.participant_identity         // LiveKit participant identity
         || msg.participant?.name                      // Legacy participant name
@@ -219,15 +221,20 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'].includes(messageType)) {
         // Task update messages - don't display in chat (handled by task panel)
         return null
-      } else if (messageType === 'participant_event') {
+      } else if (messageType === 'participant_event' || messageType === 'participant_joined' || messageType === 'participant_left') {
         // Participant join/leave events from database
         // Convert to the same format as live ParticipantEvent objects
+        // Database stores as 'participant_joined' or 'participant_left', but also support 'participant_event'
         const eventData = messageData || {}
+
+        // Determine event type from either the data or the messageType itself
+        const isJoined = messageType === 'participant_joined' || eventData.type === 'joined' || msg.metadata?.eventType === 'joined'
+
         return {
           id: msg.id,
-          type: (eventData.type === 'joined' ? 'joined' : 'left') as 'joined' | 'left',
-          participantId: eventData.participantId || msg.metadata?.participant_identity || '',
-          participantName: eventData.participantName || msg.metadata?.participant_name || msg.content?.split(' ')[0] || 'Unknown',
+          type: (isJoined ? 'joined' : 'left') as 'joined' | 'left',
+          participantId: eventData.participantId || msg.metadata?.participantIdentity || msg.metadata?.participant_identity || '',
+          participantName: eventData.participantName || msg.metadata?.participantName || msg.metadata?.participant_name || msg.content?.split(' ')[0] || 'Unknown',
           startedAt: timestamp,
           messageType: 'participant' as const,
           dataSource: 'db' as const,

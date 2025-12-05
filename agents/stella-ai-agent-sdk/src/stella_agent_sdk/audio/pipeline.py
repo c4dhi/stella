@@ -78,7 +78,7 @@ class AudioPipeline:
         stt_client: STTClient,
         tts_client: TTSClient,
         session_id: str,
-        participant_id: str = "user",
+        participant_id: str = "human",  # Default to "human" - standard LiveKit identity for users
         agent_name: str = "Agent",
         agent_id: Optional[str] = None,
     ):
@@ -223,6 +223,9 @@ class AudioPipeline:
                 # Include speaker attribution so frontend knows this is user speech
                 # Use Envelope format: { type, data: { ... } }
                 speaker_id = event.participant_id or self._participant_id
+                # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
+                speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
+                logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}")
                 await self._room.publish_data({
                     "type": "transcript",
                     "data": {
@@ -231,7 +234,7 @@ class AudioPipeline:
                         "transcript_id": event.transcript_id,
                         # Speaker attribution (who spoke)
                         "speaker_id": speaker_id,
-                        "speaker_name": speaker_id,  # Frontend will map to display name
+                        "speaker_name": speaker_name,
                         "source": "user_speech",
                         # Backwards compat
                         "participant_id": speaker_id,

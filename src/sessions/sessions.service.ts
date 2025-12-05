@@ -883,12 +883,21 @@ export class SessionsService {
     }
 
     // Store the complete envelope in metadata for perfect replay
+    // Extract nested speaker info for transcript messages
+    const nestedData = messageEnvelope.data || {};
+    const nestedSpeakerName = typeof nestedData === 'object' ? nestedData.speaker_name : undefined;
+    const nestedSpeakerId = typeof nestedData === 'object' ? nestedData.speaker_id : undefined;
+
     const completeMetadata = {
       envelope: messageEnvelope,  // Complete original envelope
       participant_identity: participantIdentity,
       participant_name: participantName,
       // Store logical sender from envelope for accurate message attribution
-      display_name: messageEnvelope.participant_id || participantName || participantIdentity,
+      // Priority: top-level participant_id > nested speaker_name > participantName > participantIdentity
+      display_name: messageEnvelope.participant_id || nestedSpeakerName || participantName || participantIdentity,
+      // Also store speaker info directly for easier access
+      speaker_name: nestedSpeakerName || participantName,
+      speaker_id: nestedSpeakerId || participantIdentity,
     };
 
     const message = await this.prisma.message.create({
