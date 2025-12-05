@@ -83,6 +83,28 @@ class WhisperSession(STTSession):
         # Language detection caching (detect-once per session)
         self.detected_language = None
 
+        # Audio preprocessing settings
+        self.max_partial_seconds = 5  # Only transcribe last 5s for partials
+        self.min_language_confidence = 0.5  # Filter low-confidence results
+
+        # Precompute high-pass filter coefficients (80Hz cutoff for noise removal)
+        from scipy import signal
+        self.highpass_sos = signal.butter(5, 80, btype='highpass', fs=16000, output='sos')
+
+    def _preprocess_audio(self, audio_float: np.ndarray) -> np.ndarray:
+        """Preprocess audio for better transcription quality."""
+        from scipy import signal
+
+        # Apply high-pass filter to remove low-frequency noise/hum
+        audio_float = signal.sosfilt(self.highpass_sos, audio_float)
+
+        # Normalize audio to 0.95 peak (improves consistency)
+        peak = np.abs(audio_float).max()
+        if peak > 0.01:
+            audio_float = audio_float / peak * 0.95
+
+        return audio_float
+
     def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
         """Process audio chunk through VAD and return transcript events.
 
@@ -215,9 +237,16 @@ class WhisperSession(STTSession):
             return None
 
         try:
-            audio_samples = np.array(self.speech_buffer, dtype=np.int16)
+            # For partials, only use last N seconds to reduce compute
+            max_partial_samples = int(self.max_partial_seconds * 16000)
+            audio_for_partial = self.speech_buffer[-max_partial_samples:] if len(self.speech_buffer) > max_partial_samples else self.speech_buffer
+
+            audio_samples = np.array(audio_for_partial, dtype=np.int16)
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
+
+            # Apply audio preprocessing (noise removal + normalization)
+            audio_float = self._preprocess_audio(audio_float)
 
             # Use cached detected language or configured language
             language = self.detected_language or self.config.get('language')
@@ -230,12 +259,17 @@ class WhisperSession(STTSession):
                 vad_filter=False,  # We use external Silero VAD
                 word_timestamps=False,
                 condition_on_previous_text=False,
+                initial_prompt=self.config.get('initial_prompt'),
             )
 
             # Cache detected language for future transcriptions in this session
             if not self.detected_language and hasattr(info, 'language') and info.language:
                 self.detected_language = info.language
                 print(f"[WhisperSession] Detected language: {self.detected_language}")
+
+            # Filter low-confidence results (likely noise)
+            if hasattr(info, 'language_probability') and info.language_probability < self.min_language_confidence:
+                return None
 
             # Process segments
             transcribed_text = ""
@@ -277,6 +311,9 @@ class WhisperSession(STTSession):
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
 
+            # Apply audio preprocessing (noise removal + normalization)
+            audio_float = self._preprocess_audio(audio_float)
+
             # Use cached detected language or configured language
             language = self.detected_language or self.config.get('language')
 
@@ -288,12 +325,17 @@ class WhisperSession(STTSession):
                 vad_filter=False,
                 word_timestamps=False,
                 condition_on_previous_text=False,
+                initial_prompt=self.config.get('initial_prompt'),
             )
 
             # Cache detected language for future transcriptions in this session
             if not self.detected_language and hasattr(info, 'language') and info.language:
                 self.detected_language = info.language
                 print(f"[WhisperSession] Detected language: {self.detected_language}")
+
+            # Filter low-confidence results (likely noise)
+            if hasattr(info, 'language_probability') and info.language_probability < self.min_language_confidence:
+                return None
 
             final_text = ""
             for segment in segments:
@@ -369,8 +411,12 @@ class WhisperProvider(STTProvider):
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
         self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
 
+        # Initial prompt for domain context (improves accuracy for specific vocabulary)
+        self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None)
+
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
-              f"compute_type={self.compute_type}, language={self.language or 'auto'}")
+              f"compute_type={self.compute_type}, language={self.language or 'auto'}, "
+              f"initial_prompt={'set' if self.initial_prompt else 'none'}")
 
     @property
     def name(self) -> str:
@@ -456,6 +502,7 @@ class WhisperProvider(STTProvider):
             'vad_min_silence_ms': self.vad_min_silence_ms,
             'partial_interval_ms': self.partial_interval_ms,
             'min_speech_samples': int(self.min_speech_ms * 16),  # Convert ms to samples at 16kHz
+            'initial_prompt': self.initial_prompt,
         }
 
         return WhisperSession(

@@ -195,6 +195,7 @@ set_defaults() {
     export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-200}"
     export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
     export PARTIAL_INTERVAL_MS="${PARTIAL_INTERVAL_MS:-1000}"
+    export WHISPER_INITIAL_PROMPT="${WHISPER_INITIAL_PROMPT:-}"
 
     # TTS Configuration
     export TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"

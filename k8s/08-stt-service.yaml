@@ -221,6 +221,12 @@ spec:
               name: stella-ai-config
               key: PARTIAL_INTERVAL_MS
               optional: true
+        - name: WHISPER_INITIAL_PROMPT
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: WHISPER_INITIAL_PROMPT
+              optional: true
         resources:
           requests:
             memory: "512Mi"
