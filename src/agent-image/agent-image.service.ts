@@ -40,6 +40,12 @@ const AGENT_TYPE_METADATA: Record<string, {
     icon: '👩‍⚕️',
     defaultConfig: { plan_id: 'stella_smalltalk' },
   },
+  'stella-light-agent': {
+    name: 'Stella Light',
+    description: 'Lightweight conversational AI with prompt-based guardrails',
+    icon: '💡',
+    defaultConfig: { plan_id: 'stella_smalltalk' },
+  },
   'echo-agent': {
     name: 'Echo Agent',
     description: 'Simple test agent that echoes user input',
@@ -62,6 +68,12 @@ export class AgentImageService {
     ['stella-agent', {
       imageName: 'stella-agent',
       dockerfilePath: 'agents/stella-agent/Dockerfile',
+      contextPath: '.',
+      tag: 'latest',
+    }],
+    ['stella-light-agent', {
+      imageName: 'stella-light-agent',
+      dockerfilePath: 'agents/stella-light-agent/Dockerfile',
       contextPath: '.',
       tag: 'latest',
     }],

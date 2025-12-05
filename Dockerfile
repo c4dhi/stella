@@ -11,9 +11,7 @@ COPY prisma ./prisma/
 RUN npm ci
 
 # Generate Prisma client (needed for TypeScript compilation)
-# DATABASE_URL passed as build arg from start-k8s.sh for schema validation
-ARG DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
-RUN DATABASE_URL="${DATABASE_URL}" npx prisma generate
+RUN npx prisma generate
 
 # Copy source code
 COPY . .
