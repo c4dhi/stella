@@ -216,9 +216,18 @@ class RoomManager:
 
             elif message_type in ('transcript', 'transcript_chunk'):
                 # STORE: Only final transcripts, skip partial ones
+                # BUT: Skip agent echoes of user_text messages (sent by agents with source='user_text')
                 if is_final:
-                    should_store = True
-                    print(f"   ✅ Storing final transcript (source={data_source})")
+                    # Check if this is an agent echoing a user_text message
+                    # Agents have identities starting with 'agent-' or other non-human prefixes
+                    is_agent_sender = packet_participant_identity and packet_participant_identity != 'human'
+                    is_user_text_echo = data_source == 'user_text' and is_agent_sender
+
+                    if is_user_text_echo:
+                        print(f"   ⏭️ Skipping agent echo of user_text from {packet_participant_identity}")
+                    else:
+                        should_store = True
+                        print(f"   ✅ Storing final transcript (source={data_source}, from={packet_participant_identity})")
                 else:
                     print(f"   ⏭️ Skipping partial transcript")
 

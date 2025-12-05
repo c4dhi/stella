@@ -219,6 +219,19 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'].includes(messageType)) {
         // Task update messages - don't display in chat (handled by task panel)
         return null
+      } else if (messageType === 'participant_event') {
+        // Participant join/leave events from database
+        // Convert to the same format as live ParticipantEvent objects
+        const eventData = messageData || {}
+        return {
+          id: msg.id,
+          type: (eventData.type === 'joined' ? 'joined' : 'left') as 'joined' | 'left',
+          participantId: eventData.participantId || msg.metadata?.participant_identity || '',
+          participantName: eventData.participantName || msg.metadata?.participant_name || msg.content?.split(' ')[0] || 'Unknown',
+          startedAt: timestamp,
+          messageType: 'participant' as const,
+          dataSource: 'db' as const,
+        }
       } else if (['voice_narration_control', 'barge_in', 'tts_pause', 'tts_resume', 'tts_start', 'tts_stop'].includes(messageType)) {
         // Control messages - don't display in chat
         return null

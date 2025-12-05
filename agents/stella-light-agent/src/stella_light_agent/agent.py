@@ -318,9 +318,9 @@ class StellaLightAgent(BaseAgent):
         try:
             history = await self.get_chat_history()
             if history:
-                # Convert to simple format
+                # Convert ChatMessage objects to simple dict format
                 return [
-                    {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+                    {"role": msg.role, "content": msg.content}
                     for msg in history[-limit:]
                 ]
         except Exception as e:

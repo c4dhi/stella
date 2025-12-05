@@ -271,7 +271,7 @@ class AudioPipeline:
         the frontend chat input) and queues them as transcript events.
 
         Args:
-            participant_id: Identity of the participant who sent the message
+            participant_id: Identity of the participant who sent the message (LiveKit identity)
             data: Raw bytes of the message (JSON encoded)
         """
         import json
@@ -284,14 +284,20 @@ class AudioPipeline:
             if message.get("type") == "user_text":
                 text = message.get("data", "").strip()
                 if text:
-                    logger.info(f"Received text message from {participant_id}: {text[:50]}...")
+                    # Use envelope's participant_id if available (actual username from frontend)
+                    # Fall back to LiveKit callback participant_id ("human") if not present
+                    envelope_participant_id = message.get("participant_id") or participant_id
+                    # Also get the transcript_id from envelope if present (for deduplication)
+                    envelope_transcript_id = message.get("transcript_id") or str(uuid.uuid4())
+
+                    logger.info(f"Received text message from {envelope_participant_id}: {text[:50]}...")
 
                     # Create a transcript event for the text message
                     event = TranscriptEvent(
                         text=text,
                         is_final=True,
-                        participant_id=participant_id,
-                        transcript_id=str(uuid.uuid4()),
+                        participant_id=envelope_participant_id,
+                        transcript_id=envelope_transcript_id,
                         confidence=1.0,
                         timestamp_ms=int(time.time() * 1000),
                         speech_started=False,
@@ -304,29 +310,36 @@ class AudioPipeline:
                         logger.warning("Transcript queue full, dropping text message")
 
                     # Echo the received text back to LiveKit so frontend shows it
+                    # Use envelope's participant_id for proper attribution
                     # This is done in a fire-and-forget manner
-                    asyncio.create_task(self._echo_received_text(text, participant_id))
+                    asyncio.create_task(self._echo_received_text(text, envelope_participant_id, envelope_transcript_id))
 
         except json.JSONDecodeError:
             logger.debug(f"Received non-JSON data message from {participant_id}")
         except Exception as e:
             logger.error(f"Error handling data message: {e}")
 
-    async def _echo_received_text(self, text: str, participant_id: str) -> None:
-        """Echo received text message back to LiveKit for frontend display."""
-        import uuid
+    async def _echo_received_text(self, text: str, participant_id: str, transcript_id: str) -> None:
+        """
+        Echo received text message back to LiveKit for frontend display.
 
+        Args:
+            text: The text message to echo
+            participant_id: The actual username from envelope (not LiveKit identity)
+            transcript_id: The original transcript_id for deduplication
+        """
         try:
             # Use Envelope format: { type, data: { ... } }
+            # Use the same transcript_id from the original message for deduplication
             await self._room.publish_data({
                 "type": "transcript",
                 "data": {
                     "text": text,
                     "is_final": True,
-                    "transcript_id": str(uuid.uuid4()),
-                    # Speaker attribution (user who typed)
+                    "transcript_id": transcript_id,
+                    # Speaker attribution (user who typed - actual username)
                     "speaker_id": participant_id,
-                    "speaker_name": participant_id,  # Frontend will map to display name
+                    "speaker_name": participant_id,
                     "source": "user_text",
                     # Backwards compat
                     "participant_id": participant_id,
