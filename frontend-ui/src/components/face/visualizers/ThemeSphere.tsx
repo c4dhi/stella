@@ -202,23 +202,11 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
     return () => cancelAnimationFrame(animationId);
   }, []); // Empty deps - runs once, reads audioLevel from ref
 
-  // Calculate scale - MUCH more visible effect when speaking
-  // With smoothedSpeaking=1 and smoothedAudio=0.7, this gives ~1.175 (17.5% larger)
-  const audioScale = 1 + smoothedSpeaking * smoothedAudio * 0.25;
+  // Calculate scale - subtle but noticeable effect when speaking
+  // With smoothedSpeaking=1 and smoothedAudio=0.7, this gives ~1.084 (8.4% larger)
+  const audioScale = 1 + smoothedSpeaking * smoothedAudio * 0.12;
 
-  // Debug logging - remove after testing
-  useEffect(() => {
-    if (isRemoteSpeaking || audioLevel > 0.01) {
-      console.log('[ThemeSphere]', {
-        isRemoteSpeaking,
-        audioLevel: audioLevel.toFixed(3),
-        smoothedAudio: smoothedAudio.toFixed(3),
-        smoothedSpeaking: smoothedSpeaking.toFixed(3),
-        audioScale: audioScale.toFixed(3),
-        isSpeakingHeld
-      });
-    }
-  }, [isRemoteSpeaking, audioLevel, smoothedAudio, smoothedSpeaking, audioScale, isSpeakingHeld]);
+  // Debug logging removed for performance
 
   // Interpolate colors based on smoothed speaking state (not abrupt switch)
   const currentColors = useMemo(() => {
@@ -265,14 +253,21 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
 
         .sphere-container {
           animation: sphere-breathe 5s ease-in-out infinite, sphere-glow-pulse 7s ease-in-out infinite;
+          will-change: transform;
         }
 
         .gradient-layer-1 {
           animation: gradient-rotate 25s linear infinite;
+          will-change: transform;
         }
 
         .gradient-layer-2 {
           animation: gradient-rotate-reverse 30s linear infinite;
+          will-change: transform;
+        }
+
+        .audio-responsive-sphere {
+          will-change: transform, filter;
         }
       `}</style>
 
@@ -280,7 +275,7 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
       <div className="absolute inset-0 sphere-container">
         {/* Inner sphere with audio-responsive transform */}
         <div
-          className="absolute inset-0 rounded-full overflow-hidden"
+          className="absolute inset-0 rounded-full overflow-hidden audio-responsive-sphere"
           style={{
             '--glow-color': colors.glow,
             background: `
@@ -293,9 +288,10 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
               inset 0 -${size * 0.18}px ${baseGlowSize}px ${currentColors.primary.replace(/[\d.]+\)$/, '0.3)')}
             `,
             filter: `brightness(${brightnessFilter})`,
-            // Audio-responsive transform - adds to the breathing animation
+            // Audio-responsive transform - no CSS transition since JS already smooths
             transform: `scale(${audioScale})`,
-            transition: 'transform 0.15s ease-out, box-shadow 0.25s ease-out, filter 0.25s ease-out',
+            // Only transition box-shadow for glow effect smoothness
+            transition: 'box-shadow 0.2s ease-out',
           } as React.CSSProperties}
         >
         {/* Rotating gradient layer 1 - Primary color - always rotates */}
@@ -304,7 +300,6 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
           style={{
             background: `radial-gradient(circle at 30% 30%, ${currentColors.primary} 0%, transparent 50%)`,
             opacity: 0.7 + smoothedSpeaking * smoothedAudio * 0.25,
-            transition: 'opacity 0.4s ease-out',
           }}
         />
 
@@ -314,7 +309,6 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
           style={{
             background: `radial-gradient(circle at 70% 60%, ${currentColors.secondary} 0%, transparent 40%)`,
             opacity: 0.6 + smoothedSpeaking * smoothedAudio * 0.3,
-            transition: 'opacity 0.4s ease-out',
           }}
         />
 
@@ -324,7 +318,6 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
           style={{
             background: `radial-gradient(circle at 50% 80%, ${currentColors.tertiary} 0%, transparent 40%)`,
             opacity: 0.5 + smoothedSpeaking * smoothedAudio * 0.25,
-            transition: 'opacity 0.4s ease-out',
           }}
         />
 
@@ -354,13 +347,12 @@ const ThemeSphere: React.FC<ThemeSphereProps> = ({
           }}
         />
 
-        {/* Center glow - always rendered, opacity controlled by smoothedSpeaking for smooth transitions */}
+        {/* Center glow - always rendered, opacity controlled by smoothedSpeaking */}
         <div
           className="absolute inset-0 rounded-full pointer-events-none"
           style={{
             background: `radial-gradient(circle at 50% 50%, ${colors.speakingGlow || colors.glow} 0%, transparent 60%)`,
             opacity: smoothedSpeaking * (0.2 + smoothedAudio * 0.35),
-            transition: 'opacity 0.4s ease-out',
           }}
         />
         </div>
