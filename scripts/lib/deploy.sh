@@ -95,6 +95,7 @@ generate_configmap() {
         -e "s|\${ONNX_PROVIDER}|${ONNX_PROVIDER:-CPUExecutionProvider}|g" \
         -e "s|\${ENABLE_GPU}|${ENABLE_GPU:-false}|g" \
         -e "s|\${VAD_THRESHOLD}|${VAD_THRESHOLD:-0.5}|g" \
+        -e "s|\${VAD_MIN_SPEECH_MS}|${VAD_MIN_SPEECH_MS:-200}|g" \
         -e "s|\${VAD_MIN_SILENCE_MS}|${VAD_MIN_SILENCE_MS:-500}|g" \
         -e "s|\${PARTIAL_INTERVAL_MS}|${PARTIAL_INTERVAL_MS:-1000}|g" \
         -e "s|\${LIVEKIT_TURN_ENABLED}|${LIVEKIT_TURN_ENABLED:-false}|g" \

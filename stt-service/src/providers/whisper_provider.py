@@ -80,6 +80,9 @@ class WhisperSession(STTSession):
         self.processing_endpoint = False
         self.chunk_count = 0
 
+        # Language detection caching (detect-once per session)
+        self.detected_language = None
+
     def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
         """Process audio chunk through VAD and return transcript events.
 
@@ -216,15 +219,23 @@ class WhisperSession(STTSession):
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
 
+            # Use cached detected language or configured language
+            language = self.detected_language or self.config.get('language')
+
             # Transcribe with faster-whisper
             segments, info = self.whisper_model.transcribe(
                 audio_float,
-                language=self.config.get('language'),
+                language=language,
                 beam_size=self.config.get('beam_size', 5),
                 vad_filter=False,  # We use external Silero VAD
                 word_timestamps=False,
                 condition_on_previous_text=False,
             )
+
+            # Cache detected language for future transcriptions in this session
+            if not self.detected_language and hasattr(info, 'language') and info.language:
+                self.detected_language = info.language
+                print(f"[WhisperSession] Detected language: {self.detected_language}")
 
             # Process segments
             transcribed_text = ""
@@ -266,15 +277,23 @@ class WhisperSession(STTSession):
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
 
+            # Use cached detected language or configured language
+            language = self.detected_language or self.config.get('language')
+
             # Final transcription
             segments, info = self.whisper_model.transcribe(
                 audio_float,
-                language=self.config.get('language'),
+                language=language,
                 beam_size=self.config.get('beam_size', 5),
                 vad_filter=False,
                 word_timestamps=False,
                 condition_on_previous_text=False,
             )
+
+            # Cache detected language for future transcriptions in this session
+            if not self.detected_language and hasattr(info, 'language') and info.language:
+                self.detected_language = info.language
+                print(f"[WhisperSession] Detected language: {self.detected_language}")
 
             final_text = ""
             for segment in segments:
@@ -348,6 +367,7 @@ class WhisperProvider(STTProvider):
         self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
         self.vad_min_silence_ms = int(os.getenv("VAD_MIN_SILENCE_MS", "500"))
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
+        self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}")
@@ -435,7 +455,7 @@ class WhisperProvider(STTProvider):
             'vad_threshold': self.vad_threshold,
             'vad_min_silence_ms': self.vad_min_silence_ms,
             'partial_interval_ms': self.partial_interval_ms,
-            'min_speech_samples': 8000,  # 0.5s minimum
+            'min_speech_samples': int(self.min_speech_ms * 16),  # Convert ms to samples at 16kHz
         }
 
         return WhisperSession(

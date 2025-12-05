@@ -161,19 +161,25 @@ class RoomManager:
 
         # Connect to room
         await self._room.connect(self.livekit_url, token)
+        print(f"[ROOM] Connected to LiveKit room: {room_name}")
 
         # Capture existing participants and their tracks
         # (they won't trigger participant_connected or track_subscribed events)
+        print(f"[ROOM] Scanning {len(self._room.remote_participants)} existing participants...")
         for identity, participant in self._room.remote_participants.items():
+            print(f"[ROOM] Found participant: {identity} (name={participant.name})")
             if participant.name:
                 self._participant_names[identity] = participant.name
                 logger.debug(f"Captured existing participant: {identity} -> {participant.name}")
 
             # Process any existing subscribed audio tracks
-            for publication in participant.track_publications.values():
+            print(f"[ROOM]   Track publications: {len(participant.track_publications)}")
+            for pub_sid, publication in participant.track_publications.items():
+                print(f"[ROOM]   - Publication {pub_sid}: track={publication.track}, kind={publication.kind}, subscribed={publication.subscribed}")
                 if (publication.track and
                     publication.track.kind == rtc.TrackKind.KIND_AUDIO and
                     publication.subscribed):
+                    print(f"[ROOM]   -> Found existing subscribed audio track from {identity}")
                     logger.info(f"Found existing subscribed audio track from {identity}")
                     self._handle_existing_audio_track(identity, publication.track)
 
@@ -266,12 +272,15 @@ class RoomManager:
         participant: rtc.RemoteParticipant,
     ) -> None:
         """Handle track subscription."""
+        print(f"[ROOM] track_subscribed event: kind={track.kind}, participant={participant.identity}")
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             # Skip if we already set this up (e.g., from existing track handling)
             if participant.identity in self._subscribed_tracks:
+                print(f"[ROOM] WARNING: Already tracking audio from {participant.identity}, skipping duplicate")
                 logger.debug(f"Track subscription event for {participant.identity}, but already tracking")
                 return
 
+            print(f"[ROOM] Subscribing to NEW audio track from {participant.identity}")
             logger.info(f"Subscribed to audio track from {participant.identity}")
             self._subscribed_tracks[participant.identity] = track
 
@@ -289,9 +298,11 @@ class RoomManager:
         """Read audio frames from a stream and put them in the queue."""
         frame_count = 0
         try:
+            print(f"[ROOM] Starting audio stream reader for {identity}")
             logger.info(f"Starting audio stream reader for {identity}")
             async for frame_event in stream:
                 if not self._connected:
+                    print(f"[ROOM] Room disconnected, stopping audio stream for {identity}")
                     logger.info(f"Room disconnected, stopping audio stream for {identity}")
                     break
                 frame = frame_event.frame
@@ -300,14 +311,20 @@ class RoomManager:
                 if frame_count == 1:
                     # Track sample rate from first frame received
                     self._audio_sample_rate = frame.sample_rate
+                    print(f"[ROOM] FIRST audio frame from {identity}: {len(audio_data)} bytes, {frame.sample_rate}Hz")
                     logger.info(f"First audio frame from {identity}: {len(audio_data)} bytes, sample_rate={frame.sample_rate}Hz, channels={frame.num_channels}")
                     logger.info(f"Audio sample rate set to {self._audio_sample_rate}Hz")
+                elif frame_count % 500 == 0:
+                    print(f"[ROOM] Received {frame_count} audio frames from {identity}")
                 await self._audio_queue.put(audio_data)
         except asyncio.CancelledError:
+            print(f"[ROOM] Audio stream task cancelled for {identity}")
             logger.debug(f"Audio stream task cancelled for {identity}")
         except Exception as e:
+            print(f"[ROOM] ERROR reading audio stream from {identity}: {e}")
             logger.error(f"Error reading audio stream from {identity}: {e}", exc_info=True)
         finally:
+            print(f"[ROOM] Audio stream reader ended for {identity} after {frame_count} frames")
             logger.info(f"Audio stream reader ended for {identity} after {frame_count} frames")
 
     def _on_track_unsubscribed(

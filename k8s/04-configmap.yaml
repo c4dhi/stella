@@ -59,6 +59,7 @@ data:
 
   # VAD Configuration (Silero VAD for whisper provider)
   VAD_THRESHOLD: "${VAD_THRESHOLD}"          # Speech detection sensitivity (0.0-1.0, default 0.5)
+  VAD_MIN_SPEECH_MS: "${VAD_MIN_SPEECH_MS}"  # Minimum speech duration for transcription (default 200ms)
   VAD_MIN_SILENCE_MS: "${VAD_MIN_SILENCE_MS}"  # End-of-speech silence threshold (default 500ms)
   PARTIAL_INTERVAL_MS: "${PARTIAL_INTERVAL_MS}"  # Partial transcript interval (default 1000ms)
 

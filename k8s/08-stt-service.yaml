@@ -203,6 +203,12 @@ spec:
               name: stella-ai-config
               key: VAD_THRESHOLD
               optional: true
+        - name: VAD_MIN_SPEECH_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_MIN_SPEECH_MS
+              optional: true
         - name: VAD_MIN_SILENCE_MS
           valueFrom:
             configMapKeyRef:

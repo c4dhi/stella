@@ -192,7 +192,7 @@ set_defaults() {
 
     # VAD Configuration
     export VAD_THRESHOLD="${VAD_THRESHOLD:-0.5}"
-    export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-250}"
+    export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-200}"
     export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
     export PARTIAL_INTERVAL_MS="${PARTIAL_INTERVAL_MS:-1000}"
 
