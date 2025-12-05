@@ -131,9 +131,11 @@ const WeatherVisualizer: React.FC<WeatherVisualizerProps> = ({
               className="absolute w-px bg-gradient-to-b from-transparent via-white/40 to-white/60"
               style={{
                 left: `${drop.left}%`,
+                top: '-10vh', // Start above viewport
                 height: `${drop.height}px`,
+                opacity: 0, // Initially invisible
                 animation: `rain-fall ${drop.duration}s linear infinite ${drop.delay}s`,
-                animationFillMode: 'backwards', // Apply 0% keyframe during delay (hidden above viewport)
+                animationFillMode: 'both',
               }}
             />
           ))}
@@ -150,11 +152,13 @@ const WeatherVisualizer: React.FC<WeatherVisualizerProps> = ({
                 className="absolute bg-white rounded-full"
                 style={{
                   left: `${flake.left}%`,
+                  top: '-10vh', // Start above viewport
                   width: `${flake.size}px`,
                   height: `${flake.size}px`,
+                  opacity: 0, // Initially invisible
                   boxShadow: '0 0 4px rgba(255, 255, 255, 0.8)',
                   animation: `snow-fall ${flake.duration}s linear infinite ${flake.delay}s`,
-                  animationFillMode: 'backwards', // Apply 0% keyframe during delay (hidden above viewport)
+                  animationFillMode: 'both',
                 }}
               />
             ))}

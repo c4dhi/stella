@@ -67,11 +67,12 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
       }
-      hideTimerRef.current = setTimeout(() => {
-        if (!isGalleryOpen) {
+      // Don't auto-hide controls if muted or gallery is open
+      if (!isMuted && !isGalleryOpen) {
+        hideTimerRef.current = setTimeout(() => {
           setShowControls(false);
-        }
-      }, 3000);
+        }, 3000);
+      }
     };
 
     // Initial setup
@@ -89,14 +90,19 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
         clearTimeout(hideTimerRef.current);
       }
     };
-  }, [isOpen, isGalleryOpen]);
+  }, [isOpen, isGalleryOpen, isMuted]);
 
-  // Keep controls visible when gallery is open
+  // Keep controls visible when gallery is open or muted
   useEffect(() => {
-    if (isGalleryOpen) {
+    if (isGalleryOpen || isMuted) {
       setShowControls(true);
+      // Clear any pending hide timer
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
     }
-  }, [isGalleryOpen]);
+  }, [isGalleryOpen, isMuted]);
 
   // Resume audio analysis when modal opens (user interaction enables AudioContext)
   useEffect(() => {
@@ -323,12 +329,43 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
             {renderVisualizer()}
           </div>
 
-          {/* Top-right control buttons (fade on inactivity) */}
+          {/* Top-right control buttons (fade on inactivity, hidden when gallery is open) */}
           <motion.div
             className={`absolute top-6 right-6 flex gap-3 z-50 transition-opacity duration-300 ${
-              showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              showControls && !isGalleryOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
+            {/* Mute Button */}
+            <motion.button
+              onClick={toggleMute}
+              disabled={status !== 'connected'}
+              className={`p-3 rounded-full backdrop-blur-sm border transition-all duration-300 hover:scale-110 ${
+                status !== 'connected'
+                  ? 'bg-white/10 border-white/20 text-white/40 cursor-not-allowed'
+                  : isMuted
+                    ? 'bg-red-500/20 border-red-400/40 text-red-400'
+                    : 'bg-green-500/20 border-green-400/40 text-green-400'
+              }`}
+              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <motion.div
+                animate={isRecording ? { scale: [1, 1.1, 1] } : { scale: 1 }}
+                transition={{ duration: 1, repeat: isRecording ? Infinity : 0 }}
+              >
+                {isMuted ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28C16.28 17.23 19 14.41 19 11h-1.7z" />
+                  </svg>
+                )}
+              </motion.div>
+            </motion.button>
+
             {/* Subtitles Toggle Button */}
             <motion.button
               className={`p-3 rounded-full backdrop-blur-sm border transition-all duration-300 hover:scale-110 ${
@@ -397,47 +434,15 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
             isVisible={showSubtitles}
           />
 
-          {/* Bottom controls (also fade on inactivity) */}
+          {/* Bottom-right ESC hint (also fade on inactivity, hidden when gallery is open) */}
           <motion.div
-            className={`absolute bottom-4 left-0 right-0 px-4 flex justify-between items-center z-40 transition-opacity duration-300 ${
-              showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            className={`absolute bottom-4 right-6 z-40 transition-opacity duration-300 ${
+              showControls && !isGalleryOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
-            {/* ESC hint */}
             <div className="text-white/40 text-sm">
               Press ESC to close
             </div>
-
-            {/* Mute Button */}
-            <motion.button
-              onClick={toggleMute}
-              disabled={status !== 'connected'}
-              className={`w-12 h-12 flex justify-center items-center p-3 rounded-full transition-all duration-300 ${
-                status !== 'connected'
-                  ? 'bg-white/10 text-white/40 cursor-not-allowed'
-                  : isMuted
-                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-400/40'
-                    : 'bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-400/40'
-              }`}
-              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <motion.div
-                animate={isRecording ? { scale: [1, 1.1, 1] } : { scale: 1 }}
-                transition={{ duration: 1, repeat: isRecording ? Infinity : 0 }}
-              >
-                {isMuted ? (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28C16.28 17.23 19 14.41 19 11h-1.7z" />
-                  </svg>
-                )}
-              </motion.div>
-            </motion.button>
           </motion.div>
         </motion.div>
       )}

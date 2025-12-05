@@ -68,11 +68,16 @@ start_port_forward_loop() {
     local log_file="$PID_DIR/pf-${service}.log"
     local backoff=1
     local max_backoff=60
+    local last_start_time=0
+
+    # Disable set -e in this function - we expect kubectl to fail and want to handle it
+    set +e
 
     echo "[$(date '+%H:%M:%S')] Starting port-forward loop for $service" >> "$log_file"
 
     while true; do
         echo "[$(date '+%H:%M:%S')] Connecting $service:$remote_port -> localhost:$local_port" >> "$log_file"
+        last_start_time=$(date +%s)
 
         # Run kubectl port-forward (blocks until it dies)
         kubectl port-forward -n "$NAMESPACE" \
@@ -80,7 +85,10 @@ start_port_forward_loop() {
             "svc/$service" "$local_port:$remote_port" >> "$log_file" 2>&1
 
         exit_code=$?
-        echo "[$(date '+%H:%M:%S')] Port-forward died (exit: $exit_code), restarting in ${backoff}s..." >> "$log_file"
+        current_time=$(date +%s)
+        runtime=$((current_time - last_start_time))
+
+        echo "[$(date '+%H:%M:%S')] Port-forward died (exit: $exit_code, ran for ${runtime}s), restarting in ${backoff}s..." >> "$log_file"
 
         sleep $backoff
 
@@ -90,8 +98,10 @@ start_port_forward_loop() {
             backoff=$max_backoff
         fi
 
-        # Reset backoff if we've been running for a while (connection was stable)
-        # This is handled implicitly by the blocking kubectl command
+        # Reset backoff if connection was stable (ran for more than 30 seconds)
+        if [ $runtime -gt 30 ]; then
+            backoff=1
+        fi
     done
 }
 
