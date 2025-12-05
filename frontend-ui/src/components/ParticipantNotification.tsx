@@ -14,7 +14,7 @@ export default function ParticipantNotification({ event }: ParticipantNotificati
 
   return (
     <motion.div
-      className="flex justify-center w-full"
+      className="flex justify-center w-full my-4"
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}

@@ -90,3 +90,73 @@ export interface UseMouthAnimationOptions {
   emotion: MouthEmotion;
   smoothingFactor?: number;
 }
+
+// Visualizer types for the face modal gallery
+export type VisualizerType =
+  | 'face'
+  | 'sphere'
+  | 'galaxy'
+  | 'rainy'
+  | 'snowy'
+  | 'christmas'
+  | 'sunny';
+
+export interface VisualizerConfig {
+  id: VisualizerType;
+  name: string;
+  description: string;
+  previewBg: string;
+  checkmarkColor: string;
+}
+
+export const VISUALIZER_CONFIGS: VisualizerConfig[] = [
+  {
+    id: 'face',
+    name: 'Face',
+    description: 'Animated SVG face',
+    previewBg: 'bg-black',
+    checkmarkColor: 'bg-violet-400',
+  },
+  {
+    id: 'sphere',
+    name: 'Sphere',
+    description: 'Glowing orb',
+    previewBg: 'bg-gradient-to-br from-slate-950 via-violet-950 to-slate-900',
+    checkmarkColor: 'bg-violet-400',
+  },
+  {
+    id: 'galaxy',
+    name: 'Galaxy',
+    description: 'Starry night sky',
+    previewBg: 'bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950',
+    checkmarkColor: 'bg-purple-400',
+  },
+  {
+    id: 'rainy',
+    name: 'Rainy',
+    description: 'Falling raindrops',
+    previewBg: 'bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900',
+    checkmarkColor: 'bg-slate-400',
+  },
+  {
+    id: 'snowy',
+    name: 'Snowy',
+    description: 'Winter wonderland',
+    previewBg: 'bg-gradient-to-b from-slate-300 via-slate-200 to-slate-100',
+    checkmarkColor: 'bg-slate-400',
+  },
+  {
+    id: 'christmas',
+    name: 'Christmas',
+    description: 'Festive lights',
+    previewBg: 'bg-gradient-to-b from-slate-900 via-green-950 to-red-950',
+    checkmarkColor: 'bg-yellow-400',
+  },
+  {
+    id: 'sunny',
+    name: 'Sunny',
+    description: 'Bright blue sky',
+    previewBg: 'bg-gradient-to-b from-sky-200 via-sky-100 to-emerald-100',
+    checkmarkColor: 'bg-amber-400',
+  },
+];

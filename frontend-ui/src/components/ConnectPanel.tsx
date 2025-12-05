@@ -72,42 +72,38 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
   }
 
   return (
-    <div className={`px-4 py-2 rounded-xl backdrop-blur-xl flex items-center gap-3 ${
-      isDark
+    <div className={`px-4 py-2 rounded-xl backdrop-blur-xl flex items-center gap-3 ${isDark
         ? 'bg-white/5 border border-white/10'
         : 'bg-white/90 shadow-sm border border-neutral-200/60'
-    }`}>
+      }`}>
       <button
         onClick={reconnect}
         disabled={status === 'connecting'}
-        className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed ${
-          status === 'connecting'
+        className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed ${status === 'connecting'
             ? isDark
               ? 'bg-primary-500/50 text-white/70 border border-primary-400/30'
               : 'bg-neutral-100/80 text-neutral-600 border border-neutral-300/50'
             : isDark
               ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
               : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)] border border-neutral-800/40'
-        }`}
+          }`}
       >
         {status === 'connecting' ? 'Connecting...' : 'Reconnect'}
       </button>
 
-      {status === 'connected' && (
+      {false && (
         <>
-
           {/* Voice Narration Toggle */}
           <button
             onClick={toggleVoiceNarration}
-            className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 border flex items-center gap-2 ${
-              voiceNarrationEnabled
+            className={`h-9 px-4 py-2 rounded-lg text-xs font-light tracking-wider transition-all duration-300 border flex items-center gap-2 ${voiceNarrationEnabled
                 ? isDark
                   ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border-primary-400/30'
                   : 'bg-neutral-900 text-white hover:bg-neutral-800 border-neutral-800/40 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
                 : isDark
                   ? 'bg-white/10 text-content-inverse-secondary hover:bg-white/20 border-white/10'
                   : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80 border-neutral-300/50'
-            }`}
+              }`}
             title={`${voiceNarrationEnabled ? 'Disable' : 'Enable'} voice narration`}
           >
             <svg
@@ -120,18 +116,19 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
             >
               {voiceNarrationEnabled ? (
                 // Speaker icon (enabled)
-                <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
               ) : (
                 // Speaker muted icon (disabled)
                 <>
-                  <path d="M11 5L6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6"/>
+                  <path d="M11 5L6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6" />
                 </>
               )}
             </svg>
             Voice
           </button>
         </>
-      )}
+      )
+      }
 
       <div className="flex items-center gap-3 ml-auto">
         <div className="flex items-center gap-2">
@@ -141,21 +138,18 @@ export default function ConnectPanel({ roomName }: ConnectPanelProps = {}) {
               ? 'bg-yellow-500 animate-pulse'
               : isDark ? 'bg-white/30' : 'bg-neutral-300'
             }`} />
-          <div className={`text-[10px] font-light tracking-wider uppercase ${
-            isDark ? 'text-content-inverse-secondary' : 'text-neutral-600'
-          }`}>
+          <div className={`text-[10px] font-light tracking-wider uppercase ${isDark ? 'text-content-inverse-secondary' : 'text-neutral-600'
+            }`}>
             {status}
           </div>
         </div>
 
         {vu > 0 && (
-          <div className={`w-12 h-px rounded-full overflow-hidden backdrop-blur-sm ${
-            isDark ? 'bg-white/20' : 'bg-neutral-200/80'
-          }`}>
+          <div className={`w-12 h-px rounded-full overflow-hidden backdrop-blur-sm ${isDark ? 'bg-white/20' : 'bg-neutral-200/80'
+            }`}>
             <div
-              className={`h-px rounded-full transition-all duration-100 ${
-                isDark ? 'bg-white/70' : 'bg-neutral-700'
-              }`}
+              className={`h-px rounded-full transition-all duration-100 ${isDark ? 'bg-white/70' : 'bg-neutral-700'
+                }`}
               style={{ width: `${Math.round(vu * 100)}%` }}
             />
           </div>

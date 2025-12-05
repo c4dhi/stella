@@ -117,6 +117,22 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       if (!envelope) {
         // Fallback for old messages without envelope - use legacy parsing
         // This ensures backward compatibility with messages stored before the refactor
+
+        // Check if this is a participant event (stored without envelope)
+        const rawMessageType = msg.messageType || ''
+        if (rawMessageType === 'participant_joined' || rawMessageType === 'participant_left' || msg.metadata?.eventType) {
+          const isJoined = rawMessageType === 'participant_joined' || msg.metadata?.eventType === 'joined'
+          return {
+            id: msg.id,
+            type: (isJoined ? 'joined' : 'left') as 'joined' | 'left',
+            participantId: msg.metadata?.participantIdentity || msg.metadata?.participant_identity || '',
+            participantName: msg.metadata?.participantName || msg.metadata?.participant_name || msg.content?.split(' ')[0] || 'Unknown',
+            startedAt: timestamp,
+            messageType: 'participant' as const,
+            dataSource: 'db' as const,
+          }
+        }
+
         return {
           id: msg.id,
           text: msg.content,
@@ -274,7 +290,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
     const processing = showProcessingMessages
       ? processingMessages.map(p => ({ ...p, messageType: 'processing' as const, dataSource: 'live' as const }))
       : []
-    const events = participantEvents.map(e => ({ ...e, dataSource: 'live' as const }))
+    const events = participantEvents.map(e => ({ ...e, messageType: 'participant' as const, dataSource: 'live' as const }))
 
     const combined = [...filteredHistorical, ...liveTranscripts, ...processing, ...events]
 

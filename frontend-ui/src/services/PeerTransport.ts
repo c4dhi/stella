@@ -38,6 +38,9 @@ export class PeerTransport implements Transport {
   private isPublishingAudio: boolean = false
   private isUnpublishingAudio: boolean = false
 
+  // Track if audio playback is enabled (requires user interaction due to browser autoplay policy)
+  private audioEnabled: boolean = false
+
   // Web Audio API for accurate speech detection
   private audioContext?: AudioContext
   private audioAnalyser?: AnalyserNode
@@ -397,7 +400,29 @@ export class PeerTransport implements Transport {
 
       // Enable audio playback (required for browser autoplay policy)
       // Must be called after user interaction (connect button click satisfies this)
-      await room.startAudio()
+      // On page refresh/auto-connect, this may fail - we handle it gracefully
+      try {
+        await room.startAudio()
+        this.audioEnabled = true
+      } catch (audioErr) {
+        console.warn('[PeerTransport] startAudio() failed (no user interaction yet):', (audioErr as Error).message)
+        console.log('[PeerTransport] Audio will be enabled on first user interaction')
+        this.audioEnabled = false
+        // Set up a one-time click handler to enable audio
+        const enableAudio = async () => {
+          try {
+            await room.startAudio()
+            this.audioEnabled = true
+            console.log('[PeerTransport] Audio enabled after user interaction')
+          } catch (e) {
+            console.warn('[PeerTransport] Failed to enable audio:', e)
+          }
+          document.removeEventListener('click', enableAudio)
+          document.removeEventListener('keydown', enableAudio)
+        }
+        document.addEventListener('click', enableAudio, { once: true })
+        document.addEventListener('keydown', enableAudio, { once: true })
+      }
 
       console.log(`👤 [USER] Connected as: ${room.localParticipant.identity}`)
 
