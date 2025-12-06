@@ -101,6 +101,13 @@ export type VisualizerType =
   | 'christmas'
   | 'sunny';
 
+// Standard props all visualizers receive
+export interface VisualizerProps {
+  audioLevel: number;
+  isRemoteSpeaking: boolean;
+  isUserSpeaking?: boolean;
+}
+
 export interface VisualizerConfig {
   id: VisualizerType;
   name: string;

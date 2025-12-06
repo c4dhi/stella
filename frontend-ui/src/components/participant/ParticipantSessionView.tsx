@@ -12,11 +12,9 @@ import {
   Loader2,
 } from 'lucide-react'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication } from 'livekit-client'
-import StellaFace from '../face/StellaFace'
-import SphereVisualizer from '../face/visualizers/SphereVisualizer'
-import WeatherVisualizer from '../face/visualizers/WeatherVisualizer'
 import TranscriptOverlay from '../face/TranscriptOverlay'
 import VisualizerGallery from '../face/VisualizerGallery'
+import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
@@ -386,53 +384,6 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     }
   }, [toggleMicrophone, isChatOpen])
 
-  // Render visualizer
-  const renderVisualizer = () => {
-    switch (currentVisualizer) {
-      case 'face':
-        return (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-          >
-            <StellaFace
-              isUserSpeaking={!isMuted}
-              isRemoteSpeaking={isRemoteSpeaking}
-              audioLevel={audioLevel}
-              eyeEmotion="listening"
-              mouthEmotion={isRemoteSpeaking ? 'speaking' : 'smile'}
-            />
-          </motion.div>
-        )
-
-      case 'sphere':
-        return (
-          <SphereVisualizer
-            audioLevel={audioLevel}
-            isRemoteSpeaking={isRemoteSpeaking}
-          />
-        )
-
-      case 'galaxy':
-      case 'rainy':
-      case 'snowy':
-      case 'christmas':
-      case 'sunny':
-        return (
-          <WeatherVisualizer
-            theme={currentVisualizer}
-            audioLevel={audioLevel}
-            isRemoteSpeaking={isRemoteSpeaking}
-          />
-        )
-
-      default:
-        return null
-    }
-  }
-
   // Loading state
   if (isConnecting) {
     return (
@@ -478,7 +429,12 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     >
       {/* Visualizer */}
       <div className="absolute inset-0 flex items-center justify-center">
-        {renderVisualizer()}
+        <VisualizerRenderer
+          type={currentVisualizer}
+          audioLevel={audioLevel}
+          isRemoteSpeaking={isRemoteSpeaking}
+          isUserSpeaking={!isMuted}
+        />
       </div>
 
       {/* Top-right control buttons */}

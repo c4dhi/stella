@@ -6,11 +6,9 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, LayoutGrid, Maximize2, Minimize2, Subtitles } from 'lucide-react';
-import StellaFace from './StellaFace';
 import TranscriptOverlay from './TranscriptOverlay';
 import VisualizerGallery from './VisualizerGallery';
-import SphereVisualizer from './visualizers/SphereVisualizer';
-import WeatherVisualizer from './visualizers/WeatherVisualizer';
+import VisualizerRenderer from './VisualizerRenderer';
 import { VisualizerType } from './types';
 import { useStore } from '../../store';
 import { startMicWithVu } from '../../services/audio/capture';
@@ -265,53 +263,6 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
     };
   }, [transport]);
 
-  // Render current visualizer
-  const renderVisualizer = () => {
-    switch (currentVisualizer) {
-      case 'face':
-        return (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-          >
-            <StellaFace
-              isUserSpeaking={isUserSpeaking}
-              isRemoteSpeaking={isRemoteSpeaking}
-              audioLevel={audioLevel}
-              eyeEmotion="listening"
-              mouthEmotion={isRemoteSpeaking ? 'speaking' : 'smile'}
-            />
-          </motion.div>
-        );
-
-      case 'sphere':
-        return (
-          <SphereVisualizer
-            audioLevel={audioLevel}
-            isRemoteSpeaking={isRemoteSpeaking}
-          />
-        );
-
-      case 'galaxy':
-      case 'rainy':
-      case 'snowy':
-      case 'christmas':
-      case 'sunny':
-        return (
-          <WeatherVisualizer
-            theme={currentVisualizer}
-            audioLevel={audioLevel}
-            isRemoteSpeaking={isRemoteSpeaking}
-          />
-        );
-
-      default:
-        return null;
-    }
-  };
-
   return (
     <AnimatePresence>
       {isOpen && (
@@ -326,7 +277,12 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
         >
           {/* Visualizer */}
           <div className="absolute inset-0 flex items-center justify-center">
-            {renderVisualizer()}
+            <VisualizerRenderer
+              type={currentVisualizer}
+              audioLevel={audioLevel}
+              isRemoteSpeaking={isRemoteSpeaking}
+              isUserSpeaking={isUserSpeaking}
+            />
           </div>
 
           {/* Top-right control buttons (fade on inactivity, hidden when gallery is open) */}

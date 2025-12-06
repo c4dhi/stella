@@ -5,6 +5,7 @@ import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { CreateInvitationDto, CreateInvitationResponse } from '../../lib/api-types'
 import { VISUALIZER_CONFIGS, type VisualizerType } from '../face/types'
+import VisualizerPreview from '../face/VisualizerPreview'
 
 interface InviteParticipantModalProps {
   isOpen: boolean
@@ -147,52 +148,6 @@ export default function InviteParticipantModal({
         return false
     }
   }, [step, participantName])
-
-  // Generate preview particles for visualizers
-  const previewStars = useMemo(() =>
-    Array.from({ length: 8 }, (_, i) => ({
-      id: i,
-      left: Math.random() * 100,
-      top: Math.random() * 100,
-      opacity: Math.random() * 0.7 + 0.3,
-    })), [])
-
-  const renderVisualizerPreview = (type: VisualizerType) => {
-    switch (type) {
-      case 'sphere':
-        return (
-          <div
-            className="w-8 h-8 rounded-full"
-            style={{
-              background: 'radial-gradient(circle at 30% 30%, rgba(124, 58, 237, 0.8) 0%, transparent 50%), radial-gradient(circle at 50% 50%, rgba(20, 20, 40, 1) 0%, rgba(10, 10, 20, 1) 100%)',
-              boxShadow: '0 0 10px rgba(124, 58, 237, 0.5)',
-            }}
-          />
-        )
-      case 'face':
-        return (
-          <div className="relative w-8 h-8">
-            <div className="absolute top-2 left-1 w-2 h-2 bg-white rounded-full" />
-            <div className="absolute top-2 right-1 w-2 h-2 bg-white rounded-full" />
-            <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-3 h-1 border-b border-white/60 rounded-b-full" />
-          </div>
-        )
-      case 'galaxy':
-        return (
-          <div className="relative w-8 h-8">
-            {previewStars.slice(0, 5).map(star => (
-              <div
-                key={star.id}
-                className="absolute bg-white rounded-full"
-                style={{ width: '2px', height: '2px', left: `${star.left}%`, top: `${star.top}%`, opacity: star.opacity }}
-              />
-            ))}
-          </div>
-        )
-      default:
-        return <div className="w-8 h-8 rounded-full bg-white/20" />
-    }
-  }
 
   return (
     <AnimatePresence>
@@ -402,8 +357,8 @@ export default function InviteParticipantModal({
                             }
                           `}
                         >
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${config.previewBg}`}>
-                            {renderVisualizerPreview(config.id)}
+                          <div className={`relative w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${config.previewBg}`}>
+                            <VisualizerPreview type={config.id} size="sm" />
                           </div>
                           <span className={`text-[10px] font-light ${isDark ? 'text-zinc-300' : 'text-neutral-600'}`}>
                             {config.name}
