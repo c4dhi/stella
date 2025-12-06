@@ -35,6 +35,11 @@ import type {
   ListenerStatus,
   MonitoringLogsResponse,
   NetworkInfoResponse,
+  Invitation,
+  CreateInvitationDto,
+  CreateInvitationResponse,
+  InvitationDetails,
+  AcceptInvitationResponse,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -331,6 +336,91 @@ class SessionManagementClient {
 
   async removeParticipant(participantId: string): Promise<DeleteResponse> {
     return this.delete<DeleteResponse>(`/participants/${participantId}`)
+  }
+
+  // ============================================================================
+  // Invitations API
+  // ============================================================================
+
+  async createInvitation(
+    sessionId: string,
+    data: CreateInvitationDto
+  ): Promise<CreateInvitationResponse> {
+    return this.post<CreateInvitationResponse>(
+      `/sessions/${sessionId}/invitations`,
+      data
+    )
+  }
+
+  async listInvitations(sessionId: string): Promise<Invitation[]> {
+    return this.get<Invitation[]>(`/sessions/${sessionId}/invitations`)
+  }
+
+  async getInvitation(invitationId: string): Promise<Invitation> {
+    return this.get<Invitation>(`/invitations/${invitationId}`)
+  }
+
+  async revokeInvitation(invitationId: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/invitations/${invitationId}`)
+  }
+
+  // ============================================================================
+  // Public Invitation API (No auth required)
+  // ============================================================================
+
+  /**
+   * Get public invitation details by token (no auth required)
+   */
+  async getPublicInvitation(token: string): Promise<InvitationDetails> {
+    const url = `${this.getBaseUrl()}/join/${token}`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Accept invitation and join session (no auth required)
+   */
+  async acceptInvitation(token: string): Promise<AcceptInvitationResponse> {
+    const url = `${this.getBaseUrl()}/join/${token}/accept`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}/accept`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
   }
 
   // ============================================================================

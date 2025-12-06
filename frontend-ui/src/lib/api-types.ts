@@ -277,13 +277,87 @@ export interface PackageValidationResult {
 }
 
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left'
   sessionId: string
   agentId?: string
   agentName?: string
   agentType?: string
+  participantId?: string
+  participantIdentity?: string
+  participantName?: string
+  isOnline?: boolean
   error?: string
   timestamp: string
+}
+
+// ============================================================================
+// Invitation Types
+// ============================================================================
+
+export enum InvitationStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  EXPIRED = 'EXPIRED',
+  REVOKED = 'REVOKED'
+}
+
+export interface Invitation {
+  id: string
+  sessionId: string
+  token: string
+  participantName: string
+  customMessage?: string | null
+  visualizerType?: string | null
+  visualizerLocked: boolean
+  status: InvitationStatus
+  createdAt: string
+  expiresAt?: string | null
+  acceptedAt?: string | null
+  participantId?: string | null
+  participant?: {
+    id: string
+    name: string
+    identity: string
+    joinedAt: string
+    leftAt?: string | null
+    lastSeenAt?: string | null
+  } | null
+}
+
+export interface CreateInvitationDto {
+  participantName: string
+  customMessage?: string
+  visualizerType?: string
+  visualizerLocked?: boolean
+  expiresInHours?: number
+}
+
+export interface CreateInvitationResponse {
+  invitation: Invitation
+  joinUrl: string
+}
+
+export interface InvitationDetails {
+  participantName: string
+  customMessage?: string | null
+  visualizerType?: string | null
+  visualizerLocked: boolean
+  sessionName?: string | null
+  status: InvitationStatus
+}
+
+export interface AcceptInvitationResponse {
+  participantId: string
+  participantName: string
+  identity: string
+  token: string
+  connectionInfo: {
+    token: string
+    serverUrl: string
+    roomName: string
+  }
+  visualizerType?: string | null
+  visualizerLocked: boolean
 }
 
 // ============================================================================

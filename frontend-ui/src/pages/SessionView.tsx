@@ -8,7 +8,7 @@ import TaskPanel from '../components/TaskPanel'
 import AgentSidebar from '../components/agents/AgentSidebar'
 import ParticipantSection from '../components/participants/ParticipantSection'
 import EditSessionModal from '../components/modals/EditSessionModal'
-import RegisterParticipantModal from '../components/modals/RegisterParticipantModal'
+// RegisterParticipantModal replaced by InviteParticipantModal in ParticipantSection
 import ParticipantConnectionModal from '../components/modals/ParticipantConnectionModal'
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
@@ -43,7 +43,6 @@ export default function SessionView() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
   // Participant modal states
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [participantConfirmDialog, setParticipantConfirmDialog] = useState<{
@@ -621,37 +620,6 @@ export default function SessionView() {
     }
   }
 
-  // Register new participant
-  const handleRegisterParticipant = async (name: string) => {
-    if (!sessionId) return
-
-    try {
-      const response = await apiClient.registerParticipant(sessionId, name)
-
-      // Convert RegisterParticipantResponse to Participant
-      const newParticipant: Participant = {
-        id: response.id,
-        sessionId,
-        name: response.name,
-        identity: response.identity,
-        joinedAt: new Date().toISOString(),
-        leftAt: null
-      }
-
-      setParticipants(prev => [...prev, newParticipant])
-
-      // Show connection modal with the new participant
-      setSelectedParticipantId(newParticipant.id)
-
-      addToast({ message: 'Participant registered successfully', type: 'success' })
-    } catch (err) {
-      addToast({
-        message: err instanceof Error ? err.message : 'Failed to register participant',
-        type: 'error'
-      })
-    }
-  }
-
   // Remove participant
   const handleRemoveParticipant = (participantId: string, participantName: string) => {
     setParticipantConfirmDialog({
@@ -821,9 +789,9 @@ export default function SessionView() {
           <ParticipantSection
             sessionId={sessionId}
             participants={participants}
-            onRegisterClick={() => setIsRegisterModalOpen(true)}
             onShowConnectionInfo={setSelectedParticipantId}
             onRemoveParticipant={handleRemoveParticipant}
+            onRefresh={() => apiClient.getSession(sessionId).then(setSession).catch(console.error)}
           />
           <AgentSidebar
             sessionId={sessionId}
@@ -869,11 +837,7 @@ export default function SessionView() {
         />
       )}
 
-      <RegisterParticipantModal
-        isOpen={isRegisterModalOpen}
-        onClose={() => setIsRegisterModalOpen(false)}
-        onSubmit={handleRegisterParticipant}
-      />
+      {/* RegisterParticipantModal moved to ParticipantSection as InviteParticipantModal */}
 
       {selectedParticipantId && (
         <ParticipantConnectionModal

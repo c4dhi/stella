@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { OnEvent } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
@@ -14,11 +15,15 @@ import { Prisma } from '@prisma/client';
 
 // Session event types for SSE streaming
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped';
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left';
   sessionId: string;
   agentId?: string;
   agentName?: string;
   agentType?: string;
+  participantId?: string;
+  participantIdentity?: string;
+  participantName?: string;
+  isOnline?: boolean;
   error?: string;
   timestamp: string;
 }
@@ -1027,6 +1032,66 @@ export class SessionsService {
       agentName,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ============================================================================
+  // Participant Presence Events
+  // ============================================================================
+
+  /**
+   * Handle SSE events from webhook controller.
+   * Converts EventEmitter events to SSE stream events.
+   */
+  @OnEvent('sse.event')
+  handleSseEvent(payload: { sessionId: string; event: string; data: any }): void {
+    const { sessionId, event, data } = payload;
+
+    // Map webhook events to SessionEvent format
+    if (event === 'participant.joined' || event === 'participant.left') {
+      this.emitParticipantPresence(
+        sessionId,
+        data.identity,
+        data.name,
+        event === 'participant.joined',
+      );
+    }
+  }
+
+  /**
+   * Emit a participant presence event.
+   */
+  emitParticipantPresence(
+    sessionId: string,
+    participantIdentity: string,
+    participantName?: string,
+    isOnline: boolean = true,
+  ): void {
+    // We need to find the session by room name since webhooks use room names
+    this.findSessionByRoomName(sessionId).then((session) => {
+      if (session) {
+        this.emitSessionEvent({
+          type: isOnline ? 'participant.joined' : 'participant.left',
+          sessionId: session.id,
+          participantIdentity,
+          participantName,
+          isOnline,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }).catch((err) => {
+      this.logger.warn(`Failed to find session for presence event: ${err.message}`);
+    });
+  }
+
+  /**
+   * Find a session by LiveKit room name.
+   */
+  private async findSessionByRoomName(roomName: string) {
+    const room = await this.prisma.room.findUnique({
+      where: { livekitRoomName: roomName },
+      include: { session: true },
+    });
+    return room?.session || null;
   }
 
   // ============================================================================
