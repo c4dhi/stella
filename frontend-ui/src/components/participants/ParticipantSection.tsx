@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Globe, Ban } from 'lucide-react'
+import { Globe, Ban, Check } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { Participant, Invitation, InvitationStatus, SessionEvent } from '../../lib/api-types'
@@ -56,6 +56,7 @@ export default function ParticipantSection({
     invitationId: '',
     participantName: '',
   })
+  const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null)
 
   // Check if we already have a pending invitation (only one at a time)
   const hasPendingInvitation = invitations.some(inv => inv.status === 'PENDING')
@@ -384,7 +385,7 @@ export default function ParticipantSection({
                             Info
                           </button>
                           <button
-                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName)}
+                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName || 'Participant')}
                             className={`
                               py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
                               ${isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-500 hover:bg-red-50'}
@@ -401,24 +402,37 @@ export default function ParticipantSection({
                           <button
                             onClick={() => {
                               navigator.clipboard.writeText(`${window.location.origin}/join/${invitation.token}`)
+                              setCopiedInvitationId(invitation.id)
+                              setTimeout(() => setCopiedInvitationId(null), 2000)
                             }}
                             className={`
                               flex-1 py-1.5 px-2 rounded-lg text-xs font-light
                               transition-all duration-200 flex items-center justify-center gap-1
-                              ${isDark
-                                ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
-                                : 'bg-white border border-border text-content-secondary hover:text-content hover:border-border-secondary'
+                              ${copiedInvitationId === invitation.id
+                                ? 'bg-green-500 border border-green-500 text-white'
+                                : isDark
+                                  ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
+                                  : 'bg-white border border-border text-content-secondary hover:text-content hover:border-border-secondary'
                               }
                             `}
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                              <rect x="9" y="9" width="13" height="13" rx="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            Copy Link
+                            {copiedInvitationId === invitation.id ? (
+                              <>
+                                <Check className="w-3.5 h-3.5" />
+                                Copied!
+                              </>
+                            ) : (
+                              <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                Copy Link
+                              </>
+                            )}
                           </button>
                           <button
-                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName)}
+                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName || 'Participant')}
                             className={`
                               py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
                               ${isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-500 hover:bg-red-50'}

@@ -50,11 +50,14 @@ export class InvitationsService {
       ? new Date(Date.now() + dto.expiresInHours * 60 * 60 * 1000)
       : null;
 
+    // Auto-generate participant name if not provided
+    const participantName = dto.participantName || `user-${Math.floor(Math.random() * 100000)}`;
+
     // Create the invitation
     const invitation = await this.prisma.invitation.create({
       data: {
         sessionId,
-        participantName: dto.participantName,
+        participantName,
         customMessage: dto.customMessage,
         visualizerType: dto.visualizerType,
         visualizerLocked: dto.visualizerLocked ?? false,

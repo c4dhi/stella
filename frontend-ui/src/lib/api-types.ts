@@ -305,7 +305,7 @@ export interface Invitation {
   id: string
   sessionId: string
   token: string
-  participantName: string
+  participantName?: string
   customMessage?: string | null
   visualizerType?: string | null
   visualizerLocked: boolean
@@ -325,7 +325,7 @@ export interface Invitation {
 }
 
 export interface CreateInvitationDto {
-  participantName: string
+  participantName?: string
   customMessage?: string
   visualizerType?: string
   visualizerLocked?: boolean

@@ -1,8 +1,9 @@
 import { IsString, IsOptional, IsBoolean, IsNumber, Min, Max } from 'class-validator';
 
 export class CreateInvitationDto {
+  @IsOptional()
   @IsString()
-  participantName: string;
+  participantName?: string;
 
   @IsOptional()
   @IsString()

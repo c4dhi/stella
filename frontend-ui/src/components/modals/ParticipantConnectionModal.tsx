@@ -38,6 +38,7 @@ export default function ParticipantConnectionModal({
   const [error, setError] = useState<string | null>(null)
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [isRevoking, setIsRevoking] = useState(false)
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
   const [currentStatus, setCurrentStatus] = useState<InvitationStatus | undefined>(participantDetails?.status)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
@@ -449,7 +450,7 @@ export default function ParticipantConnectionModal({
                   {/* Revoke button - only show when ACCEPTED and onRevoke is available */}
                   {currentStatus === 'ACCEPTED' && invitationId && onRevoke && (
                     <button
-                      onClick={handleRevoke}
+                      onClick={() => setShowRevokeConfirm(true)}
                       disabled={isRevoking}
                       className={`
                         flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
@@ -485,6 +486,100 @@ export default function ParticipantConnectionModal({
             </>
           ) : null}
         </motion.div>
+
+        {/* Revoke Confirmation Modal */}
+        {showRevokeConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowRevokeConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={`
+                w-full max-w-sm p-6 rounded-2xl
+                ${isDark
+                  ? 'bg-zinc-800 border border-zinc-700'
+                  : 'bg-white border border-neutral-200 shadow-xl'
+                }
+              `}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Warning Icon */}
+              <div className="flex justify-center mb-4">
+                <div className={`
+                  w-12 h-12 rounded-full flex items-center justify-center
+                  ${isDark ? 'bg-red-500/20' : 'bg-red-50'}
+                `}>
+                  <Ban className={`w-6 h-6 ${isDark ? 'text-red-400' : 'text-red-500'}`} />
+                </div>
+              </div>
+
+              {/* Title */}
+              <h3 className={`text-lg font-medium text-center mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                Revoke Access?
+              </h3>
+
+              {/* Description */}
+              <p className={`text-sm text-center mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                Are you sure you want to revoke access for <span className="font-medium">{connectionInfo?.participantName}</span>?
+              </p>
+
+              {/* What happens */}
+              <div className={`
+                text-xs p-3 rounded-lg mb-6
+                ${isDark ? 'bg-zinc-900/50 text-zinc-400' : 'bg-neutral-50 text-neutral-500'}
+              `}>
+                <p className="font-medium mb-1">What happens when you revoke:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>The participant will be disconnected</li>
+                  <li>They won't be able to rejoin using this link</li>
+                  <li>You can re-invite them with a new invitation</li>
+                </ul>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowRevokeConfirm(false)}
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light
+                    transition-all duration-200
+                    ${isDark
+                      ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                    }
+                  `}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowRevokeConfirm(false)
+                    await handleRevoke()
+                  }}
+                  disabled={isRevoking}
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light
+                    transition-all duration-200 flex items-center justify-center gap-2
+                    ${isDark
+                      ? 'bg-red-500 text-white hover:bg-red-400'
+                      : 'bg-red-500 text-white hover:bg-red-600'
+                    }
+                    ${isRevoking ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
+                >
+                  <Ban className="w-4 h-4" />
+                  {isRevoking ? 'Revoking...' : 'Revoke Access'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </motion.div>
     </AnimatePresence>
   )
