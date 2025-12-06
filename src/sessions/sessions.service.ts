@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Observable, Subject, filter, map, finalize } from 'rxjs';
 import { OnEvent } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
@@ -559,6 +559,31 @@ export class SessionsService {
     this.logger.log(`Participant ${participantId} token revoked and marked as left`);
 
     return { message: 'Participant removed successfully' };
+  }
+
+  /**
+   * Update participant heartbeat - updates lastSeenAt timestamp.
+   * Called periodically by participant clients to maintain presence.
+   */
+  async participantHeartbeat(participantId: string) {
+    const participant = await this.prisma.participant.findUnique({
+      where: { id: participantId },
+    });
+
+    if (!participant) {
+      throw new NotFoundException(`Participant with ID ${participantId} not found`);
+    }
+
+    if (participant.tokenRevokedAt) {
+      throw new BadRequestException('Participant token has been revoked');
+    }
+
+    await this.prisma.participant.update({
+      where: { id: participantId },
+      data: { lastSeenAt: new Date() },
+    });
+
+    return { success: true, lastSeenAt: new Date().toISOString() };
   }
 
   // Message retrieval methods

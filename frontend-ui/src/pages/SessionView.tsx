@@ -6,7 +6,7 @@ import ChatView from '../components/ChatView'
 import Composer from '../components/Composer'
 import TaskPanel from '../components/TaskPanel'
 import AgentSidebar from '../components/agents/AgentSidebar'
-import ParticipantSection from '../components/participants/ParticipantSection'
+import ParticipantSection, { type ParticipantModalData } from '../components/participants/ParticipantSection'
 import EditSessionModal from '../components/modals/EditSessionModal'
 // RegisterParticipantModal replaced by InviteParticipantModal in ParticipantSection
 import ParticipantConnectionModal from '../components/modals/ParticipantConnectionModal'
@@ -43,8 +43,9 @@ export default function SessionView() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
   // Participant modal states
-  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
+  const [selectedParticipant, setSelectedParticipant] = useState<ParticipantModalData | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
+  const [participantRefreshTrigger, setParticipantRefreshTrigger] = useState(0)
   const [participantConfirmDialog, setParticipantConfirmDialog] = useState<{
     isOpen: boolean
     title: string
@@ -789,9 +790,10 @@ export default function SessionView() {
           <ParticipantSection
             sessionId={sessionId}
             participants={participants}
-            onShowConnectionInfo={setSelectedParticipantId}
+            onShowConnectionInfo={(data) => setSelectedParticipant(data)}
             onRemoveParticipant={handleRemoveParticipant}
             onRefresh={() => apiClient.getSession(sessionId).then(setSession).catch(console.error)}
+            refreshTrigger={participantRefreshTrigger}
           />
           <AgentSidebar
             sessionId={sessionId}
@@ -839,10 +841,19 @@ export default function SessionView() {
 
       {/* RegisterParticipantModal moved to ParticipantSection as InviteParticipantModal */}
 
-      {selectedParticipantId && (
+      {selectedParticipant && (
         <ParticipantConnectionModal
-          participantId={selectedParticipantId}
-          onClose={() => setSelectedParticipantId(null)}
+          participantId={selectedParticipant.participantId}
+          invitationId={selectedParticipant.invitationId}
+          invitationToken={selectedParticipant.invitationToken}
+          participantDetails={selectedParticipant.details}
+          onRevoke={async (invitationId) => {
+            await apiClient.revokeInvitation(invitationId)
+            // Refresh session data and trigger ParticipantSection to refresh invitations
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            setParticipantRefreshTrigger(prev => prev + 1)
+          }}
+          onClose={() => setSelectedParticipant(null)}
         />
       )}
 

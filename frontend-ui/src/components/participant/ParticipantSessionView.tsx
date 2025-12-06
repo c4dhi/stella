@@ -19,6 +19,7 @@ import TranscriptOverlay from '../face/TranscriptOverlay'
 import VisualizerGallery from '../face/VisualizerGallery'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import { VisualizerType } from '../face/types'
+import { apiClient } from '../../services/ApiClient'
 
 interface ConnectionInfo {
   token: string
@@ -30,6 +31,7 @@ interface SessionData {
   participantId: string
   participantName: string
   identity: string
+  authToken: string  // Participant JWT for API calls
   connectionInfo: ConnectionInfo
   visualizerType: string | null
   visualizerLocked: boolean
@@ -117,6 +119,30 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       cleanupAudio()
     }
   }, [sessionData.connectionInfo])
+
+  // Heartbeat to maintain presence status
+  useEffect(() => {
+    const HEARTBEAT_INTERVAL = 15000 // 15 seconds
+
+    // Send initial heartbeat
+    const sendHeartbeat = async () => {
+      try {
+        await apiClient.participantHeartbeat(sessionData.authToken)
+      } catch (error) {
+        console.error('Heartbeat failed:', error)
+      }
+    }
+
+    // Send immediately on mount
+    sendHeartbeat()
+
+    // Set up interval
+    const intervalId = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL)
+
+    return () => {
+      clearInterval(intervalId)
+    }
+  }, [sessionData.authToken])
 
   // Handle track subscribed (for receiving agent audio)
   const handleTrackSubscribed = useCallback(

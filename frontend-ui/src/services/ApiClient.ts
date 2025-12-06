@@ -338,6 +338,27 @@ class SessionManagementClient {
     return this.delete<DeleteResponse>(`/participants/${participantId}`)
   }
 
+  /**
+   * Send heartbeat to update participant presence.
+   * Uses a custom auth token (participant JWT) instead of the organizer token.
+   */
+  async participantHeartbeat(authToken: string): Promise<{ success: boolean; lastSeenAt: string }> {
+    const response = await fetch(`${this.getBaseUrl()}/participants/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Heartbeat failed' }))
+      throw error
+    }
+
+    return response.json()
+  }
+
   // ============================================================================
   // Invitations API
   // ============================================================================
@@ -361,6 +382,10 @@ class SessionManagementClient {
   }
 
   async revokeInvitation(invitationId: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/invitations/${invitationId}/revoke`)
+  }
+
+  async deleteInvitation(invitationId: string): Promise<DeleteResponse> {
     return this.delete<DeleteResponse>(`/invitations/${invitationId}`)
   }
 
@@ -414,6 +439,36 @@ class SessionManagementClient {
           statusCode: response.status,
           timestamp: new Date().toISOString(),
           path: `/join/${token}/accept`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Rejoin an already accepted invitation (no auth required)
+   */
+  async rejoinInvitation(token: string): Promise<AcceptInvitationResponse> {
+    const url = `${this.getBaseUrl()}/join/${token}/rejoin`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}/rejoin`,
           message: response.statusText,
         }
       }

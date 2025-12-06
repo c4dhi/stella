@@ -145,6 +145,17 @@ export class SessionsController {
     return this.sessionsService.getParticipantConnectionInfo(participantId);
   }
 
+  // Heartbeat endpoint for participant presence tracking
+  // Called periodically by participant clients to update lastSeenAt
+  @Post('participants/heartbeat')
+  participantHeartbeat(@Request() req) {
+    const participantId = req.user.participantId;
+    if (!participantId) {
+      throw new BadRequestException('Invalid participant token');
+    }
+    return this.sessionsService.participantHeartbeat(participantId);
+  }
+
   @Delete('participants/:participantId')
   removeParticipant(@Param('participantId') participantId: string) {
     return this.sessionsService.removeParticipant(participantId);

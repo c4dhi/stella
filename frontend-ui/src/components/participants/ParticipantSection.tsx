@@ -1,17 +1,33 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Globe, Ban } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { Participant, Invitation, InvitationStatus, SessionEvent } from '../../lib/api-types'
 import PresenceIndicator from './PresenceIndicator'
 import InviteParticipantModal from '../modals/InviteParticipantModal'
 
+// Details to pass to the connection modal
+export interface ParticipantModalData {
+  participantId: string
+  invitationId: string
+  invitationToken?: string | null
+  details: {
+    createdAt: string
+    acceptedAt?: string | null
+    joinedAt?: string | null
+    lastSeenAt?: string | null
+    status: InvitationStatus
+  }
+}
+
 interface ParticipantSectionProps {
   sessionId: string
   participants: Participant[]
-  onShowConnectionInfo: (participantId: string) => void
+  onShowConnectionInfo: (data: ParticipantModalData) => void
   onRemoveParticipant: (participantId: string, participantName: string) => void
   onRefresh?: () => void
+  refreshTrigger?: number  // Increment to force refresh of invitations
 }
 
 // Track online status by identity
@@ -25,6 +41,7 @@ export default function ParticipantSection({
   onShowConnectionInfo,
   onRemoveParticipant,
   onRefresh,
+  refreshTrigger,
 }: ParticipantSectionProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
@@ -34,9 +51,13 @@ export default function ParticipantSection({
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [isLoadingInvitations, setIsLoadingInvitations] = useState(false)
   const [presenceState, setPresenceState] = useState<PresenceState>({})
+  const [revokeConfirm, setRevokeConfirm] = useState<{ isOpen: boolean; invitationId: string; participantName: string }>({
+    isOpen: false,
+    invitationId: '',
+    participantName: '',
+  })
 
-  // Check if we already have a participant (UI limit)
-  const hasParticipant = participants.filter(p => !p.leftAt).length > 0
+  // Check if we already have a pending invitation (only one at a time)
   const hasPendingInvitation = invitations.some(inv => inv.status === 'PENDING')
 
   // Fetch invitations
@@ -70,6 +91,13 @@ export default function ParticipantSection({
     fetchInvitations()
   }, [fetchInvitations])
 
+  // Refresh invitations when refreshTrigger changes (e.g., after revoke from modal)
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      fetchInvitations()
+    }
+  }, [refreshTrigger, fetchInvitations])
+
   // Subscribe to SSE events for presence updates
   useEffect(() => {
     const cleanup = apiClient.subscribeToSessionEvents(
@@ -97,19 +125,55 @@ export default function ParticipantSection({
     return cleanup
   }, [sessionId, fetchInvitations])
 
+  // Poll for presence updates (checks lastSeenAt staleness)
+  useEffect(() => {
+    const POLL_INTERVAL = 20000 // 20 seconds
+
+    const intervalId = setInterval(() => {
+      fetchInvitations()
+    }, POLL_INTERVAL)
+
+    return () => {
+      clearInterval(intervalId)
+    }
+  }, [fetchInvitations])
+
   // Handle invitation created
   const handleInvitationCreated = () => {
     fetchInvitations()
     onRefresh?.()
   }
 
-  // Handle revoke invitation
-  const handleRevokeInvitation = async (invitationId: string) => {
+  // Show revoke confirmation modal
+  const showRevokeConfirmation = (invitationId: string, participantName: string) => {
+    setRevokeConfirm({ isOpen: true, invitationId, participantName })
+  }
+
+  // Handle confirmed revoke invitation
+  const handleConfirmRevoke = async () => {
+    if (!revokeConfirm.invitationId) return
     try {
-      await apiClient.revokeInvitation(invitationId)
+      await apiClient.revokeInvitation(revokeConfirm.invitationId)
       fetchInvitations()
     } catch (err) {
       console.error('Failed to revoke invitation:', err)
+    } finally {
+      setRevokeConfirm({ isOpen: false, invitationId: '', participantName: '' })
+    }
+  }
+
+  // Cancel revoke
+  const handleCancelRevoke = () => {
+    setRevokeConfirm({ isOpen: false, invitationId: '', participantName: '' })
+  }
+
+  // Handle delete invitation
+  const handleDeleteInvitation = async (invitationId: string) => {
+    try {
+      await apiClient.deleteInvitation(invitationId)
+      fetchInvitations()
+    } catch (err) {
+      console.error('Failed to delete invitation:', err)
     }
   }
 
@@ -184,7 +248,7 @@ export default function ParticipantSection({
           <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
             <button
               onClick={() => setIsInviteModalOpen(true)}
-              disabled={hasParticipant || hasPendingInvitation}
+              disabled={hasPendingInvitation}
               className={`
                 w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                 transition-all duration-200 flex items-center justify-center gap-2
@@ -207,9 +271,9 @@ export default function ParticipantSection({
               </svg>
               Invite Participant
             </button>
-            {(hasParticipant || hasPendingInvitation) && (
+            {hasPendingInvitation && (
               <p className={`text-[10px] mt-2 text-center ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                {hasPendingInvitation ? 'Pending invitation exists' : 'One participant per session'}
+                Pending invitation exists
               </p>
             )}
           </div>
@@ -252,6 +316,17 @@ export default function ParticipantSection({
                         <span className={`text-sm font-light ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                           {invitation.participantName}
                         </span>
+                        {/* Web participant indicator */}
+                        <span
+                          className={`
+                            inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-light uppercase tracking-wider
+                            ${isDark ? 'bg-cyan-500/20 text-cyan-300' : 'bg-cyan-50 text-cyan-600'}
+                          `}
+                          title="Web participant"
+                        >
+                          <Globe className="w-2.5 h-2.5" />
+                          Web
+                        </span>
                       </div>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full ${getStatusColor(invitation.status as InvitationStatus)}`}>
                         {invitation.status}
@@ -263,9 +338,6 @@ export default function ParticipantSection({
                       {invitation.status === 'ACCEPTED' && invitation.participant ? (
                         <>
                           Joined {new Date(invitation.participant.joinedAt).toLocaleTimeString()}
-                          {isParticipantOnline(invitation.participant.identity) && (
-                            <span className="text-green-500 ml-2">· Online</span>
-                          )}
                         </>
                       ) : invitation.status === 'PENDING' ? (
                         <>
@@ -284,7 +356,18 @@ export default function ParticipantSection({
                       {invitation.status === 'ACCEPTED' && invitation.participant && (
                         <>
                           <button
-                            onClick={() => onShowConnectionInfo(invitation.participant!.id)}
+                            onClick={() => onShowConnectionInfo({
+                              participantId: invitation.participant!.id,
+                              invitationId: invitation.id,
+                              invitationToken: invitation.token,
+                              details: {
+                                createdAt: invitation.createdAt,
+                                acceptedAt: invitation.acceptedAt,
+                                joinedAt: invitation.participant?.joinedAt,
+                                lastSeenAt: invitation.participant?.lastSeenAt,
+                                status: invitation.status as InvitationStatus,
+                              },
+                            })}
                             className={`
                               flex-1 py-1.5 px-2 rounded-lg text-xs font-light
                               transition-all duration-200 flex items-center justify-center gap-1
@@ -301,16 +384,14 @@ export default function ParticipantSection({
                             Info
                           </button>
                           <button
-                            onClick={() => onRemoveParticipant(invitation.participant!.id, invitation.participantName)}
+                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName)}
                             className={`
                               py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
                               ${isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-500 hover:bg-red-50'}
                             `}
-                            title="Remove participant"
+                            title="Revoke access"
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />
-                            </svg>
+                            <Ban className="w-3.5 h-3.5" />
                           </button>
                         </>
                       )}
@@ -337,18 +418,81 @@ export default function ParticipantSection({
                             Copy Link
                           </button>
                           <button
-                            onClick={() => handleRevokeInvitation(invitation.id)}
+                            onClick={() => showRevokeConfirmation(invitation.id, invitation.participantName)}
                             className={`
                               py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
                               ${isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-500 hover:bg-red-50'}
                             `}
                             title="Revoke invitation"
                           >
+                            <Ban className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+
+                      {invitation.status === 'REVOKED' && invitation.participant && (
+                        <>
+                          <button
+                            onClick={() => onShowConnectionInfo({
+                              participantId: invitation.participant!.id,
+                              invitationId: invitation.id,
+                              invitationToken: invitation.token,
+                              details: {
+                                createdAt: invitation.createdAt,
+                                acceptedAt: invitation.acceptedAt,
+                                joinedAt: invitation.participant?.joinedAt,
+                                lastSeenAt: invitation.participant?.lastSeenAt,
+                                status: invitation.status as InvitationStatus,
+                              },
+                            })}
+                            className={`
+                              flex-1 py-1.5 px-2 rounded-lg text-xs font-light
+                              transition-all duration-200 flex items-center justify-center gap-1
+                              ${isDark
+                                ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-content-inverse hover:border-white/20'
+                                : 'bg-white border border-border text-content-secondary hover:text-content hover:border-border-secondary'
+                              }
+                            `}
+                          >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                              <path d="M18 6L6 18M6 6l12 12" />
+                              <circle cx="12" cy="12" r="10" />
+                              <path d="M12 16v-4M12 8h.01" />
+                            </svg>
+                            Info
+                          </button>
+                          <button
+                            onClick={() => handleDeleteInvitation(invitation.id)}
+                            className={`
+                              py-1.5 px-2 rounded-lg text-xs font-light transition-all duration-200
+                              ${isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-500 hover:bg-red-50'}
+                            `}
+                            title="Delete invitation"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />
                             </svg>
                           </button>
                         </>
+                      )}
+
+                      {(invitation.status === 'EXPIRED' || (invitation.status === 'REVOKED' && !invitation.participant)) && (
+                        <button
+                          onClick={() => handleDeleteInvitation(invitation.id)}
+                          className={`
+                            flex-1 py-1.5 px-2 rounded-lg text-xs font-light
+                            transition-all duration-200 flex items-center justify-center gap-1
+                            ${isDark
+                              ? 'bg-white/10 border border-white/10 text-content-inverse-secondary hover:text-red-400 hover:border-red-400/30'
+                              : 'bg-white border border-border text-content-secondary hover:text-red-500 hover:border-red-200'
+                            }
+                          `}
+                          title="Delete invitation"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6" />
+                          </svg>
+                          Delete
+                        </button>
                       )}
                     </div>
                   </motion.div>
@@ -366,6 +510,94 @@ export default function ParticipantSection({
         sessionId={sessionId}
         onSuccess={handleInvitationCreated}
       />
+
+      {/* Revoke Confirmation Modal */}
+      <AnimatePresence>
+        {revokeConfirm.isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={handleCancelRevoke}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={`
+                w-full max-w-sm rounded-2xl p-6
+                ${isDark
+                  ? 'bg-zinc-800 border border-zinc-700'
+                  : 'bg-white border border-neutral-200 shadow-xl'
+                }
+              `}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Icon */}
+              <div className={`
+                w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center
+                ${isDark ? 'bg-red-500/20' : 'bg-red-50'}
+              `}>
+                <Ban className={`w-6 h-6 ${isDark ? 'text-red-400' : 'text-red-500'}`} />
+              </div>
+
+              {/* Title */}
+              <h3 className={`text-lg font-medium text-center mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                Revoke Access?
+              </h3>
+
+              {/* Description */}
+              <p className={`text-sm text-center mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                Are you sure you want to revoke access for <span className="font-medium">{revokeConfirm.participantName}</span>?
+              </p>
+
+              {/* What happens */}
+              <div className={`
+                text-xs p-3 rounded-lg mb-6
+                ${isDark ? 'bg-zinc-900/50 text-zinc-400' : 'bg-neutral-50 text-neutral-500'}
+              `}>
+                <p className="font-medium mb-1">What happens when you revoke:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>The participant will be disconnected</li>
+                  <li>They won't be able to rejoin using this invitation</li>
+                  <li>You can delete the invitation afterwards</li>
+                </ul>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCancelRevoke}
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light
+                    transition-all duration-200
+                    ${isDark
+                      ? 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600'
+                      : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                    }
+                  `}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmRevoke}
+                  className={`
+                    flex-1 py-2.5 px-4 rounded-xl text-sm font-light
+                    transition-all duration-200
+                    ${isDark
+                      ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30'
+                      : 'bg-red-500 text-white hover:bg-red-600'
+                    }
+                  `}
+                >
+                  Revoke Access
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }

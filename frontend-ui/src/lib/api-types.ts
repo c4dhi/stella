@@ -344,6 +344,11 @@ export interface InvitationDetails {
   visualizerLocked: boolean
   sessionName?: string | null
   status: InvitationStatus
+  // Participant info for rejoin scenarios
+  participant?: {
+    id: string
+    isActive: boolean
+  } | null
 }
 
 export interface AcceptInvitationResponse {

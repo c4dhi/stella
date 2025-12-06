@@ -51,12 +51,21 @@ export class InvitationsController {
   }
 
   /**
-   * Revoke an invitation
+   * Revoke an invitation (changes status to REVOKED)
+   * DELETE /invitations/:invitationId/revoke
+   */
+  @Delete('invitations/:invitationId/revoke')
+  revoke(@Param('invitationId') invitationId: string) {
+    return this.invitationsService.revoke(invitationId);
+  }
+
+  /**
+   * Permanently delete an invitation
    * DELETE /invitations/:invitationId
    */
   @Delete('invitations/:invitationId')
-  revoke(@Param('invitationId') invitationId: string) {
-    return this.invitationsService.revoke(invitationId);
+  delete(@Param('invitationId') invitationId: string) {
+    return this.invitationsService.delete(invitationId);
   }
 
   // ============================================================================
@@ -84,5 +93,15 @@ export class InvitationsController {
     @Body() acceptInvitationDto: AcceptInvitationDto,
   ) {
     return this.invitationsService.accept(token, acceptInvitationDto);
+  }
+
+  /**
+   * Rejoin an already accepted invitation (public)
+   * POST /join/:token/rejoin
+   */
+  @Public()
+  @Post('join/:token/rejoin')
+  rejoin(@Param('token') token: string) {
+    return this.invitationsService.rejoin(token);
   }
 }
