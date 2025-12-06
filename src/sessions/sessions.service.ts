@@ -283,10 +283,13 @@ export class SessionsService {
       throw new NotFoundException(`Session with ID ${id} not found`);
     }
 
-    return this.prisma.session.update({
+    await this.prisma.session.update({
       where: { id },
       data: updateSessionDto,
     });
+
+    // Return full session detail to match frontend expectations
+    return this.findOne(id);
   }
 
   async close(id: string) {
