@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage'
 import ProjectsDashboard from './pages/ProjectsDashboard'
 import SessionsDashboard from './pages/SessionsDashboard'
 import SessionView from './pages/SessionView'
+import ParticipantJoinPage from './pages/ParticipantJoinPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { ToastContainer } from './components/Toast'
 import { useAuthStore } from './store/authStore'
@@ -24,8 +25,9 @@ export default function App() {
       <ToastContainer toasts={toasts} onRemove={removeToast} />
 
       <Routes>
-        {/* Public Route - Login */}
+        {/* Public Routes */}
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/join/:token" element={<ParticipantJoinPage />} />
 
         {/* Protected Routes */}
         <Route

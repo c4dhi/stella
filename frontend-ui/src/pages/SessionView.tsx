@@ -6,9 +6,9 @@ import ChatView from '../components/ChatView'
 import Composer from '../components/Composer'
 import TaskPanel from '../components/TaskPanel'
 import AgentSidebar from '../components/agents/AgentSidebar'
-import ParticipantSection from '../components/participants/ParticipantSection'
+import ParticipantSection, { type ParticipantModalData } from '../components/participants/ParticipantSection'
 import EditSessionModal from '../components/modals/EditSessionModal'
-import RegisterParticipantModal from '../components/modals/RegisterParticipantModal'
+// RegisterParticipantModal replaced by InviteParticipantModal in ParticipantSection
 import ParticipantConnectionModal from '../components/modals/ParticipantConnectionModal'
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
@@ -43,9 +43,9 @@ export default function SessionView() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
   // Participant modal states
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false)
-  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
+  const [selectedParticipant, setSelectedParticipant] = useState<ParticipantModalData | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
+  const [participantRefreshTrigger, setParticipantRefreshTrigger] = useState(0)
   const [participantConfirmDialog, setParticipantConfirmDialog] = useState<{
     isOpen: boolean
     title: string
@@ -302,7 +302,25 @@ export default function SessionView() {
         const agentId = data.participant_id || 'default-agent'
 
         // Try to find agent info from session agents
-        const agent = session?.agents?.find(a => a.podName === agentId || a.id === agentId)
+        // Match by: exact podName, exact id, podName starts with participant_id, or podName contains participant_id
+        // E.g., participant_id="stella-light-agent", podName could be:
+        //   - "stella-light-agent-abc123"
+        //   - "grace-stella-light-agent-abc123"
+        //   - "stella-light-agent-grace-abc123"
+        const agent = session?.agents?.find(a =>
+          a.podName === agentId ||
+          a.id === agentId ||
+          (a.podName && a.podName.startsWith(agentId + '-')) ||
+          (a.podName && a.podName.includes(agentId))
+        )
+
+        // Debug: log agent lookup details
+        console.log(`🔍 [TASK] Agent lookup:`, {
+          participant_id: agentId,
+          sessionAgents: session?.agents?.map(a => ({ id: a.id, name: a.name, podName: a.podName })),
+          foundAgent: agent ? { id: agent.id, name: agent.name, podName: agent.podName } : null
+        })
+
         const agentName = agent?.name || data.participant_id
         const agentIcon = agent?.icon || '🤖'
 
@@ -420,7 +438,7 @@ export default function SessionView() {
             }
           })() : null,
           current_task: null, // Generic progress doesn't have task-level detail
-          states: data.groups?.map((group, index) => ({
+          states: data.groups?.map((group) => ({
             id: group.id,
             title: group.label,
             type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
@@ -621,37 +639,6 @@ export default function SessionView() {
     }
   }
 
-  // Register new participant
-  const handleRegisterParticipant = async (name: string) => {
-    if (!sessionId) return
-
-    try {
-      const response = await apiClient.registerParticipant(sessionId, name)
-
-      // Convert RegisterParticipantResponse to Participant
-      const newParticipant: Participant = {
-        id: response.id,
-        sessionId,
-        name: response.name,
-        identity: response.identity,
-        joinedAt: new Date().toISOString(),
-        leftAt: null
-      }
-
-      setParticipants(prev => [...prev, newParticipant])
-
-      // Show connection modal with the new participant
-      setSelectedParticipantId(newParticipant.id)
-
-      addToast({ message: 'Participant registered successfully', type: 'success' })
-    } catch (err) {
-      addToast({
-        message: err instanceof Error ? err.message : 'Failed to register participant',
-        type: 'error'
-      })
-    }
-  }
-
   // Remove participant
   const handleRemoveParticipant = (participantId: string, participantName: string) => {
     setParticipantConfirmDialog({
@@ -821,9 +808,10 @@ export default function SessionView() {
           <ParticipantSection
             sessionId={sessionId}
             participants={participants}
-            onRegisterClick={() => setIsRegisterModalOpen(true)}
-            onShowConnectionInfo={setSelectedParticipantId}
+            onShowConnectionInfo={(data) => setSelectedParticipant(data)}
             onRemoveParticipant={handleRemoveParticipant}
+            onRefresh={() => apiClient.getSession(sessionId).then(setSession).catch(console.error)}
+            refreshTrigger={participantRefreshTrigger}
           />
           <AgentSidebar
             sessionId={sessionId}
@@ -844,6 +832,8 @@ export default function SessionView() {
               listenerStatus={listenerStatus}
               onShowLogs={() => setShowLogsModal(true)}
               sessionId={sessionId}
+              viewerIdentity="human"
+              viewerName={user?.name}
             />
           </div>
 
@@ -869,16 +859,21 @@ export default function SessionView() {
         />
       )}
 
-      <RegisterParticipantModal
-        isOpen={isRegisterModalOpen}
-        onClose={() => setIsRegisterModalOpen(false)}
-        onSubmit={handleRegisterParticipant}
-      />
+      {/* RegisterParticipantModal moved to ParticipantSection as InviteParticipantModal */}
 
-      {selectedParticipantId && (
+      {selectedParticipant && (
         <ParticipantConnectionModal
-          participantId={selectedParticipantId}
-          onClose={() => setSelectedParticipantId(null)}
+          participantId={selectedParticipant.participantId}
+          invitationId={selectedParticipant.invitationId}
+          invitationToken={selectedParticipant.invitationToken}
+          participantDetails={selectedParticipant.details}
+          onRevoke={async (invitationId) => {
+            await apiClient.revokeInvitation(invitationId)
+            // Refresh session data and trigger ParticipantSection to refresh invitations
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            setParticipantRefreshTrigger(prev => prev + 1)
+          }}
+          onClose={() => setSelectedParticipant(null)}
         />
       )}
 

@@ -59,6 +59,13 @@ enum SessionStatus {
   CLOSED
 }
 
+enum InvitationStatus {
+  PENDING   // Created, waiting for participant
+  ACCEPTED  // Participant joined
+  EXPIRED   // Time-based expiration
+  REVOKED   // Manually revoked by organizer
+}
+
 model Session {
   id           String          @id @default(uuid())
   projectId    String
@@ -70,6 +77,7 @@ model Session {
   room         Room?
   agents       AgentInstance[]
   participants Participant[]
+  invitations  Invitation[]
   messages     Message[]
   events       RoomEvent[]
 
@@ -193,19 +201,51 @@ model AgentInstance {
 }
 
 model Participant {
-  id                   String    @id @default(uuid())
+  id                   String      @id @default(uuid())
   sessionId            String
-  session              Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  name                 String    // Display name for the participant
-  identity             String    // LiveKit identity (auto-generated)
-  isManuallyRegistered Boolean   @default(false) // True if registered via API, false if auto-discovered
-  joinedAt             DateTime  @default(now())
+  session              Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name                 String      // Display name for the participant
+  identity             String      // LiveKit identity (auto-generated)
+  isManuallyRegistered Boolean     @default(false) // True if registered via API, false if auto-discovered
+  joinedAt             DateTime    @default(now())
   leftAt               DateTime?
-  tokenRevokedAt       DateTime? // When token was revoked (soft delete for security)
-  lastTokenRefresh     DateTime? // Last time LiveKit token was refreshed
+  tokenRevokedAt       DateTime?   // When token was revoked (soft delete for security)
+  lastTokenRefresh     DateTime?   // Last time LiveKit token was refreshed
+  lastSeenAt           DateTime?   // Last presence update from LiveKit
+  invitation           Invitation? // Link to invitation if created via invitation flow
 
   @@index([sessionId])
   @@index([identity])
+}
+
+// Invitation for participants to join sessions via shareable link
+model Invitation {
+  id              String           @id @default(uuid())
+  sessionId       String
+  session         Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Invitation details
+  token           String           @unique @default(uuid()) // URL token for /join/:token
+  participantName String           // Pre-assigned name for the participant
+  customMessage   String?          @db.Text // Optional organizer message
+
+  // Avatar/visualizer settings
+  visualizerType  String?          // e.g., "sphere", "face", "galaxy", "rainy", "snowy", "christmas", "sunny"
+  visualizerLocked Boolean         @default(false) // If true, participant can't change visualizer
+
+  // Status tracking
+  status          InvitationStatus @default(PENDING)
+  createdAt       DateTime         @default(now())
+  expiresAt       DateTime?        // Organizer-configured expiration (null = indefinite)
+  acceptedAt      DateTime?        // When participant accepted and joined
+
+  // Link to created participant (set when invitation is accepted)
+  participantId   String?          @unique
+  participant     Participant?     @relation(fields: [participantId], references: [id])
+
+  @@index([sessionId])
+  @@index([token])
+  @@index([status])
 }
 
 model Message {

@@ -17,6 +17,7 @@ import type {
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
 import { generateUUID } from '../lib/uuid'
+import { determineMessageRole } from '../lib/messageUtils'
 
 export class PeerTransport implements Transport {
   room?: Room
@@ -265,25 +266,30 @@ export class PeerTransport implements Transport {
               }
             }
 
-            // Determine role based on source field (new semantic approach)
-            // or fall back to participant_id matching (backwards compat)
+            // Determine role by comparing speaker identity against current user
+            // Uses shared utility for consistent role determination
             const source = serverData.source as string | undefined
-            let role: 'user' | 'assistant'
-            let displayName: string
+            const speakerId = serverData.speaker_id || serverData.participant_id || env.participant_id
+            const speakerName = serverData.speaker_name || speakerId
 
-            if (source === 'user_speech' || source === 'user_text') {
-              // User messages (speech transcribed by agent or typed text)
-              role = 'user'
-              displayName = serverData.speaker_name || serverData.participant_id || this.userName
-            } else if (source === 'agent_response' || env.type === 'agent_text') {
-              // Agent response messages
-              role = 'assistant'
+            // Use shared utility - organizer identity is always 'human'
+            const role = determineMessageRole(
+              speakerId,
+              source,
+              env.type,
+              'human',  // Organizer identity
+              speakerName,
+              this.userName
+            )
+
+            // Determine display name based on role
+            let displayName: string
+            if (role === 'assistant') {
               displayName = serverData.agent_name || 'Agent'
+            } else if (role === 'user') {
+              displayName = this.userName
             } else {
-              // Fallback to existing logic for backwards compat
-              const isUserMessage = serverData.participant_id === this.userName
-              role = isUserMessage ? 'user' : 'assistant'
-              displayName = serverData.participant_id || (isUserMessage ? this.userName : 'Agent')
+              displayName = speakerName || 'Participant'
             }
 
             const transcriptChunk: TranscriptChunk = {
@@ -300,6 +306,8 @@ export class PeerTransport implements Transport {
               agent_id: serverData.agent_id,
               agent_name: serverData.agent_name,
               source: serverData.source,
+              // Delivery tracking - correlationId from agent echo
+              correlationId: serverData.correlation_id,
             }
 
             this.onTranscript(transcriptChunk)
@@ -517,7 +525,7 @@ export class PeerTransport implements Transport {
     this.onDisconnected('client disconnect')
   }
 
-  sendUserText(text: string) {
+  sendUserText(text: string, correlationId?: string) {
     if (!this.room) {
       console.error('[PeerTransport] Cannot send message: Room not initialized')
       return
@@ -537,16 +545,20 @@ export class PeerTransport implements Transport {
       return
     }
 
-    const env: Envelope<string> = {
+    // Envelope with optional correlationId for optimistic UI updates
+    const env: Envelope<{ text: string; correlation_id?: string }> = {
       type: 'user_text',
-      data: text,
+      data: {
+        text: text,
+        correlation_id: correlationId,
+      },
       participant_id: this.userName  // Use actual user name for proper attribution
     }
     const encoder = new TextEncoder()
     const data = encoder.encode(JSON.stringify(env))
     try {
       this.room.localParticipant.publishData(data, { reliable: true })
-      console.log(`[PeerTransport] ✓ Message sent: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`)
+      console.log(`[PeerTransport] ✓ Message sent: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${correlationId ? ` (correlationId: ${correlationId.substring(0, 8)}...)` : ''}`)
     } catch (error) {
       console.error('[PeerTransport] Error sending data:', error)
     }

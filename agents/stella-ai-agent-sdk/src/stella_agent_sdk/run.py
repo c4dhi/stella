@@ -122,6 +122,7 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
     # Agent metadata for message attribution
     agent_name = os.environ.get("AGENT_NAME", "Agent")
     agent_id = os.environ.get("AGENT_ID", identity)
+    agent_icon = os.environ.get("AGENT_ICON", "🤖")
 
     # Agent-specific configuration (JSON string from AGENT_CONFIG env var)
     # Each agent interprets this config as needed (e.g., StellaAgent uses plan_id)
@@ -191,6 +192,7 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         agent._session_id = session_id
         agent._agent_name = agent_name
         agent._agent_id = agent_id
+        agent._agent_icon = agent_icon
 
         # 7. Create HistoryClient for chat history access
         # Generate JWT token with same claims as LiveKit token (for validation)
@@ -233,14 +235,13 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             if output.type == OutputType.PROGRESS_UPDATE:
                 # Send progress update to frontend with agent identity metadata
                 progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
-                if output.metadata:
-                    # Include agent_name and agent_icon in the metadata
-                    if "metadata" not in progress_data:
-                        progress_data["metadata"] = {}
-                    if "agent_name" in output.metadata:
-                        progress_data["metadata"]["agent_name"] = output.metadata["agent_name"]
-                    if "agent_icon" in output.metadata:
-                        progress_data["metadata"]["agent_icon"] = output.metadata["agent_icon"]
+                # Ensure metadata dict exists
+                if "metadata" not in progress_data:
+                    progress_data["metadata"] = {}
+                # Always include agent identity for proper frontend attribution
+                progress_data["metadata"]["agent_id"] = agent_id
+                progress_data["metadata"]["agent_name"] = agent_name
+                progress_data["metadata"]["agent_icon"] = agent_icon
                 progress_payload = {
                     "type": "progress_update",
                     "data": progress_data

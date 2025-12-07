@@ -35,6 +35,11 @@ import type {
   ListenerStatus,
   MonitoringLogsResponse,
   NetworkInfoResponse,
+  Invitation,
+  CreateInvitationDto,
+  CreateInvitationResponse,
+  InvitationDetails,
+  AcceptInvitationResponse,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -331,6 +336,189 @@ class SessionManagementClient {
 
   async removeParticipant(participantId: string): Promise<DeleteResponse> {
     return this.delete<DeleteResponse>(`/participants/${participantId}`)
+  }
+
+  /**
+   * Send heartbeat to update participant presence.
+   * Uses a custom auth token (participant JWT) instead of the organizer token.
+   */
+  async participantHeartbeat(authToken: string): Promise<{ success: boolean; lastSeenAt: string }> {
+    const response = await fetch(`${this.getBaseUrl()}/participants/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Heartbeat failed' }))
+      throw error
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Fetch message history for a participant.
+   * Uses a custom auth token (participant JWT) instead of the organizer token.
+   *
+   * By default, excludes debug/processing messages for a cleaner chat experience.
+   * Set includeDebug: true to include debug messages.
+   */
+  async getParticipantMessages(
+    sessionId: string,
+    authToken: string,
+    options: {
+      limit?: number
+      cursor?: string
+      before?: string  // ISO timestamp - load messages before this time (for pagination)
+      includeDebug?: boolean  // Include debug/processing messages (default: false)
+    } = {}
+  ): Promise<MessagesResponse> {
+    const params = new URLSearchParams()
+    if (options.limit) params.append('limit', options.limit.toString())
+    if (options.cursor) params.append('cursor', options.cursor)
+    if (options.before) params.append('before', options.before)
+    // By default, exclude debug messages for cleaner chat experience
+    params.append('include_debug', options.includeDebug ? 'true' : 'false')
+
+    const queryString = params.toString()
+    const path = `/sessions/${sessionId}/messages${queryString ? `?${queryString}` : ''}`
+
+    const response = await fetch(`${this.getBaseUrl()}${path}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Failed to fetch messages' }))
+      throw error
+    }
+
+    return response.json()
+  }
+
+  // ============================================================================
+  // Invitations API
+  // ============================================================================
+
+  async createInvitation(
+    sessionId: string,
+    data: CreateInvitationDto
+  ): Promise<CreateInvitationResponse> {
+    return this.post<CreateInvitationResponse>(
+      `/sessions/${sessionId}/invitations`,
+      data
+    )
+  }
+
+  async listInvitations(sessionId: string): Promise<Invitation[]> {
+    return this.get<Invitation[]>(`/sessions/${sessionId}/invitations`)
+  }
+
+  async getInvitation(invitationId: string): Promise<Invitation> {
+    return this.get<Invitation>(`/invitations/${invitationId}`)
+  }
+
+  async revokeInvitation(invitationId: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/invitations/${invitationId}/revoke`)
+  }
+
+  async deleteInvitation(invitationId: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/invitations/${invitationId}`)
+  }
+
+  // ============================================================================
+  // Public Invitation API (No auth required)
+  // ============================================================================
+
+  /**
+   * Get public invitation details by token (no auth required)
+   */
+  async getPublicInvitation(token: string): Promise<InvitationDetails> {
+    const url = `${this.getBaseUrl()}/join/${token}`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Accept invitation and join session (no auth required)
+   */
+  async acceptInvitation(token: string): Promise<AcceptInvitationResponse> {
+    const url = `${this.getBaseUrl()}/join/${token}/accept`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}/accept`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Rejoin an already accepted invitation (no auth required)
+   */
+  async rejoinInvitation(token: string): Promise<AcceptInvitationResponse> {
+    const url = `${this.getBaseUrl()}/join/${token}/rejoin`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/join/${token}/rejoin`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
   }
 
   // ============================================================================

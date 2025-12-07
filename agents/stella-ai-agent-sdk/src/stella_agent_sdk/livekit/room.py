@@ -77,6 +77,10 @@ class RoomManager:
         # Participant name tracking (identity -> display name)
         self._participant_names: Dict[str, str] = {}
 
+        # Track the current audio source (identity of participant whose audio we're processing)
+        # Updated whenever audio is received from a participant
+        self._current_audio_speaker: Optional[str] = None
+
         # Callbacks
         self._on_participant_joined: Optional[Callable[[str], None]] = None
         self._on_participant_left: Optional[Callable[[str], None]] = None
@@ -96,6 +100,11 @@ class RoomManager:
     def audio_sample_rate(self) -> int:
         """Sample rate of incoming audio from LiveKit (updated on first frame)."""
         return self._audio_sample_rate
+
+    @property
+    def current_audio_speaker(self) -> Optional[str]:
+        """Identity of the participant whose audio was most recently received."""
+        return self._current_audio_speaker
 
     def get_participant_name(self, identity: str) -> Optional[str]:
         """
@@ -308,6 +317,10 @@ class RoomManager:
                 frame = frame_event.frame
                 audio_data = frame.data.tobytes()
                 frame_count += 1
+
+                # Track who is speaking (for attribution in transcripts)
+                self._current_audio_speaker = identity
+
                 if frame_count == 1:
                     # Track sample rate from first frame received
                     self._audio_sample_rate = frame.sample_rate

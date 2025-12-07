@@ -145,6 +145,17 @@ export class SessionsController {
     return this.sessionsService.getParticipantConnectionInfo(participantId);
   }
 
+  // Heartbeat endpoint for participant presence tracking
+  // Called periodically by participant clients to update lastSeenAt
+  @Post('participants/heartbeat')
+  participantHeartbeat(@Request() req) {
+    const participantId = req.user.participantId;
+    if (!participantId) {
+      throw new BadRequestException('Invalid participant token');
+    }
+    return this.sessionsService.participantHeartbeat(participantId);
+  }
+
   @Delete('participants/:participantId')
   removeParticipant(@Param('participantId') participantId: string) {
     return this.sessionsService.removeParticipant(participantId);
@@ -157,6 +168,7 @@ export class SessionsController {
     @Query('cursor') cursor?: string,
     @Query('limit') limitStr?: string,
     @Query('before') before?: string,
+    @Query('include_debug') includeDebug?: string,
   ) {
     try {
       // Validate and cap limit
@@ -176,13 +188,14 @@ export class SessionsController {
       }
 
       this.logger.debug(
-        `Fetching messages for session ${sessionId} (cursor: ${cursor || 'none'}, limit: ${limit})`,
+        `Fetching messages for session ${sessionId} (cursor: ${cursor || 'none'}, limit: ${limit}, includeDebug: ${includeDebug === 'true'})`,
       );
 
       return await this.sessionsService.getMessages(sessionId, {
         cursor,
         limit,
         before,
+        includeDebug: includeDebug === 'true',
       });
     } catch (error) {
       this.logger.error(

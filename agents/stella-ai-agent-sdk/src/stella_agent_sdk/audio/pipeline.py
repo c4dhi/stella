@@ -304,10 +304,11 @@ class AudioPipeline:
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
             # Use Envelope format: { type, data: { ... } }
-            speaker_id = event.participant_id or self._participant_id
+            # Priority: event.participant_id > current_audio_speaker > default participant_id
+            speaker_id = event.participant_id or self._room.current_audio_speaker or self._participant_id
             # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
             speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
-            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}")
+            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}, current_audio_speaker={self._room.current_audio_speaker}")
             await self._room.publish_data({
                 "type": "transcript",
                 "data": {
@@ -362,7 +363,17 @@ class AudioPipeline:
 
             # Handle user_text messages from frontend
             if message.get("type") == "user_text":
-                text = message.get("data", "").strip()
+                # Handle both old format (data as string) and new format (data as object)
+                data_field = message.get("data", "")
+                if isinstance(data_field, dict):
+                    # New format: { text: string, correlation_id?: string }
+                    text = data_field.get("text", "").strip()
+                    correlation_id = data_field.get("correlation_id")
+                else:
+                    # Old format: data is the text string directly
+                    text = str(data_field).strip()
+                    correlation_id = None
+
                 if text:
                     # Use envelope's participant_id if available (actual username from frontend)
                     # Fall back to LiveKit callback participant_id ("human") if not present
@@ -392,14 +403,16 @@ class AudioPipeline:
                     # Echo the received text back to LiveKit so frontend shows it
                     # Use envelope's participant_id for proper attribution
                     # This is done in a fire-and-forget manner
-                    asyncio.create_task(self._echo_received_text(text, envelope_participant_id, envelope_transcript_id))
+                    asyncio.create_task(self._echo_received_text(text, envelope_participant_id, envelope_transcript_id, correlation_id))
 
         except json.JSONDecodeError:
             logger.debug(f"Received non-JSON data message from {participant_id}")
         except Exception as e:
             logger.error(f"Error handling data message: {e}")
 
-    async def _echo_received_text(self, text: str, participant_id: str, transcript_id: str) -> None:
+    async def _echo_received_text(
+        self, text: str, participant_id: str, transcript_id: str, correlation_id: Optional[str] = None
+    ) -> None:
         """
         Echo received text message back to LiveKit for frontend display.
 
@@ -407,23 +420,30 @@ class AudioPipeline:
             text: The text message to echo
             participant_id: The actual username from envelope (not LiveKit identity)
             transcript_id: The original transcript_id for deduplication
+            correlation_id: Optional correlation_id for message delivery confirmation
         """
         try:
             # Use Envelope format: { type, data: { ... } }
             # Use the same transcript_id from the original message for deduplication
+            data_payload = {
+                "text": text,
+                "is_final": True,
+                "transcript_id": transcript_id,
+                # Speaker attribution (user who typed - actual username)
+                "speaker_id": participant_id,
+                "speaker_name": participant_id,
+                "source": "user_text",
+                # Backwards compat
+                "participant_id": participant_id,
+            }
+
+            # Include correlation_id if provided for message delivery confirmation
+            if correlation_id:
+                data_payload["correlation_id"] = correlation_id
+
             await self._room.publish_data({
                 "type": "transcript",
-                "data": {
-                    "text": text,
-                    "is_final": True,
-                    "transcript_id": transcript_id,
-                    # Speaker attribution (user who typed - actual username)
-                    "speaker_id": participant_id,
-                    "speaker_name": participant_id,
-                    "source": "user_text",
-                    # Backwards compat
-                    "participant_id": participant_id,
-                },
+                "data": data_payload,
             })
         except Exception as e:
             logger.error(f"Error echoing text message: {e}")

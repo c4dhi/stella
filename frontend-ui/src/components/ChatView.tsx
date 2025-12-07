@@ -8,15 +8,25 @@ import { useThemeStore } from '../store/themeStore'
 import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
 import ParticipantNotification from './ParticipantNotification'
+import { MessageBubble, useMessaging } from './messaging'
+import { determineMessageRole, extractSpeakerInfo } from '../lib/messageUtils'
 import type { ListenerStatus } from '../lib/api-types'
 
 interface ChatViewProps {
   listenerStatus?: ListenerStatus | null
   onShowLogs?: () => void
   sessionId?: string
+  viewerIdentity?: string  // Identity of current viewer (default: 'human' for organizer)
+  viewerName?: string      // Display name of current viewer
 }
 
-export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSessionId }: ChatViewProps) {
+export default function ChatView({
+  listenerStatus,
+  onShowLogs,
+  sessionId: propSessionId,
+  viewerIdentity = 'human',  // Default to organizer identity
+  viewerName
+}: ChatViewProps) {
   const { sessionId: paramSessionId } = useParams<{ sessionId: string }>()
   const sessionId = propSessionId || paramSessionId
   const turns = useStore(s => s.turns)
@@ -27,8 +37,12 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   const agentTaskLists = useStore(s => s.agentTaskLists)
   const setShowTaskPanel = useStore(s => s.setShowTaskPanel)
   const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
+  const pendingMessageIds = useStore(s => s.pendingMessageIds)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+
+  // Messaging utilities for delivery status
+  const { getDeliveryStatus } = useMessaging()
 
   // Historical messages from database
   const historicalMessages = useStore(s => s.historicalMessages)
@@ -133,14 +147,25 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           }
         }
 
+        // For legacy messages without envelope, use metadata for speaker info
+        const { speakerId: legacySpeakerId, speakerName: legacySpeakerName } = extractSpeakerInfo(msg.metadata)
+        const legacyRole = determineMessageRole(
+          legacySpeakerId,
+          undefined,
+          msg.messageType,
+          viewerIdentity,
+          legacySpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: msg.content,
-          role: (msg.role || 'system') as 'user' | 'assistant' | 'system',
+          role: legacyRole,
           status: 'final' as const,
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
+          speaker_name: legacySpeakerName || getParticipantName(msg),
           source: 'db' as const,
         }
       }
@@ -149,13 +174,27 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       const messageType = envelope.type || 'unknown'
       const messageData = envelope.data || envelope
 
+      // Extract speaker info for role determination
+      const { speakerId, speakerName } = extractSpeakerInfo(msg.metadata)
+      const envelopeSpeakerId = messageData?.speaker_id || envelope.participant_id
+      const envelopeSpeakerName = messageData?.speaker_name
+
       // Handle different message types
       if (messageType === 'transcript_chunk' || messageType === 'transcript') {
         // User speech transcripts (from STT)
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          messageData?.source,
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : messageData.text,
-          role: msg.role as 'user' | 'assistant' | 'system',
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           finalizedAt: timestamp,
@@ -186,17 +225,26 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
         }
       } else if (messageType === 'user_text') {
         // User typed text messages
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          'user_text',
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         const textContent = typeof messageData === 'string' ? messageData : (messageData.text || messageData)
         return {
           id: msg.id,
           text: typeof textContent === 'string' ? textContent : JSON.stringify(textContent),
-          role: 'user' as const,
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           finalizedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: envelope.participant_id || getParticipantName(msg),
-          speaker_name: envelope.participant_id || getParticipantName(msg),
+          speaker_name: speakerName || envelopeSpeakerName || envelope.participant_id || getParticipantName(msg),
           source: 'user_text' as const,
           dataSource: 'db' as const,
         }
@@ -263,15 +311,24 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
         return null
       } else {
         // Unknown message type - display as simple transcript with content
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          messageData?.source,
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : JSON.stringify(messageData),
-          role: (msg.role || 'system') as 'user' | 'assistant' | 'system',
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          speaker_name: speakerName || envelopeSpeakerName || messageData?.speaker_name || getParticipantName(msg),
           agent_name: messageData?.agent_name,
           source: messageData?.source,
           dataSource: 'db' as const,
@@ -300,7 +357,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
     )
 
     return unique.sort((a, b) => a.startedAt - b.startedAt)
-  }, [historicalMessages, turns, processingMessages, participantEvents, showProcessingMessages])
+  }, [historicalMessages, turns, processingMessages, participantEvents, showProcessingMessages, viewerIdentity, viewerName])
 
   // Infinite scroll handler with time-travel support
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -518,82 +575,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                       </div>
                     </motion.div>
                   ) : (
-                <motion.div
-                  className={`max-w-[75%] relative group ${message.role === 'user' ? 'ml-auto' : 'mr-auto'
-                    }`}
-                >
-                  {/* Message Bubble */}
-                  <div className={`
-                    px-4 py-3 rounded-xl border overflow-hidden
-                    ${message.role === 'user'
-                      ? message.status === 'partial'
-                        ? isDark
-                          ? 'bg-violet-600/90 text-white border-violet-500/40 opacity-85'
-                          : 'bg-content/90 text-white border-content/70 opacity-85'
-                        : isDark
-                          ? 'bg-violet-600 text-white border-violet-500/60 shadow-md'
-                          : 'bg-content text-white border-content shadow-sm'
-                      : message.role === 'assistant'
-                        ? isDark
-                          ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                          : 'bg-white text-content border-border shadow-sm'
-                        : isDark
-                          ? 'bg-zinc-800/80 text-zinc-200 border-zinc-700'
-                          : 'bg-white text-content-secondary border-border shadow-sm'
-                    }
-                  `}>
-                    {/* Message Header */}
-                    <motion.div
-                      className={`text-label mb-2 flex items-center gap-2 uppercase ${
-                        message.role === 'user'
-                          ? 'text-white/70'
-                          : isDark ? 'text-zinc-400' : 'text-content-tertiary'
-                      }`}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.1, duration: 0.3 }}
-                    >
-                      <span>
-                        {message.source === 'agent_response'
-                          ? (message.agent_name || 'Agent')
-                          : (message.speaker_name || message.participant_id || message.role)}
-                      </span>
-                      <span className="opacity-50">•</span>
-                      <span>
-                        {new Date(message.startedAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </span>
-                    </motion.div>
-
-                    {/* Message Content */}
-                    {message.status === 'partial' ? (
-                      // No animation for partial messages to prevent weird text appearance
-                      <div className="text-body leading-relaxed opacity-85 break-words overflow-wrap-anywhere">
-                        {message.text}
-                        <motion.span
-                          className={`ml-1 ${
-                            message.role === 'user'
-                              ? 'text-white/50'
-                              : isDark ? 'text-zinc-500' : 'text-content-tertiary'
-                          }`}
-                          animate={{ opacity: [0, 1, 0] }}
-                          transition={{ duration: 1.2, repeat: Infinity }}
-                        >
-                          |
-                        </motion.span>
-                      </div>
-                    ) : (
-                      // Final messages - no animations
-                      <div className={`text-body leading-relaxed break-words overflow-wrap-anywhere ${
-                        message.role !== 'user' && isDark ? 'text-zinc-100' : ''
-                      }`}>
-                        {message.text}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
+                    <MessageBubble
+                      message={message as any}
+                      deliveryStatus={getDeliveryStatus(message as any, pendingMessageIds)}
+                      isDark={isDark}
+                    />
                   )
               ) : message.messageType === 'participant' ? (
                 <ParticipantNotification event={message} />

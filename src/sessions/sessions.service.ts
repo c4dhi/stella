@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { OnEvent } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
@@ -14,11 +15,15 @@ import { Prisma } from '@prisma/client';
 
 // Session event types for SSE streaming
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped';
+  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left';
   sessionId: string;
   agentId?: string;
   agentName?: string;
   agentType?: string;
+  participantId?: string;
+  participantIdentity?: string;
+  participantName?: string;
+  isOnline?: boolean;
   error?: string;
   timestamp: string;
 }
@@ -278,10 +283,13 @@ export class SessionsService {
       throw new NotFoundException(`Session with ID ${id} not found`);
     }
 
-    return this.prisma.session.update({
+    await this.prisma.session.update({
       where: { id },
       data: updateSessionDto,
     });
+
+    // Return full session detail to match frontend expectations
+    return this.findOne(id);
   }
 
   async close(id: string) {
@@ -298,8 +306,38 @@ export class SessionsService {
     // Stop all running agents using centralized function
     await this.agentsService.stopAllSessionAgents(id);
 
+    // Revoke all pending/accepted invitations
+    const revokedInvitations = await this.prisma.invitation.updateMany({
+      where: {
+        sessionId: id,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+      data: { status: 'REVOKED' },
+    });
+
+    if (revokedInvitations.count > 0) {
+      this.logger.log(
+        `Session ${id}: auto-revoked ${revokedInvitations.count} invitation(s)`,
+      );
+    }
+
+    // Mark all participants as left
+    const updatedParticipants = await this.prisma.participant.updateMany({
+      where: {
+        sessionId: id,
+        leftAt: null,
+      },
+      data: { leftAt: new Date() },
+    });
+
+    if (updatedParticipants.count > 0) {
+      this.logger.log(
+        `Session ${id}: marked ${updatedParticipants.count} participant(s) as left`,
+      );
+    }
+
     // Python message recorder will automatically stop monitoring when session becomes CLOSED
-    this.logger.log(`Session ${id} agents stopped - updating session status to CLOSED`);
+    this.logger.log(`Session ${id} cleanup complete - updating session status to CLOSED`);
 
     await this.prisma.session.update({
       where: { id },
@@ -351,7 +389,7 @@ export class SessionsService {
     }
 
     // Generate unique identity for this participant
-    const identity = `participant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const identity = `participant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
     // Create participant in database
     const participant = await this.prisma.participant.create({
@@ -556,6 +594,31 @@ export class SessionsService {
     return { message: 'Participant removed successfully' };
   }
 
+  /**
+   * Update participant heartbeat - updates lastSeenAt timestamp.
+   * Called periodically by participant clients to maintain presence.
+   */
+  async participantHeartbeat(participantId: string) {
+    const participant = await this.prisma.participant.findUnique({
+      where: { id: participantId },
+    });
+
+    if (!participant) {
+      throw new NotFoundException(`Participant with ID ${participantId} not found`);
+    }
+
+    if (participant.tokenRevokedAt) {
+      throw new BadRequestException('Participant token has been revoked');
+    }
+
+    await this.prisma.participant.update({
+      where: { id: participantId },
+      data: { lastSeenAt: new Date() },
+    });
+
+    return { success: true, lastSeenAt: new Date().toISOString() };
+  }
+
   // Message retrieval methods
   async getMessages(
     sessionId: string,
@@ -563,6 +626,7 @@ export class SessionsService {
       cursor?: string;
       limit?: number;
       before?: string;
+      includeDebug?: boolean;
     } = {},
   ) {
     const session = await this.prisma.session.findUnique({
@@ -574,8 +638,26 @@ export class SessionsService {
     }
 
     const limit = options.limit || 50;
+
+    // Define message types to include (matching getChatHistory logic)
+    const chatMessageTypes = [
+      'user_text', 'transcript', 'transcript_chunk', 'agent_text',
+      'participant_joined', 'participant_left', 'participant_event'
+    ];
+    const debugMessageTypes = [
+      'debug', 'decision_stream', 'expert_status', 'prompt_execution',
+      'safety_check', 'plan_progress_update', 'plan_deliverable_update',
+      'state_change_notification', 'complete_todo_list', 'llm_config',
+      'task_progress_update', 'progress_update'
+    ];
+
+    const messageTypes = options.includeDebug
+      ? [...chatMessageTypes, ...debugMessageTypes]
+      : chatMessageTypes;
+
     const where: Prisma.MessageWhereInput = {
       sessionId,
+      messageType: { in: messageTypes },
       ...(options.before && { timestamp: { lt: new Date(options.before) } }),
       ...(options.cursor && { id: { lt: options.cursor } }),
     };
@@ -839,17 +921,6 @@ export class SessionsService {
       return { success: true, stored: false, reason: 'recorder_message_skipped' };
     }
 
-    // Find participant if identity is provided (do NOT auto-create)
-    let participant;
-    if (participantIdentity) {
-      participant = await this.prisma.participant.findFirst({
-        where: {
-          sessionId,
-          identity: participantIdentity,
-        },
-      });
-    }
-
     // Determine message role based on participant identity
     let role: string;
     if (!participantIdentity) {
@@ -1027,6 +1098,66 @@ export class SessionsService {
       agentName,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ============================================================================
+  // Participant Presence Events
+  // ============================================================================
+
+  /**
+   * Handle SSE events from webhook controller.
+   * Converts EventEmitter events to SSE stream events.
+   */
+  @OnEvent('sse.event')
+  handleSseEvent(payload: { sessionId: string; event: string; data: any }): void {
+    const { sessionId, event, data } = payload;
+
+    // Map webhook events to SessionEvent format
+    if (event === 'participant.joined' || event === 'participant.left') {
+      this.emitParticipantPresence(
+        sessionId,
+        data.identity,
+        data.name,
+        event === 'participant.joined',
+      );
+    }
+  }
+
+  /**
+   * Emit a participant presence event.
+   */
+  emitParticipantPresence(
+    sessionId: string,
+    participantIdentity: string,
+    participantName?: string,
+    isOnline: boolean = true,
+  ): void {
+    // We need to find the session by room name since webhooks use room names
+    this.findSessionByRoomName(sessionId).then((session) => {
+      if (session) {
+        this.emitSessionEvent({
+          type: isOnline ? 'participant.joined' : 'participant.left',
+          sessionId: session.id,
+          participantIdentity,
+          participantName,
+          isOnline,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }).catch((err) => {
+      this.logger.warn(`Failed to find session for presence event: ${err.message}`);
+    });
+  }
+
+  /**
+   * Find a session by LiveKit room name.
+   */
+  private async findSessionByRoomName(roomName: string) {
+    const room = await this.prisma.room.findUnique({
+      where: { livekitRoomName: roomName },
+      include: { session: true },
+    });
+    return room?.session || null;
   }
 
   // ============================================================================

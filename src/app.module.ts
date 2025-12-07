@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { ProjectsModule } from './projects/projects.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { InvitationsModule } from './invitations/invitations.module';
 import { AgentsModule } from './agents/agents.module';
 import { LiveKitModule } from './livekit/livekit.module';
 import { KubernetesModule } from './kubernetes/kubernetes.module';
@@ -29,6 +30,7 @@ import { AgentUploadModule } from './agent-upload/agent-upload.module';
     AuthModule,
     ProjectsModule,
     SessionsModule,
+    InvitationsModule,
     AgentsModule,
     LiveKitModule,
     KubernetesModule,

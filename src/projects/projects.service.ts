@@ -1,13 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectStatsDto } from './dto/project-stats.dto';
 import { SessionStatus, AgentStatus } from '@prisma/client';
+import { AgentsService } from '../agents/agents.service';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(ProjectsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    @Inject(forwardRef(() => AgentsService))
+    private agentsService: AgentsService,
+  ) {}
 
   async create(createProjectDto: CreateProjectDto) {
     return this.prisma.project.create({
@@ -171,15 +178,43 @@ export class ProjectsService {
   async remove(id: string) {
     const project = await this.prisma.project.findUnique({
       where: { id },
+      include: {
+        sessions: {
+          select: { id: true },
+        },
+      },
     });
 
     if (!project) {
       throw new NotFoundException(`Project with ID ${id} not found`);
     }
 
+    this.logger.log(
+      `Deleting project ${id} (${project.name}) - stopping all agents and cleaning up ${project.sessions.length} sessions`,
+    );
+
+    // Stop all agents for each session before deleting
+    // This ensures K8s pods, secrets, and configmaps are properly cleaned up
+    for (const session of project.sessions) {
+      this.logger.log(`Stopping agents for session ${session.id}`);
+      try {
+        await this.agentsService.stopAllSessionAgents(session.id);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to stop agents for session ${session.id}: ${error.message}`,
+        );
+        // Continue with deletion even if agent stop fails
+      }
+    }
+
+    // Now delete the project - Prisma cascade will delete sessions, invitations, etc.
     await this.prisma.project.delete({
       where: { id },
     });
+
+    this.logger.log(
+      `Project ${id} deleted - all agents stopped, all data removed`,
+    );
 
     return { message: 'Project deleted successfully' };
   }

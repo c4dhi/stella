@@ -5,6 +5,7 @@ import { useStore } from '../store'
 import { useThemeStore } from '../store/themeStore'
 import { startMicWithVu } from '../services/audio/capture'
 import TTSControlButton from './TTSControlButton'
+import { useMessaging } from './messaging'
 
 export default function Composer() {
   const [text, setText] = useState('')
@@ -14,16 +15,32 @@ export default function Composer() {
   const isRecording = useStore(s => s.isRecording)
   const setIsMuted = useStore(s => s.setIsMuted)
   const setIsRecording = useStore(s => s.setIsRecording)
+  const addOptimisticMessage = useStore(s => s.addOptimisticMessage)
   const vu = useStore(s => s.vu)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+
+  // Get the user name from transport for message attribution
+  const userName = (transport as any)?.userName
+  const { createOptimisticMessage } = useMessaging({ userName })
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
   const send = () => {
     if (!text.trim() || !transport) return
-    try { transport.sendUserText(text.trim()) } catch { }
+
+    // Create optimistic message and add to store immediately
+    const optimisticChunk = createOptimisticMessage(text.trim())
+    addOptimisticMessage(optimisticChunk)
+
+    // Send via transport with correlationId for confirmation tracking
+    try {
+      transport.sendUserText(text.trim(), optimisticChunk.correlationId)
+    } catch (e) {
+      console.error('Failed to send message:', e)
+    }
+
     setText('')
   }
 
