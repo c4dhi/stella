@@ -359,6 +359,41 @@ class SessionManagementClient {
     return response.json()
   }
 
+  /**
+   * Fetch message history for a participant.
+   * Uses a custom auth token (participant JWT) instead of the organizer token.
+   */
+  async getParticipantMessages(
+    sessionId: string,
+    authToken: string,
+    options: {
+      limit?: number
+      cursor?: string
+    } = {}
+  ): Promise<MessagesResponse> {
+    const params = new URLSearchParams()
+    if (options.limit) params.append('limit', options.limit.toString())
+    if (options.cursor) params.append('cursor', options.cursor)
+
+    const queryString = params.toString()
+    const path = `/sessions/${sessionId}/messages${queryString ? `?${queryString}` : ''}`
+
+    const response = await fetch(`${this.getBaseUrl()}${path}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Failed to fetch messages' }))
+      throw error
+    }
+
+    return response.json()
+  }
+
   // ============================================================================
   // Invitations API
   // ============================================================================

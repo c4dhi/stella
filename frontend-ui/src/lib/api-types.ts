@@ -355,6 +355,7 @@ export interface AcceptInvitationResponse {
   participantId: string
   participantName: string
   identity: string
+  sessionId: string
   token: string
   connectionInfo: {
     token: string

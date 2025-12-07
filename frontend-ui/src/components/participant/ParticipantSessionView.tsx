@@ -11,13 +11,29 @@ import {
   Subtitles,
   Loader2,
 } from 'lucide-react'
-import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication } from 'livekit-client'
+import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication, RemoteParticipant, LocalTrackPublication } from 'livekit-client'
 import TranscriptOverlay from '../face/TranscriptOverlay'
 import VisualizerGallery from '../face/VisualizerGallery'
 import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
+import type { DeliveryStatus } from '../../lib/types'
+
+// Message type for participant chat - extends basic message with delivery tracking
+export type ParticipantMessageType = 'message' | 'participant_event'
+
+export interface ParticipantMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  text: string
+  timestamp: Date
+  messageType?: ParticipantMessageType
+  eventType?: 'joined' | 'left'  // For participant_event messages
+  participantName?: string  // For participant_event messages
+  deliveryStatus?: DeliveryStatus
+  correlationId?: string
+}
 
 interface ConnectionInfo {
   token: string
@@ -29,6 +45,7 @@ interface SessionData {
   participantId: string
   participantName: string
   identity: string
+  sessionId: string
   authToken: string  // Participant JWT for API calls
   connectionInfo: ConnectionInfo
   visualizerType: string | null
@@ -62,17 +79,16 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
-  const [messages, setMessages] = useState<Array<{
-    id: string
-    role: 'user' | 'assistant'
-    text: string
-    timestamp: Date
-  }>>([])
+  const [messages, setMessages] = useState<ParticipantMessage[]>([])
+  const [pendingCorrelationIds, setPendingCorrelationIds] = useState<Set<string>>(new Set())
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
 
   // Refs
   const containerRef = useRef<HTMLDivElement>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const publishedAudioTrackRef = useRef<LocalTrackPublication | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
 
@@ -93,6 +109,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         newRoom.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed)
         newRoom.on(RoomEvent.DataReceived, handleDataReceived)
         newRoom.on(RoomEvent.Disconnected, handleDisconnected)
+        newRoom.on(RoomEvent.ParticipantConnected, handleParticipantConnected)
+        newRoom.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected)
 
         await newRoom.connect(
           sessionData.connectionInfo.serverUrl,
@@ -142,15 +160,100 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     }
   }, [sessionData.authToken])
 
+  // Load message history when chat is opened (or on rejoin)
+  const loadMessageHistory = useCallback(async () => {
+    if (historyLoaded || isLoadingHistory) return
+
+    try {
+      setIsLoadingHistory(true)
+      const response = await apiClient.getParticipantMessages(
+        sessionData.sessionId,
+        sessionData.authToken,
+        { limit: 50 }
+      )
+
+      // Convert API messages to ParticipantMessage format
+      const historyMessages: ParticipantMessage[] = response.messages.map(msg => {
+        // Handle participant join/leave events
+        // Backend stores as 'participant_joined', 'participant_left', or 'participant_event'
+        const msgType = msg.messageType as string  // Cast to string for flexible comparison
+        const isParticipantEvent = msgType?.startsWith('participant_')
+        if (isParticipantEvent) {
+          const metadata = msg.metadata || {}
+          // Check metadata.eventType first, then messageType suffix, then content
+          const isJoined = metadata.eventType === 'joined' ||
+                          msgType === 'participant_joined' ||
+                          msg.content?.includes('joined')
+          return {
+            id: msg.id,
+            role: 'system' as const,
+            text: msg.content,
+            timestamp: new Date(msg.createdAt),
+            messageType: 'participant_event' as const,
+            eventType: isJoined ? 'joined' as const : 'left' as const,
+            participantName: metadata.participantName || msg.participant?.name,
+          }
+        }
+
+        // Regular message (transcript)
+        return {
+          id: msg.id,
+          role: (msg.role || 'user') as 'user' | 'assistant',
+          text: msg.content,
+          timestamp: new Date(msg.createdAt),
+          messageType: 'message' as const,
+          deliveryStatus: 'confirmed' as const, // History messages are always confirmed
+        }
+      })
+
+      // Prepend history (oldest first) to existing messages, avoiding duplicates
+      setMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id))
+        const newMessages = historyMessages.filter(m => !existingIds.has(m.id))
+        return [...newMessages, ...prev]
+      })
+
+      setHistoryLoaded(true)
+    } catch (error) {
+      console.error('[Participant] Failed to load message history:', error)
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }, [sessionData.sessionId, sessionData.authToken, historyLoaded, isLoadingHistory])
+
+  // Load message history when chat is opened
+  useEffect(() => {
+    if (isChatOpen && !historyLoaded) {
+      loadMessageHistory()
+    }
+  }, [isChatOpen, historyLoaded, loadMessageHistory])
+
+  // Ref to store the remote audio track for analysis
+  const remoteAudioTrackRef = useRef<RemoteTrack | null>(null)
+  const audioAnalysisFrameRef = useRef<number | null>(null)
+
   // Handle track subscribed (for receiving agent audio)
   const handleTrackSubscribed = useCallback(
     (track: RemoteTrack, publication: RemoteTrackPublication) => {
       if (track.kind === Track.Kind.Audio) {
         const audioElement = track.attach()
-        audioElement.play()
+        audioElement.autoplay = true
+        audioElement.volume = 1.0
+        audioElement.muted = false
 
-        // Set up audio analysis for visualizer
-        setupRemoteAudioAnalysis(audioElement)
+        // Add to DOM (required by some browsers)
+        audioElement.style.display = 'none'
+        document.body.appendChild(audioElement)
+
+        audioElement.play().catch(err => {
+          console.error('[Participant] Audio play failed:', err)
+        })
+
+        // Store track reference for audio analysis
+        remoteAudioTrackRef.current = track
+
+        // Set up Web Audio API for accurate speech detection
+        setupRemoteAudioAnalysis(track)
       }
     },
     []
@@ -159,54 +262,158 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   // Handle track unsubscribed
   const handleTrackUnsubscribed = useCallback(
     (track: RemoteTrack) => {
-      track.detach()
+      // Cancel audio analysis
+      if (audioAnalysisFrameRef.current) {
+        cancelAnimationFrame(audioAnalysisFrameRef.current)
+        audioAnalysisFrameRef.current = null
+      }
+
+      // Remove attached audio element from DOM
+      const elements = track.detach()
+      elements.forEach(el => {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el)
+        }
+      })
+
+      // Clear track reference
+      remoteAudioTrackRef.current = null
+
       setIsRemoteSpeaking(false)
+      setAudioLevel(0)
     },
     []
   )
 
-  // Handle data received (transcripts, etc.)
+  // Handle data received (transcripts, agent_text, etc.)
+  // Format matches PeerTransport handling for consistency
   const handleDataReceived = useCallback(
     (payload: Uint8Array) => {
       try {
         const decoder = new TextDecoder()
-        const data = JSON.parse(decoder.decode(payload))
+        const envelope = JSON.parse(decoder.decode(payload))
 
-        if (data.type === 'transcript') {
-          if (data.role === 'user') {
-            if (data.is_final) {
+        // Handle transcript, transcript_chunk, AND agent_text (like PeerTransport)
+        if (envelope.type === 'transcript' || envelope.type === 'transcript_chunk' || envelope.type === 'agent_text') {
+          const msgData = envelope.data  // Access nested data
+
+          // Determine role from source field (like PeerTransport)
+          const source = msgData.source as string | undefined
+          let role: 'user' | 'assistant'
+
+          if (source === 'user_speech' || source === 'user_text') {
+            role = 'user'
+          } else if (source === 'agent_response' || envelope.type === 'agent_text') {
+            role = 'assistant'
+          } else {
+            role = 'assistant'  // Default to assistant for unknown
+          }
+
+          const isFinal = msgData.is_final === true
+          const correlationId = msgData.correlation_id
+          const text = msgData.text
+
+          if (role === 'user') {
+            if (isFinal) {
               setUserTranscript('')
-              setMessages(prev => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: 'user',
-                  text: data.text,
-                  timestamp: new Date(),
-                },
-              ])
+
+              // Check for optimistic message confirmation by correlation ID
+              if (correlationId && pendingCorrelationIds.has(correlationId)) {
+                // Confirm the optimistic message
+                setMessages(prev => prev.map(msg =>
+                  msg.correlationId === correlationId
+                    ? { ...msg, deliveryStatus: 'confirmed' as const }
+                    : msg
+                ))
+                setPendingCorrelationIds(prev => {
+                  const next = new Set(prev)
+                  next.delete(correlationId)
+                  return next
+                })
+                return  // Don't duplicate
+              }
+
+              // Also confirm if we have an optimistic message with the same text (fallback)
+              // This catches cases where correlation_id might not match exactly
+              setMessages(prev => {
+                const pendingIdx = prev.findIndex(
+                  msg => msg.role === 'user' &&
+                         msg.deliveryStatus === 'sending' &&
+                         msg.text === text
+                )
+                if (pendingIdx >= 0) {
+                  // Found a matching pending message - confirm it instead of adding duplicate
+                  const updated = [...prev]
+                  updated[pendingIdx] = { ...updated[pendingIdx], deliveryStatus: 'confirmed' as const }
+                  // Also clean up the correlation ID if it exists
+                  if (updated[pendingIdx].correlationId) {
+                    setPendingCorrelationIds(ids => {
+                      const next = new Set(ids)
+                      next.delete(updated[pendingIdx].correlationId!)
+                      return next
+                    })
+                  }
+                  return updated
+                }
+
+                // Check if this exact message was already added recently (within 5 seconds)
+                // This prevents duplicates from agent echoes that arrive after confirmation
+                const recentDuplicate = prev.find(
+                  msg => msg.role === 'user' &&
+                         msg.text === text &&
+                         Date.now() - msg.timestamp.getTime() < 5000
+                )
+                if (recentDuplicate) {
+                  // Skip - this is a duplicate
+                  return prev
+                }
+
+                // Regular speech transcript (no correlationId, no pending match) - add it
+                return [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'user',
+                    text,
+                    timestamp: new Date(),
+                    deliveryStatus: 'confirmed',
+                  },
+                ]
+              })
             } else {
-              setUserTranscript(data.text)
+              setUserTranscript(text)
             }
-          } else if (data.role === 'assistant') {
-            if (data.is_final) {
-              setMessages(prev => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
+          } else if (role === 'assistant') {
+            // Agent response - streaming display (update existing or add new)
+            const transcriptId = msgData.transcript_id || crypto.randomUUID()
+
+            setMessages(prev => {
+              const existingIdx = prev.findIndex(m => m.id === transcriptId)
+              if (existingIdx >= 0) {
+                // Update existing partial message
+                const updated = [...prev]
+                updated[existingIdx] = {
+                  ...updated[existingIdx],
+                  text,
+                }
+                return updated
+              } else {
+                // Add new message (partial or final)
+                return [...prev, {
+                  id: transcriptId,
                   role: 'assistant',
-                  text: data.text,
+                  text,
                   timestamp: new Date(),
-                },
-              ])
-            }
+                }]
+              }
+            })
           }
         }
       } catch (error) {
         console.error('Error parsing data:', error)
       }
     },
-    []
+    [pendingCorrelationIds]
   )
 
   // Handle room disconnection
@@ -215,74 +422,237 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     cleanupAudio()
   }, [])
 
-  // Setup remote audio analysis for visualizer
-  const setupRemoteAudioAnalysis = (audioElement: HTMLAudioElement) => {
+  // Handle participant joined (for real-time notifications)
+  const handleParticipantConnected = useCallback((participant: RemoteParticipant) => {
+    // Skip agents and the message recorder
+    if (participant.identity.startsWith('agent-') || participant.identity === 'message-recorder') {
+      return
+    }
+    // Add join notification to messages
+    setMessages(prev => [...prev, {
+      id: `join-${participant.identity}-${Date.now()}`,
+      role: 'system',
+      text: `${participant.name || participant.identity} joined the session`,
+      timestamp: new Date(),
+      messageType: 'participant_event',
+      eventType: 'joined',
+      participantName: participant.name || participant.identity,
+    }])
+  }, [])
+
+  // Handle participant left (for real-time notifications)
+  const handleParticipantDisconnected = useCallback((participant: RemoteParticipant) => {
+    // Skip agents and the message recorder
+    if (participant.identity.startsWith('agent-') || participant.identity === 'message-recorder') {
+      return
+    }
+    // Add leave notification to messages
+    setMessages(prev => [...prev, {
+      id: `leave-${participant.identity}-${Date.now()}`,
+      role: 'system',
+      text: `${participant.name || participant.identity} left the session`,
+      timestamp: new Date(),
+      messageType: 'participant_event',
+      eventType: 'left',
+      participantName: participant.name || participant.identity,
+    }])
+  }, [])
+
+  // Calculate RMS (Root Mean Square) amplitude from audio samples
+  const calculateRMS = (timeData: Uint8Array): number => {
+    let sumSquares = 0
+    for (let i = 0; i < timeData.length; i++) {
+      // Normalize to -1 to 1 range (Uint8Array is 0-255, center at 128)
+      const normalized = (timeData[i] - 128) / 128
+      sumSquares += normalized * normalized
+    }
+    return Math.sqrt(sumSquares / timeData.length)
+  }
+
+  // Setup remote audio analysis for visualizer using Web Audio API
+  const setupRemoteAudioAnalysis = async (track: RemoteTrack) => {
     try {
+      // Create AudioContext if not exists
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext()
       }
 
-      const source = audioContextRef.current.createMediaElementSource(audioElement)
-      const analyser = audioContextRef.current.createAnalyser()
-      analyser.fftSize = 256
+      // Resume AudioContext if suspended (browsers require user interaction)
+      if (audioContextRef.current.state === 'suspended') {
+        console.log('[Participant] AudioContext is suspended, attempting to resume...')
+        await audioContextRef.current.resume()
+        console.log('[Participant] AudioContext resumed, state:', audioContextRef.current.state)
+      }
 
+      // Create source from remote track's MediaStreamTrack
+      const mediaStream = new MediaStream([track.mediaStreamTrack])
+      const source = audioContextRef.current.createMediaStreamSource(mediaStream)
+
+      // Create analyser for audio content analysis
+      const analyser = audioContextRef.current.createAnalyser()
+      analyser.fftSize = 2048
+      analyser.smoothingTimeConstant = 0.8
+
+      // Connect source to analyser (don't connect to destination - audio already playing via attached element)
       source.connect(analyser)
-      analyser.connect(audioContextRef.current.destination)
       analyserRef.current = analyser
 
-      // Start audio level monitoring
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      const updateLevel = () => {
-        if (!analyserRef.current) return
+      // Start audio level monitoring at 60 FPS
+      let lastSpeakingState = false
+      let resumeAttempted = false
 
-        analyserRef.current.getByteFrequencyData(dataArray)
-        const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
-        const normalizedLevel = average / 255
+      const analyzeAudio = async () => {
+        if (!analyserRef.current || !remoteAudioTrackRef.current) return
 
-        setAudioLevel(normalizedLevel)
-        setIsRemoteSpeaking(normalizedLevel > 0.1)
+        let audioLevelValue = 0
+        let isSpeaking = false
 
-        requestAnimationFrame(updateLevel)
+        // Try to resume AudioContext if it's suspended (user interaction may have happened)
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended' && !resumeAttempted) {
+          resumeAttempted = true
+          try {
+            await audioContextRef.current.resume()
+            console.log('[Participant] AudioContext resumed during monitoring')
+          } catch (err) {
+            console.warn('[Participant] Could not resume AudioContext:', err)
+          }
+        }
+
+        if (analyserRef.current && audioContextRef.current?.state === 'running') {
+          // Use Web Audio API for accurate audio content analysis
+          const bufferLength = analyserRef.current.frequencyBinCount
+          const dataArray = new Uint8Array(bufferLength)
+
+          // Get time-domain audio data (waveform) for RMS calculation
+          analyserRef.current.getByteTimeDomainData(dataArray)
+
+          // Calculate RMS amplitude (accurate loudness)
+          const rms = calculateRMS(dataArray)
+
+          // Normalize to 0.0-1.0 range and amplify for visible animation
+          audioLevelValue = Math.min(1.0, rms * 8.0)
+
+          // Speech detection: RMS threshold of 0.02 (empirically tuned)
+          isSpeaking = rms > 0.02
+        }
+
+        // Update audio level for visualizer animation
+        setAudioLevel(audioLevelValue)
+
+        // Only update speaking state if it actually changed
+        if (isSpeaking !== lastSpeakingState) {
+          setIsRemoteSpeaking(isSpeaking)
+          lastSpeakingState = isSpeaking
+        }
+
+        // Continue animation loop at 60 FPS
+        audioAnalysisFrameRef.current = requestAnimationFrame(analyzeAudio)
       }
-      updateLevel()
+
+      // Start the analysis loop
+      audioAnalysisFrameRef.current = requestAnimationFrame(analyzeAudio)
+      console.log('[Participant] Started audio level monitoring (Web Audio RMS analysis)')
     } catch (error) {
-      console.error('Error setting up audio analysis:', error)
+      console.error('[Participant] Error setting up audio analysis:', error)
     }
   }
 
-  // Toggle microphone
+  // Toggle microphone - explicitly publish/unpublish audio track (matching session screen approach)
   const toggleMicrophone = useCallback(async () => {
-    if (!room) return
+    if (!room || room.state !== 'connected') {
+      console.warn('[Participant] Cannot toggle microphone - room not connected')
+      return
+    }
 
     try {
       if (isMuted) {
-        // Start microphone
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        localStreamRef.current = stream
+        // Unmute: Get microphone and publish audio track
+        console.log('[Participant] 🎤 Starting microphone...')
 
-        await room.localParticipant.setMicrophoneEnabled(true)
-        setIsMuted(false)
-      } else {
-        // Stop microphone
-        await room.localParticipant.setMicrophoneEnabled(false)
-
+        // Clean up any existing stream first (like session screen does)
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach(track => track.stop())
+          localStreamRef.current = null
+        }
+
+        // Get microphone stream with same settings as session screen (startMicWithVu)
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,           // Mono
+            sampleRate: 48000,         // High quality input
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false,    // Match session screen setting
+          }
+        })
+        localStreamRef.current = stream
+        console.log('[Participant] ✓ Got microphone stream')
+
+        // Get the audio track from the stream
+        const audioTrack = stream.getAudioTracks()[0]
+        if (!audioTrack) {
+          console.error('[Participant] ✗ No audio track in stream')
+          return
+        }
+
+        // Publish the audio track to LiveKit (same as PeerTransport.publishAudioTrack)
+        console.log('[Participant] 📤 Publishing audio track...')
+        const publication = await room.localParticipant.publishTrack(audioTrack)
+        publishedAudioTrackRef.current = publication
+        console.log('[Participant] ✓ Audio track published:', publication.trackSid)
+
+        setIsMuted(false)
+      } else {
+        // Mute: Unpublish audio track and stop stream
+        console.log('[Participant] 🔇 Stopping microphone...')
+
+        // Unpublish the audio track
+        if (publishedAudioTrackRef.current) {
+          const track = publishedAudioTrackRef.current.track
+          if (track) {
+            await room.localParticipant.unpublishTrack(track)
+            console.log('[Participant] ✓ Audio track unpublished')
+          }
+          publishedAudioTrackRef.current = null
+        }
+
+        // Stop the media stream
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach(track => {
+            track.stop()
+            console.log('[Participant] ✓ Stopped track:', track.label)
+          })
           localStreamRef.current = null
         }
 
         setIsMuted(true)
       }
     } catch (error) {
-      console.error('Error toggling microphone:', error)
+      console.error('[Participant] ✗ Error toggling microphone:', error)
     }
   }, [room, isMuted])
 
   // Cleanup audio resources
   const cleanupAudio = () => {
+    // Cancel audio analysis animation frame
+    if (audioAnalysisFrameRef.current) {
+      cancelAnimationFrame(audioAnalysisFrameRef.current)
+      audioAnalysisFrameRef.current = null
+    }
+
+    // Stop local microphone stream
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop())
       localStreamRef.current = null
+    }
+
+    // Clear published audio track reference
+    publishedAudioTrackRef.current = null
+
+    // Clean up analyser
+    if (analyserRef.current) {
+      analyserRef.current.disconnect()
+      analyserRef.current = null
     }
 
     if (audioContextRef.current) {
@@ -290,7 +660,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       audioContextRef.current = null
     }
 
-    analyserRef.current = null
+    // Clear remote track reference
+    remoteAudioTrackRef.current = null
   }
 
   // Handle mouse movement to show/hide controls
@@ -337,16 +708,34 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     }
   }, [isGalleryOpen, isChatOpen, isMuted])
 
-  // Toggle fullscreen
+  // Toggle fullscreen (with Safari compatibility)
   const toggleFullscreen = useCallback(async () => {
     if (!containerRef.current) return
 
+    const element = containerRef.current as HTMLDivElement & {
+      webkitRequestFullscreen?: () => Promise<void>
+    }
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element
+      webkitExitFullscreen?: () => Promise<void>
+    }
+
     try {
-      if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen()
+      const isCurrentlyFullscreen = !!(document.fullscreenElement || doc.webkitFullscreenElement)
+
+      if (!isCurrentlyFullscreen) {
+        if (element.requestFullscreen) {
+          await element.requestFullscreen()
+        } else if (element.webkitRequestFullscreen) {
+          await element.webkitRequestFullscreen()
+        }
         setIsFullscreen(true)
       } else {
-        await document.exitFullscreen()
+        if (document.exitFullscreen) {
+          await document.exitFullscreen()
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen()
+        }
         setIsFullscreen(false)
       }
     } catch (error) {
@@ -354,19 +743,22 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     }
   }, [])
 
-  // Listen for fullscreen changes
+  // Listen for fullscreen changes (including Safari)
   useEffect(() => {
+    const doc = document as Document & { webkitFullscreenElement?: Element }
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement)
+      setIsFullscreen(!!(document.fullscreenElement || doc.webkitFullscreenElement))
     }
 
     document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
     }
   }, [])
 
-  // Handle spacebar to toggle mute
+  // Handle spacebar to toggle mute (and show controls)
   useEffect(() => {
     const handleSpacebar = (event: KeyboardEvent) => {
       if (event.key === ' ' || event.code === 'Space') {
@@ -374,6 +766,20 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         if (isChatOpen && document.activeElement?.tagName === 'INPUT') return
 
         event.preventDefault()
+
+        // Show controls when spacebar is pressed
+        setShowControls(true)
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current)
+        }
+        // Set timer to hide controls again (only if will be unmuted after toggle)
+        if (isMuted) {
+          // Will be unmuted - set timer to hide
+          hideTimerRef.current = setTimeout(() => {
+            setShowControls(false)
+          }, 3000)
+        }
+
         toggleMicrophone()
       }
     }
@@ -382,7 +788,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     return () => {
       document.removeEventListener('keydown', handleSpacebar)
     }
-  }, [toggleMicrophone, isChatOpen])
+  }, [toggleMicrophone, isChatOpen, isMuted])
 
   // Loading state
   if (isConnecting) {
@@ -421,12 +827,16 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
   return (
     <motion.div
-      ref={containerRef}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 z-10"
-      style={{ backgroundColor: currentVisualizer === 'face' ? '#000000' : undefined }}
     >
+      {/* Fullscreen container wrapper */}
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{ backgroundColor: currentVisualizer === 'face' ? '#000000' : undefined }}
+      >
       {/* Visualizer */}
       <div className="absolute inset-0 flex items-center justify-center">
         <VisualizerRenderer
@@ -530,6 +940,17 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         messages={messages}
         room={room}
         participantName={sessionData.participantName}
+        isLoadingHistory={isLoadingHistory}
+        onSendOptimisticMessage={(message) => {
+          setMessages(prev => [...prev, message])
+          if (message.correlationId) {
+            setPendingCorrelationIds(prev => {
+              const next = new Set(prev)
+              next.add(message.correlationId!)
+              return next
+            })
+          }
+        }}
       />
 
       {/* Transcript Overlay */}
@@ -562,6 +983,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           {sessionData.participantName}
         </div>
       </motion.div>
+      </div>{/* End fullscreen container wrapper */}
     </motion.div>
   )
 }

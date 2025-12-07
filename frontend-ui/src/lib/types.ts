@@ -5,6 +5,9 @@ export type TurnStatus = 'partial' | 'final'
 
 export type MessageSource = 'user_speech' | 'user_text' | 'agent_response'
 
+// Delivery status for user messages (WhatsApp-style checkmarks)
+export type DeliveryStatus = 'sending' | 'confirmed'
+
 export interface TranscriptChunk {
   id: TurnId
   role: Role
@@ -19,6 +22,9 @@ export interface TranscriptChunk {
   agent_id?: string          // Agent ID (for agent_response)
   agent_name?: string        // Agent display name
   source?: MessageSource     // Message origin: user_speech, user_text, agent_response
+  // Delivery tracking for optimistic UI updates
+  deliveryStatus?: DeliveryStatus  // 'sending' shows grey checkmarks, 'confirmed' shows solid
+  correlationId?: string           // Used to match optimistic message with agent echo
 }
 
 // New message processing stream types
@@ -149,7 +155,7 @@ export interface TransportEvents {
 export interface Transport extends TransportEvents {
   connect: (roomName?: string) => Promise<void>
   disconnect: () => Promise<void>
-  sendUserText: (text: string) => void
+  sendUserText: (text: string, correlationId?: string) => void
   sendControl: (kind: string, payload?: unknown) => void
   attachMicStream: (stream: MediaStream) => void
   publishAudioTrack: (stream: MediaStream) => Promise<boolean>

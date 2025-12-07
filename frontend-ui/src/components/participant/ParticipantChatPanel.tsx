@@ -1,21 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Send, User, Bot } from 'lucide-react'
-import { Room, DataPacket_Kind } from 'livekit-client'
-
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  text: string
-  timestamp: Date
-}
+import { X, Send, User, Bot, Loader2, UserPlus, UserMinus } from 'lucide-react'
+import { Room } from 'livekit-client'
+import { DeliveryStatusIndicator } from '../messaging'
+import type { ParticipantMessage } from './ParticipantSessionView'
+import { generateUUID } from '../../lib/uuid'
 
 interface ParticipantChatPanelProps {
   isOpen: boolean
   onClose: () => void
-  messages: Message[]
+  messages: ParticipantMessage[]
   room: Room | null
   participantName: string
+  onSendOptimisticMessage?: (message: ParticipantMessage) => void
+  isLoadingHistory?: boolean
 }
 
 export default function ParticipantChatPanel({
@@ -24,6 +22,8 @@ export default function ParticipantChatPanel({
   messages,
   room,
   participantName,
+  onSendOptimisticMessage,
+  isLoadingHistory = false,
 }: ParticipantChatPanelProps) {
   const [inputText, setInputText] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -35,10 +35,12 @@ export default function ParticipantChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Focus input when panel opens
+  // Scroll to bottom and focus input when panel opens
   useEffect(() => {
     if (isOpen) {
+      // Scroll to bottom after panel animation completes
       setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
         inputRef.current?.focus()
       }, 300)
     }
@@ -58,9 +60,25 @@ export default function ParticipantChatPanel({
     }
   }, [isOpen, onClose])
 
-  // Send message via data channel
+  // Send message via data channel with optimistic update
   const sendMessage = useCallback(async () => {
     if (!inputText.trim() || !room || isSending) return
+
+    const correlationId = generateUUID()
+    const trimmedText = inputText.trim()
+
+    // Create and add optimistic message immediately
+    if (onSendOptimisticMessage) {
+      const optimisticMessage: ParticipantMessage = {
+        id: generateUUID(),
+        role: 'user',
+        text: trimmedText,
+        timestamp: new Date(),
+        deliveryStatus: 'sending',
+        correlationId,
+      }
+      onSendOptimisticMessage(optimisticMessage)
+    }
 
     try {
       setIsSending(true)
@@ -69,7 +87,11 @@ export default function ParticipantChatPanel({
       const data = encoder.encode(
         JSON.stringify({
           type: 'user_text',
-          data: inputText.trim(),
+          data: {
+            text: trimmedText,
+            correlation_id: correlationId,
+          },
+          participant_id: participantName,  // Include for proper attribution (matches PeerTransport format)
         })
       )
 
@@ -83,7 +105,7 @@ export default function ParticipantChatPanel({
     } finally {
       setIsSending(false)
     }
-  }, [inputText, room, isSending])
+  }, [inputText, room, isSending, onSendOptimisticMessage])
 
   // Handle form submit
   const handleSubmit = (e: React.FormEvent) => {
@@ -131,7 +153,14 @@ export default function ParticipantChatPanel({
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.length === 0 ? (
+              {/* Loading indicator for message history */}
+              {isLoadingHistory && (
+                <div className="text-center py-4">
+                  <Loader2 className="w-5 h-5 animate-spin text-violet-400 mx-auto" />
+                  <p className="text-white/30 text-xs mt-2">Loading message history...</p>
+                </div>
+              )}
+              {messages.length === 0 && !isLoadingHistory ? (
                 <div className="text-center py-12">
                   <p className="text-white/30 text-sm">
                     No messages yet. Start speaking or type a message below.
@@ -139,51 +168,86 @@ export default function ParticipantChatPanel({
                 </div>
               ) : (
                 messages.map(message => (
-                  <motion.div
-                    key={message.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={`flex gap-3 ${
-                      message.role === 'user' ? 'flex-row-reverse' : ''
-                    }`}
-                  >
-                    {/* Avatar */}
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        message.role === 'user'
-                          ? 'bg-violet-500/20 text-violet-400'
-                          : 'bg-cyan-500/20 text-cyan-400'
+                  message.messageType === 'participant_event' ? (
+                    // Participant join/leave notification - centered pill style
+                    <motion.div
+                      key={message.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="flex justify-center my-3"
+                    >
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-white/50 text-xs">
+                        {message.eventType === 'joined' ? (
+                          <UserPlus className="w-3 h-3" />
+                        ) : (
+                          <UserMinus className="w-3 h-3" />
+                        )}
+                        <span>
+                          <span className="text-white/70 font-medium">
+                            {message.participantName || 'Someone'}
+                          </span>
+                          {' '}
+                          {message.eventType === 'joined' ? 'joined' : 'left'}
+                        </span>
+                      </div>
+                    </motion.div>
+                  ) : (
+                    // Regular message bubble
+                    <motion.div
+                      key={message.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`flex gap-3 ${
+                        message.role === 'user' ? 'flex-row-reverse' : ''
                       }`}
                     >
-                      {message.role === 'user' ? (
-                        <User className="w-4 h-4" />
-                      ) : (
-                        <Bot className="w-4 h-4" />
-                      )}
-                    </div>
-
-                    {/* Message bubble */}
-                    <div
-                      className={`flex-1 max-w-[80%] ${
-                        message.role === 'user' ? 'text-right' : ''
-                      }`}
-                    >
+                      {/* Avatar */}
                       <div
-                        className={`inline-block px-4 py-2.5 rounded-2xl ${
+                        className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                           message.role === 'user'
-                            ? 'bg-violet-500/20 text-white rounded-br-sm'
-                            : 'bg-white/5 text-white/90 rounded-bl-sm'
+                            ? 'bg-violet-500/20 text-violet-400'
+                            : 'bg-white/10 text-white/50'
                         }`}
                       >
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                          {message.text}
+                        {message.role === 'user' ? (
+                          <User className="w-4 h-4" />
+                        ) : (
+                          <Bot className="w-4 h-4" />
+                        )}
+                      </div>
+
+                      {/* Message bubble */}
+                      <div
+                        className={`flex-1 max-w-[80%] ${
+                          message.role === 'user' ? 'text-right' : ''
+                        }`}
+                      >
+                        <div
+                          className={`inline-block px-4 py-2.5 rounded-2xl ${
+                            message.role === 'user'
+                              ? 'bg-violet-500/20 text-white rounded-br-sm'
+                              : 'bg-white/5 text-white/90 rounded-bl-sm'
+                          }`}
+                        >
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                            {message.text}
+                          </p>
+                          {/* Delivery status indicator for user messages */}
+                          {message.role === 'user' && message.deliveryStatus && (
+                            <div className="flex justify-end mt-1">
+                              <DeliveryStatusIndicator
+                                status={message.deliveryStatus}
+                                className="text-white/60"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-white/30 mt-1 px-1">
+                          {formatTime(message.timestamp)}
                         </p>
                       </div>
-                      <p className="text-[10px] text-white/30 mt-1 px-1">
-                        {formatTime(message.timestamp)}
-                      </p>
-                    </div>
-                  </motion.div>
+                    </motion.div>
+                  )
                 ))
               )}
               <div ref={messagesEndRef} />

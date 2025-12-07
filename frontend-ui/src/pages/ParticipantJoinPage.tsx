@@ -72,6 +72,7 @@ interface SessionData {
   participantId: string
   participantName: string
   identity: string
+  sessionId: string
   authToken: string  // Participant JWT for API calls
   connectionInfo: ConnectionInfo
   visualizerType: string | null
@@ -170,6 +171,7 @@ export default function ParticipantJoinPage() {
               participantId: response.participantId,
               participantName: response.participantName,
               identity: response.identity,
+              sessionId: response.sessionId,
               authToken: response.token,
               connectionInfo: response.connectionInfo,
               visualizerType: response.visualizerType ?? null,
@@ -224,6 +226,7 @@ export default function ParticipantJoinPage() {
         participantId: response.participantId,
         participantName: response.participantName,
         identity: response.identity,
+        sessionId: response.sessionId,
         authToken: response.token,  // Participant JWT for API calls
         connectionInfo: response.connectionInfo,
         visualizerType: response.visualizerType ?? null,
@@ -251,6 +254,7 @@ export default function ParticipantJoinPage() {
         participantId: response.participantId,
         participantName: response.participantName,
         identity: response.identity,
+        sessionId: response.sessionId,
         authToken: response.token,  // Participant JWT for API calls
         connectionInfo: response.connectionInfo,
         visualizerType: response.visualizerType ?? null,

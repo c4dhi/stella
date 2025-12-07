@@ -300,6 +300,8 @@ export class PeerTransport implements Transport {
               agent_id: serverData.agent_id,
               agent_name: serverData.agent_name,
               source: serverData.source,
+              // Delivery tracking - correlationId from agent echo
+              correlationId: serverData.correlation_id,
             }
 
             this.onTranscript(transcriptChunk)
@@ -517,7 +519,7 @@ export class PeerTransport implements Transport {
     this.onDisconnected('client disconnect')
   }
 
-  sendUserText(text: string) {
+  sendUserText(text: string, correlationId?: string) {
     if (!this.room) {
       console.error('[PeerTransport] Cannot send message: Room not initialized')
       return
@@ -537,16 +539,20 @@ export class PeerTransport implements Transport {
       return
     }
 
-    const env: Envelope<string> = {
+    // Envelope with optional correlationId for optimistic UI updates
+    const env: Envelope<{ text: string; correlation_id?: string }> = {
       type: 'user_text',
-      data: text,
+      data: {
+        text: text,
+        correlation_id: correlationId,
+      },
       participant_id: this.userName  // Use actual user name for proper attribution
     }
     const encoder = new TextEncoder()
     const data = encoder.encode(JSON.stringify(env))
     try {
       this.room.localParticipant.publishData(data, { reliable: true })
-      console.log(`[PeerTransport] ✓ Message sent: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`)
+      console.log(`[PeerTransport] ✓ Message sent: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${correlationId ? ` (correlationId: ${correlationId.substring(0, 8)}...)` : ''}`)
     } catch (error) {
       console.error('[PeerTransport] Error sending data:', error)
     }

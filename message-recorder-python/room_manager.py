@@ -220,14 +220,15 @@ class RoomManager:
                 print(f"   📋 Attribution: identity={participant_identity}, name={participant_name}, nested_speaker={nested_speaker_name}")
 
             if message_type == 'user_text':
-                # STORE: Only if sent by actual user (human), NOT echoed by agent
-                # The original user_text comes from 'human' participant identity
-                # Echoed versions come from the agent identity
-                if packet_participant_identity == 'human':
+                # STORE: User text from any non-agent identity
+                # Original user_text comes from 'human' (organizer) OR 'participant-xxx' identities
+                # Echoed versions come from agent identities (starting with 'agent-')
+                is_agent_identity = packet_participant_identity and packet_participant_identity.startswith('agent-')
+                if not is_agent_identity:
                     should_store = True
-                    print(f"   ✅ Storing original user_text from human")
+                    print(f"   ✅ Storing original user_text from {packet_participant_identity}")
                 else:
-                    print(f"   ⏭️ Skipping echoed user_text from {packet_participant_identity}")
+                    print(f"   ⏭️ Skipping echoed user_text from agent {packet_participant_identity}")
 
             elif message_type in ('transcript', 'transcript_chunk'):
                 # STORE: Only final transcripts, skip partial ones

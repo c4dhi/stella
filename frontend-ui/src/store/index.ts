@@ -84,6 +84,9 @@ type ChatState = {
   showProcessingMessages: boolean
   lastAssistantMessageId?: string  // Track last assistant message ID to detect new messages
 
+  // Optimistic message tracking - correlationIds of messages awaiting confirmation
+  pendingMessageIds: Set<string>
+
   // Historical messages from database
   historicalMessages: any[]
   isLoadingHistory: boolean
@@ -98,6 +101,10 @@ type ChatActions = {
   addParticipantEvent: (event: ParticipantEvent) => void
   setShowProcessingMessages: (show: boolean) => void
   clear: () => void
+
+  // Optimistic message actions
+  addOptimisticMessage: (chunk: TranscriptChunk) => void
+  confirmMessage: (correlationId: string) => void
 
   // Historical message actions
   loadHistoricalMessages: (sessionId: string) => Promise<void>
@@ -264,11 +271,34 @@ export const useStore = create<
   participantEvents: [],
   showProcessingMessages: true,
   lastAssistantMessageId: undefined,
+  pendingMessageIds: new Set<string>(),
   upsertChunk: (c) => set(() => {
     const state = get()
     const existing = state.turns
-    const idx = existing.findIndex(t => t.id === c.id)
     let next
+    let newPendingIds = state.pendingMessageIds
+
+    // Check if this is an echo of a pending optimistic message
+    // Agent echoes back user_text messages with the same correlationId
+    if (c.role === 'user' && c.source === 'user_text' && c.correlationId && state.pendingMessageIds.has(c.correlationId)) {
+      // Find the existing optimistic message by correlationId
+      const optimisticIdx = existing.findIndex(t => t.correlationId === c.correlationId)
+      if (optimisticIdx >= 0) {
+        // Update the optimistic message's delivery status to confirmed
+        next = [...existing]
+        next[optimisticIdx] = {
+          ...next[optimisticIdx],
+          deliveryStatus: 'confirmed' as const,
+        }
+        // Remove from pending set
+        newPendingIds = new Set(state.pendingMessageIds)
+        newPendingIds.delete(c.correlationId)
+        return { turns: next.slice(-50), pendingMessageIds: newPendingIds }
+      }
+    }
+
+    // Normal upsert logic
+    const idx = existing.findIndex(t => t.id === c.id)
 
     // Check if this is a new assistant message (different ID from last one)
     const isNewAssistantMessage = c.role === 'assistant' &&
@@ -300,6 +330,37 @@ export const useStore = create<
 
     return newState
   }),
+
+  // Optimistic message handling - add message immediately with 'sending' status
+  addOptimisticMessage: (chunk) => set(() => {
+    const state = get()
+    const next = [...state.turns, chunk]
+    const newPendingIds = new Set(state.pendingMessageIds)
+    if (chunk.correlationId) {
+      newPendingIds.add(chunk.correlationId)
+    }
+    return {
+      turns: next.slice(-50),
+      pendingMessageIds: newPendingIds,
+    }
+  }),
+
+  // Manually confirm a message by its correlationId
+  confirmMessage: (correlationId) => set(() => {
+    const state = get()
+    const newPendingIds = new Set(state.pendingMessageIds)
+    newPendingIds.delete(correlationId)
+
+    // Update the message's delivery status
+    const turns = state.turns.map(turn => {
+      if (turn.correlationId === correlationId) {
+        return { ...turn, deliveryStatus: 'confirmed' as const }
+      }
+      return turn
+    })
+
+    return { turns, pendingMessageIds: newPendingIds }
+  }),
   addFinal: (role, text) => set(() => {
     const chunk: TranscriptChunk = {
       id: generateUUID(),
@@ -319,7 +380,7 @@ export const useStore = create<
     return { participantEvents: next.slice(-50) } // Keep last 50 participant events
   }),
   setShowProcessingMessages: (show) => set({ showProcessingMessages: show }),
-  clear: () => set(() => { return { turns: [], processingMessages: [], participantEvents: [] } }),
+  clear: () => set(() => { return { turns: [], processingMessages: [], participantEvents: [], pendingMessageIds: new Set<string>() } }),
 
   // historical messages
   historicalMessages: [],

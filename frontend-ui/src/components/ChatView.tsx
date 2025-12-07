@@ -8,6 +8,7 @@ import { useThemeStore } from '../store/themeStore'
 import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
 import ParticipantNotification from './ParticipantNotification'
+import { MessageBubble, useMessaging } from './messaging'
 import type { ListenerStatus } from '../lib/api-types'
 
 interface ChatViewProps {
@@ -27,8 +28,12 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
   const agentTaskLists = useStore(s => s.agentTaskLists)
   const setShowTaskPanel = useStore(s => s.setShowTaskPanel)
   const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
+  const pendingMessageIds = useStore(s => s.pendingMessageIds)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+
+  // Messaging utilities for delivery status
+  const { getDeliveryStatus } = useMessaging()
 
   // Historical messages from database
   const historicalMessages = useStore(s => s.historicalMessages)
@@ -518,82 +523,11 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
                       </div>
                     </motion.div>
                   ) : (
-                <motion.div
-                  className={`max-w-[75%] relative group ${message.role === 'user' ? 'ml-auto' : 'mr-auto'
-                    }`}
-                >
-                  {/* Message Bubble */}
-                  <div className={`
-                    px-4 py-3 rounded-xl border overflow-hidden
-                    ${message.role === 'user'
-                      ? message.status === 'partial'
-                        ? isDark
-                          ? 'bg-violet-600/90 text-white border-violet-500/40 opacity-85'
-                          : 'bg-content/90 text-white border-content/70 opacity-85'
-                        : isDark
-                          ? 'bg-violet-600 text-white border-violet-500/60 shadow-md'
-                          : 'bg-content text-white border-content shadow-sm'
-                      : message.role === 'assistant'
-                        ? isDark
-                          ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                          : 'bg-white text-content border-border shadow-sm'
-                        : isDark
-                          ? 'bg-zinc-800/80 text-zinc-200 border-zinc-700'
-                          : 'bg-white text-content-secondary border-border shadow-sm'
-                    }
-                  `}>
-                    {/* Message Header */}
-                    <motion.div
-                      className={`text-label mb-2 flex items-center gap-2 uppercase ${
-                        message.role === 'user'
-                          ? 'text-white/70'
-                          : isDark ? 'text-zinc-400' : 'text-content-tertiary'
-                      }`}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.1, duration: 0.3 }}
-                    >
-                      <span>
-                        {message.source === 'agent_response'
-                          ? (message.agent_name || 'Agent')
-                          : (message.speaker_name || message.participant_id || message.role)}
-                      </span>
-                      <span className="opacity-50">•</span>
-                      <span>
-                        {new Date(message.startedAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </span>
-                    </motion.div>
-
-                    {/* Message Content */}
-                    {message.status === 'partial' ? (
-                      // No animation for partial messages to prevent weird text appearance
-                      <div className="text-body leading-relaxed opacity-85 break-words overflow-wrap-anywhere">
-                        {message.text}
-                        <motion.span
-                          className={`ml-1 ${
-                            message.role === 'user'
-                              ? 'text-white/50'
-                              : isDark ? 'text-zinc-500' : 'text-content-tertiary'
-                          }`}
-                          animate={{ opacity: [0, 1, 0] }}
-                          transition={{ duration: 1.2, repeat: Infinity }}
-                        >
-                          |
-                        </motion.span>
-                      </div>
-                    ) : (
-                      // Final messages - no animations
-                      <div className={`text-body leading-relaxed break-words overflow-wrap-anywhere ${
-                        message.role !== 'user' && isDark ? 'text-zinc-100' : ''
-                      }`}>
-                        {message.text}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
+                    <MessageBubble
+                      message={message as any}
+                      deliveryStatus={getDeliveryStatus(message as any, pendingMessageIds)}
+                      isDark={isDark}
+                    />
                   )
               ) : message.messageType === 'participant' ? (
                 <ParticipantNotification event={message} />

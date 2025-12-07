@@ -333,6 +333,7 @@ export class InvitationsService {
       participantId: participant.id,
       participantName: participant.name,
       identity: participant.identity,
+      sessionId: invitation.sessionId,
       token: participantToken,
       connectionInfo: {
         token: livekitToken,
@@ -431,6 +432,7 @@ export class InvitationsService {
       participantId: invitation.participant.id,
       participantName: invitation.participant.name,
       identity: invitation.participant.identity,
+      sessionId: invitation.sessionId,
       token: participantToken,
       connectionInfo: {
         token: livekitToken,
