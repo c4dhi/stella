@@ -14,6 +14,9 @@ interface ParticipantChatPanelProps {
   participantName: string
   onSendOptimisticMessage?: (message: ParticipantMessage) => void
   isLoadingHistory?: boolean
+  hasMoreMessages?: boolean
+  isLoadingMore?: boolean
+  onLoadMore?: () => void
 }
 
 export default function ParticipantChatPanel({
@@ -24,6 +27,9 @@ export default function ParticipantChatPanel({
   participantName,
   onSendOptimisticMessage,
   isLoadingHistory = false,
+  hasMoreMessages = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: ParticipantChatPanelProps) {
   const [inputText, setInputText] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -38,11 +44,12 @@ export default function ParticipantChatPanel({
   // Scroll to bottom and focus input when panel opens
   useEffect(() => {
     if (isOpen) {
-      // Scroll to bottom after panel animation completes
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      // Instantly scroll to bottom so chat appears at the bottom immediately
+      // Use requestAnimationFrame to ensure DOM is rendered before scrolling
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
         inputRef.current?.focus()
-      }, 300)
+      })
     }
   }, [isOpen])
 
@@ -160,6 +167,25 @@ export default function ParticipantChatPanel({
                   <p className="text-white/30 text-xs mt-2">Loading message history...</p>
                 </div>
               )}
+              {/* Load More button at top */}
+              {hasMoreMessages && !isLoadingHistory && (
+                <div className="text-center py-2">
+                  <button
+                    onClick={onLoadMore}
+                    disabled={isLoadingMore}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoadingMore ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      'Load older messages'
+                    )}
+                  </button>
+                </div>
+              )}
               {messages.length === 0 && !isLoadingHistory ? (
                 <div className="text-center py-12">
                   <p className="text-white/30 text-sm">
@@ -206,10 +232,14 @@ export default function ParticipantChatPanel({
                         className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                           message.role === 'user'
                             ? 'bg-violet-500/20 text-violet-400'
+                            : message.role === 'other_user'
+                            ? 'bg-cyan-500/20 text-cyan-400'
                             : 'bg-white/10 text-white/50'
                         }`}
                       >
                         {message.role === 'user' ? (
+                          <User className="w-4 h-4" />
+                        ) : message.role === 'other_user' ? (
                           <User className="w-4 h-4" />
                         ) : (
                           <Bot className="w-4 h-4" />
@@ -222,10 +252,18 @@ export default function ParticipantChatPanel({
                           message.role === 'user' ? 'text-right' : ''
                         }`}
                       >
+                        {/* Speaker name for other_user messages */}
+                        {message.role === 'other_user' && (
+                          <p className="text-[10px] text-cyan-400/70 mb-1 px-1">
+                            {message.speakerName || message.participantName || 'Organizer'}
+                          </p>
+                        )}
                         <div
                           className={`inline-block px-4 py-2.5 rounded-2xl ${
                             message.role === 'user'
                               ? 'bg-violet-500/20 text-white rounded-br-sm'
+                              : message.role === 'other_user'
+                              ? 'bg-cyan-500/10 text-white/90 rounded-bl-sm border border-cyan-500/20'
                               : 'bg-white/5 text-white/90 rounded-bl-sm'
                           }`}
                         >

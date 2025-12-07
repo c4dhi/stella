@@ -24,13 +24,16 @@ export default function MessageBubble({
   showHeader = true,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
+  const isOtherUser = message.role === 'other_user'
   const isPartial = message.status === 'partial'
   const isFinal = message.status === 'final'
 
   // Determine the display name for the header
   const displayName = message.source === 'agent_response'
     ? (message.agent_name || 'Agent')
-    : (message.speaker_name || message.participant_id || message.role)
+    : isOtherUser
+      ? (message.speaker_name || message.participant_id || 'Participant')
+      : (message.speaker_name || message.participant_id || message.role)
 
   // Determine delivery status to show
   // - For final user messages: use provided status or message's deliveryStatus
@@ -63,13 +66,17 @@ export default function MessageBubble({
               : isDark
                 ? 'bg-violet-600 text-white border-violet-500/60 shadow-md'
                 : 'bg-content text-white border-content shadow-sm'
-            : message.role === 'assistant'
+            : isOtherUser
               ? isDark
-                ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                : 'bg-white text-content border-border shadow-sm'
-              : isDark
-                ? 'bg-zinc-800/80 text-zinc-200 border-zinc-700'
-                : 'bg-white text-content-secondary border-border shadow-sm'
+                ? 'bg-cyan-900/60 text-cyan-50 border-cyan-700/50'
+                : 'bg-cyan-50 text-cyan-900 border-cyan-200 shadow-sm'
+              : message.role === 'assistant'
+                ? isDark
+                  ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
+                  : 'bg-white text-content border-border shadow-sm'
+                : isDark
+                  ? 'bg-zinc-800/80 text-zinc-200 border-zinc-700'
+                  : 'bg-white text-content-secondary border-border shadow-sm'
           }
         `}
       >
@@ -79,7 +86,9 @@ export default function MessageBubble({
             className={`text-label mb-2 flex items-center gap-2 uppercase ${
               isUser
                 ? 'text-white/70'
-                : isDark ? 'text-zinc-400' : 'text-content-tertiary'
+                : isOtherUser
+                  ? isDark ? 'text-cyan-400' : 'text-cyan-700'
+                  : isDark ? 'text-zinc-400' : 'text-content-tertiary'
             }`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

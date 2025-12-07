@@ -302,7 +302,25 @@ export default function SessionView() {
         const agentId = data.participant_id || 'default-agent'
 
         // Try to find agent info from session agents
-        const agent = session?.agents?.find(a => a.podName === agentId || a.id === agentId)
+        // Match by: exact podName, exact id, podName starts with participant_id, or podName contains participant_id
+        // E.g., participant_id="stella-light-agent", podName could be:
+        //   - "stella-light-agent-abc123"
+        //   - "grace-stella-light-agent-abc123"
+        //   - "stella-light-agent-grace-abc123"
+        const agent = session?.agents?.find(a =>
+          a.podName === agentId ||
+          a.id === agentId ||
+          (a.podName && a.podName.startsWith(agentId + '-')) ||
+          (a.podName && a.podName.includes(agentId))
+        )
+
+        // Debug: log agent lookup details
+        console.log(`🔍 [TASK] Agent lookup:`, {
+          participant_id: agentId,
+          sessionAgents: session?.agents?.map(a => ({ id: a.id, name: a.name, podName: a.podName })),
+          foundAgent: agent ? { id: agent.id, name: agent.name, podName: agent.podName } : null
+        })
+
         const agentName = agent?.name || data.participant_id
         const agentIcon = agent?.icon || '🤖'
 
@@ -420,7 +438,7 @@ export default function SessionView() {
             }
           })() : null,
           current_task: null, // Generic progress doesn't have task-level detail
-          states: data.groups?.map((group, index) => ({
+          states: data.groups?.map((group) => ({
             id: group.id,
             title: group.label,
             type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
@@ -814,6 +832,8 @@ export default function SessionView() {
               listenerStatus={listenerStatus}
               onShowLogs={() => setShowLogsModal(true)}
               sessionId={sessionId}
+              viewerIdentity="human"
+              viewerName={user?.name}
             />
           </div>
 

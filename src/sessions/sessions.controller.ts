@@ -168,6 +168,7 @@ export class SessionsController {
     @Query('cursor') cursor?: string,
     @Query('limit') limitStr?: string,
     @Query('before') before?: string,
+    @Query('include_debug') includeDebug?: string,
   ) {
     try {
       // Validate and cap limit
@@ -187,13 +188,14 @@ export class SessionsController {
       }
 
       this.logger.debug(
-        `Fetching messages for session ${sessionId} (cursor: ${cursor || 'none'}, limit: ${limit})`,
+        `Fetching messages for session ${sessionId} (cursor: ${cursor || 'none'}, limit: ${limit}, includeDebug: ${includeDebug === 'true'})`,
       );
 
       return await this.sessionsService.getMessages(sessionId, {
         cursor,
         limit,
         before,
+        includeDebug: includeDebug === 'true',
       });
     } catch (error) {
       this.logger.error(

@@ -362,6 +362,9 @@ class SessionManagementClient {
   /**
    * Fetch message history for a participant.
    * Uses a custom auth token (participant JWT) instead of the organizer token.
+   *
+   * By default, excludes debug/processing messages for a cleaner chat experience.
+   * Set includeDebug: true to include debug messages.
    */
   async getParticipantMessages(
     sessionId: string,
@@ -369,11 +372,16 @@ class SessionManagementClient {
     options: {
       limit?: number
       cursor?: string
+      before?: string  // ISO timestamp - load messages before this time (for pagination)
+      includeDebug?: boolean  // Include debug/processing messages (default: false)
     } = {}
   ): Promise<MessagesResponse> {
     const params = new URLSearchParams()
     if (options.limit) params.append('limit', options.limit.toString())
     if (options.cursor) params.append('cursor', options.cursor)
+    if (options.before) params.append('before', options.before)
+    // By default, exclude debug messages for cleaner chat experience
+    params.append('include_debug', options.includeDebug ? 'true' : 'false')
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/messages${queryString ? `?${queryString}` : ''}`

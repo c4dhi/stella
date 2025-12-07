@@ -75,6 +75,7 @@ class BaseAgent(ABC):
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
+        self._agent_icon: str = "🤖"
 
     @property
     def session_id(self) -> Optional[str]:
@@ -631,14 +632,13 @@ class BaseAgent(ABC):
                             # Forward progress updates to frontend for task panel display
                             # Include agent identity metadata for proper display
                             progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
-                            if output.metadata:
-                                # Include agent_name and agent_icon in the metadata
-                                if "metadata" not in progress_data:
-                                    progress_data["metadata"] = {}
-                                if "agent_name" in output.metadata:
-                                    progress_data["metadata"]["agent_name"] = output.metadata["agent_name"]
-                                if "agent_icon" in output.metadata:
-                                    progress_data["metadata"]["agent_icon"] = output.metadata["agent_icon"]
+                            # Ensure metadata dict exists
+                            if "metadata" not in progress_data:
+                                progress_data["metadata"] = {}
+                            # Always include agent identity for proper frontend attribution
+                            progress_data["metadata"]["agent_id"] = self._agent_id
+                            progress_data["metadata"]["agent_name"] = self._agent_name
+                            progress_data["metadata"]["agent_icon"] = self._agent_icon
                             progress_payload = {
                                 "type": "progress_update",
                                 "data": progress_data

@@ -304,10 +304,11 @@ class AudioPipeline:
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
             # Use Envelope format: { type, data: { ... } }
-            speaker_id = event.participant_id or self._participant_id
+            # Priority: event.participant_id > current_audio_speaker > default participant_id
+            speaker_id = event.participant_id or self._room.current_audio_speaker or self._participant_id
             # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
             speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
-            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}")
+            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}, current_audio_speaker={self._room.current_audio_speaker}")
             await self._room.publish_data({
                 "type": "transcript",
                 "data": {

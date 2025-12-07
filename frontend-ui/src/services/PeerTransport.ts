@@ -17,6 +17,7 @@ import type {
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
 import { generateUUID } from '../lib/uuid'
+import { determineMessageRole } from '../lib/messageUtils'
 
 export class PeerTransport implements Transport {
   room?: Room
@@ -265,25 +266,30 @@ export class PeerTransport implements Transport {
               }
             }
 
-            // Determine role based on source field (new semantic approach)
-            // or fall back to participant_id matching (backwards compat)
+            // Determine role by comparing speaker identity against current user
+            // Uses shared utility for consistent role determination
             const source = serverData.source as string | undefined
-            let role: 'user' | 'assistant'
-            let displayName: string
+            const speakerId = serverData.speaker_id || serverData.participant_id || env.participant_id
+            const speakerName = serverData.speaker_name || speakerId
 
-            if (source === 'user_speech' || source === 'user_text') {
-              // User messages (speech transcribed by agent or typed text)
-              role = 'user'
-              displayName = serverData.speaker_name || serverData.participant_id || this.userName
-            } else if (source === 'agent_response' || env.type === 'agent_text') {
-              // Agent response messages
-              role = 'assistant'
+            // Use shared utility - organizer identity is always 'human'
+            const role = determineMessageRole(
+              speakerId,
+              source,
+              env.type,
+              'human',  // Organizer identity
+              speakerName,
+              this.userName
+            )
+
+            // Determine display name based on role
+            let displayName: string
+            if (role === 'assistant') {
               displayName = serverData.agent_name || 'Agent'
+            } else if (role === 'user') {
+              displayName = this.userName
             } else {
-              // Fallback to existing logic for backwards compat
-              const isUserMessage = serverData.participant_id === this.userName
-              role = isUserMessage ? 'user' : 'assistant'
-              displayName = serverData.participant_id || (isUserMessage ? this.userName : 'Agent')
+              displayName = speakerName || 'Participant'
             }
 
             const transcriptChunk: TranscriptChunk = {

@@ -18,6 +18,7 @@ import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
+import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
 import type { DeliveryStatus } from '../../lib/types'
 
 // Message type for participant chat - extends basic message with delivery tracking
@@ -25,12 +26,13 @@ export type ParticipantMessageType = 'message' | 'participant_event'
 
 export interface ParticipantMessage {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'other_user'  // other_user = another human (organizer or other participant)
   text: string
   timestamp: Date
   messageType?: ParticipantMessageType
   eventType?: 'joined' | 'left'  // For participant_event messages
-  participantName?: string  // For participant_event messages
+  participantName?: string  // For participant_event messages OR for displaying other_user's name
+  speakerName?: string  // Display name of the speaker (for other_user messages)
   deliveryStatus?: DeliveryStatus
   correlationId?: string
 }
@@ -83,6 +85,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [pendingCorrelationIds, setPendingCorrelationIds] = useState<Set<string>>(new Set())
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
 
   // Refs
   const containerRef = useRef<HTMLDivElement>(null)
@@ -173,6 +177,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       )
 
       // Convert API messages to ParticipantMessage format
+      // Backend already filters out debug/processing messages when include_debug=false
       const historyMessages: ParticipantMessage[] = response.messages.map(msg => {
         // Handle participant join/leave events
         // Backend stores as 'participant_joined', 'participant_left', or 'participant_event'
@@ -196,13 +201,29 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         }
 
         // Regular message (transcript)
+        // Use shared utility for consistent role determination
+        const metadata = msg.metadata || {}
+        const { speakerId, speakerName: extractedSpeakerName } = extractSpeakerInfo(metadata)
+        const speakerDisplayName = extractedSpeakerName || msg.participant?.name || speakerId
+
+        // Determine role using shared utility
+        const role = determineMessageRole(
+          speakerId || msg.participant?.identity,
+          metadata.envelope?.data?.source,
+          msg.messageType,
+          sessionData.identity,
+          speakerDisplayName,
+          sessionData.participantName
+        )
+
         return {
           id: msg.id,
-          role: (msg.role || 'user') as 'user' | 'assistant',
+          role,
           text: msg.content,
           timestamp: new Date(msg.createdAt),
           messageType: 'message' as const,
           deliveryStatus: 'confirmed' as const, // History messages are always confirmed
+          speakerName: role === 'other_user' ? (speakerDisplayName || 'Organizer') : undefined,
         }
       })
 
@@ -213,6 +234,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         return [...newMessages, ...prev]
       })
 
+      // Track if there are more messages to load
+      setHasMoreMessages(response.hasMore)
       setHistoryLoaded(true)
     } catch (error) {
       console.error('[Participant] Failed to load message history:', error)
@@ -220,6 +243,84 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       setIsLoadingHistory(false)
     }
   }, [sessionData.sessionId, sessionData.authToken, historyLoaded, isLoadingHistory])
+
+  // Load more (older) messages
+  const loadMoreMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMoreMessages || messages.length === 0) return
+
+    try {
+      setIsLoadingMore(true)
+
+      // Get the oldest message's timestamp to use as cursor
+      const oldestMessage = messages[0]
+      const beforeTimestamp = oldestMessage.timestamp.toISOString()
+
+      const response = await apiClient.getParticipantMessages(
+        sessionData.sessionId,
+        sessionData.authToken,
+        { limit: 50, before: beforeTimestamp }
+      )
+
+      // Convert API messages to ParticipantMessage format (same logic as loadMessageHistory)
+      const olderMessages: ParticipantMessage[] = response.messages.map(msg => {
+        const msgType = msg.messageType as string
+        const isParticipantEvent = msgType?.startsWith('participant_')
+        if (isParticipantEvent) {
+          const metadata = msg.metadata || {}
+          const isJoined = metadata.eventType === 'joined' ||
+                          msgType === 'participant_joined' ||
+                          msg.content?.includes('joined')
+          return {
+            id: msg.id,
+            role: 'system' as const,
+            text: msg.content,
+            timestamp: new Date(msg.createdAt),
+            messageType: 'participant_event' as const,
+            eventType: isJoined ? 'joined' as const : 'left' as const,
+            participantName: metadata.participantName || msg.participant?.name,
+          }
+        }
+
+        // Use shared utility for consistent role determination
+        const metadata = msg.metadata || {}
+        const { speakerId, speakerName: extractedSpeakerName } = extractSpeakerInfo(metadata)
+        const speakerDisplayName = extractedSpeakerName || msg.participant?.name || speakerId
+
+        const role = determineMessageRole(
+          speakerId || msg.participant?.identity,
+          metadata.envelope?.data?.source,
+          msg.messageType,
+          sessionData.identity,
+          speakerDisplayName,
+          sessionData.participantName
+        )
+
+        return {
+          id: msg.id,
+          role,
+          text: msg.content,
+          timestamp: new Date(msg.createdAt),
+          messageType: 'message' as const,
+          deliveryStatus: 'confirmed' as const,
+          speakerName: role === 'other_user' ? (speakerDisplayName || 'Organizer') : undefined,
+        }
+      })
+
+      // Prepend older messages to the beginning, avoiding duplicates
+      setMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id))
+        const newMessages = olderMessages.filter(m => !existingIds.has(m.id))
+        return [...newMessages, ...prev]
+      })
+
+      // Update hasMore based on response
+      setHasMoreMessages(response.hasMore)
+    } catch (error) {
+      console.error('[Participant] Failed to load more messages:', error)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [sessionData.sessionId, sessionData.authToken, sessionData.identity, sessionData.participantName, isLoadingMore, hasMoreMessages, messages])
 
   // Load message history when chat is opened
   useEffect(() => {
@@ -297,23 +398,27 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         if (envelope.type === 'transcript' || envelope.type === 'transcript_chunk' || envelope.type === 'agent_text') {
           const msgData = envelope.data  // Access nested data
 
-          // Determine role from source field (like PeerTransport)
+          // Extract speaker identity from message data
+          const speakerId = msgData.speaker_id || msgData.participant_id || envelope.participant_id
+          const speakerName = msgData.speaker_name || speakerId
           const source = msgData.source as string | undefined
-          let role: 'user' | 'assistant'
 
-          if (source === 'user_speech' || source === 'user_text') {
-            role = 'user'
-          } else if (source === 'agent_response' || envelope.type === 'agent_text') {
-            role = 'assistant'
-          } else {
-            role = 'assistant'  // Default to assistant for unknown
-          }
+          // Use shared utility for consistent role determination
+          const role = determineMessageRole(
+            speakerId,
+            source,
+            envelope.type,
+            sessionData.identity,
+            speakerName,
+            sessionData.participantName
+          )
 
           const isFinal = msgData.is_final === true
           const correlationId = msgData.correlation_id
           const text = msgData.text
 
           if (role === 'user') {
+            // Message from current participant (self)
             if (isFinal) {
               setUserTranscript('')
 
@@ -383,6 +488,33 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
             } else {
               setUserTranscript(text)
             }
+          } else if (role === 'other_user') {
+            // Message from another human (organizer or other participant)
+            if (isFinal) {
+              // Check for recent duplicate (prevents double-display from echoes)
+              setMessages(prev => {
+                const recentDuplicate = prev.find(
+                  msg => msg.role === 'other_user' &&
+                         msg.text === text &&
+                         Date.now() - msg.timestamp.getTime() < 5000
+                )
+                if (recentDuplicate) {
+                  return prev
+                }
+
+                return [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'other_user',
+                    text,
+                    timestamp: new Date(),
+                    speakerName: speakerName || 'Organizer',
+                  },
+                ]
+              })
+            }
+            // Don't show partial transcripts for other users in the subtitle overlay
           } else if (role === 'assistant') {
             // Agent response - streaming display (update existing or add new)
             const transcriptId = msgData.transcript_id || crypto.randomUUID()
@@ -413,7 +545,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         console.error('Error parsing data:', error)
       }
     },
-    [pendingCorrelationIds]
+    [pendingCorrelationIds, sessionData.identity, sessionData.participantName]
   )
 
   // Handle room disconnection
@@ -941,6 +1073,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         room={room}
         participantName={sessionData.participantName}
         isLoadingHistory={isLoadingHistory}
+        hasMoreMessages={hasMoreMessages}
+        isLoadingMore={isLoadingMore}
+        onLoadMore={loadMoreMessages}
         onSendOptimisticMessage={(message) => {
           setMessages(prev => [...prev, message])
           if (message.correlationId) {

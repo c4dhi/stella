@@ -1,6 +1,6 @@
 
 export type TurnId = string
-export type Role = 'user' | 'assistant' | 'system'
+export type Role = 'user' | 'assistant' | 'system' | 'other_user'
 export type TurnStatus = 'partial' | 'final'
 
 export type MessageSource = 'user_speech' | 'user_text' | 'agent_response'

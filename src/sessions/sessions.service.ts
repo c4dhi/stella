@@ -306,8 +306,38 @@ export class SessionsService {
     // Stop all running agents using centralized function
     await this.agentsService.stopAllSessionAgents(id);
 
+    // Revoke all pending/accepted invitations
+    const revokedInvitations = await this.prisma.invitation.updateMany({
+      where: {
+        sessionId: id,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+      data: { status: 'REVOKED' },
+    });
+
+    if (revokedInvitations.count > 0) {
+      this.logger.log(
+        `Session ${id}: auto-revoked ${revokedInvitations.count} invitation(s)`,
+      );
+    }
+
+    // Mark all participants as left
+    const updatedParticipants = await this.prisma.participant.updateMany({
+      where: {
+        sessionId: id,
+        leftAt: null,
+      },
+      data: { leftAt: new Date() },
+    });
+
+    if (updatedParticipants.count > 0) {
+      this.logger.log(
+        `Session ${id}: marked ${updatedParticipants.count} participant(s) as left`,
+      );
+    }
+
     // Python message recorder will automatically stop monitoring when session becomes CLOSED
-    this.logger.log(`Session ${id} agents stopped - updating session status to CLOSED`);
+    this.logger.log(`Session ${id} cleanup complete - updating session status to CLOSED`);
 
     await this.prisma.session.update({
       where: { id },
@@ -359,7 +389,7 @@ export class SessionsService {
     }
 
     // Generate unique identity for this participant
-    const identity = `participant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const identity = `participant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
     // Create participant in database
     const participant = await this.prisma.participant.create({
@@ -596,6 +626,7 @@ export class SessionsService {
       cursor?: string;
       limit?: number;
       before?: string;
+      includeDebug?: boolean;
     } = {},
   ) {
     const session = await this.prisma.session.findUnique({
@@ -607,8 +638,26 @@ export class SessionsService {
     }
 
     const limit = options.limit || 50;
+
+    // Define message types to include (matching getChatHistory logic)
+    const chatMessageTypes = [
+      'user_text', 'transcript', 'transcript_chunk', 'agent_text',
+      'participant_joined', 'participant_left', 'participant_event'
+    ];
+    const debugMessageTypes = [
+      'debug', 'decision_stream', 'expert_status', 'prompt_execution',
+      'safety_check', 'plan_progress_update', 'plan_deliverable_update',
+      'state_change_notification', 'complete_todo_list', 'llm_config',
+      'task_progress_update', 'progress_update'
+    ];
+
+    const messageTypes = options.includeDebug
+      ? [...chatMessageTypes, ...debugMessageTypes]
+      : chatMessageTypes;
+
     const where: Prisma.MessageWhereInput = {
       sessionId,
+      messageType: { in: messageTypes },
       ...(options.before && { timestamp: { lt: new Date(options.before) } }),
       ...(options.cursor && { id: { lt: options.cursor } }),
     };
@@ -870,17 +919,6 @@ export class SessionsService {
     // Skip messages from the recorder itself
     if (participantIdentity === 'message-recorder') {
       return { success: true, stored: false, reason: 'recorder_message_skipped' };
-    }
-
-    // Find participant if identity is provided (do NOT auto-create)
-    let participant;
-    if (participantIdentity) {
-      participant = await this.prisma.participant.findFirst({
-        where: {
-          sessionId,
-          identity: participantIdentity,
-        },
-      });
     }
 
     // Determine message role based on participant identity

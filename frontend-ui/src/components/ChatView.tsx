@@ -9,15 +9,24 @@ import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
 import ParticipantNotification from './ParticipantNotification'
 import { MessageBubble, useMessaging } from './messaging'
+import { determineMessageRole, extractSpeakerInfo } from '../lib/messageUtils'
 import type { ListenerStatus } from '../lib/api-types'
 
 interface ChatViewProps {
   listenerStatus?: ListenerStatus | null
   onShowLogs?: () => void
   sessionId?: string
+  viewerIdentity?: string  // Identity of current viewer (default: 'human' for organizer)
+  viewerName?: string      // Display name of current viewer
 }
 
-export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSessionId }: ChatViewProps) {
+export default function ChatView({
+  listenerStatus,
+  onShowLogs,
+  sessionId: propSessionId,
+  viewerIdentity = 'human',  // Default to organizer identity
+  viewerName
+}: ChatViewProps) {
   const { sessionId: paramSessionId } = useParams<{ sessionId: string }>()
   const sessionId = propSessionId || paramSessionId
   const turns = useStore(s => s.turns)
@@ -138,14 +147,25 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
           }
         }
 
+        // For legacy messages without envelope, use metadata for speaker info
+        const { speakerId: legacySpeakerId, speakerName: legacySpeakerName } = extractSpeakerInfo(msg.metadata)
+        const legacyRole = determineMessageRole(
+          legacySpeakerId,
+          undefined,
+          msg.messageType,
+          viewerIdentity,
+          legacySpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: msg.content,
-          role: (msg.role || 'system') as 'user' | 'assistant' | 'system',
+          role: legacyRole,
           status: 'final' as const,
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
+          speaker_name: legacySpeakerName || getParticipantName(msg),
           source: 'db' as const,
         }
       }
@@ -154,13 +174,27 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
       const messageType = envelope.type || 'unknown'
       const messageData = envelope.data || envelope
 
+      // Extract speaker info for role determination
+      const { speakerId, speakerName } = extractSpeakerInfo(msg.metadata)
+      const envelopeSpeakerId = messageData?.speaker_id || envelope.participant_id
+      const envelopeSpeakerName = messageData?.speaker_name
+
       // Handle different message types
       if (messageType === 'transcript_chunk' || messageType === 'transcript') {
         // User speech transcripts (from STT)
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          messageData?.source,
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : messageData.text,
-          role: msg.role as 'user' | 'assistant' | 'system',
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           finalizedAt: timestamp,
@@ -191,17 +225,26 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
         }
       } else if (messageType === 'user_text') {
         // User typed text messages
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          'user_text',
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         const textContent = typeof messageData === 'string' ? messageData : (messageData.text || messageData)
         return {
           id: msg.id,
           text: typeof textContent === 'string' ? textContent : JSON.stringify(textContent),
-          role: 'user' as const,
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           finalizedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: envelope.participant_id || getParticipantName(msg),
-          speaker_name: envelope.participant_id || getParticipantName(msg),
+          speaker_name: speakerName || envelopeSpeakerName || envelope.participant_id || getParticipantName(msg),
           source: 'user_text' as const,
           dataSource: 'db' as const,
         }
@@ -268,15 +311,24 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
         return null
       } else {
         // Unknown message type - display as simple transcript with content
+        // Determine role by comparing speaker to current viewer
+        const role = determineMessageRole(
+          speakerId || envelopeSpeakerId,
+          messageData?.source,
+          messageType,
+          viewerIdentity,
+          speakerName || envelopeSpeakerName,
+          viewerName
+        )
         return {
           id: msg.id,
           text: typeof messageData === 'string' ? messageData : JSON.stringify(messageData),
-          role: (msg.role || 'system') as 'user' | 'assistant' | 'system',
+          role,
           status: 'final' as const,
           startedAt: timestamp,
           messageType: 'transcript' as const,
           participant_id: getParticipantName(msg),
-          speaker_name: messageData?.speaker_name || getParticipantName(msg),
+          speaker_name: speakerName || envelopeSpeakerName || messageData?.speaker_name || getParticipantName(msg),
           agent_name: messageData?.agent_name,
           source: messageData?.source,
           dataSource: 'db' as const,
@@ -305,7 +357,7 @@ export default function ChatView({ listenerStatus, onShowLogs, sessionId: propSe
     )
 
     return unique.sort((a, b) => a.startedAt - b.startedAt)
-  }, [historicalMessages, turns, processingMessages, participantEvents, showProcessingMessages])
+  }, [historicalMessages, turns, processingMessages, participantEvents, showProcessingMessages, viewerIdentity, viewerName])
 
   // Infinite scroll handler with time-travel support
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
