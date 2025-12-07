@@ -40,6 +40,9 @@ import type {
   CreateInvitationResponse,
   InvitationDetails,
   AcceptInvitationResponse,
+  PlanTemplate,
+  CreatePlanTemplateDto,
+  UpdatePlanTemplateDto,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -740,6 +743,55 @@ class SessionManagementClient {
     return () => {
       eventSource.close()
     }
+  }
+
+  // ============================================================================
+  // Plan Templates API
+  // ============================================================================
+
+  /**
+   * List all plan templates for the current user.
+   */
+  async listPlanTemplates(): Promise<PlanTemplate[]> {
+    return this.get<PlanTemplate[]>('/plan-templates')
+  }
+
+  /**
+   * Get a single plan template by ID.
+   */
+  async getPlanTemplate(id: string): Promise<PlanTemplate> {
+    return this.get<PlanTemplate>(`/plan-templates/${id}`)
+  }
+
+  /**
+   * Create a new plan template.
+   */
+  async createPlanTemplate(data: CreatePlanTemplateDto): Promise<PlanTemplate> {
+    return this.post<PlanTemplate>('/plan-templates', data)
+  }
+
+  /**
+   * Update an existing plan template.
+   */
+  async updatePlanTemplate(id: string, data: UpdatePlanTemplateDto): Promise<PlanTemplate> {
+    return this.request<PlanTemplate>(`/plan-templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  /**
+   * Delete a plan template.
+   */
+  async deletePlanTemplate(id: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/plan-templates/${id}`)
+  }
+
+  /**
+   * Duplicate a plan template.
+   */
+  async duplicatePlanTemplate(id: string): Promise<PlanTemplate> {
+    return this.post<PlanTemplate>(`/plan-templates/${id}/duplicate`)
   }
 }
 

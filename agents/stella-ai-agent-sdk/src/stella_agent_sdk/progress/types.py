@@ -318,3 +318,160 @@ class ProgressState:
         else:
             self.progress_percentage = (self.completed_items / self.total_items) * 100.0
         return self.progress_percentage
+
+
+# =============================================================================
+# Plan Builder Terminology Aliases
+# =============================================================================
+# These aliases provide user-friendly naming that maps to the underlying
+# progress tracking types. Use these when building plan templates.
+#
+# Mapping:
+#   State -> ProgressGroup (a phase or stage in the conversation)
+#   Task -> ProgressItem (an individual task within a state)
+#   Deliverable -> ProgressItem with data collection focus
+# =============================================================================
+
+# Type aliases for Plan Builder terminology
+PlanState = ProgressGroup
+"""A state (phase) in a plan. Alias for ProgressGroup."""
+
+PlanTask = ProgressItem
+"""A task within a state. Alias for ProgressItem."""
+
+PlanDeliverable = ProgressItem
+"""A deliverable (data to collect) within a task. Alias for ProgressItem."""
+
+
+def create_state(
+    id: str,
+    label: str,
+    execution_mode: ExecutionMode = ExecutionMode.FLEXIBLE,
+    tasks: Optional[List[ProgressItem]] = None,
+    description: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ProgressGroup:
+    """
+    Create a state (phase) for a plan template.
+
+    A state represents a logical phase in the conversation, such as
+    "Introduction", "Information Gathering", or "Wrap-up".
+
+    Args:
+        id: Unique identifier for this state.
+        label: Human-readable label for display.
+        execution_mode: How tasks should be executed (SEQUENTIAL or FLEXIBLE).
+        tasks: List of tasks within this state.
+        description: Optional description of this state's purpose.
+        metadata: Additional state-specific data.
+
+    Returns:
+        A ProgressGroup configured as a plan state.
+
+    Example:
+        >>> intake_state = create_state(
+        ...     id="intake",
+        ...     label="Patient Intake",
+        ...     execution_mode=ExecutionMode.FLEXIBLE,
+        ...     tasks=[
+        ...         create_task("name", "Patient Name"),
+        ...         create_task("dob", "Date of Birth"),
+        ...     ],
+        ...     description="Collect basic patient information"
+        ... )
+    """
+    return ProgressGroup(
+        id=id,
+        label=label,
+        execution_mode=execution_mode,
+        items=tasks or [],
+        description=description,
+        metadata=metadata or {},
+    )
+
+
+def create_task(
+    id: str,
+    label: str,
+    description: Optional[str] = None,
+    required: bool = True,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ProgressItem:
+    """
+    Create a task for a plan state.
+
+    A task represents an individual action item within a state, such as
+    "Collect patient name" or "Verify insurance information".
+
+    Args:
+        id: Unique identifier for this task.
+        label: Human-readable label for display.
+        description: Optional detailed description or instructions.
+        required: Whether this task must be completed (default: True).
+        metadata: Additional task-specific data.
+
+    Returns:
+        A ProgressItem configured as a plan task.
+
+    Example:
+        >>> name_task = create_task(
+        ...     id="patient_name",
+        ...     label="Patient Name",
+        ...     description="Collect the patient's full legal name",
+        ...     required=True
+        ... )
+    """
+    return ProgressItem(
+        id=id,
+        label=label,
+        description=description,
+        required=required,
+        metadata=metadata or {},
+    )
+
+
+def create_deliverable(
+    id: str,
+    label: str,
+    data_type: str = "string",
+    description: Optional[str] = None,
+    required: bool = True,
+    enum_values: Optional[List[str]] = None,
+) -> ProgressItem:
+    """
+    Create a deliverable (data collection point) for a plan.
+
+    A deliverable represents a specific piece of data to collect, such as
+    a name, date, or selection from a list of options.
+
+    Args:
+        id: Unique identifier for this deliverable.
+        label: Human-readable label for display.
+        data_type: Type of data to collect ("string", "number", "boolean", "enum").
+        description: Optional description of what data to collect.
+        required: Whether this deliverable must be collected (default: True).
+        enum_values: For enum type, the list of valid values.
+
+    Returns:
+        A ProgressItem configured as a plan deliverable.
+
+    Example:
+        >>> insurance_type = create_deliverable(
+        ...     id="insurance_type",
+        ...     label="Insurance Type",
+        ...     data_type="enum",
+        ...     enum_values=["Private", "Medicare", "Medicaid", "None"],
+        ...     required=True
+        ... )
+    """
+    metadata: Dict[str, Any] = {"data_type": data_type}
+    if enum_values:
+        metadata["enum_values"] = enum_values
+
+    return ProgressItem(
+        id=id,
+        label=label,
+        description=description,
+        required=required,
+        metadata=metadata,
+    )

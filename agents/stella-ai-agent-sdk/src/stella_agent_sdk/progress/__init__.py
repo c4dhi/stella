@@ -58,13 +58,28 @@ from stella_agent_sdk.progress.types import (
     ProgressItem,
     ProgressGroup,
     ProgressState,
+    # Plan Builder terminology aliases
+    PlanState,
+    PlanTask,
+    PlanDeliverable,
+    create_state,
+    create_task,
+    create_deliverable,
 )
 
 __all__ = [
+    # Core progress types
     "ExecutionMode",
     "ItemStatus",
     "GroupStatus",
     "ProgressItem",
     "ProgressGroup",
     "ProgressState",
+    # Plan Builder aliases
+    "PlanState",
+    "PlanTask",
+    "PlanDeliverable",
+    "create_state",
+    "create_task",
+    "create_deliverable",
 ]

@@ -9,6 +9,7 @@ import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
 import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import ThemeToggle from '../components/ThemeToggle'
+import ProfileButton from '../components/layout/ProfileButton'
 import { useToastStore } from '../store/toastStore'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
 
@@ -225,7 +226,7 @@ export default function SessionsDashboard() {
             </div>
           </div>
 
-          {/* Right side - Theme toggle and Info button */}
+          {/* Right side - Theme toggle, Info button, Profile */}
           <div className="flex items-center gap-1">
             <ThemeToggle />
             <button
@@ -238,6 +239,7 @@ export default function SessionsDashboard() {
                 <path d="M12 16v-4M12 8h.01" />
               </svg>
             </button>
+            <ProfileButton />
           </div>
         </div>
       </header>

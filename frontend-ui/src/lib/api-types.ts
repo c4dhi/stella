@@ -516,3 +516,64 @@ export function isSessionActive(session: Session): boolean {
 export function isAgentRunning(agent: AgentInstance): boolean {
   return agent.status === AgentStatus.RUNNING
 }
+
+// ============================================================================
+// Plan Template Types (for Plan Builder)
+// ============================================================================
+
+export type ExecutionMode = 'sequential' | 'flexible'
+
+export type DeliverableType = 'string' | 'number' | 'boolean' | 'enum'
+
+export interface PlanDeliverable {
+  id: string
+  label: string
+  type: DeliverableType
+  description?: string
+  required: boolean
+  enumValues?: string[]
+  examples?: string[]
+}
+
+export interface PlanTask {
+  id: string
+  label: string
+  description?: string
+  required: boolean
+  deliverables: PlanDeliverable[]
+}
+
+export interface PlanState {
+  id: string
+  label: string
+  execution_mode: ExecutionMode
+  description?: string
+  tasks: PlanTask[]
+}
+
+export interface PlanContent {
+  states: PlanState[]
+  metadata?: Record<string, unknown>
+}
+
+export interface PlanTemplate {
+  id: string
+  userId: string
+  name: string
+  description?: string
+  content: PlanContent
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreatePlanTemplateDto {
+  name: string
+  description?: string
+  content: PlanContent
+}
+
+export interface UpdatePlanTemplateDto {
+  name?: string
+  description?: string
+  content?: PlanContent
+}

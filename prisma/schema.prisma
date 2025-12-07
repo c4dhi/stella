@@ -23,6 +23,7 @@ model User {
   updatedAt          DateTime            @updatedAt
   projectMemberships ProjectMembership[]
   customAgentTypes   AgentType[]         // Custom agents uploaded by this user
+  planTemplates      PlanTemplate[]      // Plan templates created by this user
 }
 
 enum MemberRole {
@@ -303,4 +304,18 @@ model AgentBuildLog {
   @@index([agentTypeId])
   @@index([status])
   @@index([startedAt])
+}
+
+// Plan template for reusable agent conversation plans
+model PlanTemplate {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?  @db.Text
+  content     Json     // { states: [{ id, label, execution_mode, tasks: [{ id, label, deliverables: [...] }] }] }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }

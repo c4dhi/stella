@@ -2,18 +2,16 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { apiClient } from '../services/ApiClient'
-import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
 import EditProjectModal from '../components/modals/EditProjectModal'
 import NetworkInfoModal from '../components/modals/NetworkInfoModal'
-import ThemeToggle from '../components/ThemeToggle'
+import AppHeader from '../components/layout/AppHeader'
 import type { ProjectWithCounts } from '../lib/api-types'
 
 export default function ProjectsDashboard() {
   const navigate = useNavigate()
-  const { logout, user } = useAuthStore()
   const { resolvedTheme, initializeTheme } = useThemeStore()
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
@@ -79,51 +77,11 @@ export default function ProjectsDashboard() {
     }
   }
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
-
   return (
     <div className={`min-h-screen transition-colors duration-200 ${
       isDark ? 'bg-surface-dark' : 'bg-surface'
     }`}>
-      {/* Header */}
-      <header className={`sticky top-0 z-40 border-b transition-colors duration-200 ${
-        isDark ? 'bg-surface-dark/95 border-border-dark' : 'bg-white/95 border-border'
-      } backdrop-blur-sm`}>
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div>
-            <h1 className={`text-heading-sm font-semibold tracking-tight ${
-              isDark ? 'text-content-inverse' : 'text-content'
-            }`}>
-              STELLA
-            </h1>
-            <p className={`text-caption ${
-              isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
-            }`}>
-              {user?.name || user?.email}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <button
-              onClick={() => setIsNetworkInfoOpen(true)}
-              className="btn-ghost p-2"
-              title="Network Info"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-            </button>
-            <button onClick={handleLogout} className="btn-ghost">
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AppHeader onInfoClick={() => setIsNetworkInfoOpen(true)} />
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
