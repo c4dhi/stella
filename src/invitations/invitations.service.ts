@@ -45,6 +45,20 @@ export class InvitationsService {
       throw new BadRequestException('Session does not have an associated room');
     }
 
+    // Check if there's already an active invitation for this session
+    const existingActiveInvitation = await this.prisma.invitation.findFirst({
+      where: {
+        sessionId,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+    });
+
+    if (existingActiveInvitation) {
+      throw new BadRequestException(
+        'Session already has an active invitation. Please revoke or delete the existing invitation before creating a new one.',
+      );
+    }
+
     // Calculate expiration date if provided
     const expiresAt = dto.expiresInHours
       ? new Date(Date.now() + dto.expiresInHours * 60 * 60 * 1000)

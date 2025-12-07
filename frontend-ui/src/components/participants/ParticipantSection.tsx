@@ -58,8 +58,8 @@ export default function ParticipantSection({
   })
   const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null)
 
-  // Check if we already have a pending invitation (only one at a time)
-  const hasPendingInvitation = invitations.some(inv => inv.status === 'PENDING')
+  // Check if we already have an active invitation (PENDING or ACCEPTED) - only one at a time
+  const hasActiveInvitation = invitations.some(inv => inv.status === 'PENDING' || inv.status === 'ACCEPTED')
 
   // Fetch invitations
   const fetchInvitations = useCallback(async () => {
@@ -249,7 +249,7 @@ export default function ParticipantSection({
           <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-border'}`}>
             <button
               onClick={() => setIsInviteModalOpen(true)}
-              disabled={hasPendingInvitation}
+              disabled={hasActiveInvitation}
               className={`
                 w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                 transition-all duration-200 flex items-center justify-center gap-2
@@ -272,9 +272,9 @@ export default function ParticipantSection({
               </svg>
               Invite Participant
             </button>
-            {hasPendingInvitation && (
+            {hasActiveInvitation && (
               <p className={`text-[10px] mt-2 text-center ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                Pending invitation exists
+                Active invitation exists - revoke it first
               </p>
             )}
           </div>

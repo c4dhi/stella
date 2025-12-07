@@ -241,59 +241,57 @@ export default function InviteParticipantModal({
             `}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div className={`px-6 pt-6 pb-4 border-b ${isDark ? 'border-zinc-700' : 'border-neutral-200'}`}>
-              <div className="relative">
-                <button
-                  onClick={handleClose}
-                  disabled={isSubmitting}
-                  className={`
-                    absolute -top-1 -right-1 p-2 rounded-lg transition-all duration-200
-                    disabled:opacity-60 disabled:cursor-not-allowed
-                    ${isDark
-                      ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
-                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-                    }
-                  `}
-                  title="Close"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                </button>
+            {/* Header - Hidden on complete step */}
+            {step !== 'complete' && (
+              <div className={`px-6 pt-6 pb-4 border-b ${isDark ? 'border-zinc-700' : 'border-neutral-200'}`}>
+                <div className="relative">
+                  <button
+                    onClick={handleClose}
+                    disabled={isSubmitting}
+                    className={`
+                      absolute -top-1 -right-1 p-2 rounded-lg transition-all duration-200
+                      disabled:opacity-60 disabled:cursor-not-allowed
+                      ${isDark
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                        : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                    title="Close"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
 
-                {/* Step indicator */}
-                <div className="flex items-center gap-3 mb-2">
-                  {STEPS.map((s, idx) => (
-                    <div key={s.id} className="flex items-center">
-                      <div className={`
-                        w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
-                        ${step === 'complete' || getStepNumber(step) >= s.number
-                          ? 'bg-primary-500 text-white'
-                          : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
-                        }
-                      `}>
-                        {step === 'complete' ? (
-                          <Check className="w-3 h-3" />
-                        ) : (
-                          s.number
+                  {/* Step indicator */}
+                  <div className="flex items-center gap-3 mb-2">
+                    {STEPS.map((s, idx) => (
+                      <div key={s.id} className="flex items-center">
+                        <div className={`
+                          w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
+                          ${getStepNumber(step) >= s.number
+                            ? 'bg-primary-500 text-white'
+                            : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
+                          }
+                        `}>
+                          {s.number}
+                        </div>
+                        {idx < STEPS.length - 1 && (
+                          <div className={`w-8 h-0.5 ml-3 ${isDark ? 'bg-zinc-600' : 'bg-neutral-200'}`} />
                         )}
                       </div>
-                      {idx < STEPS.length - 1 && (
-                        <div className={`w-8 h-0.5 ml-3 ${step === 'complete' ? 'bg-primary-500' : isDark ? 'bg-zinc-600' : 'bg-neutral-200'}`} />
-                      )}
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                  {getStepTitle()}
-                </h2>
-                <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                  {getStepDescription()}
-                </p>
+                  <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                    {getStepTitle()}
+                  </h2>
+                  <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                    {getStepDescription()}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Content */}
             <AnimatePresence mode="wait">
@@ -610,69 +608,148 @@ export default function InviteParticipantModal({
                 </motion.div>
               )}
 
-              {/* Complete */}
+              {/* Complete - Success Screen */}
               {step === 'complete' && result && (
                 <motion.div
                   key="complete"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.2 }}
-                  className="p-6 text-center space-y-4"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                  className="p-8 text-center"
                 >
-                  <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center ${isDark ? 'bg-green-500/20' : 'bg-green-50'}`}>
-                    <Check className="w-8 h-8 text-green-500" />
+                  {/* Close button for success screen */}
+                  <button
+                    onClick={handleClose}
+                    className={`
+                      absolute top-4 right-4 p-2 rounded-lg transition-all duration-200
+                      ${isDark
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                        : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                    title="Close"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+
+                  {/* Animated success icon with rings */}
+                  <div className="relative w-24 h-24 mx-auto mb-6">
+                    {/* Outer pulse ring */}
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1.4, opacity: 0 }}
+                      transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut' }}
+                      className={`absolute inset-0 rounded-full ${isDark ? 'bg-green-500/20' : 'bg-green-100'}`}
+                    />
+                    {/* Inner pulse ring */}
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1.2, opacity: 0 }}
+                      transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut', delay: 0.2 }}
+                      className={`absolute inset-0 rounded-full ${isDark ? 'bg-green-500/30' : 'bg-green-200'}`}
+                    />
+                    {/* Main circle */}
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 15, delay: 0.1 }}
+                      className={`absolute inset-0 rounded-full flex items-center justify-center ${isDark ? 'bg-green-500/20' : 'bg-green-50'}`}
+                    >
+                      <motion.div
+                        initial={{ scale: 0, rotate: -45 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        transition={{ type: 'spring', stiffness: 200, damping: 12, delay: 0.3 }}
+                      >
+                        <Check className="w-10 h-10 text-green-500" strokeWidth={2.5} />
+                      </motion.div>
+                    </motion.div>
                   </div>
 
-                  <div>
-                    <h3 className={`text-lg font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                      Invitation Created!
+                  {/* Success message */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="mb-6"
+                  >
+                    <h3 className={`text-2xl font-light tracking-wide mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                      You're all set! 🎉
                     </h3>
-                    <p className={`text-sm mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                      Share this link with {result.invitation.participantName}
+                    <p className={`text-sm font-light ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                      Share this link with <span className={`font-medium ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}>{result.invitation.participantName}</span> to let them join
                     </p>
-                  </div>
+                  </motion.div>
 
-                  {/* Link display with inline copy button */}
-                  <div className={`p-4 rounded-xl text-left ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-50'}`}>
+                  {/* Link card */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className={`
+                      p-5 rounded-2xl text-left
+                      ${isDark ? 'bg-zinc-700/50 border border-zinc-600/50' : 'bg-neutral-50 border border-neutral-200/50'}
+                    `}
+                  >
                     <div className="flex items-center gap-2 mb-3">
-                      <Link2 className={`w-4 h-4 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`} />
-                      <span className={`text-xs font-light tracking-wider uppercase ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                      <div className={`p-1.5 rounded-lg ${isDark ? 'bg-zinc-600' : 'bg-white border border-neutral-200'}`}>
+                        <Link2 className={`w-4 h-4 ${isDark ? 'text-zinc-300' : 'text-neutral-500'}`} />
+                      </div>
+                      <span className={`text-xs font-medium tracking-wider uppercase ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                         Invitation Link
                       </span>
                     </div>
-                    <div className="flex gap-2">
-                      <div className={`
-                        flex-1 p-3 rounded-lg text-sm font-mono break-all
-                        ${isDark ? 'bg-zinc-800 text-zinc-300' : 'bg-white text-neutral-700 border border-neutral-200'}
-                      `}>
-                        {result.joinUrl}
-                      </div>
-                      <button
-                        onClick={handleCopyLink}
-                        className={`
-                          shrink-0 px-4 rounded-lg text-sm font-medium
-                          flex items-center justify-center gap-2 transition-all
-                          ${copied
-                            ? 'bg-green-500 text-white'
-                            : isDark
-                              ? 'bg-primary-500 text-white hover:bg-primary-400'
-                              : 'bg-neutral-900 text-white hover:bg-neutral-800'
-                          }
-                        `}
-                      >
-                        {copied ? (
-                          <Check className="w-4 h-4" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                      </button>
+
+                    <div className={`
+                      p-3 rounded-xl text-sm font-mono break-all mb-4
+                      ${isDark ? 'bg-zinc-800/80 text-zinc-300 border border-zinc-700/50' : 'bg-white text-neutral-600 border border-neutral-200'}
+                    `}>
+                      {result.joinUrl}
                     </div>
-                  </div>
+
+                    <button
+                      onClick={handleCopyLink}
+                      className={`
+                        w-full py-3 px-4 rounded-xl text-sm font-medium
+                        flex items-center justify-center gap-2 transition-all duration-200
+                        ${copied
+                          ? 'bg-green-500 text-white'
+                          : isDark
+                            ? 'bg-primary-500 text-white hover:bg-primary-400 shadow-lg shadow-primary-500/20'
+                            : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-lg shadow-neutral-900/20'
+                        }
+                      `}
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>Copied to clipboard!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copy invitation link</span>
+                        </>
+                      )}
+                    </button>
+                  </motion.div>
+
+                  {/* Subtle hint */}
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                    className={`text-xs mt-4 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}
+                  >
+                    The participant will see a welcome screen when they open this link
+                  </motion.p>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Footer */}
+            {/* Footer - Hidden on complete step */}
+            {step !== 'complete' && (
             <div className={`px-6 py-4 border-t ${isDark ? 'border-zinc-700' : 'border-neutral-200'}`}>
               <div className="flex gap-3">
                 {step === 'type' ? (
@@ -708,21 +785,6 @@ export default function InviteParticipantModal({
                       Continue
                     </button>
                   </>
-                ) : step === 'complete' ? (
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    className={`
-                      w-full py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
-                      transition-all duration-200
-                      ${isDark
-                        ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
-                        : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80'
-                      }
-                    `}
-                  >
-                    Done
-                  </button>
                 ) : step === 'expiration' ? (
                   <>
                     <button
@@ -802,6 +864,7 @@ export default function InviteParticipantModal({
                 )}
               </div>
             </div>
+            )}
           </motion.div>
         </motion.div>
       )}
