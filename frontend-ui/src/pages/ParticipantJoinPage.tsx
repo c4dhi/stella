@@ -4,8 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { AlertCircle, Loader2, Clock, RefreshCw } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import type { InvitationDetails, AcceptInvitationResponse, InvitationStatus } from '../lib/api-types'
+import { checkMicrophonePermission } from '../lib/mediaDevices'
 import TermsModal from '../components/participant/TermsModal'
 import OrganizerMessageModal from '../components/participant/OrganizerMessageModal'
+import PermissionsModal from '../components/participant/PermissionsModal'
 import ParticipantSessionView from '../components/participant/ParticipantSessionView'
 
 // --- STYLES ---
@@ -59,6 +61,7 @@ type PageState =
   | 'ERROR'
   | 'TERMS_MODAL'
   | 'MESSAGE_MODAL'
+  | 'PERMISSIONS_CHECK'  // Device permissions screen
   | 'WAITING'      // When participant is active, waiting in queue
   | 'SESSION_VIEW'
 
@@ -198,21 +201,6 @@ export default function ParticipantJoinPage() {
     return () => clearInterval(intervalId)
   }, [pageState, token])
 
-  // Handle terms acceptance
-  const handleTermsAccepted = useCallback(() => {
-    if (invitation?.customMessage) {
-      setPageState('MESSAGE_MODAL')
-    } else {
-      // No custom message, proceed to accept invitation
-      handleAcceptInvitation()
-    }
-  }, [invitation])
-
-  // Handle message acknowledgment
-  const handleMessageAcknowledged = useCallback(() => {
-    handleAcceptInvitation()
-  }, [])
-
   // Accept invitation and join session
   const handleAcceptInvitation = useCallback(async () => {
     if (!token) return
@@ -240,6 +228,39 @@ export default function ParticipantJoinPage() {
       setPageState('ERROR')
     }
   }, [token])
+
+  // Check if we need to show permissions screen
+  const checkAndProceed = useCallback(async () => {
+    const micPermission = await checkMicrophonePermission()
+
+    if (micPermission === 'granted') {
+      // Skip permissions screen, go straight to accept
+      await handleAcceptInvitation()
+    } else {
+      // Show permissions screen
+      setPageState('PERMISSIONS_CHECK')
+    }
+  }, [handleAcceptInvitation])
+
+  // Handle terms acceptance
+  const handleTermsAccepted = useCallback(() => {
+    if (invitation?.customMessage) {
+      setPageState('MESSAGE_MODAL')
+    } else {
+      // No custom message, check permissions
+      checkAndProceed()
+    }
+  }, [invitation, checkAndProceed])
+
+  // Handle message acknowledgment
+  const handleMessageAcknowledged = useCallback(() => {
+    checkAndProceed()
+  }, [checkAndProceed])
+
+  // Handle permissions complete
+  const handlePermissionsComplete = useCallback(async () => {
+    await handleAcceptInvitation()
+  }, [handleAcceptInvitation])
 
   // Rejoin an already accepted invitation
   const handleRejoinInvitation = useCallback(async () => {
@@ -356,6 +377,16 @@ export default function ParticipantJoinPage() {
               message={invitation.customMessage!}
               participantName={invitation.participantName}
               onContinue={handleMessageAcknowledged}
+            />
+          )}
+
+          {/* PERMISSIONS_CHECK State */}
+          {pageState === 'PERMISSIONS_CHECK' && invitation && (
+            <PermissionsModal
+              key="permissions"
+              isOpen={true}
+              participantName={invitation.participantName}
+              onComplete={handlePermissionsComplete}
             />
           )}
 
