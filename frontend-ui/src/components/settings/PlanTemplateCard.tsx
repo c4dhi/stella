@@ -64,11 +64,10 @@ export default function PlanTemplateCard({
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
       transition={{ delay: index * 0.05, type: 'spring', stiffness: 300, damping: 25 }}
       whileHover={{ y: -4, transition: { duration: 0.2 } }}
-      className={`group relative rounded-2xl overflow-hidden transition-shadow duration-300 ${
-        isDark
+      className={`group relative rounded-2xl overflow-hidden transition-shadow duration-300 ${isDark
           ? 'bg-surface-dark-secondary hover:shadow-xl hover:shadow-black/20'
           : 'bg-white shadow-sm hover:shadow-xl hover:shadow-black/5'
-      }`}
+        }`}
     >
       <div className="p-5">
         {/* Header */}
@@ -88,21 +87,18 @@ export default function PlanTemplateCard({
 
           {/* Title & Description */}
           <div className="flex-1 min-w-0">
-            <h3 className={`text-heading-sm font-semibold truncate ${
-              isDark ? 'text-content-inverse' : 'text-content'
-            }`}>
+            <h3 className={`text-heading-sm font-semibold truncate ${isDark ? 'text-content-inverse' : 'text-content'
+              }`}>
               {template.name}
             </h3>
             {template.description ? (
-              <p className={`text-body-sm mt-1 line-clamp-2 ${
-                isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-              }`}>
+              <p className={`text-body-sm mt-1 line-clamp-2 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
                 {template.description}
               </p>
             ) : (
-              <p className={`text-body-sm mt-1 italic ${
-                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
-              }`}>
+              <p className={`text-body-sm mt-1 italic ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                }`}>
                 No description
               </p>
             )}
@@ -112,12 +108,10 @@ export default function PlanTemplateCard({
         {/* Stats Pills */}
         <div className="flex flex-wrap gap-2 mb-5">
           <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${
-              isDark
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
                 ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
                 : 'bg-surface-secondary text-content-secondary'
-            }`}
-            whileHover={{ scale: 1.05 }}
+              }`}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -127,12 +121,10 @@ export default function PlanTemplateCard({
             {stateCount} {stateCount === 1 ? 'state' : 'states'}
           </motion.div>
           <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${
-              isDark
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
                 ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
                 : 'bg-surface-secondary text-content-secondary'
-            }`}
-            whileHover={{ scale: 1.05 }}
+              }`}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 11l3 3L22 4" />
@@ -141,12 +133,10 @@ export default function PlanTemplateCard({
             {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
           </motion.div>
           <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${
-              isDark
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
                 ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
                 : 'bg-surface-secondary text-content-secondary'
-            }`}
-            whileHover={{ scale: 1.05 }}
+              }`}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
@@ -157,12 +147,10 @@ export default function PlanTemplateCard({
         </div>
 
         {/* Footer */}
-        <div className={`flex items-center justify-between pt-4 border-t ${
-          isDark ? 'border-border-dark/50' : 'border-border/50'
-        }`}>
-          <span className={`text-caption ${
-            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+        <div className={`flex items-center justify-between pt-4 border-t ${isDark ? 'border-border-dark/50' : 'border-border/50'
           }`}>
+          <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+            }`}>
             Updated {updatedAt}
           </span>
 
@@ -170,11 +158,10 @@ export default function PlanTemplateCard({
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
             <motion.button
               onClick={onEdit}
-              className={`p-2 rounded-lg transition-colors ${
-                isDark
+              className={`p-2 rounded-lg transition-colors ${isDark
                   ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-tertiary'
                   : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
-              }`}
+                }`}
               title="Edit"
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
@@ -186,11 +173,10 @@ export default function PlanTemplateCard({
             </motion.button>
             <motion.button
               onClick={onDuplicate}
-              className={`p-2 rounded-lg transition-colors ${
-                isDark
+              className={`p-2 rounded-lg transition-colors ${isDark
                   ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-tertiary'
                   : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
-              }`}
+                }`}
               title="Duplicate"
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
@@ -202,11 +188,10 @@ export default function PlanTemplateCard({
             </motion.button>
             <motion.button
               onClick={onDelete}
-              className={`p-2 rounded-lg transition-colors ${
-                isDark
+              className={`p-2 rounded-lg transition-colors ${isDark
                   ? 'text-content-inverse-secondary hover:text-red-400 hover:bg-red-500/10'
                   : 'text-content-secondary hover:text-red-600 hover:bg-red-50'
-              }`}
+                }`}
               title="Delete"
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
@@ -221,11 +206,10 @@ export default function PlanTemplateCard({
 
       {/* Hover overlay */}
       <motion.div
-        className={`absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${
-          isDark
+        className={`absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${isDark
             ? 'bg-gradient-to-t from-primary/5 to-transparent'
             : 'bg-gradient-to-t from-primary/5 to-transparent'
-        }`}
+          }`}
       />
     </motion.div>
   )

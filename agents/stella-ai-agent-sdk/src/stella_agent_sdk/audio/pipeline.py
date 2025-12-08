@@ -111,6 +111,11 @@ class AudioPipeline:
         # Barge-in callbacks
         self._speech_started_callbacks: List[Callable[[], Awaitable[None]]] = []
 
+        # Speaker attribution: Lock in who is speaking at VAD speech_started
+        # This prevents race conditions where current_audio_speaker changes
+        # before the transcript for a previous speaker is received
+        self._current_utterance_speaker: Optional[str] = None
+
         # Audio streaming
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._stt_stream_task: Optional[asyncio.Task] = None
@@ -304,11 +309,24 @@ class AudioPipeline:
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
             # Use Envelope format: { type, data: { ... } }
-            # Priority: event.participant_id > current_audio_speaker > default participant_id
-            speaker_id = event.participant_id or self._room.current_audio_speaker or self._participant_id
+            #
+            # Speaker attribution logic:
+            # - Use current_audio_speaker as the ground truth (updated with each audio frame)
+            # - If utterance_speaker differs from current_audio_speaker, a speaker change occurred
+            #   mid-stream (without a silence gap triggering speech_started), so update it
+            # - This handles the case where participant starts speaking right after organizer
+            #
+            # NOTE: event.participant_id from STT is NOT used because it's always the
+            # same value passed when the stream was initialized, not the actual speaker.
+            current_speaker = self._room.current_audio_speaker
+            if current_speaker and current_speaker != self._current_utterance_speaker:
+                # Speaker changed without a speech_started event (no silence gap)
+                logger.debug(f"Speaker change detected: {self._current_utterance_speaker} -> {current_speaker}")
+                self._current_utterance_speaker = current_speaker
+            speaker_id = self._current_utterance_speaker or current_speaker or self._participant_id
             # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
             speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
-            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}, current_audio_speaker={self._room.current_audio_speaker}")
+            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}, utterance_speaker={self._current_utterance_speaker}, current_audio_speaker={self._room.current_audio_speaker}")
             await self._room.publish_data({
                 "type": "transcript",
                 "data": {
@@ -335,7 +353,13 @@ class AudioPipeline:
 
     async def _handle_speech_started(self) -> None:
         """Handle VAD speech_started signal (potential barge-in)."""
-        logger.debug("Speech started detected")
+        # Lock in the speaker identity at the START of each utterance
+        # This is the most reliable moment for attribution because:
+        # 1. current_audio_speaker was just updated from the incoming audio frame
+        # 2. No race condition - we capture before any transcription happens
+        # 3. All subsequent partial/final transcripts for this utterance use this speaker
+        self._current_utterance_speaker = self._room.current_audio_speaker
+        logger.debug(f"Speech started detected - locked speaker: {self._current_utterance_speaker}")
 
         # Fire all registered callbacks
         for callback in self._speech_started_callbacks:
