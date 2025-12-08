@@ -88,7 +88,9 @@ const interpolate = (value: number, inputRange: number[], outputRange: number[])
   return outputRange[0];
 };
 
-// Calculate mouth SVG path (matches mobile calculateMouthPath function)
+// Calculate mouth SVG path using UNIFIED cubic bezier structure
+// This prevents glitches when transitioning between speaking/not-speaking
+// because the path structure remains consistent (always M -> C -> C -> Z)
 const calculateMouthPath = (
   mouthOpenness: number,
   mouthEmotion: MouthEmotion,
@@ -99,37 +101,69 @@ const calculateMouthPath = (
 
   const shape = MOUTH_EXPRESSIONS[mouthEmotion] || MOUTH_EXPRESSIONS.neutral;
 
-  if (isSpeaking) {
-    // Speaking: O-shaped mouth (ellipse)
-    const baseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 0.8, 30);  // Increased from 0.6, 20
-    const baseHeight = Math.max(shape.height * 12, 12);  // Increased from 8, 8
+  // Calculate speaking dimensions (oval) - LARGER and more expressive
+  const speakingBaseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.2, 45);  // Increased from 0.8, 30
+  const speakingBaseHeight = Math.max(shape.height * 20, 20);  // Increased from 12, 12
+  const openness = interpolate(
+    mouthOpenness,
+    [0, 0.05, 0.15, 0.4, 1.0],      // More responsive to lower values
+    [0.5, 0.8, 1.2, 1.8, 2.5]       // More expressive range
+  );
+  const speakingHeight = speakingBaseHeight * openness;
+  const widthFactor = interpolate(openness, [0.5, 2.5], [1.0, 0.8]);
+  const speakingWidth = speakingBaseWidth * widthFactor;
 
-    // Use openness to control mouth size (audio-reactive)
-    const openness = interpolate(
-      mouthOpenness,
-      [0, 0.05, 0.2, 0.5, 1.0],
-      [0.4, 0.6, 0.9, 1.3, 1.7]
-    );
+  // Calculate non-speaking dimensions - BIGGER smile
+  const smileWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.0, 35);  // Increased from 0.6, 20
 
-    const ovalHeight = baseHeight * openness;
-    const widthFactor = interpolate(openness, [0.4, 1.7], [1.0, 0.85]);
-    const ovalWidth = baseWidth * widthFactor;
+  // Blend between speaking and non-speaking based on isSpeaking flag
+  const talkingAmount = isSpeaking ? Math.min(mouthOpenness * 5, 1) : 0;
 
-    const radiusX = ovalWidth / 2;
-    const radiusY = ovalHeight / 2;
+  const finalWidth = smileWidth + (speakingWidth - smileWidth) * talkingAmount;
 
-    // SVG ellipse path
-    return `M ${centerX - radiusX} ${centerY}
-            A ${radiusX} ${radiusY} 0 1 1 ${centerX + radiusX} ${centerY}
-            A ${radiusX} ${radiusY} 0 1 1 ${centerX - radiusX} ${centerY} Z`;
-  } else {
-    // Not speaking: curved line (smile/neutral)
-    const lineWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 0.6, 20);
-    const startX = centerX - lineWidth / 2;
-    const endX = centerX + lineWidth / 2;
-    const curveY = centerY + (shape.curvature * 20);
-    return `M ${startX} ${centerY} Q ${centerX} ${curveY} ${endX} ${centerY}`;
-  }
+  // Calculate radii
+  const radiusX = Math.max(finalWidth / 2, 18);  // Increased minimum from 10
+
+  // For speaking: use oval height; For smile: very thin
+  const speakingRadiusY = Math.max(speakingHeight / 2, 12);  // Increased from 8
+  const smileRadiusY = 2; // Slightly thicker line for smile
+  const radiusY = smileRadiusY + (speakingRadiusY - smileRadiusY) * talkingAmount;
+
+  // Smile curvature: positive = smile (curves down), negative = frown (curves up)
+  // This is the vertical offset for the smile curve - MORE PRONOUNCED
+  const smileCurveAmount = shape.curvature * 22 * (1 - talkingAmount);  // Increased from 15
+
+  // Bezier control point factor (0.552 approximates a circle)
+  const k = 0.552;
+
+  // Start and end points (on the horizontal center line)
+  const startX = centerX - radiusX;
+  const endX = centerX + radiusX;
+
+  // KEY INSIGHT: For a smile, both top and bottom control points curve in the SAME direction
+  // For an oval, they curve in OPPOSITE directions
+  // We blend between these two behaviors based on talkingAmount
+
+  // When talking (oval): top goes up (-radiusY), bottom goes down (+radiusY)
+  // When smiling (curve): both go down by smileCurveAmount
+
+  const topCurveOffset = -radiusY * k * talkingAmount + smileCurveAmount;
+  const bottomCurveOffset = radiusY * k * talkingAmount + smileCurveAmount;
+
+  // Control points for top curve (from left to right)
+  const topCp1X = startX + radiusX * 0.3;
+  const topCp1Y = centerY + topCurveOffset;
+  const topCp2X = endX - radiusX * 0.3;
+  const topCp2Y = centerY + topCurveOffset;
+
+  // Control points for bottom curve (from right back to left)
+  const botCp1X = endX - radiusX * 0.3;
+  const botCp1Y = centerY + bottomCurveOffset;
+  const botCp2X = startX + radiusX * 0.3;
+  const botCp2Y = centerY + bottomCurveOffset;
+
+  // Unified path: M -> C -> C -> Z (same structure always)
+  return `M ${startX} ${centerY} C ${topCp1X} ${topCp1Y} ${topCp2X} ${topCp2Y} ${endX} ${centerY} C ${botCp1X} ${botCp1Y} ${botCp2X} ${botCp2Y} ${startX} ${centerY} Z`;
 };
 
 // Calculate eyebrow SVG path
