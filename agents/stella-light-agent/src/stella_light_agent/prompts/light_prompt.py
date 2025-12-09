@@ -20,6 +20,7 @@ class LightPromptBuilder:
 
         Args:
             context: State machine context from get_context_for_prompt()
+                     May include 'plan_system_prompt' for custom identity/instructions
 
         Returns:
             Complete system prompt string
@@ -30,9 +31,10 @@ class LightPromptBuilder:
         progress = context.get("progress", {})
         state_just_changed = context.get("state_just_changed", False)
         current_task = context.get("current_task")
+        plan_system_prompt = context.get("plan_system_prompt")
 
         parts = [
-            self._build_identity(),
+            self._build_identity(plan_system_prompt),
             self._build_guardrails(),
             self._build_response_format(),
             self._build_deliverable_rules(deliverables),
@@ -48,8 +50,27 @@ class LightPromptBuilder:
 
         return "\n\n".join(parts)
 
-    def _build_identity(self) -> str:
-        """Build STELLA identity section."""
+    def _build_identity(self, plan_system_prompt: Optional[str] = None) -> str:
+        """
+        Build STELLA identity section.
+
+        Args:
+            plan_system_prompt: Optional custom system prompt from the plan.
+                               If provided, uses this instead of the default identity.
+        """
+        # If a custom system prompt is provided in the plan, use it
+        if plan_system_prompt:
+            return f"""## Your Identity & Instructions
+{plan_system_prompt}
+
+## Core Personality Traits
+- Friendly, warm, and genuinely interested in the person you're speaking with
+- Supportive and encouraging, never judgmental
+- Natural and conversational - avoid sounding robotic or scripted
+- Concise but thorough - aim for 30-50 words per response
+- Ask only ONE question at a time to keep the conversation flowing naturally"""
+
+        # Default STELLA identity
         return """## Your Identity
 You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.
 

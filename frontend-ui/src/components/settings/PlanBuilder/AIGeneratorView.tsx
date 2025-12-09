@@ -7,16 +7,16 @@ import { apiClient } from '../../../services/ApiClient'
 
 const EXAMPLE_PROMPTS = [
   {
-    title: 'Customer Onboarding',
-    prompt: 'Create a plan for onboarding new customers with welcome call, account setup, and training sessions',
+    title: 'Fitness Check-in',
+    prompt: 'Conduct a fitness check-in: first greet and learn their name, then ask about current exercise habits (type, frequency, duration), followed by discussing their goals and challenges, and finally provide encouragement and schedule a follow-up',
   },
   {
-    title: 'Product Launch',
-    prompt: 'Design a product launch plan with market research, beta testing, marketing campaign, and release phases',
+    title: 'Restaurant Reservation',
+    prompt: 'Take a restaurant reservation: greet the caller, collect booking details (date, time, party size), ask about special requests (dietary needs, occasion, seating preference), confirm the reservation details, and thank them',
   },
   {
-    title: 'Interview Process',
-    prompt: 'Structure an interview process with phone screening, technical assessment, and final interviews',
+    title: 'Tech Support Intake',
+    prompt: 'Handle a tech support call: greet and get customer info, identify the problem (device, issue description, when it started), try basic troubleshooting steps, then either resolve or escalate with a ticket number',
   },
 ]
 

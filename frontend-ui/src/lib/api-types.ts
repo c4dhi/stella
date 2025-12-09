@@ -212,7 +212,8 @@ export interface CreateAgentDto {
   name: string // max 255 characters, required
   icon?: string // max 10 characters (emoji), optional
   agentType?: string // agent type id (e.g., 'stella-agent', 'echo-agent')
-  config?: Record<string, unknown> // agent-specific config (e.g., { plan_id: 'stella_smalltalk' })
+  config?: Record<string, unknown> // agent-specific config (e.g., { plan: {...} })
+  envVarTemplateId?: string // environment variable template to use
 }
 
 export interface AgentType {
@@ -519,41 +520,102 @@ export function isAgentRunning(agent: AgentInstance): boolean {
 
 // ============================================================================
 // Plan Template Types (for Plan Builder)
+// Canonical format matching stella-ai-agent-sdk/plan
 // ============================================================================
 
+/**
+ * State execution mode (matches SDK StateType enum)
+ * - strict: Sequential task processing - one task at a time
+ * - loose: Flexible/parallel task processing - any order
+ */
+export type StateType = 'strict' | 'loose'
+
+/**
+ * @deprecated Use StateType instead. Kept for backward compatibility.
+ */
 export type ExecutionMode = 'sequential' | 'flexible'
 
 export type DeliverableType = 'string' | 'number' | 'boolean' | 'enum'
 
+/**
+ * A single deliverable within a task.
+ * Represents a piece of information to collect from the user.
+ */
 export interface PlanDeliverable {
-  id: string
-  label: string
+  key: string                      // Unique identifier (was: id)
   type: DeliverableType
-  description?: string
+  description: string              // What to collect (was: label)
   required: boolean
-  enumValues?: string[]
+  acceptance_criteria?: string     // Validation rules (was: description)
+  enum_values?: string[]           // For enum type (was: enumValues)
   examples?: string[]
 }
 
+/**
+ * A task within a state, containing deliverables.
+ */
 export interface PlanTask {
   id: string
-  label: string
-  description?: string
+  description: string              // Task title/name (was: label)
+  instruction?: string             // Instructions for agent (was: description)
   required: boolean
   deliverables: PlanDeliverable[]
 }
 
-export interface PlanState {
-  id: string
-  label: string
-  execution_mode: ExecutionMode
-  description?: string
-  tasks: PlanTask[]
+/**
+ * State transition definition.
+ */
+export interface StateTransition {
+  target_state_id: string
+  condition_type: string           // "all_tasks_complete", "deliverable_value", "deliverable_exists"
+  priority?: number
+  condition_config?: Record<string, unknown>
 }
 
+/**
+ * A state in the plan, containing tasks.
+ */
+export interface PlanState {
+  id: string
+  title: string                    // Display name (was: label)
+  type: StateType                  // Processing mode (was: execution_mode)
+  description?: string
+  tasks: PlanTask[]
+  transitions?: StateTransition[]
+}
+
+// Session context field for collecting participant information
+export interface SessionContextField {
+  id: string
+  label: string
+  type: 'string' | 'number' | 'boolean' | 'select'
+  required: boolean
+  description?: string
+  options?: string[]  // For select type
+  default_value?: string | number | boolean  // snake_case for SDK consistency
+}
+
+export interface SessionContext {
+  fields: SessionContextField[]
+}
+
+/**
+ * Complete plan content structure.
+ *
+ * Note: id, title, description, initial_state_id are optional here because
+ * they may come from the parent PlanTemplate when stored in the database.
+ * When passed to the agent, these should be populated from PlanTemplate fields.
+ */
 export interface PlanContent {
+  id?: string                      // Plan identifier (optional, from template)
+  title?: string                   // Plan display name (optional, from template)
+  description?: string             // Plan description (optional, from template)
+  initial_state_id?: string        // Starting state ID
   states: PlanState[]
   metadata?: Record<string, unknown>
+  // Initial prompt configuration
+  system_prompt?: string           // Agent persona (snake_case for SDK consistency)
+  session_context?: SessionContext
 }
 
 export interface PlanTemplate {
@@ -591,4 +653,65 @@ export interface GeneratePlanTemplateResponse {
   content: PlanContent
   suggestedName: string
   suggestedDescription: string
+}
+
+// ============================================================================
+// Environment Variable Template Types
+// ============================================================================
+
+export interface EnvVarTemplate {
+  id: string
+  userId: string
+  name: string
+  description?: string
+  variableKeys: string[]  // Only keys, not values (for security)
+  agentTypeId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateEnvVarTemplateDto {
+  name: string
+  description?: string
+  variables: Record<string, string>
+  agentTypeId?: string
+}
+
+export interface UpdateEnvVarTemplateDto {
+  name?: string
+  description?: string
+  variables?: Record<string, string>
+  agentTypeId?: string
+}
+
+// ============================================================================
+// Agent Requirements (parsed from configSchema)
+// ============================================================================
+
+export interface AgentRequirements {
+  requiresPlan: boolean
+  requiredEnvVars: string[]
+}
+
+/**
+ * Parse agent requirements from configSchema
+ * Looks for:
+ * - x-stella-requires-plan: true on any property
+ * - x-stella-env-vars: ["VAR1", "VAR2"] at root level
+ */
+export function parseAgentRequirements(
+  configSchema: Record<string, unknown> | null | undefined
+): AgentRequirements {
+  if (!configSchema) {
+    return { requiresPlan: false, requiredEnvVars: [] }
+  }
+
+  const properties = (configSchema.properties as Record<string, any>) || {}
+  const requiresPlan = Object.values(properties).some(
+    (prop: any) => prop?.['x-stella-requires-plan'] === true
+  )
+
+  const requiredEnvVars = (configSchema['x-stella-env-vars'] as string[]) || []
+
+  return { requiresPlan, requiredEnvVars }
 }

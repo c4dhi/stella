@@ -8,6 +8,7 @@ import SettingsPage from './pages/SettingsPage'
 import ParticipantJoinPage from './pages/ParticipantJoinPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { ToastContainer } from './components/Toast'
+import PlanBuilderModal from './components/settings/PlanBuilder/PlanBuilderModal'
 import { useAuthStore } from './store/authStore'
 import { useToastStore } from './store/toastStore'
 
@@ -24,6 +25,9 @@ export default function App() {
     <BrowserRouter>
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* Global Plan Builder Modal */}
+      <PlanBuilderModal />
 
       <Routes>
         {/* Public Routes */}

@@ -1,37 +1,26 @@
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
-import type { PlanTemplate } from '../../lib/api-types'
+import type { EnvVarTemplate } from '../../lib/api-types'
 
-interface PlanTemplateCardProps {
-  template: PlanTemplate
+interface EnvVarTemplateCardProps {
+  template: EnvVarTemplate
   index: number
   onEdit: () => void
   onDelete: () => void
   onDuplicate: () => void
 }
 
-export default function PlanTemplateCard({
+export default function EnvVarTemplateCard({
   template,
   index,
   onEdit,
   onDelete,
   onDuplicate,
-}: PlanTemplateCardProps) {
+}: EnvVarTemplateCardProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
-  const stateCount = template.content.states?.length || 0
-  const taskCount = template.content.states?.reduce(
-    (acc, state) => acc + (state.tasks?.length || 0),
-    0
-  ) || 0
-  const deliverableCount = template.content.states?.reduce(
-    (acc, state) => acc + state.tasks?.reduce(
-      (acc2, task) => acc2 + (task.deliverables?.length || 0),
-      0
-    ) || 0,
-    0
-  ) || 0
+  const varCount = template.variableKeys?.length || 0
 
   const updatedAt = new Date(template.updatedAt).toLocaleDateString('en-US', {
     month: 'short',
@@ -42,18 +31,18 @@ export default function PlanTemplateCard({
   // Generate gradient colors based on template name
   const colorIndex = template.name.charCodeAt(0) % 5
   const gradients = [
-    'from-blue-500/20 to-indigo-500/20',
-    'from-purple-500/20 to-pink-500/20',
-    'from-emerald-500/20 to-teal-500/20',
-    'from-orange-500/20 to-amber-500/20',
-    'from-cyan-500/20 to-blue-500/20',
+    'from-amber-500/20 to-orange-500/20',
+    'from-green-500/20 to-emerald-500/20',
+    'from-violet-500/20 to-purple-500/20',
+    'from-rose-500/20 to-pink-500/20',
+    'from-sky-500/20 to-cyan-500/20',
   ]
   const iconColors = [
-    'text-blue-500',
-    'text-purple-500',
-    'text-emerald-500',
-    'text-orange-500',
-    'text-cyan-500',
+    'text-amber-500',
+    'text-green-500',
+    'text-violet-500',
+    'text-rose-500',
+    'text-sky-500',
   ]
 
   return (
@@ -75,12 +64,10 @@ export default function PlanTemplateCard({
           {/* Icon */}
           <motion.div
             className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br ${gradients[colorIndex]}`}
-            transition={{ type: 'spring', stiffness: 300, damping: 15 }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={iconColors[colorIndex]}>
-              <polygon points="12 2 2 7 12 12 22 7 12 2" />
-              <polyline points="2 17 12 22 22 17" />
-              <polyline points="2 12 12 17 22 12" />
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
           </motion.div>
 
@@ -104,45 +91,43 @@ export default function PlanTemplateCard({
           </div>
         </div>
 
-        {/* Stats Pills */}
-        <div className="flex flex-wrap gap-2 mb-5">
-          <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
-              ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
-              : 'bg-surface-secondary text-content-secondary'
-              }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="12 2 2 7 12 12 22 7 12 2" />
-              <polyline points="2 17 12 22 22 17" />
-              <polyline points="2 12 12 17 22 12" />
-            </svg>
-            {stateCount} {stateCount === 1 ? 'state' : 'states'}
-          </motion.div>
-          <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
-              ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
-              : 'bg-surface-secondary text-content-secondary'
-              }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-            </svg>
-            {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
-          </motion.div>
-          <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
-              ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
-              : 'bg-surface-secondary text-content-secondary'
-              }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-            {deliverableCount} {deliverableCount === 1 ? 'deliverable' : 'deliverables'}
-          </motion.div>
+        {/* Variable Keys */}
+        <div className="mb-5">
+          <div className={`flex flex-wrap gap-2`}>
+            <motion.div
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
+                ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
+                : 'bg-surface-secondary text-content-secondary'
+                }`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              {varCount} {varCount === 1 ? 'variable' : 'variables'}
+            </motion.div>
+          </div>
+          {varCount > 0 && (
+            <div className={`mt-3 flex flex-wrap gap-1.5`}>
+              {template.variableKeys.slice(0, 4).map((key) => (
+                <span
+                  key={key}
+                  className={`px-2 py-1 rounded-md text-xs font-mono ${isDark
+                      ? 'bg-zinc-700/50 text-zinc-300'
+                      : 'bg-neutral-100 text-neutral-600'
+                    }`}
+                >
+                  {key}
+                </span>
+              ))}
+              {varCount > 4 && (
+                <span className={`px-2 py-1 text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-400'
+                  }`}>
+                  +{varCount - 4} more
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -206,8 +191,8 @@ export default function PlanTemplateCard({
       {/* Hover overlay */}
       <motion.div
         className={`absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${isDark
-          ? 'bg-gradient-to-t from-primary/5 to-transparent'
-          : 'bg-gradient-to-t from-primary/5 to-transparent'
+          ? 'bg-gradient-to-t from-amber-500/5 to-transparent'
+          : 'bg-gradient-to-t from-amber-500/5 to-transparent'
           }`}
       />
     </motion.div>

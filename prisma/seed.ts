@@ -1,6 +1,28 @@
-import { PrismaClient, AgentValidationStatus } from '@prisma/client'
+import { PrismaClient, AgentValidationStatus, Prisma } from '@prisma/client'
 
 const prisma = new PrismaClient()
+
+// Config schema for agents that require a plan
+const planRequiredSchema: Prisma.InputJsonValue = {
+  type: 'object',
+  properties: {
+    plan: {
+      type: 'object',
+      description: 'Plan configuration with states, tasks, and deliverables',
+      'x-stella-requires-plan': true,  // Marker for DeployAgentModal to show plan selection step
+    },
+    llm: {
+      type: 'object',
+      description: 'LLM configuration (model, temperature, etc.)',
+      properties: {
+        model: { type: 'string', default: 'gpt-4o' },
+        temperature: { type: 'number', default: 0.7 },
+      },
+    },
+  },
+  // Required environment variables that must be provided via template or manual entry
+  'x-stella-env-vars': ['OPENAI_API_KEY'],
+}
 
 const builtInAgents = [
   {
@@ -13,6 +35,7 @@ const builtInAgents = [
     validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text'],
     defaultConfig: {},  // Echo agent has no special config
+    configSchema: Prisma.DbNull,  // No special requirements
   },
   {
     slug: 'stella-agent',
@@ -23,7 +46,8 @@ const builtInAgents = [
     isBuiltIn: true,
     validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text', 'plans', 'experts'],
-    defaultConfig: { plan_id: 'stella_smalltalk' },  // Default plan for Stella agent
+    defaultConfig: {},  // Plan is now passed via config.plan instead of plan_id
+    configSchema: planRequiredSchema,  // Requires a plan to be selected
   },
   {
     slug: 'stella-light-agent',
@@ -34,7 +58,8 @@ const builtInAgents = [
     isBuiltIn: true,
     validationStatus: AgentValidationStatus.APPROVED,
     capabilities: ['voice', 'text', 'plans'],
-    defaultConfig: { plan_id: 'stella_smalltalk' },  // Default plan
+    defaultConfig: {},  // Plan is now passed via config.plan instead of plan_id
+    configSchema: planRequiredSchema,  // Requires a plan to be selected
   },
 ]
 
@@ -53,6 +78,7 @@ async function main() {
         validationStatus: agent.validationStatus,
         capabilities: agent.capabilities,
         defaultConfig: agent.defaultConfig,
+        configSchema: agent.configSchema,
       },
       create: agent,
     })

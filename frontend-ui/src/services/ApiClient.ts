@@ -45,6 +45,9 @@ import type {
   UpdatePlanTemplateDto,
   GeneratePlanTemplateDto,
   GeneratePlanTemplateResponse,
+  EnvVarTemplate,
+  CreateEnvVarTemplateDto,
+  UpdateEnvVarTemplateDto,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -801,6 +804,57 @@ class SessionManagementClient {
    */
   async generatePlanTemplate(data: GeneratePlanTemplateDto): Promise<GeneratePlanTemplateResponse> {
     return this.post<GeneratePlanTemplateResponse>('/plan-templates/generate', data)
+  }
+
+  // ============================================================================
+  // Environment Variable Templates API
+  // ============================================================================
+
+  /**
+   * List all environment variable templates for the current user.
+   * Optionally filter by agent type.
+   */
+  async listEnvVarTemplates(agentTypeId?: string): Promise<EnvVarTemplate[]> {
+    const query = agentTypeId ? `?agentTypeId=${agentTypeId}` : ''
+    return this.get<EnvVarTemplate[]>(`/env-var-templates${query}`)
+  }
+
+  /**
+   * Get a single environment variable template by ID.
+   */
+  async getEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
+    return this.get<EnvVarTemplate>(`/env-var-templates/${id}`)
+  }
+
+  /**
+   * Create a new environment variable template.
+   */
+  async createEnvVarTemplate(data: CreateEnvVarTemplateDto): Promise<EnvVarTemplate> {
+    return this.post<EnvVarTemplate>('/env-var-templates', data)
+  }
+
+  /**
+   * Update an existing environment variable template.
+   */
+  async updateEnvVarTemplate(id: string, data: UpdateEnvVarTemplateDto): Promise<EnvVarTemplate> {
+    return this.request<EnvVarTemplate>(`/env-var-templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  /**
+   * Delete an environment variable template.
+   */
+  async deleteEnvVarTemplate(id: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/env-var-templates/${id}`)
+  }
+
+  /**
+   * Duplicate an environment variable template.
+   */
+  async duplicateEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
+    return this.post<EnvVarTemplate>(`/env-var-templates/${id}/duplicate`)
   }
 }
 

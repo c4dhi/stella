@@ -62,6 +62,7 @@ class StellaLightAgent(BaseAgent):
         # Session config
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
+        self._plan_system_prompt: Optional[str] = None  # Custom system prompt from plan
 
         print("[StellaLightAgent] Initialized")
 
@@ -89,6 +90,7 @@ class StellaLightAgent(BaseAgent):
         """
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
+        self._plan_system_prompt: Optional[str] = None  # Store plan's custom system prompt
 
         print(f"[StellaLightAgent] Session started: {session_id}")
         print(f"[StellaLightAgent] Config keys: {list(config.keys())}")
@@ -121,6 +123,10 @@ class StellaLightAgent(BaseAgent):
         if plan_config:
             success = self.state_machine.initialize(plan_config)
             print(f"[StellaLightAgent] State machine initialized: {success}")
+            # Extract custom system prompt from plan if provided (snake_case per SDK convention)
+            if "system_prompt" in plan_config:
+                self._plan_system_prompt = plan_config["system_prompt"]
+                print(f"[StellaLightAgent] Using custom system prompt from plan")
         else:
             print(f"[StellaLightAgent] No plan_id or plan in config - state machine disabled")
 
@@ -184,6 +190,9 @@ class StellaLightAgent(BaseAgent):
             sm_context = {}
             if self.state_machine.is_initialized:
                 sm_context = self.state_machine.get_context_for_prompt()
+            # Add custom system prompt from plan if available
+            if self._plan_system_prompt:
+                sm_context["plan_system_prompt"] = self._plan_system_prompt
 
             # Show processing status
             yield AgentOutput.status(

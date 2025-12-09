@@ -16,22 +16,22 @@ interface PlanBuilderProps {
 }
 
 const createEmptyState = (): PlanState => ({
-  id: `state_${Date.now()}`,
-  label: '',
-  execution_mode: 'flexible',
+  id: crypto.randomUUID(),
+  title: '',
+  type: 'loose',
   tasks: [],
 })
 
 const createEmptyTask = (): PlanTask => ({
-  id: `task_${Date.now()}`,
-  label: '',
+  id: crypto.randomUUID(),
+  description: '',
   required: true,
   deliverables: [],
 })
 
 const createEmptyDeliverable = (): PlanDeliverable => ({
-  id: `deliverable_${Date.now()}`,
-  label: '',
+  key: `deliverable_${crypto.randomUUID().slice(0, 8)}`, // Keep short for readability
+  description: '',
   type: 'string',
   required: true,
 })
@@ -44,6 +44,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
+  const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
   const [states, setStates] = useState<PlanState[]>(template?.content.states || [])
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
@@ -101,6 +102,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         }
         setStates(content.states)
         setSelectedStateIndex(content.states.length > 0 ? 0 : null)
+        // Also import system_prompt if present
+        if (content.system_prompt) {
+          setSystemPrompt(content.system_prompt)
+        }
         addToast({ message: 'Plan imported successfully', type: 'success' })
       } catch (err) {
         addToast({ message: 'Failed to parse JSON file', type: 'error' })
@@ -111,7 +116,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleExport = () => {
-    const content: PlanContent = { states }
+    const content: PlanContent = {
+      states,
+      ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
+    }
     const json = JSON.stringify(content, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -135,7 +143,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
     setIsSaving(true)
     try {
-      const content: PlanContent = { states }
+      const content: PlanContent = {
+        states,
+        ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
+      }
       let saved: PlanTemplate
 
       if (isEditing) {
@@ -347,6 +358,31 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   : 'border-border focus:border-primary text-content placeholder:text-content-tertiary'
               } focus:outline-none`}
             />
+
+            {/* System Prompt / Initial Instructions */}
+            <div className="mt-4">
+              <label className={`block text-caption font-medium mb-2 ${
+                isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+              }`}>
+                System Prompt
+                <span className={`ml-2 text-caption font-normal ${
+                  isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                }`}>
+                  (Agent personality & instructions)
+                </span>
+              </label>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="e.g., You are a friendly memory coach helping seniors improve their cognitive abilities..."
+                rows={4}
+                className={`w-full px-4 py-2.5 rounded-xl text-body-sm bg-transparent border-2 resize-none transition-colors ${
+                  isDark
+                    ? 'border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
+                    : 'border-border focus:border-primary text-content placeholder:text-content-tertiary'
+                } focus:outline-none`}
+              />
+            </div>
           </div>
 
           {/* States List */}
@@ -439,7 +475,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                               ? 'text-content-inverse'
                               : 'text-content'
                         }`}>
-                          {state.label || `State ${index + 1}`}
+                          {state.title || `State ${index + 1}`}
                         </div>
                         <div className={`text-caption ${
                           isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
@@ -559,7 +595,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                 transition={{ duration: 0.2 }}
                 className="h-full"
               >
-                <PlanJsonViewer content={{ states }} />
+                <PlanJsonViewer content={{
+                  states,
+                  ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
+                }} />
               </motion.div>
             ) : selectedStateIndex !== null && states[selectedStateIndex] ? (
               <motion.div

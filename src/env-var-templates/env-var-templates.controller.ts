@@ -1,0 +1,89 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  ValidationPipe,
+  UsePipes,
+} from '@nestjs/common';
+import { EnvVarTemplatesService } from './env-var-templates.service';
+import { CreateEnvVarTemplateDto } from './dto/create-env-var-template.dto';
+import { UpdateEnvVarTemplateDto } from './dto/update-env-var-template.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+
+@Controller('env-var-templates')
+@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+export class EnvVarTemplatesController {
+  constructor(
+    private readonly envVarTemplatesService: EnvVarTemplatesService,
+  ) {}
+
+  /**
+   * Create a new environment variable template
+   */
+  @Post()
+  create(
+    @CurrentUser() user: any,
+    @Body() dto: CreateEnvVarTemplateDto,
+  ) {
+    return this.envVarTemplatesService.create(user.userId, dto);
+  }
+
+  /**
+   * Get all environment variable templates for the current user
+   * Optionally filter by agent type
+   */
+  @Get()
+  findAll(
+    @CurrentUser() user: any,
+    @Query('agentTypeId') agentTypeId?: string,
+  ) {
+    if (agentTypeId) {
+      return this.envVarTemplatesService.findByAgentType(
+        user.userId,
+        agentTypeId,
+      );
+    }
+    return this.envVarTemplatesService.findAllByUser(user.userId);
+  }
+
+  /**
+   * Get a single environment variable template by ID
+   */
+  @Get(':id')
+  findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.envVarTemplatesService.findOne(id, user.userId);
+  }
+
+  /**
+   * Update an environment variable template
+   */
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: UpdateEnvVarTemplateDto,
+  ) {
+    return this.envVarTemplatesService.update(id, user.userId, dto);
+  }
+
+  /**
+   * Delete an environment variable template
+   */
+  @Delete(':id')
+  remove(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.envVarTemplatesService.remove(id, user.userId);
+  }
+
+  /**
+   * Duplicate an environment variable template
+   */
+  @Post(':id/duplicate')
+  duplicate(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.envVarTemplatesService.duplicate(id, user.userId);
+  }
+}

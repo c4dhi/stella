@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 
-export type SettingsSection = 'profile' | 'preferences' | 'plan-builder'
+export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
@@ -40,6 +40,17 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
         <polygon points="12 2 2 7 12 12 22 7 12 2" />
         <polyline points="2 17 12 22 22 17" />
         <polyline points="2 12 12 17 22 12" />
+      </svg>
+    ),
+  },
+  {
+    id: 'env-vars',
+    label: 'Environment Variables',
+    description: 'Secure secrets & keys',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
     ),
   },

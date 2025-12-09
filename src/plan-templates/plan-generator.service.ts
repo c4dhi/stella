@@ -5,37 +5,52 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import { v4 as uuidv4 } from 'uuid';
 import { GeneratePlanTemplateDto } from './dto/generate-plan-template.dto';
 
+// Canonical plan types matching stella-ai-agent-sdk/plan
 interface PlanDeliverable {
-  id: string;
-  label: string;
+  key: string;
   type: 'string' | 'number' | 'boolean' | 'enum';
-  description?: string;
+  description: string;
   required: boolean;
-  enumValues?: string[];
+  acceptance_criteria?: string;
+  enum_values?: string[];
   examples?: string[];
 }
 
 interface PlanTask {
   id: string;
-  label: string;
-  description?: string;
+  description: string;
+  instruction?: string;
   required: boolean;
   deliverables: PlanDeliverable[];
 }
 
+interface StateTransition {
+  target_state_id: string;
+  condition_type?: string;
+  priority?: number;
+  condition_config?: Record<string, unknown>;
+}
+
 interface PlanState {
   id: string;
-  label: string;
-  execution_mode: 'sequential' | 'flexible';
+  title: string;
+  type: 'strict' | 'loose';
   description?: string;
   tasks: PlanTask[];
+  transitions?: StateTransition[];
 }
 
 interface PlanContent {
+  id: string;
+  title: string;
+  description?: string;
+  initial_state_id?: string;
   states: PlanState[];
   metadata?: Record<string, unknown>;
+  system_prompt?: string;
 }
 
 export interface GeneratePlanTemplateResponse {
@@ -109,191 +124,197 @@ export class PlanGeneratorService {
   }
 
   private buildSystemPrompt(): string {
-    return `You are an expert at designing structured plans for AI-powered workflows.
+    return `You are an expert at designing structured conversation plans for AI voice agents.
 Your task is to generate a PlanContent JSON structure based on user descriptions.
+
+IMPORTANT CONCEPT HIERARCHY:
+- STATE = A distinct phase in the conversation (e.g., "Greeting", "Questions", "Farewell")
+- TASK = A granular to-do item within a state (e.g., "Learn the user's name", "Ask about workout frequency")
+- DELIVERABLE = A single data variable that a task produces (e.g., "user_name", "workout_frequency")
+
+Think of it like this:
+- States are like chapters in a conversation
+- Tasks are individual questions or micro-goals (usually 1 deliverable per task)
+- Deliverables are the actual data points/variables collected
 
 The structure must follow this exact schema:
 {
   "content": {
+    "id": "plan_<unique_id>",
+    "title": "Human-readable plan name",
+    "description": "Brief description of the plan purpose",
+    "initial_state_id": "state_<first_state_id>",
     "states": [
       {
-        "id": "state_<unique_timestamp>",
-        "label": "State Name",
-        "execution_mode": "sequential" | "flexible",
-        "description": "Optional description of this state/phase",
+        "id": "state_<unique_id>",
+        "title": "State Name",
+        "type": "strict" | "loose",
+        "description": "What this phase accomplishes",
         "tasks": [
           {
-            "id": "task_<unique_timestamp>",
-            "label": "Task Name",
-            "description": "Optional task description",
+            "id": "task_<unique_id>",
+            "description": "What to ask/do",
+            "instruction": "How to ask it (optional)",
             "required": true | false,
             "deliverables": [
               {
-                "id": "deliverable_<unique_timestamp>",
-                "label": "Deliverable Name",
+                "key": "variable_name",
+                "description": "What this captures",
                 "type": "string" | "number" | "boolean" | "enum",
-                "description": "What this deliverable captures",
                 "required": true | false,
-                "enumValues": ["option1", "option2"],
-                "examples": ["Example 1", "Example 2"]
+                "enum_values": ["option1", "option2"],
+                "examples": ["realistic example 1", "realistic example 2"]
               }
             ]
           }
         ]
       }
     ],
+    "system_prompt": "AI agent persona description",
     "metadata": {}
   },
-  "suggestedName": "A short, descriptive name for this plan (max 50 chars)",
-  "suggestedDescription": "A brief description of what this plan accomplishes (1-2 sentences)"
+  "suggestedName": "Short plan name (max 50 chars)",
+  "suggestedDescription": "Brief description (1-2 sentences)"
 }
 
-CRITICAL: Deliverable examples must be CONCRETE and REALISTIC, not generic placeholders.
-
-Here is an example of a well-structured plan with realistic deliverable examples:
+Here is an example of a well-structured plan - notice how tasks are GRANULAR (one question = one task):
 
 {
   "content": {
+    "id": "plan_fitness_checkin",
+    "title": "Fitness Activity Check-in",
+    "description": "A brief conversation to learn about someone's exercise habits",
+    "initial_state_id": "state_greeting",
     "states": [
       {
-        "id": "state_1",
-        "label": "Initial Discovery",
-        "execution_mode": "sequential",
-        "description": "Gather key information about the customer's needs and situation",
+        "id": "state_greeting",
+        "title": "Greeting",
+        "type": "strict",
+        "description": "Welcome the user and get their name",
         "tasks": [
           {
-            "id": "task_1",
-            "label": "Company Background",
-            "description": "Understand the customer's business context",
+            "id": "task_welcome",
+            "description": "Greet and ask for name",
+            "instruction": "Warmly greet the user and ask what they'd like to be called",
             "required": true,
             "deliverables": [
               {
-                "id": "del_1",
-                "label": "Company Name",
+                "key": "user_name",
+                "description": "User's preferred name",
                 "type": "string",
                 "required": true,
-                "examples": ["Acme Healthcare Solutions", "TechStart GmbH", "Green Energy Corp"]
-              },
-              {
-                "id": "del_2",
-                "label": "Industry Sector",
-                "type": "enum",
-                "required": true,
-                "enumValues": ["Healthcare", "Technology", "Manufacturing", "Finance", "Retail", "Other"],
-                "examples": ["Healthcare", "Technology"]
-              },
-              {
-                "id": "del_3",
-                "label": "Employee Count",
-                "type": "number",
-                "required": true,
-                "description": "Total number of employees in the organization",
-                "examples": ["50", "250", "1200"]
-              },
-              {
-                "id": "del_4",
-                "label": "Current Challenges",
-                "type": "string",
-                "required": true,
-                "description": "Main pain points the customer is facing",
-                "examples": [
-                  "Manual data entry consuming 20+ hours weekly, leading to delayed reporting",
-                  "Customer support response times averaging 48 hours, causing churn",
-                  "Inventory discrepancies of 15% causing stockouts and lost sales"
-                ]
-              }
-            ]
-          },
-          {
-            "id": "task_2",
-            "label": "Budget Discussion",
-            "required": true,
-            "deliverables": [
-              {
-                "id": "del_5",
-                "label": "Annual Budget Range",
-                "type": "enum",
-                "required": true,
-                "enumValues": ["Under €10,000", "€10,000-€50,000", "€50,000-€100,000", "Over €100,000"],
-                "examples": ["€10,000-€50,000"]
-              },
-              {
-                "id": "del_6",
-                "label": "Budget Approval Status",
-                "type": "boolean",
-                "required": true,
-                "description": "Is budget already approved for this initiative?",
-                "examples": ["true", "false"]
+                "examples": ["Sarah", "Mike", "Dr. Johnson"]
               }
             ]
           }
         ]
       },
       {
-        "id": "state_2",
-        "label": "Technical Assessment",
-        "execution_mode": "flexible",
-        "description": "Evaluate technical requirements and integration needs",
+        "id": "state_fitness_questions",
+        "title": "Fitness Activity",
+        "type": "loose",
+        "description": "Learn about the user's exercise habits",
         "tasks": [
           {
-            "id": "task_3",
-            "label": "Infrastructure Review",
+            "id": "task_workout_type",
+            "description": "Ask about preferred exercise",
+            "instruction": "Ask what type of exercise they enjoy most",
             "required": true,
             "deliverables": [
               {
-                "id": "del_7",
-                "label": "Current Systems",
-                "type": "string",
+                "key": "preferred_exercise",
+                "description": "Type of exercise they prefer",
+                "type": "enum",
                 "required": true,
-                "description": "Key software systems currently in use",
-                "examples": [
-                  "SAP ERP, Salesforce CRM, custom PostgreSQL database, Microsoft 365",
-                  "Oracle NetSuite, HubSpot, AWS infrastructure with S3 and Lambda",
-                  "Legacy mainframe system, on-premise Exchange server, custom PHP application"
-                ]
-              },
+                "enum_values": ["Running", "Swimming", "Gym/Weights", "Yoga", "Team Sports", "Other"],
+                "examples": ["Running", "Yoga"]
+              }
+            ]
+          },
+          {
+            "id": "task_frequency",
+            "description": "Ask about workout frequency",
+            "instruction": "Ask how often they exercise per week",
+            "required": true,
+            "deliverables": [
               {
-                "id": "del_8",
-                "label": "API Integration Required",
-                "type": "boolean",
+                "key": "weekly_frequency",
+                "description": "Times per week they exercise",
+                "type": "number",
                 "required": true,
-                "examples": ["true", "false"]
-              },
+                "examples": ["3", "5", "7"]
+              }
+            ]
+          },
+          {
+            "id": "task_duration",
+            "description": "Ask about workout duration",
+            "instruction": "Ask how long their typical workout session is",
+            "required": true,
+            "deliverables": [
               {
-                "id": "del_9",
-                "label": "Data Volume Estimate",
+                "key": "session_duration_minutes",
+                "description": "Typical workout length in minutes",
+                "type": "number",
+                "required": true,
+                "examples": ["30", "45", "60", "90"]
+              }
+            ]
+          },
+          {
+            "id": "task_goals",
+            "description": "Ask about fitness goals",
+            "required": false,
+            "deliverables": [
+              {
+                "key": "fitness_goal",
+                "description": "Their main fitness objective",
                 "type": "string",
                 "required": false,
-                "description": "Estimated amount of data to be processed",
-                "examples": ["~50,000 records/month", "2TB historical data + 100GB monthly growth", "500 transactions/day"]
+                "examples": ["Lose 10kg by summer", "Run a marathon", "Build muscle", "Improve flexibility"]
               }
             ]
           }
         ]
+      },
+      {
+        "id": "state_farewell",
+        "title": "Farewell",
+        "type": "strict",
+        "description": "Thank the user and close the conversation",
+        "tasks": [
+          {
+            "id": "task_thank_and_close",
+            "description": "Thank user and say goodbye",
+            "instruction": "Summarize what you learned, thank them, and wish them well",
+            "required": true,
+            "deliverables": []
+          }
+        ]
       }
-    ]
+    ],
+    "system_prompt": "You are a friendly fitness coach conducting a quick check-in. Be encouraging and enthusiastic about exercise. Use casual, supportive language. Celebrate their efforts regardless of frequency or intensity."
   },
-  "suggestedName": "Customer Discovery Process",
-  "suggestedDescription": "Structured discovery workflow for qualifying new enterprise customers and understanding their technical needs."
+  "suggestedName": "Fitness Activity Check-in",
+  "suggestedDescription": "A brief conversation to learn about someone's exercise habits and fitness goals."
 }
 
 Guidelines:
-1. Create logical states that represent distinct phases of the workflow
-2. Use "sequential" execution_mode when tasks must be completed in order
-3. Use "flexible" execution_mode when tasks can be done in any order
-4. Include meaningful deliverables that capture the output of each task
-5. Use appropriate deliverable types:
-   - "string" for text responses (open-ended answers)
-   - "number" for numeric values (counts, amounts, percentages)
-   - "boolean" for yes/no questions
-   - "enum" for multiple choice (include enumValues array)
-6. Generate unique IDs using the format: state_<timestamp>, task_<timestamp>, deliverable_<timestamp>
-7. Keep the plan practical and achievable
-8. Add helpful descriptions to states, tasks, and deliverables
-9. ALWAYS include realistic examples for EVERY deliverable - examples should be specific and plausible real-world values, NOT generic placeholders like "example value" or "discussed X"
-10. Mark critical deliverables as required: true
+1. REQUIRED FIELDS: Always include id, title, description, and initial_state_id in content
+2. STATES = conversation phases (typically 2-4 states: greeting, main questions, farewell)
+3. TASKS = granular to-dos, usually ONE question per task
+4. DELIVERABLES = individual variables (usually 1 per task, sometimes 0 for closing tasks)
+5. Use "strict" when order matters, "loose" when questions can be asked flexibly
+6. Keep plans SHORT and focused - this is for brief voice conversations
+7. Use appropriate types: string (open text), number (counts), boolean (yes/no), enum (choices)
+8. Generate snake_case keys for deliverables: user_name, workout_frequency, etc.
+9. ALWAYS include realistic examples for deliverables
+10. ALWAYS generate a system_prompt with:
+    - Clear role (e.g., "You are a friendly fitness coach...")
+    - Communication style (casual, professional, enthusiastic, etc.)
+    - 2-3 sentences max
 
-Respond ONLY with valid JSON matching the schema above. No additional text or explanation.`;
+Respond ONLY with valid JSON matching the schema above.`;
   }
 
   private buildUserPrompt(dto: GeneratePlanTemplateDto): string {
@@ -307,32 +328,64 @@ Respond ONLY with valid JSON matching the schema above. No additional text or ex
   private validateAndNormalizeResponse(
     response: GeneratePlanTemplateResponse,
   ): GeneratePlanTemplateResponse {
-    // Ensure all IDs are unique by regenerating them with timestamp + counter
-    const timestamp = Date.now();
-    let counter = 0;
-
+    // Ensure all IDs are proper UUIDs (don't rely on AI-generated IDs)
     if (!response.content?.states) {
       throw new InternalServerErrorException(
         'Invalid response structure: missing states',
       );
     }
 
+    // Generate proper UUIDs for all plan elements
+    response.content.id = uuidv4();
+    response.content.title =
+      response.content.title || response.suggestedName || 'Generated Plan';
+    response.content.description =
+      response.content.description || response.suggestedDescription || '';
+
+    // First pass: Create mapping from old state IDs to new UUIDs
+    const stateIdMap = new Map<string, string>();
+    for (const state of response.content.states) {
+      const oldId = state.id || '';
+      const newId = uuidv4();
+      stateIdMap.set(oldId, newId);
+    }
+
+    // Second pass: Update states with new IDs and fix transition references
     response.content.states = response.content.states.map((state) => ({
       ...state,
-      id: state.id || `state_${timestamp}_${counter++}`,
-      execution_mode: state.execution_mode || 'flexible',
+      id: stateIdMap.get(state.id || '') || uuidv4(),
+      title: state.title || 'Untitled State',
+      type: state.type || 'loose',
       tasks: (state.tasks || []).map((task) => ({
         ...task,
-        id: task.id || `task_${timestamp}_${counter++}`,
+        id: uuidv4(), // Always use UUID for task IDs
+        description: task.description || 'Untitled Task',
         required: task.required ?? true,
         deliverables: (task.deliverables || []).map((del) => ({
           ...del,
-          id: del.id || `deliverable_${timestamp}_${counter++}`,
+          // Keep deliverable keys as snake_case identifiers (not UUIDs)
+          // These are used as variable names, so should be meaningful
+          key: del.key || `deliverable_${uuidv4().slice(0, 8)}`,
+          description: del.description || 'Unnamed deliverable',
           type: del.type || 'string',
           required: del.required ?? true,
         })),
       })),
+      // Update transition target_state_ids to use new UUIDs
+      transitions: (state.transitions || []).map((trans) => ({
+        ...trans,
+        target_state_id:
+          stateIdMap.get(trans.target_state_id) || trans.target_state_id,
+      })),
     }));
+
+    // Set initial_state_id to first state if not provided
+    if (
+      !response.content.initial_state_id &&
+      response.content.states.length > 0
+    ) {
+      response.content.initial_state_id = response.content.states[0].id;
+    }
 
     // Ensure we have suggested name and description
     response.suggestedName = response.suggestedName || 'Generated Plan';

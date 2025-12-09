@@ -208,8 +208,9 @@ export class AgentsService {
    *
    * @param sessionId - The session ID
    * @param createAgentDto - Agent creation parameters
+   * @param userId - The user creating the agent (for env var template access)
    */
-  async create(sessionId: string, createAgentDto: CreateAgentDto) {
+  async create(sessionId: string, createAgentDto: CreateAgentDto, userId: string) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
       include: { room: true, project: true },
@@ -266,7 +267,7 @@ export class AgentsService {
     // 4. Create K8s pod asynchronously (don't block response)
     // NOTE: In the new architecture, agents connect directly to LiveKit rooms via SDK
     // No need for session-management-server to join rooms
-    this.createAgentPodAsync(agent.id, session, createAgentDto, agentType);
+    this.createAgentPodAsync(agent.id, session, createAgentDto, agentType, userId);
 
     return agent;
   }
@@ -279,6 +280,7 @@ export class AgentsService {
     session: { id: string; projectId: string; room: { livekitRoomName: string; serverUrl: string } | null },
     createAgentDto: CreateAgentDto,
     agentType: string,
+    userId: string,
   ): Promise<void> {
     try {
       // Get environment variables for LiveKit (agent pod needs these for gRPC config)
@@ -295,6 +297,7 @@ export class AgentsService {
         agentId,
         sessionId: session.id,
         projectId: session.projectId,
+        userId,
         agentName: createAgentDto.name,
         agentIcon: createAgentDto.icon || '🤖',
         agentType,
@@ -305,6 +308,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: createAgentDto.config || {},
         forceRebuild: createAgentDto.forceRebuild,
+        envVarTemplateId: createAgentDto.envVarTemplateId,
       });
 
       // Update agent with pod info
@@ -739,12 +743,21 @@ export class AgentsService {
       `🔗 Agent ${id} reconnecting to LiveKit room: "${agent.session.room.livekitRoomName}" at ${livekitUrl}`
     );
 
+    // Get the user ID from the project membership (first owner/admin)
+    const projectMembership = await this.prisma.projectMembership.findFirst({
+      where: {
+        projectId: agent.session.projectId,
+        role: { in: ['OWNER', 'ADMIN'] },
+      },
+    });
+
     // Recreate Kubernetes pod with SAME agent ID
     try {
       const { podName, secretName } = await this.k8s.createAgentPod({
         agentId: id, // SAME ID - this ensures pod/secret are unique to this agent
         sessionId: agent.sessionId,
         projectId: agent.session.projectId,
+        userId: projectMembership?.userId || '', // Get user from project for env var access
         agentName: agent.name,
         agentIcon: agent.icon || '🤖',
         roomName: agent.session.room.livekitRoomName,
@@ -754,6 +767,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType: agent.agentType || 'stella-agent',  // Use stored agent type for image selection
+        // Note: envVarTemplateId not passed on restart - uses same config as original
       });
 
       // Update agent with new pod info

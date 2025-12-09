@@ -11,6 +11,7 @@ export default function PlanBuilderModal() {
     isOpen,
     editingTemplate,
     onSaveCallback,
+    isNested,
     currentView,
     generatedContent,
     suggestedName,
@@ -75,15 +76,19 @@ export default function PlanBuilderModal() {
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center"
+          className="fixed inset-0 z-[200] flex items-center justify-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
         >
-          {/* Backdrop */}
+          {/* Backdrop - use blur when standalone, solid overlay when nested to avoid double blur */}
           <motion.div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className={`absolute inset-0 ${
+              isNested
+                ? 'bg-black/80'  // Solid overlay when opened from another modal
+                : 'bg-black/60 backdrop-blur-sm'  // Blurred when standalone
+            }`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

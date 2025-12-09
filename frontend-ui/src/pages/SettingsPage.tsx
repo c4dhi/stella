@@ -7,8 +7,9 @@ import SettingsSidebar, { type SettingsSection } from '../components/settings/Se
 import ProfileSection from '../components/settings/ProfileSection'
 import PreferencesSection from '../components/settings/PreferencesSection'
 import PlanBuilderSection from '../components/settings/PlanBuilderSection'
+import EnvVarBuilderSection from '../components/settings/EnvVarBuilderSection'
 
-const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder']
+const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars']
 
 // Animation variants for page transitions
 const pageVariants = {
@@ -63,6 +64,8 @@ export default function SettingsPage() {
         return <PreferencesSection />
       case 'plan-builder':
         return <PlanBuilderSection />
+      case 'env-vars':
+        return <EnvVarBuilderSection />
       default:
         return <ProfileSection />
     }

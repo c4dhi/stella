@@ -2,11 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as k8s from '@kubernetes/client-node';
 import { AgentImageService } from '../agent-image/agent-image.service';
+import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 
 export interface AgentPodConfig {
   agentId: string;
   sessionId: string;
   projectId: string;
+  userId: string;           // User ID for env var template access validation
   agentName: string;
   agentIcon: string;
   roomName: string;
@@ -18,6 +20,7 @@ export interface AgentPodConfig {
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
   agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
+  envVarTemplateId?: string; // Optional env var template for custom environment variables
 }
 
 @Injectable()
@@ -33,6 +36,7 @@ export class KubernetesService {
   constructor(
     private configService: ConfigService,
     private agentImageService: AgentImageService,
+    private envVarTemplatesService: EnvVarTemplatesService,
   ) {
     this.namespace = this.configService.get<string>('KUBERNETES_NAMESPACE', 'default');
     this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'stella-agent');
@@ -257,6 +261,22 @@ export class KubernetesService {
   }
 
   private async createSecret(secretName: string, config: AgentPodConfig): Promise<void> {
+    // Fetch custom env vars from template if specified
+    let customEnvVars: Record<string, string> = {};
+    if (config.envVarTemplateId && config.userId) {
+      try {
+        this.logger.log(`Fetching env var template ${config.envVarTemplateId} for user ${config.userId}`);
+        customEnvVars = await this.envVarTemplatesService.getDecryptedVariables(
+          config.envVarTemplateId,
+          config.userId,
+        );
+        this.logger.log(`Loaded ${Object.keys(customEnvVars).length} custom environment variables`);
+      } catch (error) {
+        this.logger.error(`Failed to load env var template: ${error.message}`);
+        throw error;
+      }
+    }
+
     const secret: k8s.V1Secret = {
       metadata: {
         name: secretName,
@@ -278,7 +298,10 @@ export class KubernetesService {
         // OPENAI_API_KEY removed - now from stella-ai-secrets
         // ELEVENLABS_API_KEY removed - now from stella-ai-secrets
         // Agent-specific config as JSON string (each agent interprets as needed)
+        // Frontend and agents now use canonical SDK format (no transformation needed)
         AGENT_CONFIG: JSON.stringify(config.agentConfig || {}),
+        // Custom environment variables from user's env var template (decrypted)
+        ...customEnvVars,
       },
     };
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
-import type { PlanState, PlanTask, PlanDeliverable, ExecutionMode } from '../../../lib/api-types'
+import type { PlanState, PlanTask, PlanDeliverable, StateType } from '../../../lib/api-types'
 import PlanTaskEditor from './PlanTaskEditor'
 
 interface PlanStateEditorProps {
@@ -74,8 +74,8 @@ export default function PlanStateEditor({
         <div className="flex-1 space-y-4">
           <input
             type="text"
-            value={state.label}
-            onChange={(e) => onChange({ ...state, label: e.target.value })}
+            value={state.title}
+            onChange={(e) => onChange({ ...state, title: e.target.value })}
             placeholder="State name"
             className="input-field w-full text-heading font-semibold"
           />
@@ -93,12 +93,12 @@ export default function PlanStateEditor({
               Execution Mode
             </label>
             <select
-              value={state.execution_mode}
-              onChange={(e) => onChange({ ...state, execution_mode: e.target.value as ExecutionMode })}
+              value={state.type}
+              onChange={(e) => onChange({ ...state, type: e.target.value as StateType })}
               className="input-field w-full max-w-xs"
             >
-              <option value="flexible">Flexible (agent decides order)</option>
-              <option value="sequential">Sequential (tasks in order)</option>
+              <option value="loose">Flexible (agent decides order)</option>
+              <option value="strict">Sequential (tasks in order)</option>
             </select>
           </div>
         </div>
@@ -188,7 +188,7 @@ export default function PlanStateEditor({
                       <div className={`text-body-sm font-medium truncate ${
                         isDark ? 'text-content-inverse' : 'text-content'
                       }`}>
-                        {task.label || `Task ${index + 1}`}
+                        {task.description || `Task ${index + 1}`}
                       </div>
                       <div className={`text-caption ${
                         isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'

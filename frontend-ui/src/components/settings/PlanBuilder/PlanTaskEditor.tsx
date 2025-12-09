@@ -56,8 +56,8 @@ export default function PlanTaskEditor({
           </label>
           <input
             type="text"
-            value={task.label}
-            onChange={(e) => onChange({ ...task, label: e.target.value })}
+            value={task.description}
+            onChange={(e) => onChange({ ...task, description: e.target.value })}
             placeholder="e.g., Collect patient information"
             className="input-field w-full"
           />
@@ -67,11 +67,11 @@ export default function PlanTaskEditor({
           <label className={`text-body-sm font-medium mb-1.5 block ${
             isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
           }`}>
-            Description (optional)
+            Instructions (optional)
           </label>
           <textarea
-            value={task.description || ''}
-            onChange={(e) => onChange({ ...task, description: e.target.value || undefined })}
+            value={task.instruction || ''}
+            onChange={(e) => onChange({ ...task, instruction: e.target.value || undefined })}
             placeholder="Instructions or context for this task"
             rows={2}
             className="input-field w-full resize-none"
@@ -133,7 +133,7 @@ export default function PlanTaskEditor({
             <AnimatePresence>
               {task.deliverables.map((deliverable, index) => (
                 <motion.div
-                  key={deliverable.id}
+                  key={deliverable.key}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
@@ -147,12 +147,12 @@ export default function PlanTaskEditor({
                           <label className={`text-caption font-medium mb-1 block ${
                             isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                           }`}>
-                            Label
+                            Description
                           </label>
                           <input
                             type="text"
-                            value={deliverable.label}
-                            onChange={(e) => handleUpdateDeliverable(index, { ...deliverable, label: e.target.value })}
+                            value={deliverable.description}
+                            onChange={(e) => handleUpdateDeliverable(index, { ...deliverable, description: e.target.value })}
                             placeholder="e.g., Patient Name"
                             className="input-field w-full text-body-sm"
                           />
@@ -168,7 +168,7 @@ export default function PlanTaskEditor({
                             onChange={(e) => handleUpdateDeliverable(index, {
                               ...deliverable,
                               type: e.target.value as DeliverableType,
-                              enumValues: e.target.value === 'enum' ? deliverable.enumValues || [] : undefined,
+                              enum_values: e.target.value === 'enum' ? deliverable.enum_values || [] : undefined,
                             })}
                             className="input-field w-full text-body-sm"
                           >
@@ -184,16 +184,16 @@ export default function PlanTaskEditor({
                         <label className={`text-caption font-medium mb-1 block ${
                           isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                         }`}>
-                          Description (optional)
+                          Acceptance Criteria (optional)
                         </label>
                         <input
                           type="text"
-                          value={deliverable.description || ''}
+                          value={deliverable.acceptance_criteria || ''}
                           onChange={(e) => handleUpdateDeliverable(index, {
                             ...deliverable,
-                            description: e.target.value || undefined,
+                            acceptance_criteria: e.target.value || undefined,
                           })}
-                          placeholder="Additional context"
+                          placeholder="Validation rules or additional context"
                           className="input-field w-full text-body-sm"
                         />
                       </div>
@@ -207,10 +207,10 @@ export default function PlanTaskEditor({
                           </label>
                           <input
                             type="text"
-                            value={deliverable.enumValues?.join(', ') || ''}
+                            value={deliverable.enum_values?.join(', ') || ''}
                             onChange={(e) => handleUpdateDeliverable(index, {
                               ...deliverable,
-                              enumValues: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
+                              enum_values: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
                             })}
                             placeholder="e.g., Option 1, Option 2, Option 3"
                             className="input-field w-full text-body-sm"
@@ -300,14 +300,14 @@ export default function PlanTaskEditor({
                         <div className={`text-body-sm font-medium truncate ${
                           isDark ? 'text-content-inverse' : 'text-content'
                         }`}>
-                          {deliverable.label || 'Unnamed deliverable'}
+                          {deliverable.description || 'Unnamed deliverable'}
                         </div>
                         <div className={`text-caption ${
                           isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
                         }`}>
                           {deliverable.type}
-                          {deliverable.type === 'enum' && deliverable.enumValues?.length
-                            ? ` (${deliverable.enumValues.length} options)`
+                          {deliverable.type === 'enum' && deliverable.enum_values?.length
+                            ? ` (${deliverable.enum_values.length} options)`
                             : ''}
                           {deliverable.examples?.length
                             ? ` · e.g., ${deliverable.examples.slice(0, 2).join(', ')}${deliverable.examples.length > 2 ? '...' : ''}`
