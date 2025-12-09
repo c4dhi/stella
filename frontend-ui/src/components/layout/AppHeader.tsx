@@ -3,14 +3,12 @@ import { useThemeStore } from '../../store/themeStore'
 import ProfileButton from './ProfileButton'
 
 interface AppHeaderProps {
-  onInfoClick?: () => void
   showBackButton?: boolean
   backPath?: string
   backLabel?: string
 }
 
 export default function AppHeader({
-  onInfoClick,
   showBackButton = false,
   backPath,
   backLabel = 'Back',
@@ -51,19 +49,6 @@ export default function AppHeader({
 
         {/* Right side */}
         <div className="flex items-center gap-1">
-          {onInfoClick && (
-            <button
-              onClick={onInfoClick}
-              className="btn-ghost p-2"
-              title="Network Info"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-            </button>
-          )}
-
           <ProfileButton />
         </div>
       </div>

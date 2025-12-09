@@ -13,9 +13,8 @@ import ParticipantConnectionModal from '../components/modals/ParticipantConnecti
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
-import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import StellaFaceModal from '../components/face/StellaFaceModal'
-import ThemeToggle from '../components/ThemeToggle'
+import ProfileButton from '../components/layout/ProfileButton'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
@@ -60,9 +59,6 @@ export default function SessionView() {
 
   // Agent modal states
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false)
-
-  // Network info modal state
-  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Listener status for recording indicator
   const [listenerStatus, setListenerStatus] = useState<ListenerStatus | null>(null)
@@ -786,18 +782,8 @@ export default function SessionView() {
               </div>
             </div>
 
-            {/* Right side - Theme toggle and Info button */}
-            <ThemeToggle />
-            <button
-              onClick={() => setIsNetworkInfoOpen(true)}
-              className="btn-ghost p-2"
-              title="Network Information"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-            </button>
+            {/* Right side - Profile */}
+            <ProfileButton />
           </div>
         </div>
       </header>
@@ -898,12 +884,6 @@ export default function SessionView() {
         isOpen={showLogsModal}
         onClose={() => setShowLogsModal(false)}
         sessionId={sessionId}
-      />
-
-      {/* Network Info Modal */}
-      <NetworkInfoModal
-        isOpen={isNetworkInfoOpen}
-        onClose={() => setIsNetworkInfoOpen(false)}
       />
 
       {/* STELLA Face Modal - Full Screen */}

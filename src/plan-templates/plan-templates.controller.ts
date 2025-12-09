@@ -10,14 +10,19 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { PlanTemplatesService } from './plan-templates.service';
+import { PlanGeneratorService } from './plan-generator.service';
 import { CreatePlanTemplateDto } from './dto/create-plan-template.dto';
 import { UpdatePlanTemplateDto } from './dto/update-plan-template.dto';
+import { GeneratePlanTemplateDto } from './dto/generate-plan-template.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('plan-templates')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class PlanTemplatesController {
-  constructor(private readonly planTemplatesService: PlanTemplatesService) {}
+  constructor(
+    private readonly planTemplatesService: PlanTemplatesService,
+    private readonly planGeneratorService: PlanGeneratorService,
+  ) {}
 
   @Post()
   create(
@@ -25,6 +30,11 @@ export class PlanTemplatesController {
     @Body() dto: CreatePlanTemplateDto,
   ) {
     return this.planTemplatesService.create(user.userId, dto);
+  }
+
+  @Post('generate')
+  generate(@Body() dto: GeneratePlanTemplateDto) {
+    return this.planGeneratorService.generate(dto);
   }
 
   @Get()

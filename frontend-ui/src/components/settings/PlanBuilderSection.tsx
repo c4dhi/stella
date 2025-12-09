@@ -7,6 +7,7 @@ import { apiClient } from '../../services/ApiClient'
 import type { PlanTemplate } from '../../lib/api-types'
 import PlanTemplateCard from './PlanTemplateCard'
 import PlanBuilderModal from './PlanBuilder/PlanBuilderModal'
+import ConfirmDialog from '../modals/ConfirmDialog'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -39,6 +40,8 @@ export default function PlanBuilderSection() {
   const [templates, setTemplates] = useState<PlanTemplate[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [templateToDelete, setTemplateToDelete] = useState<PlanTemplate | null>(null)
 
   const loadTemplates = async () => {
     try {
@@ -69,18 +72,25 @@ export default function PlanBuilderSection() {
     })
   }
 
-  const handleDelete = async (template: PlanTemplate) => {
-    if (!confirm(`Delete "${template.name}"? This cannot be undone.`)) return
+  const handleDelete = (template: PlanTemplate) => {
+    setTemplateToDelete(template)
+    setDeleteConfirmOpen(true)
+  }
 
+  const confirmDeleteTemplate = async () => {
+    if (!templateToDelete) return
     try {
-      await apiClient.deletePlanTemplate(template.id)
-      setTemplates(prev => prev.filter(t => t.id !== template.id))
-      addToast({ message: `"${template.name}" deleted`, type: 'success' })
+      await apiClient.deletePlanTemplate(templateToDelete.id)
+      setTemplates(prev => prev.filter(t => t.id !== templateToDelete.id))
+      addToast({ message: `"${templateToDelete.name}" deleted`, type: 'success' })
     } catch (err) {
       addToast({
         message: err instanceof Error ? err.message : 'Failed to delete template',
         type: 'error',
       })
+    } finally {
+      setDeleteConfirmOpen(false)
+      setTemplateToDelete(null)
     }
   }
 
@@ -272,6 +282,17 @@ export default function PlanBuilderSection() {
 
       {/* Plan Builder Modal */}
       <PlanBuilderModal />
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="Delete Plan Template"
+        message={`Delete "${templateToDelete?.name}"? This cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmVariant="danger"
+        onConfirm={confirmDeleteTemplate}
+        onCancel={() => { setDeleteConfirmOpen(false); setTemplateToDelete(null) }}
+      />
     </>
   )
 }

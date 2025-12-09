@@ -645,6 +645,7 @@ class AudioPipeline:
             logger.debug("TTS not available, skipping speak()")
             return
 
+        logger.info(f"[TTS] speak() called with text: {text[:50]}...")
         self._is_speaking = True
         self._stop_speaking_event.clear()
 
@@ -675,7 +676,7 @@ class AudioPipeline:
         if not sentence.strip():
             return
 
-        logger.debug(f"Speaking sentence: {sentence[:50]}...")
+        logger.info(f"[TTS] Speaking sentence: {sentence[:50]}...")
 
         max_retries = 3
         base_delay = 0.5  # seconds

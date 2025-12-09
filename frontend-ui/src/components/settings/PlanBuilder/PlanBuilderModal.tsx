@@ -4,9 +4,21 @@ import { usePlanBuilderStore } from '../../../store/planBuilderStore'
 import { useThemeStore } from '../../../store/themeStore'
 import type { PlanTemplate } from '../../../lib/api-types'
 import PlanBuilder from './PlanBuilder'
+import AIGeneratorView from './AIGeneratorView'
 
 export default function PlanBuilderModal() {
-  const { isOpen, editingTemplate, onSaveCallback, closeModal } = usePlanBuilderStore()
+  const {
+    isOpen,
+    editingTemplate,
+    onSaveCallback,
+    currentView,
+    generatedContent,
+    suggestedName,
+    suggestedDescription,
+    closeModal,
+    setView,
+    clearGeneratedContent,
+  } = usePlanBuilderStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
@@ -41,6 +53,24 @@ export default function PlanBuilderModal() {
     closeModal()
   }
 
+  const handleBackToGenerator = () => {
+    clearGeneratedContent()
+    setView('generator')
+  }
+
+  // Build initial template from generated content or editing template
+  const initialTemplate = generatedContent
+    ? {
+        id: '',
+        userId: '',
+        name: suggestedName,
+        description: suggestedDescription,
+        content: generatedContent,
+        createdAt: '',
+        updatedAt: '',
+      }
+    : editingTemplate || undefined
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -70,11 +100,20 @@ export default function PlanBuilderModal() {
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           >
-            <PlanBuilder
-              template={editingTemplate || undefined}
-              onSave={handleSave}
-              onCancel={closeModal}
-            />
+            <AnimatePresence mode="wait">
+              {currentView === 'generator' ? (
+                <AIGeneratorView key="generator" onClose={closeModal} />
+              ) : (
+                <PlanBuilder
+                  key="builder"
+                  template={initialTemplate}
+                  onSave={handleSave}
+                  onCancel={closeModal}
+                  onBack={!editingTemplate && generatedContent ? handleBackToGenerator : undefined}
+                  isFromGenerator={!!generatedContent}
+                />
+              )}
+            </AnimatePresence>
           </motion.div>
         </motion.div>
       )}

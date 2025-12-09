@@ -11,6 +11,8 @@ interface PlanBuilderProps {
   template?: PlanTemplate
   onSave: (template: PlanTemplate) => void
   onCancel: () => void
+  onBack?: () => void
+  isFromGenerator?: boolean
 }
 
 const createEmptyState = (): PlanState => ({
@@ -34,7 +36,7 @@ const createEmptyDeliverable = (): PlanDeliverable => ({
   required: true,
 })
 
-export default function PlanBuilder({ template, onSave, onCancel }: PlanBuilderProps) {
+export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
@@ -49,7 +51,7 @@ export default function PlanBuilder({ template, onSave, onCancel }: PlanBuilderP
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
-  const isEditing = !!template
+  const isEditing = !!template?.id
 
   const handleAddState = () => {
     const newState = createEmptyState()
@@ -180,20 +182,41 @@ export default function PlanBuilder({ template, onSave, onCancel }: PlanBuilderP
         transition={{ delay: 0.1 }}
       >
         <div className="flex items-center gap-4">
-          <motion.button
-            onClick={onCancel}
-            className={`p-2 rounded-xl transition-colors ${
-              isDark
-                ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-secondary'
-                : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
-            }`}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-          </motion.button>
+          {/* Back to Generator button (only when coming from AI generator) */}
+          {onBack && (
+            <motion.button
+              onClick={onBack}
+              className={`p-2 rounded-xl transition-colors ${
+                isDark
+                  ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-secondary'
+                  : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
+              }`}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              title="Back to AI Generator"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </motion.button>
+          )}
+          {/* Close button (only when there's no back button) */}
+          {!onBack && (
+            <motion.button
+              onClick={onCancel}
+              className={`p-2 rounded-xl transition-colors ${
+                isDark
+                  ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-secondary'
+                  : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
+              }`}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </motion.button>
+          )}
           <div>
             <h2 className={`text-heading font-semibold ${
               isDark ? 'text-content-inverse' : 'text-content'
@@ -267,8 +290,30 @@ export default function PlanBuilder({ template, onSave, onCancel }: PlanBuilderP
         </div>
       </motion.div>
 
+      {/* AI-Generated Banner */}
+      {isFromGenerator && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`mx-8 mt-4 px-4 py-2.5 rounded-xl flex items-center gap-3 ${
+            isDark
+              ? 'bg-violet-500/10 border border-violet-500/20'
+              : 'bg-violet-50 border border-violet-200'
+          }`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-500 flex-shrink-0">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+          <span className={`text-body-sm ${isDark ? 'text-violet-400' : 'text-violet-700'}`}>
+            AI-generated plan — review and customize as needed
+          </span>
+        </motion.div>
+      )}
+
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className={`flex-1 flex overflow-hidden ${isFromGenerator ? 'mt-4' : ''}`}>
         {/* Left Panel - State List */}
         <motion.div
           className={`w-80 border-r flex flex-col ${

@@ -577,3 +577,18 @@ export interface UpdatePlanTemplateDto {
   description?: string
   content?: PlanContent
 }
+
+// ============================================================================
+// Plan Generator Types (AI-powered plan generation)
+// ============================================================================
+
+export interface GeneratePlanTemplateDto {
+  prompt: string
+  context?: string
+}
+
+export interface GeneratePlanTemplateResponse {
+  content: PlanContent
+  suggestedName: string
+  suggestedDescription: string
+}

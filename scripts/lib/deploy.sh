@@ -228,6 +228,7 @@ create_secrets() {
         --from-literal=postgres-password="$POSTGRES_PASSWORD" \
         --from-literal=database-url="$db_url" \
         --from-literal=openai-api-key="$OPENAI_API_KEY" \
+        --from-literal=openai-plan-generator-api-key="${OPENAI_PLAN_GENERATOR_API_KEY:-$OPENAI_API_KEY}" \
         --from-literal=jwt-secret="${JWT_SECRET:-$(openssl rand -base64 32)}" \
         --from-literal=livekit-api-key="$LIVEKIT_API_KEY" \
         --from-literal=livekit-api-secret="$LIVEKIT_API_SECRET" \

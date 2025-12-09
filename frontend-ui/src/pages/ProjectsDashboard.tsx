@@ -6,7 +6,7 @@ import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
 import EditProjectModal from '../components/modals/EditProjectModal'
-import NetworkInfoModal from '../components/modals/NetworkInfoModal'
+import ConfirmDialog from '../components/modals/ConfirmDialog'
 import AppHeader from '../components/layout/AppHeader'
 import type { ProjectWithCounts } from '../lib/api-types'
 
@@ -21,7 +21,8 @@ export default function ProjectsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithCounts | null>(null)
-  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
     initializeTheme()
@@ -63,17 +64,25 @@ export default function ProjectsDashboard() {
     }
   }
 
-  const handleDeleteProject = async (projectId: string, projectName: string) => {
-    if (!confirm(`Delete "${projectName}"? This cannot be undone.`)) return
+  const handleDeleteProject = (projectId: string, projectName: string) => {
+    setProjectToDelete({ id: projectId, name: projectName })
+    setDeleteConfirmOpen(true)
+  }
+
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return
     try {
-      await apiClient.deleteProject(projectId)
-      setProjects(prev => prev.filter(p => p.id !== projectId))
-      addToast({ message: `Project "${projectName}" deleted`, type: 'success' })
+      await apiClient.deleteProject(projectToDelete.id)
+      setProjects(prev => prev.filter(p => p.id !== projectToDelete.id))
+      addToast({ message: `Project "${projectToDelete.name}" deleted`, type: 'success' })
     } catch (err) {
       addToast({
         message: err instanceof Error ? err.message : 'Failed to delete project',
         type: 'error'
       })
+    } finally {
+      setDeleteConfirmOpen(false)
+      setProjectToDelete(null)
     }
   }
 
@@ -81,7 +90,7 @@ export default function ProjectsDashboard() {
     <div className={`min-h-screen transition-colors duration-200 ${
       isDark ? 'bg-surface-dark' : 'bg-surface'
     }`}>
-      <AppHeader onInfoClick={() => setIsNetworkInfoOpen(true)} />
+      <AppHeader />
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
@@ -288,9 +297,15 @@ export default function ProjectsDashboard() {
         />
       )}
 
-      <NetworkInfoModal
-        isOpen={isNetworkInfoOpen}
-        onClose={() => setIsNetworkInfoOpen(false)}
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="Delete Project"
+        message={`Delete "${projectToDelete?.name}"? This will permanently remove the project and all its sessions. This cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmVariant="danger"
+        onConfirm={confirmDeleteProject}
+        onCancel={() => { setDeleteConfirmOpen(false); setProjectToDelete(null) }}
       />
     </div>
   )

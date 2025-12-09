@@ -43,6 +43,8 @@ import type {
   PlanTemplate,
   CreatePlanTemplateDto,
   UpdatePlanTemplateDto,
+  GeneratePlanTemplateDto,
+  GeneratePlanTemplateResponse,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -792,6 +794,13 @@ class SessionManagementClient {
    */
   async duplicatePlanTemplate(id: string): Promise<PlanTemplate> {
     return this.post<PlanTemplate>(`/plan-templates/${id}/duplicate`)
+  }
+
+  /**
+   * Generate a plan template using AI.
+   */
+  async generatePlanTemplate(data: GeneratePlanTemplateDto): Promise<GeneratePlanTemplateResponse> {
+    return this.post<GeneratePlanTemplateResponse>('/plan-templates/generate', data)
   }
 }
 
