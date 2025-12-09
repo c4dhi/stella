@@ -40,6 +40,14 @@ import type {
   CreateInvitationResponse,
   InvitationDetails,
   AcceptInvitationResponse,
+  PlanTemplate,
+  CreatePlanTemplateDto,
+  UpdatePlanTemplateDto,
+  GeneratePlanTemplateDto,
+  GeneratePlanTemplateResponse,
+  EnvVarTemplate,
+  CreateEnvVarTemplateDto,
+  UpdateEnvVarTemplateDto,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -740,6 +748,113 @@ class SessionManagementClient {
     return () => {
       eventSource.close()
     }
+  }
+
+  // ============================================================================
+  // Plan Templates API
+  // ============================================================================
+
+  /**
+   * List all plan templates for the current user.
+   */
+  async listPlanTemplates(): Promise<PlanTemplate[]> {
+    return this.get<PlanTemplate[]>('/plan-templates')
+  }
+
+  /**
+   * Get a single plan template by ID.
+   */
+  async getPlanTemplate(id: string): Promise<PlanTemplate> {
+    return this.get<PlanTemplate>(`/plan-templates/${id}`)
+  }
+
+  /**
+   * Create a new plan template.
+   */
+  async createPlanTemplate(data: CreatePlanTemplateDto): Promise<PlanTemplate> {
+    return this.post<PlanTemplate>('/plan-templates', data)
+  }
+
+  /**
+   * Update an existing plan template.
+   */
+  async updatePlanTemplate(id: string, data: UpdatePlanTemplateDto): Promise<PlanTemplate> {
+    return this.request<PlanTemplate>(`/plan-templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  /**
+   * Delete a plan template.
+   */
+  async deletePlanTemplate(id: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/plan-templates/${id}`)
+  }
+
+  /**
+   * Duplicate a plan template.
+   */
+  async duplicatePlanTemplate(id: string): Promise<PlanTemplate> {
+    return this.post<PlanTemplate>(`/plan-templates/${id}/duplicate`)
+  }
+
+  /**
+   * Generate a plan template using AI.
+   */
+  async generatePlanTemplate(data: GeneratePlanTemplateDto): Promise<GeneratePlanTemplateResponse> {
+    return this.post<GeneratePlanTemplateResponse>('/plan-templates/generate', data)
+  }
+
+  // ============================================================================
+  // Environment Variable Templates API
+  // ============================================================================
+
+  /**
+   * List all environment variable templates for the current user.
+   * Optionally filter by agent type.
+   */
+  async listEnvVarTemplates(agentTypeId?: string): Promise<EnvVarTemplate[]> {
+    const query = agentTypeId ? `?agentTypeId=${agentTypeId}` : ''
+    return this.get<EnvVarTemplate[]>(`/env-var-templates${query}`)
+  }
+
+  /**
+   * Get a single environment variable template by ID.
+   */
+  async getEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
+    return this.get<EnvVarTemplate>(`/env-var-templates/${id}`)
+  }
+
+  /**
+   * Create a new environment variable template.
+   */
+  async createEnvVarTemplate(data: CreateEnvVarTemplateDto): Promise<EnvVarTemplate> {
+    return this.post<EnvVarTemplate>('/env-var-templates', data)
+  }
+
+  /**
+   * Update an existing environment variable template.
+   */
+  async updateEnvVarTemplate(id: string, data: UpdateEnvVarTemplateDto): Promise<EnvVarTemplate> {
+    return this.request<EnvVarTemplate>(`/env-var-templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  /**
+   * Delete an environment variable template.
+   */
+  async deleteEnvVarTemplate(id: string): Promise<DeleteResponse> {
+    return this.delete<DeleteResponse>(`/env-var-templates/${id}`)
+  }
+
+  /**
+   * Duplicate an environment variable template.
+   */
+  async duplicateEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
+    return this.post<EnvVarTemplate>(`/env-var-templates/${id}/duplicate`)
   }
 }
 

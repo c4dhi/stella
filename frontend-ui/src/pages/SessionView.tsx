@@ -13,16 +13,16 @@ import ParticipantConnectionModal from '../components/modals/ParticipantConnecti
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
-import NetworkInfoModal from '../components/modals/NetworkInfoModal'
 import StellaFaceModal from '../components/face/StellaFaceModal'
-import ThemeToggle from '../components/ThemeToggle'
+import ProfileButton from '../components/layout/ProfileButton'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
 import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
-import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpdateMessage, TodoList, StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
+import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpdateMessage, TodoList } from '../lib/types'
+import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 import { generateUUID } from '../lib/uuid'
 
 export default function SessionView() {
@@ -60,9 +60,6 @@ export default function SessionView() {
 
   // Agent modal states
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false)
-
-  // Network info modal state
-  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Listener status for recording indicator
   const [listenerStatus, setListenerStatus] = useState<ListenerStatus | null>(null)
@@ -414,6 +411,63 @@ export default function SessionView() {
           current_group: data.current_group_id,
         })
 
+        // Helper to reconstruct tasks from items by grouping on task_id metadata
+        const reconstructTasksFromItems = (items: typeof data.groups[0]['items']) => {
+          if (!items || items.length === 0) return []
+
+          // Group items by task_id from metadata
+          const taskMap = new Map<string, {
+            id: string
+            description: string
+            instruction: string
+            deliverables: typeof items
+          }>()
+
+          for (const item of items) {
+            const taskId = item.metadata?.task_id || 'default_task'
+            const taskDescription = item.metadata?.task_description || item.description || 'Task'
+
+            if (!taskMap.has(taskId)) {
+              taskMap.set(taskId, {
+                id: taskId,
+                description: taskDescription,
+                instruction: '',
+                deliverables: []
+              })
+            }
+            taskMap.get(taskId)!.deliverables.push(item)
+          }
+
+          // Convert map to array of tasks
+          return Array.from(taskMap.values()).map(task => {
+            // Determine task status based on deliverables
+            const allCompleted = task.deliverables.every(d => d.status === 'completed' || d.status === 'skipped')
+            const anyInProgress = task.deliverables.some(d => d.status === 'in_progress')
+            const taskStatus: TaskStatus = allCompleted ? TaskStatus.COMPLETED :
+                                           anyInProgress ? TaskStatus.IN_PROGRESS : TaskStatus.PENDING
+
+            return {
+              id: task.id,
+              description: task.description,
+              instruction: task.instruction,
+              required: true,
+              status: taskStatus,
+              deliverables: task.deliverables.map(item => ({
+                key: item.id,
+                description: item.label,
+                type: item.metadata?.deliverable_type || 'string',
+                required: item.required,
+                status: item.status as DeliverableStatus,
+                value: item.value,
+                collected_at: item.collected_at,
+                confidence: item.confidence,
+                reasoning: item.metadata?.reasoning,
+                acceptance_criteria: item.metadata?.acceptance_criteria,
+              }))
+            }
+          })
+        }
+
         // Convert generic SDK ProgressState to TodoList format
         const todoList: TodoList = {
           initialized: true,
@@ -437,41 +491,38 @@ export default function SessionView() {
               is_complete: group.status === 'completed',
             }
           })() : null,
-          current_task: null, // Generic progress doesn't have task-level detail
-          states: data.groups?.map((group) => ({
-            id: group.id,
-            title: group.label,
-            type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
-            description: group.description || '',
-            status: group.status as StateStatus,
-            is_current: group.is_current,
-            completed_at: group.completed_at || undefined,
-            tasks: [{
-              id: `${group.id}_task`,
-              description: group.label,
-              instruction: group.description || '',
-              required: true,
-              status: group.status === 'completed' ? 'completed' as TaskStatus :
-                      group.is_current ? 'in_progress' as TaskStatus : 'pending' as TaskStatus,
-              deliverables: group.items?.map(item => ({
-                key: item.id,
-                description: item.label,
-                type: 'string',
-                required: item.required,
-                status: item.status as DeliverableStatus,
-                value: item.value,
-                collected_at: item.collected_at,
-                confidence: item.confidence,
-                reasoning: item.metadata?.reasoning,
-                acceptance_criteria: item.metadata?.acceptance_criteria,
-              })) || [],
-            }],
-          })) || [],
+          current_task: null,
+          states: data.groups?.map((group) => {
+            const tasks = reconstructTasksFromItems(group.items)
+            return {
+              id: group.id,
+              title: group.label,
+              type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
+              description: group.description || '',
+              status: group.status as StateStatus,
+              is_current: group.is_current,
+              completed_at: group.completed_at || undefined,
+              tasks: tasks,
+            }
+          }) || [],
           tasks_summary: {
-            total_tasks: data.groups?.length || 0,
-            completed_tasks: data.groups?.filter(g => g.status === 'completed').length || 0,
-            pending_tasks: data.groups?.filter(g => g.status === 'pending').length || 0,
-            current_tasks: data.groups?.filter(g => g.is_current).length || 0,
+            total_tasks: data.groups?.reduce((sum, g) => {
+              // Count unique tasks from items metadata
+              const taskIds = new Set(g.items?.map(i => i.metadata?.task_id || 'default') || [])
+              return sum + taskIds.size
+            }, 0) || 0,
+            completed_tasks: data.groups?.reduce((sum, g) => {
+              const tasks = reconstructTasksFromItems(g.items)
+              return sum + tasks.filter(t => t.status === 'completed').length
+            }, 0) || 0,
+            pending_tasks: data.groups?.reduce((sum, g) => {
+              const tasks = reconstructTasksFromItems(g.items)
+              return sum + tasks.filter(t => t.status === 'pending').length
+            }, 0) || 0,
+            current_tasks: data.groups?.reduce((sum, g) => {
+              const tasks = reconstructTasksFromItems(g.items)
+              return sum + tasks.filter(t => t.status === 'in_progress').length
+            }, 0) || 0,
           },
           conversation_age_minutes: data.elapsed_minutes || 0,
           last_updated: data.last_updated || new Date().toISOString(),
@@ -662,11 +713,11 @@ export default function SessionView() {
   }
 
   // Deploy agent
-  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => {
+  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string) => {
     if (!sessionId) return
 
     try {
-      await apiClient.createAgent(sessionId, { name, icon, config, agentType })
+      await apiClient.createAgent(sessionId, { name, icon, config, agentType, envVarTemplateId })
       addToast({ message: 'Agent deployed successfully', type: 'success' })
 
       // Refresh session to get updated agents list
@@ -786,18 +837,8 @@ export default function SessionView() {
               </div>
             </div>
 
-            {/* Right side - Theme toggle and Info button */}
-            <ThemeToggle />
-            <button
-              onClick={() => setIsNetworkInfoOpen(true)}
-              className="btn-ghost p-2"
-              title="Network Information"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-            </button>
+            {/* Right side - Profile */}
+            <ProfileButton />
           </div>
         </div>
       </header>
@@ -898,12 +939,6 @@ export default function SessionView() {
         isOpen={showLogsModal}
         onClose={() => setShowLogsModal(false)}
         sessionId={sessionId}
-      />
-
-      {/* Network Info Modal */}
-      <NetworkInfoModal
-        isOpen={isNetworkInfoOpen}
-        onClose={() => setIsNetworkInfoOpen(false)}
       />
 
       {/* STELLA Face Modal - Full Screen */}

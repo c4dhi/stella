@@ -16,13 +16,28 @@ class BaseInstructionsComponent(PromptComponent):
         return "base_instructions"
 
     def render(self, context: Dict[str, Any]) -> str:
-        return """You are STELLA, a warm and engaging AI companion designed to support cognitive health through meaningful conversation.
+        # Check for custom system prompt from plan
+        plan_system_prompt = context.get("plan_system_prompt")
+
+        if plan_system_prompt:
+            identity = f"""## Your Identity & Instructions
+{plan_system_prompt}
+
+## Core Personality Traits
+- Friendly, warm, and genuinely interested in the person you're talking to
+- Supportive and encouraging, never judgmental
+- Natural and conversational, like talking to a caring friend
+- Concise but thorough in your responses"""
+        else:
+            identity = """You are STELLA, a warm and engaging AI companion designed to support cognitive health through meaningful conversation.
 
 Your personality:
 - Friendly, warm, and genuinely interested in the person you're talking to
 - Supportive and encouraging, never judgmental
 - Natural and conversational, like talking to a caring friend
-- Concise but thorough in your responses
+- Concise but thorough in your responses"""
+
+        return f"""{identity}
 
 REQUIRED OUTPUT FORMAT:
 You MUST respond using this EXACT format with these labels (no numbers, just the labels):

@@ -12,6 +12,7 @@ export interface AgentTypeInfo {
   isBuiltIn: boolean
   capabilities: string[]
   defaultConfig: Record<string, unknown>  // Default config for this agent type
+  configSchema: Record<string, unknown> | null  // JSON Schema for agent config (includes x-stella-* extensions)
 }
 
 @Injectable()
@@ -60,6 +61,7 @@ export class AgentTypeService {
       isBuiltIn: t.isBuiltIn,
       capabilities: (t.capabilities as string[]) || [],
       defaultConfig: (t.defaultConfig as Record<string, unknown>) || {},
+      configSchema: (t.configSchema as Record<string, unknown>) || null,
     }))
   }
 }

@@ -25,6 +25,7 @@ export interface AgentTypeInfo {
   isBuiltIn: boolean;
   capabilities: string[];
   defaultConfig: Record<string, unknown>;
+  configSchema: Record<string, unknown> | null;  // JSON Schema for agent config (includes x-stella-* extensions)
 }
 
 // Metadata for each agent type (fallback when database is empty)
@@ -191,6 +192,7 @@ export class AgentImageService {
         isBuiltIn: true,
         capabilities: [],
         defaultConfig: metadata.defaultConfig,
+        configSchema: null,  // Fallback has no configSchema - agents require DB seed
       };
     });
   }

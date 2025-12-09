@@ -4,9 +4,11 @@ import LoginPage from './pages/LoginPage'
 import ProjectsDashboard from './pages/ProjectsDashboard'
 import SessionsDashboard from './pages/SessionsDashboard'
 import SessionView from './pages/SessionView'
+import SettingsPage from './pages/SettingsPage'
 import ParticipantJoinPage from './pages/ParticipantJoinPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { ToastContainer } from './components/Toast'
+import PlanBuilderModal from './components/settings/PlanBuilder/PlanBuilderModal'
 import { useAuthStore } from './store/authStore'
 import { useToastStore } from './store/toastStore'
 
@@ -23,6 +25,9 @@ export default function App() {
     <BrowserRouter>
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* Global Plan Builder Modal */}
+      <PlanBuilderModal />
 
       <Routes>
         {/* Public Routes */}
@@ -51,6 +56,22 @@ export default function App() {
           element={
             <ProtectedRoute>
               <SessionView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings/:section"
+          element={
+            <ProtectedRoute>
+              <SettingsPage />
             </ProtectedRoute>
           }
         />

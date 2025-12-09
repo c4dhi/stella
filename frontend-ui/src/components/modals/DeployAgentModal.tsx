@@ -1,20 +1,29 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import EmojiPicker from '../EmojiPicker'
 import AgentGalleryCard from '../agents/AgentGalleryCard'
 import { AgentUploadCard, MyAgentsSection } from '../agents'
 import { apiClient } from '../../services/ApiClient'
 import { useThemeStore } from '../../store/themeStore'
-import type { AgentType, CustomAgentType, AgentUploadResponse } from '../../lib/api-types'
+import { usePlanBuilderStore } from '../../store/planBuilderStore'
+import type {
+  AgentType,
+  CustomAgentType,
+  AgentUploadResponse,
+  PlanTemplate,
+  EnvVarTemplate,
+} from '../../lib/api-types'
+import { parseAgentRequirements } from '../../lib/api-types'
 
 interface DeployAgentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => Promise<void>
+  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string) => Promise<void>
 }
 
-type Step = 'gallery' | 'upload' | 'configure' | 'advanced'
+type Step = 'gallery' | 'upload' | 'configure' | 'plan' | 'envvars'
 type GalleryTab = 'builtin' | 'myagents'
+type EnvVarsView = 'select' | 'edit'  // select=choose template, edit=manual entry
 
 export default function DeployAgentModal({
   isOpen,
@@ -26,8 +35,6 @@ export default function DeployAgentModal({
   const [selectedType, setSelectedType] = useState<AgentType | null>(null)
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤖')
-  const [configJson, setConfigJson] = useState('{}')
-  const [configError, setConfigError] = useState<string | null>(null)
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingTypes, setIsLoadingTypes] = useState(false)
@@ -35,6 +42,38 @@ export default function DeployAgentModal({
   const [uploadRefreshTrigger, setUploadRefreshTrigger] = useState(0)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const { openModal: openPlanBuilder } = usePlanBuilderStore()
+
+  // Plan-related state
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>([])
+  const [selectedPlan, setSelectedPlan] = useState<PlanTemplate | null>(null)
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false)
+
+  // Env var template state
+  const [envVarTemplates, setEnvVarTemplates] = useState<EnvVarTemplate[]>([])
+  const [selectedEnvVarTemplate, setSelectedEnvVarTemplate] = useState<EnvVarTemplate | null>(null)
+  const [isLoadingEnvVars, setIsLoadingEnvVars] = useState(false)
+  const [envVarsView, setEnvVarsView] = useState<EnvVarsView>('select')
+  const [envVars, setEnvVars] = useState<Record<string, string>>({})  // Current env vars being edited
+  const [newEnvVarKey, setNewEnvVarKey] = useState('')  // For adding new variables
+
+  // Parse agent requirements from configSchema
+  const agentRequirements = useMemo(() => {
+    if (!selectedType) return { requiresPlan: false, requiredEnvVars: [] as string[] }
+    return parseAgentRequirements(selectedType.configSchema)
+  }, [selectedType])
+
+  // Determine dynamic steps based on agent requirements
+  // Flow: Gallery → Configure → (Plan if required) → Env Vars
+  const dynamicSteps = useMemo((): Step[] => {
+    const steps: Step[] = ['gallery', 'configure']
+    if (agentRequirements.requiresPlan) {
+      steps.push('plan')
+    }
+    // Always show env vars step (templates or manual entry)
+    steps.push('envvars')
+    return steps
+  }, [agentRequirements])
 
   // Reset state when modal opens
   useEffect(() => {
@@ -44,9 +83,12 @@ export default function DeployAgentModal({
       setSelectedType(null)
       setName('')
       setIcon('🤖')
-      setConfigJson('{}')
-      setConfigError(null)
       setError(null)
+      setSelectedPlan(null)
+      setSelectedEnvVarTemplate(null)
+      setEnvVarsView('select')
+      setEnvVars({})
+      setNewEnvVarKey('')
 
       // Fetch agent types
       setIsLoadingTypes(true)
@@ -56,7 +98,6 @@ export default function DeployAgentModal({
         })
         .catch((err) => {
           console.error('Failed to fetch agent types:', err)
-          // Set default agent types if API fails
           setAgentTypes([
             {
               id: 'echo-agent',
@@ -75,16 +116,49 @@ export default function DeployAgentModal({
     }
   }, [isOpen])
 
-  // Update icon and config when agent type is selected
+  // Fetch plan templates when agent requires a plan
+  useEffect(() => {
+    if (agentRequirements.requiresPlan && planTemplates.length === 0) {
+      setIsLoadingPlans(true)
+      apiClient.listPlanTemplates()
+        .then(setPlanTemplates)
+        .catch((err) => console.error('Failed to fetch plan templates:', err))
+        .finally(() => setIsLoadingPlans(false))
+    }
+  }, [agentRequirements.requiresPlan, planTemplates.length])
+
+  // Fetch env var templates
+  useEffect(() => {
+    if (step === 'envvars' && envVarTemplates.length === 0) {
+      setIsLoadingEnvVars(true)
+      apiClient.listEnvVarTemplates(selectedType?.id)
+        .then(setEnvVarTemplates)
+        .catch((err) => console.error('Failed to fetch env var templates:', err))
+        .finally(() => setIsLoadingEnvVars(false))
+    }
+  }, [step, envVarTemplates.length, selectedType?.id])
+
+  // Initialize env vars with required keys when entering edit view
+  useEffect(() => {
+    if (envVarsView === 'edit' && agentRequirements.requiredEnvVars.length > 0) {
+      setEnvVars(prev => {
+        const updated = { ...prev }
+        agentRequirements.requiredEnvVars.forEach(key => {
+          if (!(key in updated)) {
+            updated[key] = ''
+          }
+        })
+        return updated
+      })
+    }
+  }, [envVarsView, agentRequirements.requiredEnvVars])
+
+  // Update icon when agent type is selected
   useEffect(() => {
     if (selectedType) {
       if (selectedType.icon) {
         setIcon(selectedType.icon)
       }
-      // Pre-fill config with agent type's defaultConfig
-      const defaultConfig = selectedType.defaultConfig || {}
-      setConfigJson(JSON.stringify(defaultConfig, null, 2))
-      setConfigError(null)
     }
   }, [selectedType])
 
@@ -93,57 +167,120 @@ export default function DeployAgentModal({
   }
 
   const handleSelectCustomAgent = (agent: CustomAgentType) => {
-    // Convert CustomAgentType to AgentType for selection
     setSelectedType(agent as AgentType)
   }
 
-  const handleUploadComplete = (result: AgentUploadResponse) => {
-    // Refresh the my-agents list and switch to that tab
+  const handleCreateNewPlan = () => {
+    openPlanBuilder(undefined, (newTemplate: PlanTemplate) => {
+      // Add the new template to the list and select it
+      setPlanTemplates(prev => [newTemplate, ...prev])
+      setSelectedPlan(newTemplate)
+    }, true)  // isNested=true since we're opening from DeployAgentModal
+  }
+
+  const handleEditPlan = (plan: PlanTemplate, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent selecting the plan when clicking edit
+    openPlanBuilder(plan, (updatedTemplate: PlanTemplate) => {
+      // Update the template in the list
+      setPlanTemplates(prev => prev.map(p => p.id === updatedTemplate.id ? updatedTemplate : p))
+      // If this was the selected plan, update the selection too
+      if (selectedPlan?.id === updatedTemplate.id) {
+        setSelectedPlan(updatedTemplate)
+      }
+    }, true)  // isNested=true since we're opening from DeployAgentModal
+  }
+
+  const handleUploadComplete = (_result: AgentUploadResponse) => {
     setUploadRefreshTrigger(prev => prev + 1)
     setGalleryTab('myagents')
     setStep('gallery')
   }
 
   const handleContinue = () => {
-    if (step === 'gallery' && selectedType) {
-      setStep('configure')
-    } else if (step === 'configure') {
-      setStep('advanced')
+    // Special handling for envvars step - transition from select to edit view
+    if (step === 'envvars' && envVarsView === 'select') {
+      // Prefill env vars from template if one is selected
+      if (selectedEnvVarTemplate) {
+        const prefilled: Record<string, string> = {}
+        // Initialize with template keys (values will be masked/encrypted on server)
+        selectedEnvVarTemplate.variableKeys.forEach(key => {
+          prefilled[key] = '••••••••' // Placeholder to show it's prefilled
+        })
+        // Also ensure required vars are present
+        agentRequirements.requiredEnvVars.forEach(key => {
+          if (!(key in prefilled)) {
+            prefilled[key] = ''
+          }
+        })
+        setEnvVars(prefilled)
+      } else {
+        // No template - initialize with required vars only
+        const initial: Record<string, string> = {}
+        agentRequirements.requiredEnvVars.forEach(key => {
+          initial[key] = ''
+        })
+        setEnvVars(initial)
+      }
+      setEnvVarsView('edit')
+      return
+    }
+
+    const currentIndex = dynamicSteps.indexOf(step)
+    if (currentIndex >= 0 && currentIndex < dynamicSteps.length - 1) {
+      const nextStep = dynamicSteps[currentIndex + 1]
+      setStep(nextStep)
     }
   }
 
   const handleBack = () => {
-    if (step === 'advanced') {
-      setStep('configure')
-    } else if (step === 'configure') {
+    if (step === 'upload') {
       setStep('gallery')
-    } else if (step === 'upload') {
-      setStep('gallery')
+    } else if (step === 'envvars' && envVarsView === 'edit') {
+      // Go back to template selection within envvars step
+      setEnvVarsView('select')
+    } else {
+      const currentIndex = dynamicSteps.indexOf(step)
+      if (currentIndex > 0) {
+        const prevStep = dynamicSteps[currentIndex - 1]
+        setStep(prevStep)
+        // Reset envvars view when leaving envvars step
+        if (step === 'envvars') {
+          setEnvVarsView('select')
+          setEnvVars({})
+        }
+      }
     }
     setError(null)
   }
 
-  const validateJson = (json: string): Record<string, unknown> | null => {
-    try {
-      const parsed = JSON.parse(json)
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError('Config must be a JSON object')
-        return null
-      }
-      setConfigError(null)
-      return parsed
-    } catch {
-      setConfigError('Invalid JSON syntax')
-      return null
-    }
+  const getCurrentStepNumber = (): number => {
+    if (step === 'upload') return 1
+    const stepsWithoutUpload = dynamicSteps.filter((s): s is Exclude<Step, 'upload'> => s !== 'upload')
+    const idx = stepsWithoutUpload.indexOf(step as Exclude<Step, 'upload'>)
+    return idx >= 0 ? idx + 1 : 1
   }
 
-  const handleConfigChange = (value: string) => {
-    setConfigJson(value)
-    if (value.trim()) {
-      validateJson(value)
-    } else {
-      setConfigError(null)
+  const getTotalSteps = (): number => {
+    return dynamicSteps.filter(s => s !== 'upload').length
+  }
+
+  const canContinue = (): boolean => {
+    switch (step) {
+      case 'gallery':
+        return !!selectedType
+      case 'configure':
+        return !!name.trim()
+      case 'plan':
+        return !!selectedPlan
+      case 'envvars':
+        // In select view: can always continue (template selection is optional)
+        if (envVarsView === 'select') {
+          return true
+        }
+        // In edit view: all required vars must be filled
+        return agentRequirements.requiredEnvVars.every(key => envVars[key]?.trim())
+      default:
+        return true
     }
   }
 
@@ -160,18 +297,34 @@ export default function DeployAgentModal({
       return
     }
 
-    // Parse and validate config
-    const config = configJson.trim() ? validateJson(configJson) : {}
-    if (configJson.trim() && config === null) {
-      setError('Please fix the JSON configuration errors')
-      return
+    // Build config
+    let config: Record<string, unknown> = {}
+
+    // Merge plan content into config if a plan is selected
+    // Map PlanTemplate fields to canonical SDK Plan fields
+    if (selectedPlan) {
+      config = {
+        ...config,
+        plan: {
+          id: selectedPlan.id,
+          title: selectedPlan.name,                    // Map template.name → plan.title
+          description: selectedPlan.description || '', // Map template.description → plan.description
+          ...selectedPlan.content,
+        },
+      }
     }
 
     setIsSubmitting(true)
     setError(null)
 
     try {
-      await onSubmit(name.trim(), icon, config || undefined, selectedType.slug)
+      await onSubmit(
+        name.trim(),
+        icon,
+        Object.keys(config).length > 0 ? config : undefined,
+        selectedType.slug,
+        selectedEnvVarTemplate?.id
+      )
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to deploy agent')
@@ -187,13 +340,75 @@ export default function DeployAgentModal({
     }
   }
 
-  const getStepNumber = (s: Step): number => {
-    switch (s) {
-      case 'gallery': return 1
-      case 'upload': return 1  // Upload is part of step 1
-      case 'configure': return 2
-      case 'advanced': return 3
+  const getStepTitle = (): string => {
+    switch (step) {
+      case 'gallery': return 'Choose an Agent'
+      case 'upload': return 'Upload Agent'
+      case 'configure': return 'Customize Agent'
+      case 'plan': return 'Select a Plan'
+      case 'envvars': return envVarsView === 'select' ? 'Environment Variables' : 'Configure Variables'
     }
+  }
+
+  const getStepDescription = (): string => {
+    switch (step) {
+      case 'gallery': return 'Select an agent type to deploy to this session'
+      case 'upload': return 'Upload a custom agent package (.zip)'
+      case 'configure': return `Set a name and icon for your ${selectedType?.name || 'agent'}`
+      case 'plan': return `Choose a conversation plan for ${selectedType?.name || 'the agent'}`
+      case 'envvars': return envVarsView === 'select'
+        ? 'Select a template or enter variables manually'
+        : 'Enter values for the environment variables'
+    }
+  }
+
+  const isLastStep = (): boolean => {
+    const currentIndex = dynamicSteps.indexOf(step)
+    // For envvars step, only the edit view is the "last step" (deploy)
+    if (step === 'envvars') {
+      return envVarsView === 'edit'
+    }
+    return currentIndex === dynamicSteps.length - 1
+  }
+
+  // Generate gradient colors for plan cards
+  const getPlanCardStyle = (index: number) => {
+    const gradients = [
+      'from-blue-500/20 to-indigo-500/20',
+      'from-purple-500/20 to-pink-500/20',
+      'from-emerald-500/20 to-teal-500/20',
+      'from-orange-500/20 to-amber-500/20',
+      'from-cyan-500/20 to-blue-500/20',
+    ]
+    const iconColors = [
+      'text-blue-500',
+      'text-purple-500',
+      'text-emerald-500',
+      'text-orange-500',
+      'text-cyan-500',
+    ]
+    const colorIndex = index % 5
+    return { gradient: gradients[colorIndex], iconColor: iconColors[colorIndex] }
+  }
+
+  // Generate gradient colors for env var template cards
+  const getEnvVarCardStyle = (index: number) => {
+    const gradients = [
+      'from-amber-500/20 to-orange-500/20',
+      'from-green-500/20 to-emerald-500/20',
+      'from-violet-500/20 to-purple-500/20',
+      'from-rose-500/20 to-pink-500/20',
+      'from-sky-500/20 to-cyan-500/20',
+    ]
+    const iconColors = [
+      'text-amber-500',
+      'text-green-500',
+      'text-violet-500',
+      'text-rose-500',
+      'text-sky-500',
+    ]
+    const colorIndex = index % 5
+    return { gradient: gradients[colorIndex], iconColor: iconColors[colorIndex] }
   }
 
   return (
@@ -242,38 +457,34 @@ export default function DeployAgentModal({
                   </svg>
                 </button>
 
-                {/* Step indicator - 3 steps now */}
+                {/* Step indicator */}
                 <div className="flex items-center gap-3 mb-2">
-                  {[1, 2, 3].map((num, idx) => (
+                  {Array.from({ length: getTotalSteps() }, (_, idx) => idx + 1).map((num, idx) => (
                     <div key={num} className="flex items-center">
                       <div className={`
                         w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
-                        ${getStepNumber(step) >= num
-                          ? isDark ? 'bg-primary-500 text-white' : 'bg-primary-500 text-white'
+                        ${getCurrentStepNumber() >= num
+                          ? 'bg-primary-500 text-white'
                           : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
                         }
                       `}>
                         {num}
                       </div>
-                      {idx < 2 && (
-                        <div className={`w-8 h-0.5 ml-3 ${isDark ? 'bg-zinc-600' : 'bg-neutral-200'}`} />
+                      {idx < getTotalSteps() - 1 && (
+                        <div className={`w-8 h-0.5 ml-3 ${getCurrentStepNumber() > num
+                            ? 'bg-primary-500'
+                            : isDark ? 'bg-zinc-600' : 'bg-neutral-200'
+                          }`} />
                       )}
                     </div>
                   ))}
                 </div>
 
                 <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                  {step === 'gallery' ? 'Choose an Agent' : step === 'upload' ? 'Upload Agent' : step === 'configure' ? 'Configure Agent' : 'Advanced Config'}
+                  {getStepTitle()}
                 </h2>
                 <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                  {step === 'gallery'
-                    ? 'Select an agent type to deploy to this session'
-                    : step === 'upload'
-                    ? 'Upload a custom agent package (.zip)'
-                    : step === 'configure'
-                    ? `Set a name and icon for your ${selectedType?.name || 'agent'}`
-                    : 'Customize agent-specific configuration (JSON)'
-                  }
+                  {getStepDescription()}
                 </p>
               </div>
             </div>
@@ -385,7 +596,6 @@ export default function DeployAgentModal({
                         </div>
                       </button>
 
-                      {/* My agents list */}
                       <MyAgentsSection
                         onSelectAgent={handleSelectCustomAgent}
                         refreshTrigger={uploadRefreshTrigger}
@@ -416,7 +626,7 @@ export default function DeployAgentModal({
                   transition={{ duration: 0.2 }}
                   className="p-6"
                 >
-                  <form onSubmit={(e) => { e.preventDefault(); handleContinue(); }} className="space-y-4">
+                  <div className="space-y-4">
                     {/* Selected agent summary */}
                     {selectedType && (
                       <div className={`
@@ -475,103 +685,561 @@ export default function DeployAgentModal({
                       </div>
                     </div>
 
-                    {/* Error message */}
                     {error && (
                       <motion.div
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         className={`p-3 rounded-lg text-xs font-light ${isDark
-                            ? 'bg-red-500/10 border border-red-500/20 text-red-400'
-                            : 'bg-red-50/80 border border-red-200/60 text-red-600'
+                          ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                          : 'bg-red-50/80 border border-red-200/60 text-red-600'
                           }`}
                       >
                         {error}
                       </motion.div>
                     )}
-                  </form>
+                  </div>
                 </motion.div>
-              ) : (
+              ) : step === 'plan' ? (
                 <motion.div
-                  key="advanced"
+                  key="plan"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
                   transition={{ duration: 0.2 }}
                   className="p-6"
                 >
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Agent summary bar */}
-                    <div className={`
-                      flex items-center gap-3 p-3 rounded-xl
-                      ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-50'}
-                    `}>
-                      <div className={`
-                        w-8 h-8 rounded-lg flex items-center justify-center text-lg
-                        ${isDark ? 'bg-zinc-600' : 'bg-white border border-neutral-200'}
-                      `}>
-                        {icon}
-                      </div>
-                      <div className="flex-1">
-                        <div className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                          {name || 'Unnamed Agent'}
-                        </div>
-                        <div className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                          {selectedType?.name}
-                        </div>
+                  {isLoadingPlans ? (
+                    <div className={`h-48 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                      <div className="flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        Loading plan templates...
                       </div>
                     </div>
-
-                    {/* JSON Config Editor */}
-                    <div>
-                      <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
-                        Agent Configuration <span className={isDark ? 'text-zinc-500' : 'text-neutral-400'}>(JSON)</span>
-                      </label>
-                      <textarea
-                        value={configJson}
-                        onChange={(e) => handleConfigChange(e.target.value)}
-                        rows={8}
-                        spellCheck={false}
+                  ) : planTemplates.length === 0 ? (
+                    <div className={`flex flex-col items-center justify-center text-center py-8`}>
+                      <svg className={`w-16 h-16 mb-4 ${isDark ? 'text-zinc-600' : 'text-neutral-300'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2" strokeWidth={1.5} />
+                        <polyline points="2 17 12 22 22 17" strokeWidth={1.5} />
+                        <polyline points="2 12 12 17 22 12" strokeWidth={1.5} />
+                      </svg>
+                      <p className={`text-sm font-medium mb-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                        No plan templates yet
+                      </p>
+                      <p className={`text-xs mb-4 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                        Create your first plan to get started
+                      </p>
+                      <motion.button
+                        type="button"
+                        onClick={handleCreateNewPlan}
+                        whileTap={{ scale: 0.98 }}
                         className={`
-                          w-full px-4 py-3 rounded-xl text-sm font-mono
-                          focus:outline-none transition-all duration-200 resize-none
-                          ${configError
-                            ? isDark
-                              ? 'bg-zinc-800 border-2 border-red-500/50 text-zinc-100 focus:border-red-500'
-                              : 'bg-neutral-50/50 border-2 border-red-300 text-neutral-900 focus:border-red-400'
-                            : isDark
-                              ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
-                              : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                          inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium
+                          transition-all duration-200
+                          ${isDark
+                            ? 'bg-primary-500 text-white hover:bg-primary-400'
+                            : 'bg-neutral-900 text-white hover:bg-neutral-800'
                           }
                         `}
-                        placeholder="{}"
-                      />
-                      {configError ? (
-                        <div className={`mt-2 text-xs font-light ${isDark ? 'text-red-400' : 'text-red-500'}`}>
-                          {configError}
-                        </div>
-                      ) : (
-                        <div className={`mt-2 text-xs font-light ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                          Agent-specific configuration passed to the agent at startup
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Error message */}
-                    {error && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`p-3 rounded-lg text-xs font-light ${isDark
-                            ? 'bg-red-500/10 border border-red-500/20 text-red-400'
-                            : 'bg-red-50/80 border border-red-200/60 text-red-600'
-                          }`}
                       >
-                        {error}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Create New Plan
+                      </motion.button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3 max-h-[350px] overflow-y-auto pr-2">
+                      {planTemplates.map((plan, index) => {
+                        const style = getPlanCardStyle(index)
+                        const stateCount = plan.content.states?.length || 0
+                        const taskCount = plan.content.states?.reduce((acc, s) => acc + (s.tasks?.length || 0), 0) || 0
+
+                        return (
+                          <motion.button
+                            key={plan.id}
+                            type="button"
+                            onClick={() => setSelectedPlan(plan)}
+                            whileHover={{ y: -2 }}
+                            className={`
+                              group/card relative p-4 rounded-xl text-left transition-all duration-200
+                              ${selectedPlan?.id === plan.id
+                                ? isDark
+                                  ? 'bg-primary-500/20 border-2 border-primary-500 shadow-lg shadow-primary-500/20'
+                                  : 'bg-primary-50 border-2 border-primary-500 shadow-lg shadow-primary-500/10'
+                                : isDark
+                                  ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500 hover:bg-zinc-700/80'
+                                  : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:shadow-md'
+                              }
+                            `}
+                          >
+                            {/* Top-right actions: Edit button + Selection checkmark */}
+                            <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                              {/* Edit button - shows on hover */}
+                              <motion.div
+                                onClick={(e) => handleEditPlan(plan, e)}
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.95 }}
+                                className={`
+                                  p-1.5 rounded-lg cursor-pointer
+                                  opacity-0 group-hover/card:opacity-100 transition-opacity duration-200
+                                  ${isDark
+                                    ? 'hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200'
+                                    : 'hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600'
+                                  }
+                                `}
+                                title="Edit plan"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                              </motion.div>
+                              {/* Selection checkmark */}
+                              {selectedPlan?.id === plan.id && (
+                                <svg className={`w-5 h-5 ${isDark ? 'text-primary-400' : 'text-primary-500'}`} fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
+
+                            {/* Icon */}
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 bg-gradient-to-br ${style.gradient}`}>
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={style.iconColor}>
+                                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                                <polyline points="2 17 12 22 22 17" />
+                                <polyline points="2 12 12 17 22 12" />
+                              </svg>
+                            </div>
+
+                            {/* Title */}
+                            <h3 className={`text-sm font-semibold truncate mb-1 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                              {plan.name}
+                            </h3>
+
+                            {/* Description */}
+                            {plan.description && (
+                              <p className={`text-xs line-clamp-2 mb-3 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                {plan.description}
+                              </p>
+                            )}
+
+                            {/* Stats */}
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className={`
+                                inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs
+                                ${isDark ? 'bg-zinc-600/50 text-zinc-300' : 'bg-neutral-100 text-neutral-600'}
+                              `}>
+                                {stateCount} states
+                              </span>
+                              <span className={`
+                                inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs
+                                ${isDark ? 'bg-zinc-600/50 text-zinc-300' : 'bg-neutral-100 text-neutral-600'}
+                              `}>
+                                {taskCount} tasks
+                              </span>
+                              {plan.content.system_prompt && (
+                                <span className={`
+                                  inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs
+                                  ${isDark ? 'bg-blue-500/20 text-blue-300' : 'bg-blue-50 text-blue-600'}
+                                `}>
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                  </svg>
+                                  Prompt
+                                </span>
+                              )}
+                            </div>
+                          </motion.button>
+                        )
+                      })}
+
+                      {/* Create New Plan Card - at the end */}
+                      <motion.button
+                        type="button"
+                        onClick={handleCreateNewPlan}
+                        whileHover={{ y: -2 }}
+                        className={`
+                          p-4 rounded-xl text-left transition-all duration-200
+                          border-2 border-dashed hover:border-solid
+                          ${isDark
+                            ? 'border-zinc-600 hover:border-primary-500 bg-zinc-800/30 hover:bg-zinc-700/50'
+                            : 'border-neutral-300 hover:border-primary-500 bg-neutral-50/50 hover:bg-primary-50'
+                          }
+                        `}
+                      >
+                        {/* Icon */}
+                        <div className={`
+                          w-10 h-10 rounded-xl flex items-center justify-center mb-3
+                          ${isDark ? 'bg-zinc-700' : 'bg-neutral-100'}
+                        `}>
+                          <svg
+                            width="20"
+                            height="20"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            className={isDark ? 'text-zinc-400' : 'text-neutral-500'}
+                          >
+                            <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </div>
+
+                        {/* Title */}
+                        <h3 className={`text-sm font-semibold mb-1 ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}>
+                          Create New Plan
+                        </h3>
+
+                        {/* Description */}
+                        <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                          Build a custom conversation plan with AI assistance
+                        </p>
+                      </motion.button>
+                    </div>
+                  )}
+                </motion.div>
+              ) : step === 'envvars' ? (
+                <motion.div
+                  key="envvars"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  {/* Required env vars info banner */}
+                  {agentRequirements.requiredEnvVars.length > 0 && (
+                    <div className={`
+                      p-3 rounded-xl mb-4
+                      ${isDark ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-amber-50 border border-amber-200'}
+                    `}>
+                      <div className={`text-xs font-medium mb-1 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                        Required Environment Variables
+                      </div>
+                      <div className={`flex flex-wrap gap-1.5`}>
+                        {agentRequirements.requiredEnvVars.map(key => (
+                          <span key={key} className={`
+                            px-2 py-0.5 rounded text-xs font-mono
+                            ${isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-700'}
+                          `}>
+                            {key}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <AnimatePresence mode="wait">
+                    {envVarsView === 'select' ? (
+                      <motion.div
+                        key="env-select"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        {isLoadingEnvVars ? (
+                          <div className={`h-32 flex items-center justify-center text-sm ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                              Loading templates...
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2">
+                            {/* Template cards */}
+                            {envVarTemplates.map((template, index) => {
+                              const style = getEnvVarCardStyle(index)
+                              const isSelected = selectedEnvVarTemplate?.id === template.id
+
+                              return (
+                                <motion.button
+                                  key={template.id}
+                                  type="button"
+                                  onClick={() => setSelectedEnvVarTemplate(isSelected ? null : template)}
+                                  whileHover={{ y: -2 }}
+                                  className={`
+                                    p-4 rounded-xl text-left transition-all duration-200
+                                    ${isSelected
+                                      ? isDark
+                                        ? 'bg-primary-500/20 border-2 border-primary-500 shadow-lg shadow-primary-500/20'
+                                        : 'bg-primary-50 border-2 border-primary-500 shadow-lg shadow-primary-500/10'
+                                      : isDark
+                                        ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500 hover:bg-zinc-700/80'
+                                        : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:shadow-md'
+                                    }
+                                  `}
+                                >
+                                  {/* Selection checkmark */}
+                                  {isSelected && (
+                                    <div className="absolute top-3 right-3">
+                                      <svg className={`w-5 h-5 ${isDark ? 'text-primary-400' : 'text-primary-500'}`} fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                      </svg>
+                                    </div>
+                                  )}
+
+                                  {/* Icon */}
+                                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 bg-gradient-to-br ${style.gradient}`}>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={style.iconColor}>
+                                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                    </svg>
+                                  </div>
+
+                                  {/* Title */}
+                                  <h3 className={`text-sm font-semibold truncate mb-1 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                                    {template.name}
+                                  </h3>
+
+                                  {/* Variables count */}
+                                  <div className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                    {template.variableKeys.length} variable{template.variableKeys.length !== 1 ? 's' : ''}
+                                  </div>
+
+                                  {/* Variables preview */}
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {template.variableKeys.slice(0, 2).map(key => (
+                                      <span key={key} className={`
+                                        px-1.5 py-0.5 rounded text-xs font-mono truncate max-w-[80px]
+                                        ${isDark ? 'bg-zinc-600/50 text-zinc-300' : 'bg-neutral-100 text-neutral-600'}
+                                      `}>
+                                        {key}
+                                      </span>
+                                    ))}
+                                    {template.variableKeys.length > 2 && (
+                                      <span className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                                        +{template.variableKeys.length - 2}
+                                      </span>
+                                    )}
+                                  </div>
+                                </motion.button>
+                              )
+                            })}
+
+                            {/* Enter Manually card - at the end */}
+                            <motion.button
+                              type="button"
+                              onClick={() => {
+                                setSelectedEnvVarTemplate(null)
+                                // Initialize with required vars only
+                                const initial: Record<string, string> = {}
+                                agentRequirements.requiredEnvVars.forEach(key => {
+                                  initial[key] = ''
+                                })
+                                setEnvVars(initial)
+                                setEnvVarsView('edit')
+                              }}
+                              whileHover={{ y: -2 }}
+                              className={`
+                                p-4 rounded-xl text-left transition-all duration-200
+                                border-2 border-dashed hover:border-solid
+                                ${isDark
+                                  ? 'border-zinc-600 hover:border-primary-500 bg-zinc-800/30 hover:bg-zinc-700/50'
+                                  : 'border-neutral-300 hover:border-primary-500 bg-neutral-50/50 hover:bg-primary-50'
+                                }
+                              `}
+                            >
+                              {/* Icon */}
+                              <div className={`
+                                w-10 h-10 rounded-xl flex items-center justify-center mb-3
+                                ${isDark ? 'bg-zinc-700' : 'bg-neutral-100'}
+                              `}>
+                                <svg
+                                  width="20"
+                                  height="20"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  className={isDark ? 'text-zinc-400' : 'text-neutral-500'}
+                                >
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" strokeLinecap="round" strokeLinejoin="round" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </div>
+
+                              {/* Title */}
+                              <h3 className={`text-sm font-semibold mb-1 ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}>
+                                Enter Manually
+                              </h3>
+
+                              {/* Description */}
+                              <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                Configure variables without a template
+                              </p>
+                            </motion.button>
+                          </div>
+                        )}
+
+                        {/* Empty state - no templates */}
+                        {!isLoadingEnvVars && envVarTemplates.length === 0 && (
+                          <div className={`text-center py-4`}>
+                            <p className={`text-sm mb-3 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                              No saved templates. You can create templates in Settings.
+                            </p>
+                            <motion.button
+                              type="button"
+                              onClick={() => {
+                                const initial: Record<string, string> = {}
+                                agentRequirements.requiredEnvVars.forEach(key => {
+                                  initial[key] = ''
+                                })
+                                setEnvVars(initial)
+                                setEnvVarsView('edit')
+                              }}
+                              whileTap={{ scale: 0.98 }}
+                              className={`
+                                inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium
+                                transition-all duration-200
+                                ${isDark
+                                  ? 'bg-primary-500 text-white hover:bg-primary-400'
+                                  : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                                }
+                              `}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              Enter Variables Manually
+                            </motion.button>
+                          </div>
+                        )}
+                      </motion.div>
+                    ) : (
+                      /* Edit view - manual entry form */
+                      <motion.div
+                        key="env-edit"
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        {/* Source indicator */}
+                        {selectedEnvVarTemplate && (
+                          <div className={`
+                            flex items-center gap-2 p-2 rounded-lg mb-4
+                            ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-100'}
+                          `}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={isDark ? 'text-zinc-400' : 'text-neutral-500'}>
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            <span className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                              Prefilled from: <span className="font-medium">{selectedEnvVarTemplate.name}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedEnvVarTemplate(null)
+                                setEnvVarsView('select')
+                              }}
+                              className={`ml-auto text-xs ${isDark ? 'text-zinc-500 hover:text-zinc-300' : 'text-neutral-400 hover:text-neutral-600'}`}
+                            >
+                              Change
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="space-y-3 max-h-[260px] overflow-y-auto pr-2">
+                          {/* Existing env vars */}
+                          {Object.entries(envVars).map(([key, value]) => {
+                            const isRequired = agentRequirements.requiredEnvVars.includes(key)
+                            return (
+                              <div key={key} className="flex items-start gap-2">
+                                <div className="flex-1">
+                                  <label className={`block text-xs font-mono mb-1.5 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                                    {key} {isRequired && <span className="text-red-500">*</span>}
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={value}
+                                    onChange={(e) => setEnvVars(prev => ({ ...prev, [key]: e.target.value }))}
+                                    className={`
+                                      w-full px-4 py-2.5 rounded-xl text-sm font-mono
+                                      focus:outline-none transition-all duration-200
+                                      ${isDark
+                                        ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
+                                        : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                                      }
+                                    `}
+                                    placeholder={`Enter ${key}`}
+                                  />
+                                </div>
+                                {!isRequired && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEnvVars(prev => {
+                                        const updated = { ...prev }
+                                        delete updated[key]
+                                        return updated
+                                      })
+                                    }}
+                                    className={`
+                                      mt-6 p-2 rounded-lg transition-colors
+                                      ${isDark ? 'hover:bg-zinc-700 text-zinc-500 hover:text-red-400' : 'hover:bg-neutral-100 text-neutral-400 hover:text-red-500'}
+                                    `}
+                                    title="Remove variable"
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
+
+                          {/* Add new variable */}
+                          <div className={`
+                            p-3 rounded-xl border-2 border-dashed
+                            ${isDark ? 'border-zinc-700 bg-zinc-800/30' : 'border-neutral-200 bg-neutral-50/50'}
+                          `}>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={newEnvVarKey}
+                                onChange={(e) => setNewEnvVarKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+                                placeholder="NEW_VARIABLE_NAME"
+                                className={`
+                                  flex-1 px-3 py-2 rounded-lg text-sm font-mono
+                                  focus:outline-none transition-all duration-200
+                                  ${isDark
+                                    ? 'bg-zinc-700 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
+                                    : 'bg-white border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400'
+                                  }
+                                `}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (newEnvVarKey && !envVars[newEnvVarKey]) {
+                                    setEnvVars(prev => ({ ...prev, [newEnvVarKey]: '' }))
+                                    setNewEnvVarKey('')
+                                  }
+                                }}
+                                disabled={!newEnvVarKey || !!envVars[newEnvVarKey]}
+                                className={`
+                                  px-3 py-2 rounded-lg text-sm font-medium transition-all
+                                  disabled:opacity-40 disabled:cursor-not-allowed
+                                  ${isDark
+                                    ? 'bg-zinc-600 text-zinc-200 hover:bg-zinc-500'
+                                    : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
+                                  }
+                                `}
+                              >
+                                Add
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </motion.div>
                     )}
-                  </form>
+                  </AnimatePresence>
                 </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
 
             {/* Footer */}
@@ -597,7 +1265,7 @@ export default function DeployAgentModal({
                     <button
                       type="button"
                       onClick={handleContinue}
-                      disabled={!selectedType}
+                      disabled={!canContinue()}
                       className={`
                         flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
                         transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
@@ -630,7 +1298,7 @@ export default function DeployAgentModal({
                       Back to Gallery
                     </span>
                   </button>
-                ) : step === 'configure' ? (
+                ) : (
                   <>
                     <button
                       type="button"
@@ -652,61 +1320,48 @@ export default function DeployAgentModal({
                         Back
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleContinue}
-                      disabled={!name.trim()}
-                      className={`
-                        flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
-                        transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
-                        ${isDark
-                          ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
-                          : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
-                        }
-                      `}
-                    >
-                      Continue
-                    </button>
+                    {isLastStep() ? (
+                      <button
+                        type="button"
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || !canContinue()}
+                        className={`
+                          flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                          transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed
+                          ${isDark
+                            ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
+                            : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                          }
+                        `}
+                      >
+                        {isSubmitting ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            Deploying...
+                          </span>
+                        ) : (
+                          'Deploy Agent'
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleContinue}
+                        disabled={!canContinue()}
+                        className={`
+                          flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
+                          transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
+                          ${isDark
+                            ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
+                            : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                          }
+                        `}
+                      >
+                        Continue
+                      </button>
+                    )}
                   </>
-                ) : step === 'advanced' ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleBack}
-                      disabled={isSubmitting}
-                      className={`
-                        py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
-                        transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed
-                        ${isDark
-                          ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
-                          : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80'
-                        }
-                      `}
-                    >
-                      <span className="flex items-center gap-2">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        Back
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSubmit}
-                      disabled={isSubmitting || !name.trim() || !!configError}
-                      className={`
-                        flex-1 py-2.5 px-4 rounded-xl text-sm font-light tracking-wider
-                        transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed
-                        ${isDark
-                          ? 'bg-primary-500 text-white hover:bg-primary-400 hover:shadow-primary border border-primary-400/30'
-                          : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
-                        }
-                      `}
-                    >
-                      {isSubmitting ? 'Deploying...' : 'Deploy Agent'}
-                    </button>
-                  </>
-                ) : null}
+                )}
               </div>
             </div>
           </motion.div>

@@ -7,8 +7,7 @@ import CreateSessionModal from '../components/modals/CreateSessionModal'
 import EditSessionModal from '../components/modals/EditSessionModal'
 import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
-import NetworkInfoModal from '../components/modals/NetworkInfoModal'
-import ThemeToggle from '../components/ThemeToggle'
+import ProfileButton from '../components/layout/ProfileButton'
 import { useToastStore } from '../store/toastStore'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
 
@@ -32,7 +31,6 @@ export default function SessionsDashboard() {
   const [sessionToClose, setSessionToClose] = useState<{ id: string; name: string } | null>(null)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null)
-  const [isNetworkInfoOpen, setIsNetworkInfoOpen] = useState(false)
 
   // Initialize theme on mount
   useEffect(() => {
@@ -225,19 +223,9 @@ export default function SessionsDashboard() {
             </div>
           </div>
 
-          {/* Right side - Theme toggle and Info button */}
+          {/* Right side - Profile */}
           <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <button
-              onClick={() => setIsNetworkInfoOpen(true)}
-              className="btn-ghost p-2"
-              title="Network Information"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-            </button>
+            <ProfileButton />
           </div>
         </div>
       </header>
@@ -590,12 +578,6 @@ export default function SessionsDashboard() {
           setDeleteModalOpen(false)
           setSessionToDelete(null)
         }}
-      />
-
-      {/* Network Info Modal */}
-      <NetworkInfoModal
-        isOpen={isNetworkInfoOpen}
-        onClose={() => setIsNetworkInfoOpen(false)}
       />
     </div>
   )

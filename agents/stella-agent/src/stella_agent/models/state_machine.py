@@ -5,17 +5,24 @@ Defines the core data structures for plan-based conversation flow:
 - State: A phase with tasks and transitions (STRICT/LOOSE modes)
 - Task: A unit of work containing deliverables
 - Deliverable: A piece of information to collect from the user
+
+NOTE: Field names follow the canonical SDK format defined in stella_agent_sdk.plan.
+These runtime classes extend the SDK definitions with status tracking fields.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
-
-class StateType(str, Enum):
-    """Processing mode for a state."""
-    STRICT = "strict"   # Sequential task processing - one at a time
-    LOOSE = "loose"     # Parallel/flexible task processing
+# Import canonical StateType from SDK for consistency
+try:
+    from stella_agent_sdk.plan import StateType
+except ImportError:
+    # Fallback for development without SDK installed
+    class StateType(str, Enum):
+        """Processing mode for a state."""
+        STRICT = "strict"   # Sequential task processing - one at a time
+        LOOSE = "loose"     # Parallel/flexible task processing
 
 
 class DeliverableStatus(str, Enum):
@@ -236,9 +243,14 @@ class Plan:
         initial_state_id = data.get("initial_state_id", "")
         if not initial_state_id and states:
             initial_state_id = states[0].id
+
+        # Handle missing id/title fields (common when plan comes directly from frontend)
+        plan_id = data.get("id", data.get("name", "plan"))
+        plan_title = data.get("title", data.get("name", "Conversation Plan"))
+
         return cls(
-            id=data["id"],
-            title=data.get("title", data["id"]),
+            id=plan_id,
+            title=plan_title,
             description=data.get("description", ""),
             initial_state_id=initial_state_id,
             states=states,

@@ -78,6 +78,22 @@ from stella_agent_sdk.progress import (
     ProgressGroup,
     ProgressState,
 )
+from stella_agent_sdk.plan import (
+    # Enums
+    StateType,
+    DeliverableType,
+    # Plan structure types
+    Plan,
+    PlanState,
+    PlanTask,
+    PlanDeliverable,
+    StateTransition,
+    # Session context types
+    SessionContext,
+    SessionContextField,
+    # Migration utilities
+    normalize_plan,
+)
 
 __version__ = "0.4.0"
 
@@ -98,6 +114,17 @@ __all__ = [
     "ProgressItem",
     "ProgressGroup",
     "ProgressState",
+    # Plan types (canonical definitions)
+    "StateType",
+    "DeliverableType",
+    "Plan",
+    "PlanState",
+    "PlanTask",
+    "PlanDeliverable",
+    "StateTransition",
+    "SessionContext",
+    "SessionContextField",
+    "normalize_plan",
     # Agent interface
     "BaseAgent",
     # Entry point (config from environment)

@@ -100,6 +100,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
+        verified: true, // User can only login if verified
+        createdAt: user.createdAt,
       },
       token,
     };
@@ -112,6 +114,7 @@ export class AuthService {
         id: true,
         email: true,
         name: true,
+        verified: true,
         createdAt: true,
         projectMemberships: {
           select: {

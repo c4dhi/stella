@@ -19,6 +19,8 @@ import { StorageModule } from './storage/storage.module';
 import { AgentPackageModule } from './agent-package/agent-package.module';
 import { AgentBuildModule } from './agent-build/agent-build.module';
 import { AgentUploadModule } from './agent-upload/agent-upload.module';
+import { PlanTemplatesModule } from './plan-templates/plan-templates.module';
+import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.module';
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { AgentUploadModule } from './agent-upload/agent-upload.module';
     AgentPackageModule,
     AgentBuildModule,
     AgentUploadModule,
+    PlanTemplatesModule,
+    EnvVarTemplatesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -88,6 +88,9 @@ class StellaAgent(BaseAgent):
         # Track session start time for elapsed time calculation
         self._session_started_at: Optional[str] = None
 
+        # Custom system prompt from plan (set in on_session_start)
+        self._plan_system_prompt: Optional[str] = None
+
         print(f"[StellaAgent] Initialized with {len(self.expert_pool.agents)} experts")
 
     async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
@@ -116,6 +119,9 @@ class StellaAgent(BaseAgent):
             sm_context = {}
             if self.state_machine.is_initialized:
                 sm_context = self.state_machine.get_context_for_prompt()
+            # Add custom system prompt from plan if available
+            if self._plan_system_prompt:
+                sm_context["plan_system_prompt"] = self._plan_system_prompt
 
             # Build context from fetched history
             context = self._build_context(conversation_history)
@@ -401,6 +407,7 @@ class StellaAgent(BaseAgent):
         from datetime import datetime
         self._session_started_at = datetime.utcnow().isoformat() + "Z"
         self.config = config
+        self._plan_system_prompt: Optional[str] = None  # Store plan's custom system prompt
 
         # Initialize state machine from plan
         plan = None
@@ -423,6 +430,10 @@ class StellaAgent(BaseAgent):
         if plan:
             if self.state_machine.initialize(plan):
                 print(f"[StellaAgent] State machine initialized with plan: {plan.get('title', 'Unknown')}")
+                # Extract custom system prompt from plan if provided (snake_case per SDK convention)
+                if "system_prompt" in plan:
+                    self._plan_system_prompt = plan["system_prompt"]
+                    print(f"[StellaAgent] Using custom system prompt from plan")
             else:
                 print(f"[StellaAgent] Failed to initialize state machine from plan")
         else:

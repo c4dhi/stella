@@ -14,6 +14,7 @@ import { map } from 'rxjs/operators';
 import { AgentsService } from './agents.service';
 import { AgentImageService } from '../agent-image/agent-image.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 interface MessageEvent {
   data: string;
@@ -39,8 +40,9 @@ export class AgentsController {
   create(
     @Param('sessionId') sessionId: string,
     @Body() createAgentDto: CreateAgentDto,
+    @CurrentUser() user: any,
   ) {
-    return this.agentsService.create(sessionId, createAgentDto);
+    return this.agentsService.create(sessionId, createAgentDto, user.userId);
   }
 
   @Get('agents/:agentId')

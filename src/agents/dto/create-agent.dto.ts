@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, MaxLength, IsBoolean, IsObject } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, MaxLength, IsBoolean, IsObject, IsUUID } from 'class-validator';
 
 export class CreateAgentDto {
   @IsString()
@@ -18,7 +18,11 @@ export class CreateAgentDto {
 
   @IsObject()
   @IsOptional()
-  config?: Record<string, unknown>;  // Agent-specific config (e.g., { plan_id: "stella_smalltalk" })
+  config?: Record<string, unknown>;  // Agent-specific config (e.g., { plan: {...}, plan_id: "..." })
+
+  @IsUUID()
+  @IsOptional()
+  envVarTemplateId?: string;  // Environment variable template to use for agent pod
 
   @IsBoolean()
   @IsOptional()

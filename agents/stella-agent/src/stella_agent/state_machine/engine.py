@@ -56,7 +56,7 @@ class StateMachine:
         Initialize the state machine with a plan configuration.
 
         Args:
-            plan_config: Plan dictionary from session config
+            plan_config: Plan dictionary from session config (canonical format)
 
         Returns:
             True if initialization successful
@@ -65,14 +65,9 @@ class StateMachine:
             self.plan = Plan.from_dict(plan_config)
             self.execution_state = ExecutionState(plan=self.plan)
             self._initialized = True
-            print(f"[StateMachine] Initialized plan: {self.plan.title}")
-            print(f"[StateMachine] Initial state: {self.execution_state.current_state_id}")
-            print(f"[StateMachine] States: {[s.id for s in self.plan.states]}")
             return True
         except Exception as e:
             print(f"[StateMachine] Initialization failed: {e}")
-            import traceback
-            traceback.print_exc()
             return False
 
     @property

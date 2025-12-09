@@ -185,7 +185,7 @@ export default function LoginPage() {
               STELLA
             </h1>
             <p className="text-white/30 text-xs tracking-wide">
-              Intelligent Voice Agents
+              System for Testing and Engineering LLM-based conversational Agents
             </p>
           </motion.div>
 

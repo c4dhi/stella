@@ -120,6 +120,11 @@ spec:
             secretKeyRef:
               name: stella-ai-secrets
               key: openai-api-key
+        - name: OPENAI_PLAN_GENERATOR_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: stella-ai-secrets
+              key: openai-plan-generator-api-key
         - name: ELEVENLABS_API_KEY
           valueFrom:
             secretKeyRef:

@@ -23,6 +23,8 @@ model User {
   updatedAt          DateTime            @updatedAt
   projectMemberships ProjectMembership[]
   customAgentTypes   AgentType[]         // Custom agents uploaded by this user
+  planTemplates      PlanTemplate[]      // Plan templates created by this user
+  envVarTemplates    EnvVarTemplate[]    // Environment variable templates created by this user
 }
 
 enum MemberRole {
@@ -164,6 +166,7 @@ model AgentType {
   // Relations
   agents           AgentInstance[]
   buildLogs        AgentBuildLog[]
+  envVarTemplates  EnvVarTemplate[]    // Env var templates scoped to this agent type
 
   @@index([slug])
   @@index([isBuiltIn])
@@ -303,4 +306,43 @@ model AgentBuildLog {
   @@index([agentTypeId])
   @@index([status])
   @@index([startedAt])
+}
+
+// Plan template for reusable agent conversation plans
+model PlanTemplate {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?  @db.Text
+  content     Json     // Canonical SDK format: { states: [...], system_prompt?: string, session_context?: { fields: [...] } }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Environment variable template for reusable secure configurations
+model EnvVarTemplate {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?    @db.Text
+
+  // Encrypted JSON: { "KEY": "value", ... }
+  // Values are encrypted at rest using AES-256-GCM
+  // Format: {iv}:{authTag}:{encryptedData} (all base64 encoded)
+  variables   String     @db.Text
+
+  // Optional: scope to specific agent type
+  agentTypeId String?
+  agentType   AgentType? @relation(fields: [agentTypeId], references: [id])
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([agentTypeId])
 }

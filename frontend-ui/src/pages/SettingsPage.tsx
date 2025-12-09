@@ -1,0 +1,118 @@
+import { useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useThemeStore } from '../store/themeStore'
+import AppHeader from '../components/layout/AppHeader'
+import SettingsSidebar, { type SettingsSection } from '../components/settings/SettingsSidebar'
+import ProfileSection from '../components/settings/ProfileSection'
+import PreferencesSection from '../components/settings/PreferencesSection'
+import PlanBuilderSection from '../components/settings/PlanBuilderSection'
+import EnvVarBuilderSection from '../components/settings/EnvVarBuilderSection'
+
+const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars']
+
+// Animation variants for page transitions
+const pageVariants = {
+  initial: {
+    opacity: 0,
+    y: 20,
+    scale: 0.98
+  },
+  animate: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: {
+      duration: 0.3,
+      ease: [0.25, 0.46, 0.45, 0.94] as const
+    }
+  },
+  exit: {
+    opacity: 0,
+    y: -10,
+    scale: 0.98,
+    transition: {
+      duration: 0.2
+    }
+  }
+}
+
+export default function SettingsPage() {
+  const navigate = useNavigate()
+  const { section } = useParams<{ section?: string }>()
+  const { resolvedTheme, initializeTheme } = useThemeStore()
+  const isDark = resolvedTheme === 'dark'
+
+  // Validate and normalize section param
+  const activeSection: SettingsSection = validSections.includes(section as SettingsSection)
+    ? (section as SettingsSection)
+    : 'profile'
+
+  useEffect(() => {
+    initializeTheme()
+  }, [initializeTheme])
+
+  const handleSectionChange = (newSection: SettingsSection) => {
+    navigate(`/settings/${newSection}`)
+  }
+
+  const renderContent = () => {
+    switch (activeSection) {
+      case 'profile':
+        return <ProfileSection />
+      case 'preferences':
+        return <PreferencesSection />
+      case 'plan-builder':
+        return <PlanBuilderSection />
+      case 'env-vars':
+        return <EnvVarBuilderSection />
+      default:
+        return <ProfileSection />
+    }
+  }
+
+  return (
+    <motion.div
+      className={`min-h-screen flex flex-col transition-colors duration-200 ${
+        isDark ? 'bg-surface-dark' : 'bg-surface'
+      }`}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+      <AppHeader
+        showBackButton
+        backPath="/dashboard"
+        backLabel="Dashboard"
+      />
+
+      <div className="flex-1 flex justify-center overflow-hidden">
+        <div className="w-full max-w-6xl flex">
+          {/* Sidebar */}
+          <SettingsSidebar
+            activeSection={activeSection}
+            onSectionChange={handleSectionChange}
+          />
+
+          {/* Main Content */}
+          <main className={`flex-1 overflow-y-auto p-8 ${
+            isDark ? 'bg-surface-dark' : 'bg-surface'
+          }`}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeSection}
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="h-full"
+              >
+                {renderContent()}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+      </div>
+    </motion.div>
+  )
+}

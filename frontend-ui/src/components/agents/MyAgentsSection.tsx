@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Package, Clock, CheckCircle, XCircle, AlertTriangle, Trash2, RefreshCw } from 'lucide-react'
 import { apiClient } from '../../services/ApiClient'
+import { useToastStore } from '../../store/toastStore'
 import { AgentBuildStatus } from './AgentBuildStatus'
+import ConfirmDialog from '../modals/ConfirmDialog'
 import type { CustomAgentType, AgentValidationStatus } from '../../lib/api-types'
 
 interface MyAgentsSectionProps {
@@ -10,11 +12,14 @@ interface MyAgentsSectionProps {
 }
 
 export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSectionProps) {
+  const { addToast } = useToastStore()
   const [agents, setAgents] = useState<CustomAgentType[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
   const [deletingAgent, setDeletingAgent] = useState<string | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [agentToDelete, setAgentToDelete] = useState<{ id: string; name: string } | null>(null)
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -33,23 +38,27 @@ export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSecti
     fetchAgents()
   }, [fetchAgents, refreshTrigger])
 
-  const handleDelete = useCallback(async (agentId: string, e: React.MouseEvent) => {
+  const handleDelete = useCallback((agentId: string, agentName: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    setAgentToDelete({ id: agentId, name: agentName })
+    setDeleteConfirmOpen(true)
+  }, [])
 
-    if (!confirm('Are you sure you want to delete this agent? This cannot be undone.')) {
-      return
-    }
-
-    setDeletingAgent(agentId)
+  const confirmDeleteAgent = useCallback(async () => {
+    if (!agentToDelete) return
+    setDeletingAgent(agentToDelete.id)
     try {
-      await apiClient.deleteCustomAgent(agentId)
-      setAgents(prev => prev.filter(a => a.id !== agentId))
+      await apiClient.deleteCustomAgent(agentToDelete.id)
+      setAgents(prev => prev.filter(a => a.id !== agentToDelete.id))
+      addToast({ message: `Agent "${agentToDelete.name}" deleted`, type: 'success' })
     } catch (err: any) {
-      alert(err?.message || 'Failed to delete agent')
+      addToast({ message: err?.message || 'Failed to delete agent', type: 'error' })
     } finally {
       setDeletingAgent(null)
+      setDeleteConfirmOpen(false)
+      setAgentToDelete(null)
     }
-  }, [])
+  }, [agentToDelete, addToast])
 
   const getStatusBadge = (status: AgentValidationStatus | undefined) => {
     switch (status) {
@@ -150,8 +159,9 @@ export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSecti
   }
 
   return (
-    <div className="space-y-3">
-      {agents.map((agent) => (
+    <>
+      <div className="space-y-3">
+        {agents.map((agent) => (
         <div
           key={agent.id}
           className={`
@@ -191,7 +201,7 @@ export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSecti
 
             {/* Delete button */}
             <button
-              onClick={(e) => handleDelete(agent.id, e)}
+              onClick={(e) => handleDelete(agent.id, agent.name, e)}
               disabled={deletingAgent === agent.id}
               className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
               title="Delete agent"
@@ -215,6 +225,18 @@ export function MyAgentsSection({ onSelectAgent, refreshTrigger }: MyAgentsSecti
           )}
         </div>
       ))}
-    </div>
+      </div>
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="Delete Agent"
+        message={`Delete "${agentToDelete?.name}"? This cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmVariant="danger"
+        onConfirm={confirmDeleteAgent}
+        onCancel={() => { setDeleteConfirmOpen(false); setAgentToDelete(null) }}
+      />
+    </>
   )
 }
