@@ -15,7 +15,7 @@ export interface AgentPodConfig {
   livekitUrl: string;
   livekitApiKey: string;
   livekitApiSecret: string;
-  // openaiApiKey removed - now read from stella-ai-secrets
+  // API keys (OPENAI_API_KEY, etc.) provided via envVarTemplateId
   ttsProvider: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
   agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
@@ -205,25 +205,8 @@ export class KubernetesService {
                 name: 'NODE_ENV',
                 value: process.env.NODE_ENV || 'local',
               },
-              // Shared API keys from central stella-ai-secrets
-              {
-                name: 'OPENAI_API_KEY',
-                valueFrom: {
-                  secretKeyRef: {
-                    name: 'stella-ai-secrets',
-                    key: 'openai-api-key',
-                  },
-                },
-              },
-              {
-                name: 'ELEVENLABS_API_KEY',
-                valueFrom: {
-                  secretKeyRef: {
-                    name: 'stella-ai-secrets',
-                    key: 'elevenlabs-api-key',
-                  },
-                },
-              },
+              // API keys (OPENAI_API_KEY, ELEVENLABS_API_KEY, etc.) must be provided
+              // via user's env var template - no default fallback
             ],
             resources: {
               requests: {
@@ -295,8 +278,7 @@ export class KubernetesService {
         ROOM_NAME: config.roomName,
         IDENTITY: `agent-${config.agentId}`,
         TTS_PROVIDER: config.ttsProvider,
-        // OPENAI_API_KEY removed - now from stella-ai-secrets
-        // ELEVENLABS_API_KEY removed - now from stella-ai-secrets
+        // API keys (OPENAI_API_KEY, ELEVENLABS_API_KEY, etc.) come from customEnvVars below
         // Agent-specific config as JSON string (each agent interprets as needed)
         // Frontend and agents now use canonical SDK format (no transformation needed)
         AGENT_CONFIG: JSON.stringify(config.agentConfig || {}),
