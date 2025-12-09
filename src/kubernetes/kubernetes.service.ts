@@ -144,11 +144,25 @@ export class KubernetesService {
         // Production-only: Override DNS to bypass corporate SSL inspection (UZH network)
         // Uses CUSTOM_DNS_SERVERS (e.g., 8.8.8.8) with K8s search domains for service discovery
         ...(this.getProductionDnsConfig()),
+        // Pod-level security: run as non-root user
+        securityContext: {
+          runAsNonRoot: true,
+          runAsUser: 1000,
+          runAsGroup: 1000,
+          fsGroup: 1000,
+        },
         containers: [
           {
             name: 'agent',
             image: agentImage,
             imagePullPolicy: this.imagePullPolicy as any,
+            // Container-level security: prevent privilege escalation, drop capabilities
+            securityContext: {
+              allowPrivilegeEscalation: false,
+              capabilities: {
+                drop: ['ALL'],
+              },
+            },
             // Run agent module (config from environment variables)
             // echo-agent -> echo_agent, stella-agent -> stella_agent
             command: ['python', '-m', agentType.replace(/-/g, '_')],
