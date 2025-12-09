@@ -27,12 +27,20 @@ interface AIGeneratorViewProps {
 export default function AIGeneratorView({ onClose }: AIGeneratorViewProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
-  const { setView, setGeneratedContent } = usePlanBuilderStore()
+  const { setView, setGeneratedContent, setHasUnsavedChanges } = usePlanBuilderStore()
   const isDark = resolvedTheme === 'dark'
 
   const [prompt, setPrompt] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Track changes when prompt is modified
+  const handlePromptChange = (value: string) => {
+    setPrompt(value)
+    if (value.trim()) {
+      setHasUnsavedChanges(true)
+    }
+  }
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -75,7 +83,7 @@ export default function AIGeneratorView({ onClose }: AIGeneratorViewProps) {
   }
 
   const handleExampleClick = (examplePrompt: string) => {
-    setPrompt(examplePrompt)
+    handlePromptChange(examplePrompt)
     textareaRef.current?.focus()
   }
 
@@ -159,7 +167,7 @@ export default function AIGeneratorView({ onClose }: AIGeneratorViewProps) {
             <textarea
               ref={textareaRef}
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => handlePromptChange(e.target.value)}
               placeholder="Describe the plan you want to create...
 
 For example: 'A sales process with lead qualification, demo scheduling, proposal review, and contract signing stages'"

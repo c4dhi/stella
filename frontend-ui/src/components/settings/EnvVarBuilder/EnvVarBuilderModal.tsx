@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
@@ -33,8 +33,38 @@ export default function EnvVarBuilderModal({
   const [entries, setEntries] = useState<EnvVarEntry[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [showCloseConfirmation, setShowCloseConfirmation] = useState(false)
 
   const isEditing = !!template
+
+  // Check if form has content (for unsaved changes tracking)
+  const hasContent = useCallback(() => {
+    return name.trim() !== '' ||
+      description.trim() !== '' ||
+      entries.some(e => e.key.trim() !== '' || e.value.trim() !== '')
+  }, [name, description, entries])
+
+  // Request close - shows confirmation if there are unsaved changes
+  const requestClose = useCallback(() => {
+    if (hasUnsavedChanges && hasContent()) {
+      setShowCloseConfirmation(true)
+    } else {
+      onClose()
+    }
+  }, [hasUnsavedChanges, hasContent, onClose])
+
+  // Confirm close - force close without saving
+  const confirmClose = useCallback(() => {
+    setShowCloseConfirmation(false)
+    setHasUnsavedChanges(false)
+    onClose()
+  }, [onClose])
+
+  // Cancel close request
+  const cancelClose = useCallback(() => {
+    setShowCloseConfirmation(false)
+  }, [])
 
   // Reset form when modal opens/closes or template changes
   useEffect(() => {
@@ -56,21 +86,54 @@ export default function EnvVarBuilderModal({
         setEntries([{ id: `0-${Date.now()}`, key: '', value: '' }])
       }
       setError(null)
+      setHasUnsavedChanges(false)
+      setShowCloseConfirmation(false)
     }
   }, [isOpen, template])
 
+  // Handle escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        if (showCloseConfirmation) {
+          cancelClose()
+        } else {
+          requestClose()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, showCloseConfirmation, requestClose, cancelClose])
+
   const addEntry = () => {
     setEntries([...entries, { id: `${entries.length}-${Date.now()}`, key: '', value: '' }])
+    setHasUnsavedChanges(true)
   }
 
   const removeEntry = (id: string) => {
     if (entries.length > 1) {
       setEntries(entries.filter((e) => e.id !== id))
+      setHasUnsavedChanges(true)
     }
   }
 
   const updateEntry = (id: string, field: 'key' | 'value', value: string) => {
     setEntries(entries.map((e) => (e.id === id ? { ...e, [field]: value } : e)))
+    setHasUnsavedChanges(true)
+  }
+
+  // Update name with change tracking
+  const handleNameChange = (value: string) => {
+    setName(value)
+    setHasUnsavedChanges(true)
+  }
+
+  // Update description with change tracking
+  const handleDescriptionChange = (value: string) => {
+    setDescription(value)
+    setHasUnsavedChanges(true)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -130,6 +193,7 @@ export default function EnvVarBuilderModal({
         })
         addToast({ message: 'Template created successfully', type: 'success' })
       }
+      setHasUnsavedChanges(false)
       onSave()
       onClose()
     } catch (err) {
@@ -148,7 +212,7 @@ export default function EnvVarBuilderModal({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
           className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm"
-          onClick={onClose}
+          onClick={requestClose}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -168,7 +232,7 @@ export default function EnvVarBuilderModal({
             <div className={`px-6 pt-6 pb-4 border-b ${isDark ? 'border-zinc-700' : 'border-neutral-200'}`}>
               <div className="relative">
                 <button
-                  onClick={onClose}
+                  onClick={requestClose}
                   disabled={isSaving}
                   className={`
                     absolute -top-1 -right-1 p-2 rounded-lg transition-all duration-200
@@ -218,7 +282,7 @@ export default function EnvVarBuilderModal({
                   <input
                     type="text"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => handleNameChange(e.target.value)}
                     maxLength={255}
                     className={`
                       w-full px-4 py-3 rounded-xl text-sm
@@ -239,7 +303,7 @@ export default function EnvVarBuilderModal({
                   </label>
                   <textarea
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    onChange={(e) => handleDescriptionChange(e.target.value)}
                     rows={2}
                     maxLength={2000}
                     className={`
@@ -371,7 +435,7 @@ export default function EnvVarBuilderModal({
                 <div className="flex gap-3">
                   <button
                     type="button"
-                    onClick={onClose}
+                    onClick={requestClose}
                     disabled={isSaving}
                     className={`
                       flex-1 py-2.5 px-4 rounded-xl text-sm font-medium
@@ -401,6 +465,58 @@ export default function EnvVarBuilderModal({
                 </div>
               </div>
             </form>
+
+            {/* Close Confirmation Dialog */}
+            <AnimatePresence>
+              {showCloseConfirmation && (
+                <motion.div
+                  className="absolute inset-0 z-10 flex items-center justify-center rounded-[20px] overflow-hidden"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={cancelClose} />
+                  <motion.div
+                    className={`relative z-10 p-6 rounded-2xl shadow-2xl max-w-sm mx-4 ${
+                      isDark ? 'bg-zinc-800 border border-zinc-700' : 'bg-white border border-neutral-200'
+                    }`}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 bg-amber-500/10`}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-amber-500">
+                        <path d="M12 9v4M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                      Unsaved Changes
+                    </h3>
+                    <p className={`text-sm mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                      You have unsaved changes. Are you sure you want to close without saving?
+                    </p>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={cancelClose}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-colors ${
+                          isDark
+                            ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                            : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                        }`}
+                      >
+                        Keep Editing
+                      </button>
+                      <button
+                        onClick={confirmClose}
+                        className="flex-1 py-2.5 px-4 rounded-xl text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
+                      >
+                        Discard Changes
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         </motion.div>
       )}

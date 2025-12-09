@@ -13,6 +13,7 @@ interface PlanBuilderProps {
   onCancel: () => void
   onBack?: () => void
   isFromGenerator?: boolean
+  onContentChange?: () => void  // Called when content is modified
 }
 
 const createEmptyState = (): PlanState => ({
@@ -36,7 +37,7 @@ const createEmptyDeliverable = (): PlanDeliverable => ({
   required: true,
 })
 
-export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator }: PlanBuilderProps) {
+export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
@@ -54,14 +55,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
   const isEditing = !!template?.id
 
+  // Helper to mark content as changed
+  const markChanged = () => {
+    onContentChange?.()
+  }
+
   const handleAddState = () => {
     const newState = createEmptyState()
     setStates(prev => [...prev, newState])
     setSelectedStateIndex(states.length)
+    markChanged()
   }
 
   const handleUpdateState = (index: number, updated: PlanState) => {
     setStates(prev => prev.map((s, i) => i === index ? updated : s))
+    markChanged()
   }
 
   const handleDeleteState = (index: number) => {
@@ -71,6 +79,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     } else if (selectedStateIndex !== null && selectedStateIndex > index) {
       setSelectedStateIndex(selectedStateIndex - 1)
     }
+    markChanged()
   }
 
   const handleMoveState = (index: number, direction: 'up' | 'down') => {
@@ -87,6 +96,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     } else if (selectedStateIndex === newIndex) {
       setSelectedStateIndex(index)
     }
+    markChanged()
   }
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -106,6 +116,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         if (content.system_prompt) {
           setSystemPrompt(content.system_prompt)
         }
+        markChanged()
         addToast({ message: 'Plan imported successfully', type: 'success' })
       } catch (err) {
         addToast({ message: 'Failed to parse JSON file', type: 'error' })
@@ -339,7 +350,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); markChanged() }}
               placeholder="Plan name"
               className={`w-full px-4 py-2.5 rounded-xl text-heading-sm font-semibold bg-transparent border-2 transition-colors ${
                 isDark
@@ -349,7 +360,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
             />
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); markChanged() }}
               placeholder="Description (optional)"
               rows={2}
               className={`w-full mt-3 px-4 py-2.5 rounded-xl text-body-sm bg-transparent border-2 resize-none transition-colors ${
@@ -373,7 +384,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               </label>
               <textarea
                 value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
+                onChange={(e) => { setSystemPrompt(e.target.value); markChanged() }}
                 placeholder="e.g., You are a friendly memory coach helping seniors improve their cognitive abilities..."
                 rows={4}
                 className={`w-full px-4 py-2.5 rounded-xl text-body-sm bg-transparent border-2 resize-none transition-colors ${

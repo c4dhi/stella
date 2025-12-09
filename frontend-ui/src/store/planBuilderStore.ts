@@ -15,15 +15,23 @@ interface PlanBuilderStore {
   suggestedName: string
   suggestedDescription: string
 
+  // Unsaved changes tracking
+  hasUnsavedChanges: boolean
+  showCloseConfirmation: boolean
+
   // Actions
   openModal: (template?: PlanTemplate, onSave?: (template: PlanTemplate) => void, isNested?: boolean) => void
   closeModal: () => void
+  requestClose: () => void  // Request close - may show confirmation
+  confirmClose: () => void  // Force close without saving
+  cancelClose: () => void   // Cancel the close request
+  setHasUnsavedChanges: (value: boolean) => void
   setView: (view: ModalView) => void
   setGeneratedContent: (content: PlanContent, name: string, description: string) => void
   clearGeneratedContent: () => void
 }
 
-export const usePlanBuilderStore = create<PlanBuilderStore>((set) => ({
+export const usePlanBuilderStore = create<PlanBuilderStore>((set, get) => ({
   isOpen: false,
   editingTemplate: null,
   onSaveCallback: null,
@@ -32,6 +40,8 @@ export const usePlanBuilderStore = create<PlanBuilderStore>((set) => ({
   generatedContent: null,
   suggestedName: '',
   suggestedDescription: '',
+  hasUnsavedChanges: false,
+  showCloseConfirmation: false,
 
   openModal: (template, onSave, isNested = false) => set({
     isOpen: true,
@@ -43,6 +53,8 @@ export const usePlanBuilderStore = create<PlanBuilderStore>((set) => ({
     generatedContent: null,
     suggestedName: '',
     suggestedDescription: '',
+    hasUnsavedChanges: false,
+    showCloseConfirmation: false,
   }),
 
   closeModal: () => set({
@@ -54,7 +66,27 @@ export const usePlanBuilderStore = create<PlanBuilderStore>((set) => ({
     generatedContent: null,
     suggestedName: '',
     suggestedDescription: '',
+    hasUnsavedChanges: false,
+    showCloseConfirmation: false,
   }),
+
+  requestClose: () => {
+    const { hasUnsavedChanges } = get()
+    if (hasUnsavedChanges) {
+      set({ showCloseConfirmation: true })
+    } else {
+      get().closeModal()
+    }
+  },
+
+  confirmClose: () => {
+    set({ showCloseConfirmation: false })
+    get().closeModal()
+  },
+
+  cancelClose: () => set({ showCloseConfirmation: false }),
+
+  setHasUnsavedChanges: (value) => set({ hasUnsavedChanges: value }),
 
   setView: (view) => set({ currentView: view }),
 
@@ -63,6 +95,7 @@ export const usePlanBuilderStore = create<PlanBuilderStore>((set) => ({
     suggestedName: name,
     suggestedDescription: description,
     currentView: 'builder',
+    hasUnsavedChanges: true,  // Generated content counts as unsaved changes
   }),
 
   clearGeneratedContent: () => set({
