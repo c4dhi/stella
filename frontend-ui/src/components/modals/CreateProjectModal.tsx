@@ -361,7 +361,7 @@ export default function CreateProjectModal({
                           <div className={`
                             w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
                             ${getStepNumber(step) >= s.number
-                              ? 'bg-primary-500 text-white'
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
                               : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
                             }
                           `}>
@@ -369,7 +369,7 @@ export default function CreateProjectModal({
                           </div>
                           {idx < visibleStepConfigs.length - 1 && (
                             <div className={`w-8 h-0.5 ml-3 ${getStepNumber(step) > s.number
-                              ? 'bg-primary-500'
+                              ? isDark ? 'bg-violet-500' : 'bg-neutral-900'
                               : isDark ? 'bg-zinc-600' : 'bg-neutral-200'
                             }`} />
                           )}
@@ -444,8 +444,8 @@ export default function CreateProjectModal({
                           relative p-4 rounded-xl text-left transition-all duration-200
                           ${projectType === 'private'
                             ? isDark
-                              ? 'bg-primary-500/20 border-2 border-primary-500'
-                              : 'bg-primary-50 border-2 border-primary-500'
+                              ? 'bg-violet-500/20 border-2 border-violet-500'
+                              : 'bg-neutral-100 border-2 border-neutral-900'
                             : isDark
                               ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
                               : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
@@ -456,7 +456,7 @@ export default function CreateProjectModal({
                           <div className={`
                             w-10 h-10 rounded-xl flex items-center justify-center
                             ${projectType === 'private'
-                              ? 'bg-primary-500 text-white'
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
                               : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
                             }
                           `}>
@@ -480,8 +480,8 @@ export default function CreateProjectModal({
                           relative p-4 rounded-xl text-left transition-all duration-200
                           ${projectType === 'public'
                             ? isDark
-                              ? 'bg-primary-500/20 border-2 border-primary-500'
-                              : 'bg-primary-50 border-2 border-primary-500'
+                              ? 'bg-violet-500/20 border-2 border-violet-500'
+                              : 'bg-neutral-100 border-2 border-neutral-900'
                             : isDark
                               ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
                               : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
@@ -492,7 +492,7 @@ export default function CreateProjectModal({
                           <div className={`
                             w-10 h-10 rounded-xl flex items-center justify-center
                             ${projectType === 'public'
-                              ? 'bg-primary-500 text-white'
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
                               : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
                             }
                           `}>
@@ -793,7 +793,10 @@ export default function CreateProjectModal({
                     onClick={handleClose}
                     className={`
                       w-full py-3 rounded-xl text-sm font-medium transition-all
-                      bg-primary-500 text-white hover:bg-primary-600
+                      ${isDark
+                        ? 'bg-violet-600 text-white hover:bg-violet-500'
+                        : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                      }
                     `}
                   >
                     Done
@@ -839,7 +842,10 @@ export default function CreateProjectModal({
                   className={`
                     px-6 py-2.5 rounded-xl text-sm font-medium transition-all
                     disabled:opacity-60 disabled:cursor-not-allowed
-                    bg-primary-500 text-white hover:bg-primary-600
+                    ${isDark
+                      ? 'bg-violet-600 text-white hover:bg-violet-500'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                    }
                   `}
                 >
                   {isSubmitting

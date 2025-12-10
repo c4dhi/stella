@@ -71,9 +71,9 @@ export default function PublicLinkModal({
               <div className="flex items-center gap-3 mb-2">
                 <div className={`
                   w-10 h-10 rounded-xl flex items-center justify-center
-                  ${isDark ? 'bg-violet-500/20' : 'bg-violet-50'}
+                  ${isDark ? 'bg-violet-500/20' : 'bg-neutral-100'}
                 `}>
-                  <Globe className={`w-5 h-5 ${isDark ? 'text-violet-400' : 'text-violet-600'}`} />
+                  <Globe className={`w-5 h-5 ${isDark ? 'text-violet-400' : 'text-neutral-900'}`} />
                 </div>
                 <div>
                   <h2 className={`text-lg font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
@@ -173,7 +173,7 @@ export default function PublicLinkModal({
                     flex items-center justify-center gap-2
                     ${isDark
                       ? 'bg-violet-600 text-white hover:bg-violet-500'
-                      : 'bg-violet-600 text-white hover:bg-violet-700'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800'
                     }
                   `}
                 >

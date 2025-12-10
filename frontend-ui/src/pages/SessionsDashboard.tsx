@@ -343,10 +343,10 @@ export default function SessionsDashboard() {
               // Public project empty state - focus on inviting participants
               <>
                 <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
-                  isDark ? 'bg-violet-500/20' : 'bg-violet-50'
+                  isDark ? 'bg-violet-500/20' : 'bg-neutral-100'
                 }`}>
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className={
-                    isDark ? 'text-violet-400' : 'text-violet-600'
+                    isDark ? 'text-violet-400' : 'text-neutral-900'
                   } stroke="currentColor" strokeWidth="1.5">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                     <circle cx="9" cy="7" r="4" />
