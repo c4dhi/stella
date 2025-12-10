@@ -6,21 +6,31 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   ValidationPipe,
   UsePipes,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { UpdatePublicConfigDto } from './dto/update-public-config.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('projects')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post()
-  create(@Body() createProjectDto: CreateProjectDto) {
-    return this.projectsService.create(createProjectDto);
+  create(
+    @Body() createProjectDto: CreateProjectDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.projectsService.create(createProjectDto, user.userId);
   }
 
   @Get()
@@ -49,5 +59,25 @@ export class ProjectsController {
   @Delete(':projectId')
   remove(@Param('projectId') id: string) {
     return this.projectsService.remove(id);
+  }
+
+  /**
+   * Update public project configuration
+   */
+  @Patch(':projectId/public-config')
+  updatePublicConfig(
+    @Param('projectId') id: string,
+    @Body() dto: UpdatePublicConfigDto,
+  ) {
+    return this.projectsService.updatePublicConfig(id, dto);
+  }
+
+  /**
+   * Get public link for a project
+   */
+  @Get(':projectId/public-link')
+  getPublicLink(@Param('projectId') id: string) {
+    const baseUrl = this.configService.get<string>('PUBLIC_FRONTEND_URL') || 'http://localhost:8080';
+    return this.projectsService.getPublicLink(id, baseUrl);
   }
 }

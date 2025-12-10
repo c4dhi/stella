@@ -25,17 +25,18 @@ export class AgentGrpcController {
    */
   @GrpcMethod('AgentService', 'RegisterAgent')
   async registerAgent(request: any): Promise<any> {
-    this.logger.log(`RegisterAgent called: ${request.agent_type}`);
+    // NestJS gRPC uses camelCase for field names (agentType, not agent_type)
+    this.logger.log(`RegisterAgent called: ${request.agentType}`);
 
     const response = await this.agentServerService.handleRegisterAgent({
-      agentType: request.agent_type,
-      agentVersion: request.agent_version,
+      agentType: request.agentType,
+      agentVersion: request.agentVersion,
       capabilities: request.capabilities || {},
     });
 
     return {
       success: response.success,
-      session_id: response.sessionId,
+      sessionId: response.sessionId,
       message: response.message,
       config: response.config,
     };
@@ -86,16 +87,17 @@ export class AgentGrpcController {
    */
   @GrpcMethod('AgentService', 'SendInterrupt')
   async sendInterrupt(request: any): Promise<any> {
-    this.logger.log(`SendInterrupt called for session: ${request.session_id}`);
+    // NestJS gRPC uses camelCase for field names
+    this.logger.log(`SendInterrupt called for session: ${request.sessionId}`);
 
     const result = await this.agentServerService.sendInterrupt(
-      request.session_id,
+      request.sessionId,
       request.reason,
     );
 
     return {
       success: result.success,
-      was_processing: result.wasProcessing,
+      wasProcessing: result.wasProcessing,
     };
   }
 
@@ -104,13 +106,14 @@ export class AgentGrpcController {
    */
   @GrpcMethod('AgentService', 'EndSession')
   async endSession(request: any): Promise<any> {
-    this.logger.log(`EndSession called for session: ${request.session_id}`);
+    // NestJS gRPC uses camelCase for field names
+    this.logger.log(`EndSession called for session: ${request.sessionId}`);
 
-    await this.agentServerService.sendSessionEnd(request.session_id);
+    await this.agentServerService.sendSessionEnd(request.sessionId);
 
     return {
       success: true,
-      final_data: {},
+      finalData: {},
     };
   }
 
@@ -123,9 +126,9 @@ export class AgentGrpcController {
 
     return {
       healthy: true,
-      agent_type: 'session-management-server',
-      agent_version: '1.0.0',
-      session_id: connectedSessions.length > 0 ? connectedSessions[0] : '',
+      agentType: 'session-management-server',
+      agentVersion: '1.0.0',
+      sessionId: connectedSessions.length > 0 ? connectedSessions[0] : '',
     };
   }
 }

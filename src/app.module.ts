@@ -21,6 +21,7 @@ import { AgentBuildModule } from './agent-build/agent-build.module';
 import { AgentUploadModule } from './agent-upload/agent-upload.module';
 import { PlanTemplatesModule } from './plan-templates/plan-templates.module';
 import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.module';
+import { PublicProjectsModule } from './public-projects/public-projects.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.mod
     AgentUploadModule,
     PlanTemplatesModule,
     EnvVarTemplatesModule,
+    PublicProjectsModule,
   ],
   controllers: [AppController],
   providers: [

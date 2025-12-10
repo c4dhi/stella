@@ -54,6 +54,20 @@ model Project {
   updatedAt   DateTime            @updatedAt
   sessions    Session[]
   memberships ProjectMembership[]
+
+  // Public Project Configuration
+  isPublic               Boolean    @default(false)
+  publicToken            String?    @unique @default(uuid())
+  publicAgentTypeId      String?
+  publicAgentType        AgentType? @relation(fields: [publicAgentTypeId], references: [id], name: "publicProjects")
+  publicAgentConfig      Json?      // { name, icon, plan, envVarTemplateId }
+  publicVisualizerType   String?
+  publicVisualizerLocked Boolean    @default(false)
+  publicExpiresAt        DateTime?
+  publicEnabled          Boolean    @default(true)
+
+  @@index([publicToken])
+  @@index([isPublic, publicEnabled])
 }
 
 enum SessionStatus {
@@ -167,6 +181,7 @@ model AgentType {
   agents           AgentInstance[]
   buildLogs        AgentBuildLog[]
   envVarTemplates  EnvVarTemplate[]    // Env var templates scoped to this agent type
+  publicProjects   Project[]           @relation(name: "publicProjects")
 
   @@index([slug])
   @@index([isBuiltIn])

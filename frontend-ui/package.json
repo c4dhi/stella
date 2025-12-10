@@ -11,8 +11,10 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@types/js-cookie": "^3.0.6",
     "@vladmandic/face-api": "^1.7.15",
     "framer-motion": "^12.23.22",
+    "js-cookie": "^3.0.5",
     "livekit-client": "^2.15.6",
     "lucide-react": "^0.552.0",
     "qrcode.react": "^4.2.0",

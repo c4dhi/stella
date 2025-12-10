@@ -50,6 +50,7 @@ from stella_agent_sdk.livekit.room import RoomManager
 from stella_agent_sdk.services.stt_client import STTClient
 from stella_agent_sdk.services.tts_client import TTSClient
 from stella_agent_sdk.services.history_client import HistoryClient
+from stella_agent_sdk.services.agent_server_client import AgentServerClient
 from stella_agent_sdk.messages.types import OutputType
 
 logger = logging.getLogger(__name__)
@@ -138,12 +139,17 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
     logger.info(f"Room: {room_name}, Identity: {identity}, Session: {session_id}")
     logger.info(f"STT: {stt_address}, TTS: {tts_address}")
 
+    # Agent server address for registration (gRPC)
+    # GRPC_SERVER is set by kubernetes.service.ts when deploying agent pods
+    agent_server_address = os.environ.get("GRPC_SERVER", os.environ.get("AGENT_SERVER_ADDRESS", "session-management-server:50051"))
+
     # Initialize components
     room_manager: Optional[RoomManager] = None
     stt_client: Optional[STTClient] = None
     tts_client: Optional[TTSClient] = None
     audio_pipeline: Optional[AudioPipeline] = None
     history_client: Optional[HistoryClient] = None
+    agent_server_client: Optional[AgentServerClient] = None
     shutdown_event = asyncio.Event()
 
     # Set up signal handlers for graceful shutdown
@@ -265,7 +271,27 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             else:
                 logger.debug(f"[ON_READY] Ignoring output type: {output.type}")
 
-        # 10b. Register callback to re-send progress when new participants join
+        # 10b. Register agent with session-management-server (marks status as RUNNING)
+        logger.info(f"Registering agent: type='{agent.agent_type}', version='{agent.agent_version}'")
+        agent_server_client = AgentServerClient(agent_server_address)
+        try:
+            await agent_server_client.connect()
+            registration_result = await agent_server_client.register_agent(
+                agent_type=agent.agent_type,
+                agent_version=agent.agent_version,
+            )
+            if registration_result["success"]:
+                logger.info(f"Agent registered with session-management-server: {registration_result['session_id']}")
+            else:
+                logger.warning(f"Agent registration response: {registration_result['message']}")
+        except Exception as e:
+            # Log but don't fail - agent can still work without registration
+            logger.warning(f"Failed to register agent with session-management-server: {e}")
+        finally:
+            await agent_server_client.disconnect()
+            agent_server_client = None
+
+        # 10c. Register callback to re-send progress when new participants join
         def on_participant_joined(participant_identity: str):
             # Use the agent's stored progress payload (updated by audio loop)
             if agent._last_progress_payload:

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { KubernetesService } from '../kubernetes/kubernetes.service';
 import { AgentServerService } from '../agent-server/agent-server.service';
@@ -23,6 +24,7 @@ export class AgentsService {
     private prisma: PrismaService,
     private k8s: KubernetesService,
     private configService: ConfigService,
+    private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
   ) {
@@ -425,6 +427,10 @@ export class AgentsService {
       if (this.sessionsService) {
         this.sessionsService.emitAgentFailed(session.id, agentId, sanitizedName, error.message);
       }
+
+      // Emit internal EventEmitter event for PublicProjectsService to catch
+      // This allows event-based waiting instead of DB polling
+      this.eventEmitter.emit(`agent.failed.${session.id}`, { error: error.message });
     }
   }
 

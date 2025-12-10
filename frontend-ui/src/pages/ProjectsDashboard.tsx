@@ -45,10 +45,11 @@ export default function ProjectsDashboard() {
     loadProjects()
   }, [])
 
-  const handleCreateProject = async (name: string) => {
+  const handleCreateProject = async (name: string): Promise<string> => {
     const newProject = await apiClient.createProject({ name })
     setProjects(prev => [newProject as ProjectWithCounts, ...prev])
     addToast({ message: `Project "${name}" created`, type: 'success' })
+    return newProject.id
   }
 
   const handleUpdateProject = async (name: string) => {

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
-import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { Observable, Subject, ReplaySubject, filter, map, finalize } from 'rxjs';
 import { OnEvent } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,7 +15,12 @@ import { Prisma } from '@prisma/client';
 
 // Session event types for SSE streaming
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left';
+  type:
+    | 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+    | 'participant.joined' | 'participant.left'
+    // Join progress types for public project flow
+    | 'join.session_created' | 'join.agent_deploying' | 'join.agent_starting'
+    | 'join.agent_ready' | 'join.invitation_created' | 'join.complete' | 'join.failed';
   sessionId: string;
   agentId?: string;
   agentName?: string;
@@ -26,6 +31,10 @@ export interface SessionEvent {
   isOnline?: boolean;
   error?: string;
   timestamp: string;
+  // Join progress fields
+  step?: number;
+  totalSteps?: number;
+  invitationToken?: string;
 }
 
 interface MessageEvent {
@@ -41,7 +50,7 @@ export class SessionsService {
   private lastStatusUpdate: Date = new Date();
 
   // Event subjects for SSE streaming per session
-  private sessionEventSubjects: Map<string, Subject<SessionEvent>> = new Map();
+  private sessionEventSubjects: Map<string, Subject<SessionEvent> | ReplaySubject<SessionEvent>> = new Map();
   private subscriberCounts: Map<string, number> = new Map();
 
   constructor(
@@ -995,9 +1004,10 @@ export class SessionsService {
    */
   getSessionEventStream(sessionId: string): Observable<MessageEvent> {
     // Get or create a subject for this session
+    // Using ReplaySubject to buffer last 10 events for late subscribers
     let subject = this.sessionEventSubjects.get(sessionId);
     if (!subject) {
-      subject = new Subject<SessionEvent>();
+      subject = new ReplaySubject<SessionEvent>(10, 30000); // Buffer 10 events, 30 second window
       this.sessionEventSubjects.set(sessionId, subject);
       this.subscriberCounts.set(sessionId, 0);
     }
@@ -1034,15 +1044,22 @@ export class SessionsService {
   /**
    * Emit a session event to all connected SSE clients.
    * Called by AgentServerService when agent state changes.
+   * Creates a ReplaySubject if none exists, so events are buffered for late subscribers.
    */
   emitSessionEvent(event: SessionEvent): void {
-    const subject = this.sessionEventSubjects.get(event.sessionId);
-    if (subject) {
-      this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
-      subject.next(event);
-    } else {
-      this.logger.debug(`No SSE subscribers for session ${event.sessionId}, event not emitted`);
+    let subject = this.sessionEventSubjects.get(event.sessionId);
+
+    // Create ReplaySubject if it doesn't exist - this allows events to be buffered
+    // before any SSE subscribers connect (important for public project join flow)
+    if (!subject) {
+      subject = new ReplaySubject<SessionEvent>(10, 30000); // Buffer 10 events, 30 second window
+      this.sessionEventSubjects.set(event.sessionId, subject);
+      this.subscriberCounts.set(event.sessionId, 0);
+      this.logger.log(`Created ReplaySubject for session ${event.sessionId} (no subscribers yet)`);
     }
+
+    this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
+    subject.next(event);
   }
 
   /**
