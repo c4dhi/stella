@@ -25,6 +25,7 @@ import type {
   AgentBuildStatus,
   AgentBuildResponse,
   SessionEvent,
+  ProjectSessionEvent,
   DeleteResponse,
   ApiError,
   Participant,
@@ -832,6 +833,53 @@ class SessionManagementClient {
 
     // Return cleanup function
     return () => {
+      eventSource.close()
+    }
+  }
+
+  /**
+   * Subscribe to real-time project events (session created, closed, deleted).
+   * Used by SessionsDashboard for real-time updates when new participants join.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToProjectEvents(
+    projectId: string,
+    onEvent: (event: ProjectSessionEvent) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/projects/${projectId}/sessions/events`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log(`[ApiClient] SSE connection opened for project ${projectId}`)
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: ProjectSessionEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse project SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Project SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log(`[ApiClient] Closing SSE connection for project ${projectId}`)
       eventSource.close()
     }
   }

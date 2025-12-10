@@ -10,7 +10,7 @@ import CloseSessionModal from '../components/modals/CloseSessionModal'
 import PublicLinkModal from '../components/modals/PublicLinkModal'
 import ProfileButton from '../components/layout/ProfileButton'
 import { useToastStore } from '../store/toastStore'
-import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
+import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus, ProjectSessionEvent } from '../lib/api-types'
 
 export default function SessionsDashboard() {
   const navigate = useNavigate()
@@ -109,6 +109,51 @@ export default function SessionsDashboard() {
 
     return () => clearInterval(interval)
   }, [sessions])
+
+  // Subscribe to real-time project events via SSE
+  useEffect(() => {
+    if (!projectId) return
+
+    const unsubscribe = apiClient.subscribeToProjectEvents(
+      projectId,
+      (event: ProjectSessionEvent) => {
+        console.log('[SessionsDashboard] Received project event:', event)
+
+        switch (event.type) {
+          case 'session.created':
+            // Reload sessions to get full session data with counts
+            // No toast - silent update to avoid spam when many participants join
+            loadData()
+            break
+
+          case 'session.closed':
+            // Update session status in local state
+            setSessions(prev =>
+              prev.map(s =>
+                s.id === event.sessionId
+                  ? { ...s, status: 'CLOSED' as SessionStatus }
+                  : s
+              )
+            )
+            break
+
+          case 'session.deleted':
+            // Remove session from local state
+            setSessions(prev => prev.filter(s => s.id !== event.sessionId))
+            break
+        }
+      },
+      (error) => {
+        console.error('[SessionsDashboard] SSE connection error:', error)
+        // EventSource auto-reconnects, just log the error
+      }
+    )
+
+    return () => {
+      console.log('[SessionsDashboard] Cleaning up SSE subscription')
+      unsubscribe()
+    }
+  }, [projectId])
 
   // Handle session creation
   const handleCreateSession = async (name?: string) => {

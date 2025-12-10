@@ -290,7 +290,11 @@ export interface SessionEvent {
     // Join progress types for public project flow
     | 'join.session_created' | 'join.agent_deploying' | 'join.agent_starting'
     | 'join.agent_ready' | 'join.invitation_created' | 'join.complete' | 'join.failed'
+    // Project-level session lifecycle events
+    | 'session.created' | 'session.closed' | 'session.deleted'
   sessionId: string
+  projectId?: string      // For project-level event filtering
+  sessionName?: string    // For display in notifications
   agentId?: string
   agentName?: string
   agentType?: string
@@ -304,6 +308,20 @@ export interface SessionEvent {
   step?: number
   totalSteps?: number
   invitationToken?: string
+}
+
+// Project-level session events (for SessionsDashboard real-time updates)
+export type ProjectSessionEventType =
+  | 'session.created'
+  | 'session.closed'
+  | 'session.deleted'
+
+export interface ProjectSessionEvent {
+  type: ProjectSessionEventType
+  sessionId: string
+  projectId: string
+  sessionName?: string
+  timestamp: string
 }
 
 // ============================================================================
