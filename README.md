@@ -113,6 +113,21 @@ The agent will start in a Kubernetes pod and automatically connect to the LiveKi
 
 ## Prerequisites
 
+### LiveKit Server (Required)
+
+STELLA requires an external LiveKit server for WebRTC communication. You need to set up LiveKit before deploying STELLA:
+
+- **LiveKit Cloud** (recommended): [livekit.io/cloud](https://livekit.io/cloud) - Managed service, easiest setup
+- **Self-hosted**: [LiveKit Server Documentation](https://docs.livekit.io/home/self-hosting/local/) - Run your own server
+
+Once LiveKit is set up, configure the following in your `.env`:
+```bash
+LIVEKIT_URL=wss://your-livekit-server.com        # Internal URL for agents
+PUBLIC_LIVEKIT_URL=wss://your-livekit-server.com # Public URL for browsers
+LIVEKIT_API_KEY=your-api-key
+LIVEKIT_API_SECRET=your-api-secret
+```
+
 ### macOS (OrbStack or Docker Desktop)
 
 - **Docker**: [Docker Desktop](https://docker.com/products/docker-desktop) or [OrbStack](https://orbstack.dev) (recommended)
@@ -140,33 +155,50 @@ K3s is a lightweight Kubernetes distribution that's automatically installed and 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Kubernetes Cluster                     │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                   Namespace: ai-agents                │  │
-│  │                                                       │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │  │
-│  │  │  PostgreSQL  │  │   LiveKit    │  │   Backend    │ │  │
-│  │  │     :5432    │  │    :7880     │  │    API       │ │  │
-│  │  └──────────────┘  └──────────────┘  │    :3000     │ │  │
-│  │                                      └──────────────┘ │  │
-│  │  ┌──────────────┐                                    │  │
-│  │  │  Frontend UI │                                    │  │
-│  │  │    :5173     │                                    │  │
-│  │  └──────────────┘                                    │  │
-│  │                                                       │  │
-│  │  ┌──────────────────────────────────────────────────┐ │  │
-│  │  │        AI Agent Pods (Created On-Demand)         │ │  │
-│  │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │ │  │
-│  │  │  │ Agent 1 │  │ Agent 2 │  │ Agent 3 │  ...      │ │  │
-│  │  │  └─────────┘  └─────────┘  └─────────┘           │ │  │
-│  │  └──────────────────────────────────────────────────┘ │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-          ↑                     ↑                   ↑
-    Port Forward          Port Forward        Port Forward
-   localhost:5173       localhost:3000     localhost:7880
+                              ┌─────────────────────────┐
+                              │   LiveKit Cloud/Server  │
+                              │      (External)         │
+                              │   WebRTC Media Server   │
+                              └───────────┬─────────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Kubernetes Cluster                              │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                       Namespace: ai-agents                        │  │
+│  │                                                                   │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │  │
+│  │  │  PostgreSQL  │  │  Backend API │  │       Frontend UI        │ │  │
+│  │  │    :5432     │  │    :3000     │  │         :5173            │ │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────────────────┘ │  │
+│  │                                                                   │  │
+│  │  ┌──────────────┐  ┌──────────────┐                               │  │
+│  │  │ STT Service  │  │ TTS Service  │   Speech-to-Text & Text-to-  │  │
+│  │  │   :50051     │  │   :50052     │   Speech microservices       │  │
+│  │  └──────────────┘  └──────────────┘                               │  │
+│  │                                                                   │  │
+│  │  ┌──────────────────────────────────────────────────────────────┐ │  │
+│  │  │              AI Agent Pods (Created On-Demand)               │ │  │
+│  │  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐     │ │  │
+│  │  │  │ stella-agent  │  │ stella-agent  │  │  stella-light │ ... │ │  │
+│  │  │  │   Session 1   │  │   Session 2   │  │    Session 3  │     │ │  │
+│  │  │  └───────────────┘  └───────────────┘  └───────────────┘     │ │  │
+│  │  └──────────────────────────────────────────────────────────────┘ │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+          ↑                     ↑
+    Port Forward          Port Forward
+   localhost:5173       localhost:3000
 ```
+
+**Key Components:**
+- **LiveKit** - External WebRTC media server (cloud-hosted or self-hosted)
+- **Backend API** - NestJS server managing sessions, agents, and LiveKit tokens
+- **Frontend UI** - React app for real-time voice/text communication
+- **STT/TTS Services** - Microservices for speech recognition and synthesis
+- **Agent Pods** - Python conversational AI agents, created per session
 
 ---
 
@@ -331,12 +363,15 @@ curl -X DELETE http://localhost:3000/agents/:agentId
 | `DATABASE_URL` | PostgreSQL connection string | Required |
 | `PORT` | Server port | `3000` |
 | `NODE_ENV` | Environment mode | `development` |
-| `LIVEKIT_URL` | LiveKit server URL | `ws://localhost:7880` |
-| `LIVEKIT_API_KEY` | LiveKit API key | `devkey` |
-| `LIVEKIT_API_SECRET` | LiveKit API secret | `secret` |
+| `LIVEKIT_URL` | LiveKit server URL (internal) | Required |
+| `PUBLIC_LIVEKIT_URL` | LiveKit URL for browser clients | Required |
+| `LIVEKIT_API_KEY` | LiveKit API key | Required |
+| `LIVEKIT_API_SECRET` | LiveKit API secret | Required |
 | `KUBERNETES_NAMESPACE` | K8s namespace for agents | `ai-agents` |
 | `AGENT_IMAGE` | Docker image for agents | `conversational-ai-server:latest` |
 | `OPENAI_API_KEY` | OpenAI API key (for agents) | Required |
+| `STT_PROVIDER` | Speech-to-text provider | `sherpa` |
+| `TTS_PROVIDER` | Text-to-speech provider | `kokoro` |
 
 ---
 
