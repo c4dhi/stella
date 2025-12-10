@@ -1,10 +1,24 @@
-# Session Management Server
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/stella-banner.png">
+    <source media="(prefers-color-scheme: light)" srcset=".github/stella-banner.png">
+    <img alt="STELLA - System for Testing and Engineering LLM-based Conversational Agents" src=".github/stella-banner.png" width="800">
+  </picture>
+</p>
 
-A NestJS-based control plane for managing conversational AI sessions with LiveKit WebRTC integration and Kubernetes agent orchestration.
+<h1 align="center">STELLA Backend</h1>
+
+<p align="center">
+  <strong>System for Testing and Engineering LLM-based Conversational Agents</strong>
+</p>
+
+<p align="center">
+  A NestJS-based control plane for managing conversational AI sessions with LiveKit WebRTC integration and Kubernetes agent orchestration.
+</p>
 
 ---
 
-## 🚀 Kubernetes Quick Start (Recommended)
+## Quick Start
 
 **Get the entire system running in 3 commands:**
 
@@ -16,53 +30,114 @@ nano .env  # Set OPENAI_API_KEY and database credentials
 # 2. Deploy everything
 ./scripts/start-k8s.sh
 
-# OR: Run in background (survives SSH logout) 🆕
+# OR: Run in background (survives SSH logout)
 ./scripts/start-k8s.sh --daemon
 ```
 
-✅ **Done!** System is now running at:
-- Frontend UI: http://localhost:5173
-- API: http://localhost:3000
-- LiveKit: ws://localhost:7880
-- Agents: Auto-created as Kubernetes pods
-
-### Deployment Modes
-
-**Foreground Mode** (Default):
-```bash
-./scripts/start-k8s.sh
-# Press Ctrl+C to stop all services
-```
-
-**Background Mode** (Daemon) - Perfect for servers:
-```bash
-# Start in background (survives SSH logout)
-./scripts/start-k8s.sh --daemon
-
-# Stop all services
-./scripts/start-k8s.sh --stop
-
-# View logs
-tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
-```
-
-📖 **Full Kubernetes Guide**: See [K8S_DEPLOYMENT.md](./K8S_DEPLOYMENT.md) or [KUBERNETES_QUICK_START.md](../KUBERNETES_QUICK_START.md)
+**Done!** System is now running at:
+- **Frontend UI**: http://localhost:5173
+- **API**: http://localhost:3000
+- **LiveKit**: ws://localhost:7880
+- **Agents**: Auto-created as Kubernetes pods
 
 ---
 
-## Overview
+## Setting Up Your First Agent
 
-This server manages the lifecycle of conversational AI sessions, including:
-- **Project & Session Management**: Organize multiple sessions under projects
-- **LiveKit Integration**: Token generation and room management
-- **Kubernetes Orchestration**: Dynamic agent pod deployment
-- **Frontend UI**: React-based web interface for real-time voice/text communication
-- **Real-time Tracking**: Participants, messages, and events
-- **Agent Control**: Start, stop, and monitor Python conversational AI agents
+### 1. Create an Environment Variable Template
+
+Before deploying an agent, you need to create an environment variable template with your API keys:
+
+1. Open the **Frontend UI** at http://localhost:5173
+2. Go to **Settings** in the sidebar
+3. Click **"New Template"** in the Environment Variables section
+4. Add your API keys:
+   - `OPENAI_API_KEY` - Your OpenAI API key (required)
+   - `ELEVENLABS_API_KEY` - Optional, for ElevenLabs TTS
+   - Any other environment variables your agent needs
+5. Give the template a name (e.g., "Production Keys") and save
+
+### 2. Deploy an Agent
+
+1. Create or open a session from the Sessions page
+2. Click **"Deploy Agent"** in the session view
+3. Select your environment variable template from the dropdown
+4. Choose an agent type:
+   - **stella-agent** - Full-featured agent with advanced capabilities
+   - **stella-light-agent** - Lightweight agent for simpler use cases
+5. Optionally select a **Plan Template** to define the conversation flow
+6. Click **Deploy**
+
+The agent will start in a Kubernetes pod and automatically connect to the LiveKit room. You can then interact with it via voice or text.
+
+### 3. Monitor Your Agent
+
+- View agent status in the session panel
+- Click on the agent to see logs and metrics
+- Stop the agent when done to free up resources
+
+---
+
+## Deployment Modes
+
+| Flag | Description | Use Case |
+|------|-------------|----------|
+| (default) | Foreground mode | Local development, press Ctrl+C to stop |
+| `--daemon, -d` | Background mode | Remote servers, survives SSH logout |
+| `--restart, -r` | Stop then restart | Apply code changes quickly |
+| `--rebuild` | Force rebuild images | After Dockerfile changes |
+| `--skip-build` | Skip builds | Restart pods only |
+| `--stop` | Stop all services | Cleanup |
+| `--dry-run` | Preview changes | Test before applying |
+| `--production` | Production mode | Deploy with production settings |
+
+**Examples:**
+```bash
+# Local development
+./scripts/start-k8s.sh
+
+# Production deployment in background
+./scripts/start-k8s.sh --production --daemon
+
+# Apply code changes (stop, rebuild, restart)
+./scripts/start-k8s.sh --restart
+
+# Force rebuild everything
+./scripts/start-k8s.sh --rebuild
+
+# Preview what would happen
+./scripts/start-k8s.sh --dry-run --verbose
+```
+
+---
+
+## Prerequisites
+
+### macOS (OrbStack or Docker Desktop)
+
+- **Docker**: [Docker Desktop](https://docker.com/products/docker-desktop) or [OrbStack](https://orbstack.dev) (recommended)
+- **kubectl**: Auto-installed if missing
+- **OpenAI API key**
+
+OrbStack provides a built-in Kubernetes cluster that's lightweight and fast. The startup script auto-detects OrbStack and uses it automatically.
+
+### Linux (K3s)
+
+- **Docker**: Docker Engine
+- **K3s**: Auto-installed by the startup script
+- **OpenAI API key**
+
+K3s is a lightweight Kubernetes distribution that's automatically installed and configured by the startup script on Linux systems.
+
+### Supported Platforms
+
+- macOS (Intel & Apple Silicon)
+- Ubuntu/Linux
+- Windows (via WSL2)
+
+---
 
 ## Architecture
-
-### Kubernetes Architecture (Recommended)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -93,174 +168,36 @@ This server manages the lifecycle of conversational AI sessions, including:
    localhost:5173       localhost:3000     localhost:7880
 ```
 
-### Standalone Architecture (Local Development)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  Session Management Server                  │
-│                       (NestJS + Prisma)                     │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Projects   │  │   Sessions   │  │    Agents    │       │
-│  │    Module    │  │    Module    │  │    Module    │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│         │                  │                  │             │
-│         └──────────────────┴──────────────────┘             │
-│                           │                                 │
-│                  ┌────────┴─────────┐                       │
-│                  │   PostgreSQL     │                       │
-│                  │   (Prisma ORM)   │                       │
-│                  └──────────────────┘                       │
-└──────────────────┬──────────────────────────┬───────────────┘
-                   │                          │
-        ┌──────────▼────────┐       ┌─────────▼──────────┐
-        │   LiveKit Server  │       │  Kubernetes Cluster│
-        │   (WebRTC)        │       │  (Agent Pods)      │
-        └───────────────────┘       └────────────────────┘
-```
+---
 
 ## Features
 
-### ✅ **Project Management**
+### Project & Session Management
 - Create and organize multiple projects
 - Track sessions, agents, and activity per project
 - Get aggregated statistics
 
-### ✅ **Session Management**
-- Create sessions with unique LiveKit rooms
-- Generate join tokens for participants
-- Track session lifecycle (ACTIVE/CLOSED)
-- Query and filter sessions
-
-### ✅ **Agent Orchestration**
+### Agent Orchestration
 - Deploy conversational AI agents to Kubernetes
 - Automatic Secret and Pod creation
 - Pass plan configurations via environment variables
 - Monitor agent status and logs
 - Graceful shutdown and cleanup
 
-### ✅ **LiveKit Integration**
+### LiveKit Integration
 - JWT token generation for secure room access
 - WebRTC-based real-time communication
 - Data channel for text messages
 
-### ✅ **Data Persistence**
+### Data Persistence
 - PostgreSQL database via Prisma ORM
 - Track participants, messages, and room events
 - Timeline view combining messages and events
 
-## Prerequisites
+---
 
-### Option 1: Kubernetes Deployment (Recommended)
-- **Docker** (Docker Desktop on macOS, Docker Engine on Linux)
-- **kubectl** CLI tool
-- **minikube** (auto-installed by startup script on both macOS and Ubuntu)
-- **OpenAI API key**
+## Useful Commands
 
-**Supported Platforms:**
-- ✅ macOS (Intel & Apple Silicon)
-- ✅ Ubuntu/Linux
-- ✅ Windows (via WSL2)
-
-### Option 2: Standalone Deployment (Local Development)
-- **Node.js** 18+ and npm
-- **PostgreSQL** database
-- **Kubernetes** cluster (minikube, k3s, or cloud provider)
-- **LiveKit** server running
-- **Docker** (for building agent images)
-
-## Deployment Options
-
-### Option 1: Kubernetes Deployment (Recommended)
-
-**One-command deployment with everything included:**
-
-```bash
-# 1. Create .env file with your credentials
-cp .env.example .env
-nano .env
-# Set:
-#   OPENAI_API_KEY=sk-your-actual-key-here
-#   POSTGRES_DB=session_management
-#   POSTGRES_USER=your-db-username
-#   POSTGRES_PASSWORD=your-secure-password
-
-# 2. Make startup script executable (first time only)
-chmod +x scripts/start-k8s.sh
-
-# 3. Deploy everything
-./scripts/start-k8s.sh
-
-# OR: Run in background (daemon mode)
-./scripts/start-k8s.sh --daemon
-
-# View help and all options
-./scripts/start-k8s.sh --help
-```
-
-**What gets deployed:**
-- ✅ PostgreSQL database with persistent storage
-- ✅ LiveKit WebRTC server
-- ✅ Session Management API server
-- ✅ Frontend UI (React + Vite)
-- ✅ Automatic Prisma migrations
-- ✅ RBAC permissions for pod management
-- ✅ Port forwarding to localhost
-
-**Access URLs:**
-- Frontend UI: http://localhost:5173
-- API: http://localhost:3000
-- LiveKit: ws://localhost:7880
-
-**Deployment Modes:**
-
-| Feature | Foreground Mode | Background Mode (Daemon) |
-|---------|----------------|--------------------------|
-| **Command** | `./scripts/start-k8s.sh` | `./scripts/start-k8s.sh --daemon` |
-| **Output** | Live to terminal | Logged to `/tmp/stella-ai-k8s/` |
-| **SSH Logout** | ❌ Stops services | ✅ Services continue |
-| **Stop Method** | Ctrl+C | `./scripts/start-k8s.sh --stop` |
-| **Best For** | Local development | Remote servers, production |
-| **Process Management** | Attached to terminal | `nohup` + `disown` |
-
-1. **Foreground Mode** (default):
-   ```bash
-   ./scripts/start-k8s.sh
-   # Press Ctrl+C to stop all services
-   ```
-   - Interactive mode with live output
-   - Stops when terminal closes or Ctrl+C is pressed
-   - Best for local development
-
-2. **Background Mode** (daemon):
-   ```bash
-   # Start in background
-   ./scripts/start-k8s.sh --daemon
-
-   # Services continue running after SSH logout ✓
-   # View logs
-   tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
-
-   # Stop services
-   ./scripts/start-k8s.sh --stop
-   ```
-   - Runs as background processes using `nohup`
-   - Survives SSH disconnections
-   - Perfect for remote servers and production
-   - All logs saved to `/tmp/stella-ai-k8s/`
-
-**Log Files (Daemon Mode):**
-```
-/tmp/stella-ai-k8s/
-├── stella-ai-k8s.log          # Main deployment log
-├── port-forwards.pid          # PIDs of port-forward processes
-├── pf-frontend.log            # Frontend port-forward logs
-├── pf-backend.log             # Backend port-forward logs
-├── pf-livekit.log             # LiveKit port-forward logs
-└── pf-postgres.log            # PostgreSQL port-forward logs
-```
-
-**Useful commands:**
 ```bash
 # View all resources
 kubectl get all -n ai-agents
@@ -274,667 +211,178 @@ kubectl logs -f -n ai-agents -l app=session-management-server
 # Monitor daemon mode logs
 tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 
-# Check port-forward processes (daemon mode)
-cat /tmp/stella-ai-k8s/port-forwards.pid
-ps -p $(cat /tmp/stella-ai-k8s/port-forwards.pid)
-
-# Stop cluster (foreground mode)
-# Press Ctrl+C
-
-# Stop cluster (daemon mode)
+# Stop services
 ./scripts/start-k8s.sh --stop
 
-# OR manually stop minikube
-minikube stop
-
-# Restart cluster
-./scripts/start-k8s.sh          # foreground
-./scripts/start-k8s.sh --daemon # background
+# Restart with code changes
+./scripts/start-k8s.sh --restart
 ```
-
-📖 **Full Guide**: See [K8S_DEPLOYMENT.md](./K8S_DEPLOYMENT.md)
 
 ---
 
-### Option 2: Standalone Deployment (Local Development)
+## Troubleshooting
 
-**For manual setup or development without Kubernetes:**
+### Connection Issues
 
-#### 1. Install Dependencies
+**"Connection to database failed"**
+- Ensure PostgreSQL pod is running: `kubectl get pods -n ai-agents`
+- Check DATABASE_URL in your `.env`
+- Run migrations: `npx prisma migrate deploy`
 
-```bash
-npm install
-```
+**"Failed to create pod: Forbidden"**
+- Check Kubernetes RBAC permissions
+- Ensure namespace exists: `kubectl get namespace ai-agents`
+- Verify ServiceAccount: `kubectl get sa -n ai-agents`
 
-#### 2. Configure Environment
+**"Agent pod not starting"**
+- Check agent image exists: `docker images | grep stella`
+- View pod logs: `kubectl logs <pod-name> -n ai-agents`
+- Check pod events: `kubectl describe pod <pod-name> -n ai-agents`
 
-Copy `.env.example` to `.env` and update:
+**"LiveKit connection refused"**
+- Ensure LiveKit pod is running
+- Check port forwarding is active
+- Verify LIVEKIT_URL in configuration
 
-```env
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/session_management?schema=public"
+### Platform-Specific
 
-# LiveKit
-LIVEKIT_URL=ws://localhost:7880
-LIVEKIT_API_KEY=devkey
-LIVEKIT_API_SECRET=secret
+**macOS (OrbStack)**
+- Ensure OrbStack is running before starting the script
+- OrbStack provides Kubernetes automatically, no additional setup needed
+- If using Docker Desktop instead, ensure Kubernetes is enabled in settings
 
-# Kubernetes
-KUBERNETES_NAMESPACE=ai-agents
-AGENT_IMAGE=conversational-ai-server:latest
+**Linux (K3s)**
+- K3s is auto-installed by the startup script
+- Ensure user has docker group permissions: `sudo usermod -aG docker $USER`
+- After adding to docker group, log out and back in
 
-# OpenAI (for agents)
-OPENAI_API_KEY=sk-your-key
-```
-
-#### 3. Setup Database
-
-```bash
-# Generate Prisma client
-npx prisma generate
-
-# Run migrations
-npx prisma migrate dev --name init
-
-# (Optional) Open Prisma Studio to view data
-npx prisma studio
-```
-
-#### 4. Build Agent Docker Image
+### Daemon Mode Issues
 
 ```bash
-cd conversational-ai-server-python
-docker build -t conversational-ai-server:latest .
+# Check if port-forwards are running
+cat /tmp/stella-ai-k8s/port-forwards.pid
+ps -p $(cat /tmp/stella-ai-k8s/port-forwards.pid)
+
+# View logs
+tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
+
+# Clean restart
+./scripts/start-k8s.sh --stop
+./scripts/start-k8s.sh --daemon
 ```
 
-#### 5. Start the Server
+---
 
-```bash
-# Development mode with hot reload
-npm run start:dev
-
-# Production mode
-npm run build
-npm run start:prod
-```
-
-Server will start on `http://localhost:3000`
-
-## API Endpoints
+## API Reference
 
 ### Projects
 
-#### `POST /projects`
-Create a new project
-
 ```bash
+# Create project
 curl -X POST http://localhost:3000/projects \
   -H "Content-Type: application/json" \
   -d '{"name": "My Project"}'
-```
 
-#### `GET /projects`
-List all projects with counts
-
-```bash
+# List projects
 curl http://localhost:3000/projects
-```
 
-#### `GET /projects/:projectId`
-Get project details
-
-#### `GET /projects/:projectId/stats`
-Get project statistics
-
-```bash
-curl http://localhost:3000/projects/abc123/stats
-```
-
-Returns:
-```json
-{
-  "totalSessions": 10,
-  "activeSessions": 3,
-  "totalAgents": 5,
-  "activeAgents": 2,
-  "totalMessages": 150,
-  "totalParticipants": 8
-}
+# Get project stats
+curl http://localhost:3000/projects/:projectId/stats
 ```
 
 ### Sessions
 
-#### `POST /projects/:projectId/sessions`
-Create a new session
-
 ```bash
-curl -X POST http://localhost:3000/projects/abc123/sessions \
+# Create session
+curl -X POST http://localhost:3000/projects/:projectId/sessions \
   -H "Content-Type: application/json" \
-  -d '{"planId": "cognitive_stimulation_demo_sm"}'
-```
+  -d '{"planId": "my_plan"}'
 
-#### `GET /projects/:projectId/sessions`
-List sessions with filters
-
-Query parameters:
-- `status`: `ACTIVE` or `CLOSED`
-- `search`: Filter by room name
-- `skip`: Pagination offset
-- `take`: Number of results (max 100)
-
-```bash
-curl "http://localhost:3000/projects/abc123/sessions?status=ACTIVE&take=20"
-```
-
-#### `GET /sessions/:sessionId`
-Get session details including participants and agents
-
-#### `POST /sessions/:sessionId/joinToken`
-Mint a LiveKit join token for a participant
-
-```bash
-curl -X POST http://localhost:3000/sessions/xyz789/joinToken \
+# Get join token
+curl -X POST http://localhost:3000/sessions/:sessionId/joinToken \
   -H "Content-Type: application/json" \
-  -d '{
-    "identity": "user-123",
-    "name": "John Doe"
-  }'
+  -d '{"identity": "user-123", "name": "John Doe"}'
 ```
-
-Returns:
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "serverUrl": "ws://localhost:7880",
-  "roomName": "session-1234567890-abc"
-}
-```
-
-#### `GET /sessions/:sessionId/timeline`
-Get unified timeline of messages and events
-
-Query parameters:
-- `skip`: Pagination offset (default: 0)
-- `take`: Number of results (default: 50)
 
 ### Agents
 
-#### `POST /sessions/:sessionId/agents`
-Start a new agent for a session
-
 ```bash
-curl -X POST http://localhost:3000/sessions/xyz789/agents \
+# Start agent
+curl -X POST http://localhost:3000/sessions/:sessionId/agents \
   -H "Content-Type: application/json" \
-  -d '{
-    "role": "conversational-ai",
-    "planId": "cognitive_stimulation_demo_sm"
-  }'
+  -d '{"role": "conversational-ai"}'
+
+# Get agent status
+curl http://localhost:3000/agents/:agentId
+
+# Get agent logs
+curl http://localhost:3000/agents/:agentId/logs
+
+# Stop agent
+curl -X DELETE http://localhost:3000/agents/:agentId
 ```
-
-This will:
-1. Create an `AgentInstance` record in the database
-2. Create a Kubernetes Secret with LiveKit credentials and env vars
-3. Deploy a Kubernetes Pod running the Python conversational AI server
-4. Return the agent details
-
-#### `GET /agents/:agentId`
-Get agent status and Kubernetes pod info
-
-```bash
-curl http://localhost:3000/agents/agent123
-```
-
-#### `GET /agents/:agentId/logs`
-Get agent pod logs (last 100 lines)
-
-```bash
-curl http://localhost:3000/agents/agent123/logs
-```
-
-#### `DELETE /agents/:agentId`
-Stop an agent and cleanup Kubernetes resources
-
-```bash
-curl -X DELETE http://localhost:3000/agents/agent123
-```
-
-## Data Model
-
-### Project
-- `id`: UUID
-- `name`: Project name
-- `createdAt`, `updatedAt`: Timestamps
-- **Relations**: Many Sessions
-
-### Session
-- `id`: UUID
-- `projectId`: Parent project
-- `status`: `ACTIVE` | `CLOSED`
-- `createdAt`, `closedAt`: Timestamps
-- **Relations**: One Room, Many Agents, Participants, Messages, Events
-
-### Room
-- `id`: UUID
-- `sessionId`: Parent session (unique)
-- `livekitRoomName`: LiveKit room name (unique)
-- `serverUrl`: LiveKit server URL
-
-### AgentInstance
-- `id`: UUID
-- `sessionId`: Parent session
-- `role`: Agent role (e.g., "conversational-ai")
-- `status`: `STARTING` | `RUNNING` | `STOPPING` | `STOPPED` | `FAILED`
-- `podName`: Kubernetes pod name
-- `secretName`: Kubernetes secret name
-- `planId`: Optional plan configuration
-- `createdAt`, `stoppedAt`: Timestamps
-
-### Participant
-- `id`: UUID
-- `sessionId`: Parent session
-- `identity`: Participant identity (from LiveKit)
-- `joinedAt`, `leftAt`: Timestamps
-
-### Message
-- `id`: UUID
-- `sessionId`: Parent session
-- `participantId`: Optional sender
-- `content`: Message text
-- `messageType`: `"text"` | `"transcript"` | `"system"`
-- `timestamp`: Message time
-
-### RoomEvent
-- `id`: UUID
-- `sessionId`: Parent session
-- `eventType`: Event type (e.g., `"participant_joined"`)
-- `data`: JSON event data
-- `timestamp`: Event time
-
-## Kubernetes Integration
-
-### Agent Pod Deployment
-
-When you create an agent via `POST /sessions/:sessionId/agents`, the server:
-
-1. **Creates a Secret** named `agent-secret-{agentId}` containing:
-   ```yaml
-   LIVEKIT_URL: wss://livekit.example.com
-   LIVEKIT_API_KEY: devkey
-   LIVEKIT_API_SECRET: secret
-   ROOM_NAME: session-1234567890-abc
-   IDENTITY: agent-{agentId}
-   OPENAI_API_KEY: sk-...
-   TTS_PROVIDER: opensource
-   PLAN_ID: cognitive_stimulation_demo_sm  # if specified
-   ```
-
-2. **Creates a Pod** named `agent-{agentId}` with:
-   - Image: `conversational-ai-server:latest` (configurable)
-   - Environment: Loaded from the Secret
-   - Labels: `projectId`, `sessionId`, `role`
-   - Resources: 512Mi-2Gi memory, 250m-1000m CPU
-
-3. **Updates AgentInstance** record with pod and secret names
-
-### Pod Cleanup
-
-When you delete an agent via `DELETE /agents/:agentId`, the server:
-1. Deletes the Kubernetes Pod
-2. Deletes the Kubernetes Secret
-3. Updates the AgentInstance status to `STOPPED`
-
-### Viewing Logs
-
-Agent logs are streamed from Kubernetes pods via the k8s API.
-
-## Development
-
-### Running Tests
-
-```bash
-# Unit tests
-npm run test
-
-# E2E tests
-npm run test:e2e
-
-# Test coverage
-npm run test:cov
-```
-
-### Database Migrations
-
-```bash
-# Create a new migration
-npx prisma migrate dev --name add_new_field
-
-# Reset database (WARNING: deletes all data)
-npx prisma migrate reset
-
-# Deploy migrations to production
-npx prisma migrate deploy
-```
-
-### Linting and Formatting
-
-```bash
-# Lint
-npm run lint
-
-# Format
-npm run format
-```
-
-## Production Deployment
-
-### Local Kubernetes (minikube)
-
-**Use the automated startup script:**
-
-```bash
-# See "Deployment Options > Option 1" above
-./scripts/start-k8s.sh
-```
-
-All Kubernetes manifests are in the `k8s/` directory:
-- `00-namespace.yaml` - Creates `ai-agents` namespace
-- `01-postgres.yaml` - PostgreSQL with PVC
-- `02-livekit.yaml` - LiveKit server
-- `03-secrets.yaml` - Base secrets (OpenAI key injected from `.env`)
-- `04-configmap.yaml` - Environment config
-- `05-rbac.yaml` - ServiceAccount + RBAC permissions
-- `06-session-management-server.yaml` - Backend API deployment
-- `07-frontend-ui.yaml` - Frontend UI deployment (React + Vite + nginx)
-
-### Cloud Kubernetes (GKE/EKS/AKS)
-
-For production deployment to cloud providers:
-
-1. **Update secrets** in `k8s/03-secrets.yaml`:
-   - Change all default passwords
-   - Use real OpenAI API key
-   - Consider using external secrets management (Vault, AWS Secrets Manager, etc.)
-
-2. **Update database** to managed service:
-   - Replace `k8s/01-postgres.yaml` with cloud database connection
-   - Update `DATABASE_URL` in secrets
-
-3. **Configure Ingress** for external access:
-   ```bash
-   kubectl apply -f k8s/
-   kubectl apply -f k8s-production/ingress.yaml  # Your ingress config
-   ```
-
-4. **Enable SSL/TLS**:
-   - Use cert-manager for automatic certificates
-   - Update LiveKit URL to use `wss://`
-
-5. **Scale backend**:
-   ```bash
-   kubectl scale deployment session-management-server -n ai-agents --replicas=3
-   ```
-
-### Docker Build (Manual)
-
-```bash
-# Build backend image
-docker build -t session-management-server:latest .
-docker push your-registry/session-management-server:latest
-
-# Build agent image
-cd conversational-ai-server-python
-docker build -t conversational-ai-server:latest .
-docker push your-registry/conversational-ai-server:latest
-
-# Build frontend image
-cd frontend-ui
-docker build -t frontend-ui:latest .
-docker push your-registry/frontend-ui:latest
-```
-
-### RBAC Requirements
-
-The server needs Kubernetes permissions to create/delete Pods and Secrets. This is already configured in `k8s/05-rbac.yaml`:
-
-- **ServiceAccount**: `session-management-sa`
-- **Role**: Can create/get/list/delete pods, secrets, and pod logs
-- **RoleBinding**: Binds the role to the service account
-
-These are automatically applied by `./scripts/start-k8s.sh`.
-
-## Troubleshooting
-
-### "Connection to database failed"
-- Ensure PostgreSQL is running
-- Check `DATABASE_URL` in `.env`
-- Run `npx prisma migrate deploy`
-
-### "Failed to create pod: Forbidden"
-- Check Kubernetes RBAC permissions
-- Ensure the server has a ServiceAccount with Pod/Secret access
-- Verify namespace exists: `kubectl get namespace ai-agents`
-
-### "Agent pod not starting"
-- Check agent image exists: `docker images | grep conversational-ai`
-- View pod logs: `kubectl logs agent-{agentId} -n ai-agents`
-- Check image pull policy matches availability
-
-### "LiveKit connection refused"
-- Ensure LiveKit server is running
-- Check `LIVEKIT_URL` is accessible from the server
-- Verify API key/secret match LiveKit config
-
-### Daemon Mode Issues
-
-**Port forwards not working after SSH logout:**
-```bash
-# Check if processes are still running
-cat /tmp/stella-ai-k8s/port-forwards.pid
-ps -p $(cat /tmp/stella-ai-k8s/port-forwards.pid)
-
-# If not running, restart daemon mode
-./scripts/start-k8s.sh --daemon
-```
-
-**View daemon mode logs:**
-```bash
-# Main deployment log
-tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
-
-# Individual port-forward logs
-tail -f /tmp/stella-ai-k8s/pf-frontend.log
-tail -f /tmp/stella-ai-k8s/pf-backend.log
-tail -f /tmp/stella-ai-k8s/pf-livekit.log
-tail -f /tmp/stella-ai-k8s/pf-postgres.log
-```
-
-**Clean up stale daemon processes:**
-```bash
-# Stop everything
-./scripts/start-k8s.sh --stop
-
-# Or manually kill port-forwards
-kill $(cat /tmp/stella-ai-k8s/port-forwards.pid)
-rm -rf /tmp/stella-ai-k8s/
-
-# Restart
-./scripts/start-k8s.sh --daemon
-```
-
-### Platform-Specific Issues
-
-**Ubuntu/Linux:**
-- Ensure user is in docker group: `sudo usermod -aG docker $USER`
-- Restart session after adding to docker group: `newgrp docker`
-- Install minikube: Auto-installed by script or manual install
-
-**macOS:**
-- Ensure Docker Desktop or OrbStack is running
-- Homebrew should be installed for auto-installing minikube
-- If using OrbStack, ensure it's running before starting script
-
-## Routing Configuration
-
-The backend supports both **direct port access** (development) and **path-based routing** (production with reverse proxy) with smart defaults.
-
-### Development Mode (Direct Port Access)
-
-**Default behavior** with `NODE_ENV=development`:
-- Routes accessible at root: `/projects`, `/sessions`, etc.
-- No API prefix applied
-- CORS allows all origins (`*`)
-
-```bash
-# .env
-NODE_ENV=development
-PORT=3000
-
-# Access API at:
-http://localhost:3000/projects
-http://localhost:3000/sessions
-```
-
-### Production Mode
-
-**Default behavior** with `NODE_ENV=production`:
-- Routes at root level: `/projects`, `/sessions`, etc. (no `/api` prefix)
-- Internal routes at `/internal/*`
-- CORS should be configured for your domain
-- `API_PREFIX=""` is set in ConfigMap to disable prefix
-
-```bash
-# .env
-NODE_ENV=production
-PORT=3000
-CORS_ORIGIN=https://yourdomain.com
-
-# With Nginx reverse proxy (optional /api prefix):
-# External: https://yourdomain.com/projects (direct)
-#       or: https://yourdomain.com/api/projects (nginx rewrite)
-# Internal: http://localhost:3000/projects (no prefix)
-```
-
-### Nginx Reverse Proxy Configuration
-
-For production deployment, you have two options:
-
-```nginx
-# OPTION 1: Direct proxy (no /api prefix in external URLs)
-location ~ ^/(auth|projects|sessions|agents|health) {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-
-# OPTION 2: Add /api prefix for external URLs (optional)
-# location /api/ {
-#     rewrite ^/api/(.*) /$1 break;
-#     proxy_pass http://127.0.0.1:3000;
-#     proxy_http_version 1.1;
-#     proxy_set_header Host $host;
-#     proxy_set_header X-Real-IP $remote_addr;
-#     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-#     proxy_set_header X-Forwarded-Proto $scheme;
-# }
-
-# Internal APIs (Python services) - /internal/*
-location /internal/ {
-    proxy_pass http://127.0.0.1:3000/;
-    # Same proxy headers as above
-}
-
-# LiveKit WebSocket - /livekit
-location /livekit {
-    proxy_pass http://127.0.0.1:7880;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    # WebSocket-specific configuration
-}
-```
-
-### Manual Override
-
-Override smart defaults with explicit configuration:
-
-```bash
-# Force API prefix regardless of NODE_ENV
-API_PREFIX=api
-
-# Disable prefix in production
-API_PREFIX=
-
-# Use custom prefix
-API_PREFIX=v1
-```
-
-### Frontend Configuration
-
-Update frontend environment variables to match backend routing:
-
-```bash
-# Development (local)
-VITE_API_URL=http://localhost:3000
-VITE_LIVEKIT_URL=ws://localhost:7880
-
-# Production with IP:port (direct access)
-VITE_API_URL=http://192.168.1.100:3000
-VITE_LIVEKIT_URL=ws://192.168.1.100:7880
-
-# Production with reverse proxy (optional /api prefix via nginx rewrite)
-VITE_API_URL=https://yourdomain.com
-# Or with explicit /api prefix: https://yourdomain.com/api
-VITE_LIVEKIT_URL=wss://yourdomain.com/livekit
-```
-
-### Route Structure
-
-**Public API Routes** (no prefix - all at root level):
-- `/projects`
-- `/sessions`
-- `/agents`
-- `/participants`
-- `/auth`
-- `/health`
-
-**Internal API Routes** (no prefix):
-- `/internal/active-sessions` (Python message recorder)
-- `/internal/sessions/:id/messages`
-- `/internal/monitoring/*`
 
 ---
 
-## Environment Variables Reference
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | Required |
 | `PORT` | Server port | `3000` |
-| `NODE_ENV` | Environment (`development`/`production`) | `development` |
-| `API_PREFIX` | Global route prefix (smart default based on NODE_ENV) | `''` (dev), `'api'` (prod) |
-| `CORS_ORIGIN` | CORS allowed origins | `*` (dev), domain (prod) |
-| `PUBLIC_SERVER_URL` | Public API URL for mobile clients | Auto-detected |
-| `PUBLIC_LIVEKIT_URL` | Public LiveKit URL for clients | Auto-detected |
-| `LIVEKIT_URL` | LiveKit server URL (internal) | `ws://localhost:7880` |
+| `NODE_ENV` | Environment mode | `development` |
+| `LIVEKIT_URL` | LiveKit server URL | `ws://localhost:7880` |
 | `LIVEKIT_API_KEY` | LiveKit API key | `devkey` |
 | `LIVEKIT_API_SECRET` | LiveKit API secret | `secret` |
 | `KUBERNETES_NAMESPACE` | K8s namespace for agents | `ai-agents` |
 | `AGENT_IMAGE` | Docker image for agents | `conversational-ai-server:latest` |
-| `AGENT_IMAGE_PULL_POLICY` | Image pull policy | `IfNotPresent` |
 | `OPENAI_API_KEY` | OpenAI API key (for agents) | Required |
-| `TTS_PROVIDER` | TTS provider for agents | `opensource` |
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `npm run test`
-5. Submit a pull request
+## Development
+
+### Local Development (Standalone)
+
+```bash
+# Install dependencies
+npm install
+
+# Generate Prisma client
+npx prisma generate
+
+# Run migrations
+npx prisma migrate dev
+
+# Start development server
+npm run start:dev
+```
+
+### Running Tests
+
+```bash
+npm run test        # Unit tests
+npm run test:e2e    # E2E tests
+npm run test:cov    # Coverage
+```
+
+### Database Migrations
+
+```bash
+npx prisma migrate dev --name add_new_field  # Create migration
+npx prisma migrate reset                      # Reset database
+npx prisma migrate deploy                     # Deploy to production
+```
+
+---
+
+## Documentation
+
+- [Kubernetes Deployment Guide](./K8S_DEPLOYMENT.md)
+- [Kubernetes Quick Start](../KUBERNETES_QUICK_START.md)
+
+---
 
 ## License
 
-This project is part of the voice-ai-agents monorepo.
+This project is part of the STELLA workspace.

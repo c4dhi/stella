@@ -13,6 +13,7 @@
 #   ./scripts/start-k8s.sh --verbose          # Detailed output
 #   ./scripts/start-k8s.sh --daemon           # Run in background
 #   ./scripts/start-k8s.sh --stop             # Stop all services
+#   ./scripts/start-k8s.sh --restart          # Stop then start (apply code changes)
 #
 # =============================================================================
 
@@ -40,6 +41,7 @@ source "$LIB_DIR/deploy.sh"
 
 DAEMON_MODE=false
 STOP_MODE=false
+RESTART_MODE=false
 REBUILD_MODE=false
 RESET_DB_MODE=false
 SKIP_BUILD_MODE=false
@@ -59,6 +61,9 @@ parse_args() {
                 ;;
             --stop)
                 STOP_MODE=true
+                ;;
+            --restart|-r)
+                RESTART_MODE=true
                 ;;
             --rebuild)
                 REBUILD_MODE=true
@@ -97,7 +102,7 @@ parse_args() {
     done
 
     # Export for use in modules
-    export DAEMON_MODE STOP_MODE REBUILD_MODE RESET_DB_MODE
+    export DAEMON_MODE STOP_MODE RESTART_MODE REBUILD_MODE RESET_DB_MODE
     export SKIP_BUILD_MODE DRY_RUN_MODE VERBOSE_MODE ENV_FLAG
 }
 
@@ -110,6 +115,7 @@ show_help() {
     echo "  --rebuild       Force rebuild all Docker images"
     echo "  --reset-db      Reset database and rebuild (WARNING: data loss)"
     echo "  --skip-build    Skip builds, restart pods only"
+    echo "  --restart, -r   Stop services first, then start (apply code changes)"
     echo "  --dry-run       Preview changes without executing"
     echo "  --verbose, -v   Show detailed output"
     echo "  --daemon, -d    Run in background mode"
@@ -120,6 +126,7 @@ show_help() {
     echo "  $0                        # Local dev, auto-detect changes"
     echo "  $0 --production           # Production deployment"
     echo "  $0 --rebuild              # Force rebuild everything"
+    echo "  $0 --restart -d           # Restart services, run in background"
     echo "  $0 --dry-run --verbose    # Preview with details"
 }
 
@@ -145,6 +152,13 @@ main() {
     if [[ "$STOP_MODE" == "true" ]]; then
         stop_services
         exit 0
+    fi
+
+    # Phase 2b: Handle restart mode - stop first, then continue with normal startup
+    if [[ "$RESTART_MODE" == "true" ]]; then
+        info "Restart mode: stopping existing services first..."
+        stop_services
+        echo ""
     fi
 
     # Phase 3: Load Configuration
