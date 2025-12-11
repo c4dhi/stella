@@ -6,6 +6,7 @@ import type {
   ProjectWithCounts,
   ProjectWithSessions,
   ProjectStats,
+  ProjectMetrics,
   CreateProjectDto,
   SessionWithRoom,
   SessionDetail,
@@ -25,6 +26,7 @@ import type {
   AgentBuildStatus,
   AgentBuildResponse,
   SessionEvent,
+  ProjectSessionEvent,
   DeleteResponse,
   ApiError,
   Participant,
@@ -48,6 +50,19 @@ import type {
   EnvVarTemplate,
   CreateEnvVarTemplateDto,
   UpdateEnvVarTemplateDto,
+  UpdatePublicConfigDto,
+  PublicProjectInfo,
+  JoinPublicProjectResponse,
+  StartJoinPublicProjectResponse,
+  JoinProgressResponse,
+  PublicLinkResponse,
+  ProjectWithPublicConfig,
+  UserMessage,
+  UnreadCountResponse,
+  PaginatedMessagesResponse,
+  ProjectCollaboratorsResponse,
+  ProjectInvitationResponse,
+  UserNotificationEvent,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -188,6 +203,190 @@ class SessionManagementClient {
 
   async deleteProject(projectId: string): Promise<DeleteResponse> {
     return this.delete<DeleteResponse>(`/projects/${projectId}`)
+  }
+
+  /**
+   * Update public project configuration
+   */
+  async updateProjectPublicConfig(
+    projectId: string,
+    data: UpdatePublicConfigDto
+  ): Promise<ProjectWithPublicConfig> {
+    return this.request<ProjectWithPublicConfig>(
+      `/projects/${projectId}/public-config`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    )
+  }
+
+  /**
+   * Get public link for a project
+   */
+  async getProjectPublicLink(projectId: string): Promise<PublicLinkResponse> {
+    return this.get<PublicLinkResponse>(`/projects/${projectId}/public-link`)
+  }
+
+  // ============================================================================
+  // Public Project API (No auth required)
+  // ============================================================================
+
+  /**
+   * Get public project info by token (no auth required)
+   * Used for the waiting screen before joining
+   */
+  async getPublicProject(publicToken: string): Promise<PublicProjectInfo> {
+    const url = `${this.getBaseUrl()}/p/${publicToken}`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/p/${publicToken}`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Join a public project (no auth required) - BLOCKING/DEPRECATED
+   * Creates session, deploys agent, waits for ready, creates invitation
+   * Returns invitation token for redirect to /join/:invitationToken
+   * @deprecated Use startJoinPublicProject with subscribeToJoinProgress instead
+   */
+  async joinPublicProject(publicToken: string): Promise<JoinPublicProjectResponse> {
+    const url = `${this.getBaseUrl()}/p/${publicToken}/join`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/p/${publicToken}/join`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Start joining a public project (no auth required) - NON-BLOCKING
+   * Creates session and deploys agent, returns immediately with sessionId
+   * Poll getJoinProgress for status updates
+   */
+  async startJoinPublicProject(publicToken: string): Promise<StartJoinPublicProjectResponse> {
+    const url = `${this.getBaseUrl()}/p/${publicToken}/start-join`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/p/${publicToken}/start-join`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Get join progress status (no auth required) - POLLING
+   * Returns current step, status, and invitationToken when complete
+   */
+  async getJoinProgress(publicToken: string, sessionId: string): Promise<JoinProgressResponse> {
+    const url = `${this.getBaseUrl()}/p/${publicToken}/join/${sessionId}/status`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      let errorData: ApiError
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          timestamp: new Date().toISOString(),
+          path: `/p/${publicToken}/join/${sessionId}/status`,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
+  }
+
+  /**
+   * Subscribe to join progress events via SSE (no auth required)
+   * Events: join.session_created, join.agent_deploying, join.agent_starting,
+   *         join.agent_ready, join.invitation_created, join.complete, join.failed
+   * Returns cleanup function to close the EventSource connection.
+   * @deprecated Use getJoinProgress polling instead for more reliable updates
+   */
+  subscribeToJoinProgress(
+    publicToken: string,
+    sessionId: string,
+    onEvent: (event: SessionEvent) => void,
+    onError?: (error: Event) => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/p/${publicToken}/join/${sessionId}/events`
+
+    // No auth needed for public endpoints
+    const eventSource = new EventSource(url)
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: SessionEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse join progress event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Join progress SSE connection error:', e)
+      if (onError) {
+        onError(e)
+      }
+    }
+
+    // Return cleanup function
+    return () => {
+      eventSource.close()
+    }
   }
 
   // ============================================================================
@@ -645,6 +844,112 @@ class SessionManagementClient {
     }
   }
 
+  /**
+   * Subscribe to real-time project events (session created, closed, deleted).
+   * Used by SessionsDashboard for real-time updates when new participants join.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToProjectEvents(
+    projectId: string,
+    onEvent: (event: ProjectSessionEvent) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/projects/${projectId}/sessions/events`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log(`[ApiClient] SSE connection opened for project ${projectId}`)
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: ProjectSessionEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse project SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Project SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log(`[ApiClient] Closing SSE connection for project ${projectId}`)
+      eventSource.close()
+    }
+  }
+
+  // ============================================================================
+  // Project Metrics API
+  // ============================================================================
+
+  /**
+   * Get current metrics snapshot for a project.
+   * Includes session counts, agent status, participant counts, and message stats.
+   */
+  async getProjectMetrics(projectId: string): Promise<ProjectMetrics> {
+    return this.request<ProjectMetrics>(`/metrics/projects/${projectId}`)
+  }
+
+  /**
+   * Subscribe to real-time project metrics via SSE.
+   * Receives updates every 5 seconds or immediately when data changes.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToProjectMetrics(
+    projectId: string,
+    onData: (metrics: ProjectMetrics) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/metrics/projects/${projectId}/stream`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log(`[ApiClient] Metrics SSE connection opened for project ${projectId}`)
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const metrics: ProjectMetrics = JSON.parse(e.data)
+        onData(metrics)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse metrics SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Metrics SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log(`[ApiClient] Closing metrics SSE connection for project ${projectId}`)
+      eventSource.close()
+    }
+  }
+
   // ============================================================================
   // Custom Agent Upload API
   // ============================================================================
@@ -855,6 +1160,139 @@ class SessionManagementClient {
    */
   async duplicateEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
     return this.post<EnvVarTemplate>(`/env-var-templates/${id}/duplicate`)
+  }
+
+  // ============================================================================
+  // User Messages API (Inbox)
+  // ============================================================================
+
+  /**
+   * Get paginated messages for the current user.
+   */
+  async getMessages(params?: { page?: number; limit?: number }): Promise<PaginatedMessagesResponse> {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    const query = queryParams.toString()
+    return this.get<PaginatedMessagesResponse>(`/user/messages${query ? `?${query}` : ''}`)
+  }
+
+  /**
+   * Get unread message count for the current user.
+   */
+  async getUnreadMessageCount(): Promise<UnreadCountResponse> {
+    return this.get<UnreadCountResponse>('/user/messages/unread-count')
+  }
+
+  /**
+   * Mark a message as read.
+   */
+  async markMessageAsRead(messageId: string): Promise<UserMessage> {
+    return this.request<UserMessage>(`/user/messages/${messageId}/read`, {
+      method: 'PATCH',
+    })
+  }
+
+  /**
+   * Delete a message.
+   */
+  async deleteMessage(messageId: string): Promise<void> {
+    await this.delete<void>(`/user/messages/${messageId}`)
+  }
+
+  /**
+   * Subscribe to real-time user notification events via SSE.
+   * Events: message.created, message.deleted, unread_count.changed
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToUserNotifications(
+    onEvent: (event: UserNotificationEvent) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/user/messages/events`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log('[ApiClient] User notifications SSE connection opened')
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: UserNotificationEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse user notification event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] User notifications SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log('[ApiClient] Closing user notifications SSE connection')
+      eventSource.close()
+    }
+  }
+
+  // ============================================================================
+  // Project Collaborators API
+  // ============================================================================
+
+  /**
+   * Get all collaborators and pending invitations for a project.
+   */
+  async getProjectCollaborators(projectId: string): Promise<ProjectCollaboratorsResponse> {
+    return this.get<ProjectCollaboratorsResponse>(`/projects/${projectId}/collaborators`)
+  }
+
+  /**
+   * Invite a user to collaborate on a project.
+   */
+  async inviteCollaborator(projectId: string, email: string): Promise<ProjectInvitationResponse> {
+    return this.post<ProjectInvitationResponse>(
+      `/projects/${projectId}/collaborators/invite`,
+      { email }
+    )
+  }
+
+  /**
+   * Remove a collaborator from a project.
+   */
+  async removeCollaborator(projectId: string, userId: string): Promise<void> {
+    await this.delete<void>(`/projects/${projectId}/collaborators/${userId}`)
+  }
+
+  /**
+   * Cancel a pending invitation.
+   */
+  async cancelProjectInvitation(invitationId: string): Promise<void> {
+    await this.delete<void>(`/project-invitations/${invitationId}`)
+  }
+
+  /**
+   * Accept a project invitation.
+   */
+  async acceptProjectInvitation(invitationId: string): Promise<ProjectInvitationResponse> {
+    return this.post<ProjectInvitationResponse>(`/project-invitations/${invitationId}/accept`)
+  }
+
+  /**
+   * Decline a project invitation.
+   */
+  async declineProjectInvitation(invitationId: string): Promise<void> {
+    await this.post<void>(`/project-invitations/${invitationId}/decline`)
   }
 }
 

@@ -230,6 +230,16 @@ export class SessionsController {
     return this.sessionsService.getSessionEventStream(sessionId);
   }
 
+  /**
+   * SSE endpoint for real-time project events (session created, closed, deleted).
+   * Used by SessionsDashboard for real-time updates when new participants join.
+   */
+  @Sse('projects/:projectId/sessions/events')
+  streamProjectEvents(@Param('projectId') projectId: string): Observable<MessageEvent> {
+    this.logger.log(`SSE connection opened for project ${projectId} session events`);
+    return this.sessionsService.getProjectEventStream(projectId);
+  }
+
   // Get monitoring logs
   @Get('monitoring/logs')
   getMonitoringLogs(@Query('sessionId') sessionId?: string): Promise<{

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
-import { Observable, Subject, filter, map, finalize } from 'rxjs';
+import { Observable, Subject, ReplaySubject, filter, map, finalize } from 'rxjs';
 import { OnEvent } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,8 +15,17 @@ import { Prisma } from '@prisma/client';
 
 // Session event types for SSE streaming
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left';
+  type:
+    | 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+    | 'participant.joined' | 'participant.left'
+    // Join progress types for public project flow
+    | 'join.session_created' | 'join.agent_deploying' | 'join.agent_starting'
+    | 'join.agent_ready' | 'join.invitation_created' | 'join.complete' | 'join.failed'
+    // Project-level session lifecycle events
+    | 'session.created' | 'session.closed' | 'session.deleted';
   sessionId: string;
+  projectId?: string;      // For project-level event filtering
+  sessionName?: string;    // For display in notifications
   agentId?: string;
   agentName?: string;
   agentType?: string;
@@ -26,6 +35,10 @@ export interface SessionEvent {
   isOnline?: boolean;
   error?: string;
   timestamp: string;
+  // Join progress fields
+  step?: number;
+  totalSteps?: number;
+  invitationToken?: string;
 }
 
 interface MessageEvent {
@@ -41,8 +54,12 @@ export class SessionsService {
   private lastStatusUpdate: Date = new Date();
 
   // Event subjects for SSE streaming per session
-  private sessionEventSubjects: Map<string, Subject<SessionEvent>> = new Map();
+  private sessionEventSubjects: Map<string, Subject<SessionEvent> | ReplaySubject<SessionEvent>> = new Map();
   private subscriberCounts: Map<string, number> = new Map();
+
+  // Event subjects for SSE streaming per project (session lifecycle events)
+  private projectEventSubjects: Map<string, ReplaySubject<SessionEvent>> = new Map();
+  private projectSubscriberCounts: Map<string, number> = new Map();
 
   constructor(
     private prisma: PrismaService,
@@ -83,6 +100,14 @@ export class SessionsService {
     // Message recording is now handled by the Python message recorder service
     // which automatically discovers and monitors all active sessions
     this.logger.log(`Session ${session.id} created - will be auto-discovered by message recorder`);
+
+    // Emit session.created event for real-time dashboard updates
+    this.emitSessionCreated({
+      id: session.id,
+      projectId: session.projectId,
+      name: session.name,
+      room: session.room || undefined,
+    });
 
     return session;
   }
@@ -347,6 +372,9 @@ export class SessionsService {
       },
     });
 
+    // Emit session.closed event for real-time dashboard updates
+    this.emitSessionClosed(id, session.projectId, session.name);
+
     return { message: 'Session closed successfully' };
   }
 
@@ -359,6 +387,10 @@ export class SessionsService {
       throw new NotFoundException(`Session with ID ${id} not found`);
     }
 
+    // Capture session info before deletion for event emission
+    const projectId = session.projectId;
+    const sessionName = session.name;
+
     this.logger.log(`Deleting session ${id} - stopping all agents and removing all data`);
 
     // Stop all running agents using centralized function
@@ -368,6 +400,9 @@ export class SessionsService {
     await this.prisma.session.delete({
       where: { id },
     });
+
+    // Emit session.deleted event for real-time dashboard updates
+    this.emitSessionDeleted(id, projectId, sessionName);
 
     this.logger.log(`Session ${id} deleted - all agents stopped, all data removed`);
     return { message: 'Session deleted successfully' };
@@ -995,9 +1030,10 @@ export class SessionsService {
    */
   getSessionEventStream(sessionId: string): Observable<MessageEvent> {
     // Get or create a subject for this session
+    // Using ReplaySubject to buffer last 10 events for late subscribers
     let subject = this.sessionEventSubjects.get(sessionId);
     if (!subject) {
-      subject = new Subject<SessionEvent>();
+      subject = new ReplaySubject<SessionEvent>(10, 30000); // Buffer 10 events, 30 second window
       this.sessionEventSubjects.set(sessionId, subject);
       this.subscriberCounts.set(sessionId, 0);
     }
@@ -1034,15 +1070,22 @@ export class SessionsService {
   /**
    * Emit a session event to all connected SSE clients.
    * Called by AgentServerService when agent state changes.
+   * Creates a ReplaySubject if none exists, so events are buffered for late subscribers.
    */
   emitSessionEvent(event: SessionEvent): void {
-    const subject = this.sessionEventSubjects.get(event.sessionId);
-    if (subject) {
-      this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
-      subject.next(event);
-    } else {
-      this.logger.debug(`No SSE subscribers for session ${event.sessionId}, event not emitted`);
+    let subject = this.sessionEventSubjects.get(event.sessionId);
+
+    // Create ReplaySubject if it doesn't exist - this allows events to be buffered
+    // before any SSE subscribers connect (important for public project join flow)
+    if (!subject) {
+      subject = new ReplaySubject<SessionEvent>(10, 30000); // Buffer 10 events, 30 second window
+      this.sessionEventSubjects.set(event.sessionId, subject);
+      this.subscriberCounts.set(event.sessionId, 0);
+      this.logger.log(`Created ReplaySubject for session ${event.sessionId} (no subscribers yet)`);
     }
+
+    this.logger.log(`Emitting ${event.type} event for session ${event.sessionId}`);
+    subject.next(event);
   }
 
   /**
@@ -1096,6 +1139,109 @@ export class SessionsService {
       sessionId,
       agentId,
       agentName,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // ============================================================================
+  // Project-level Session Events (for SessionsDashboard real-time updates)
+  // ============================================================================
+
+  /**
+   * Get an Observable stream of project events for SSE.
+   * Events include session.created, session.closed, session.deleted
+   */
+  getProjectEventStream(projectId: string): Observable<MessageEvent> {
+    let subject = this.projectEventSubjects.get(projectId);
+    if (!subject) {
+      subject = new ReplaySubject<SessionEvent>(10, 30000); // Buffer 10 events, 30 second window
+      this.projectEventSubjects.set(projectId, subject);
+      this.projectSubscriberCounts.set(projectId, 0);
+    }
+
+    const currentCount = this.projectSubscriberCounts.get(projectId) || 0;
+    this.projectSubscriberCounts.set(projectId, currentCount + 1);
+    this.logger.log(`SSE subscriber added for project ${projectId} (total: ${currentCount + 1})`);
+
+    return subject.asObservable().pipe(
+      filter((event) => event.projectId === projectId),
+      map((event) => ({
+        data: JSON.stringify(event),
+        // NOTE: Don't set 'type' field - it maps to SSE 'event:' field which requires
+        // addEventListener() on the frontend instead of onmessage. The event type is
+        // already in the data JSON.
+        id: `${Date.now()}`,
+      })),
+      finalize(() => {
+        const count = this.projectSubscriberCounts.get(projectId) || 1;
+        this.projectSubscriberCounts.set(projectId, count - 1);
+        this.logger.log(`SSE subscriber removed for project ${projectId} (remaining: ${count - 1})`);
+
+        if (count - 1 <= 0) {
+          this.projectEventSubjects.delete(projectId);
+          this.projectSubscriberCounts.delete(projectId);
+          this.logger.log(`SSE subject cleaned up for project ${projectId}`);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Emit a project event to all connected SSE clients.
+   */
+  private emitProjectEvent(event: SessionEvent): void {
+    if (!event.projectId) {
+      this.logger.warn('Cannot emit project event without projectId');
+      return;
+    }
+
+    let subject = this.projectEventSubjects.get(event.projectId);
+    if (!subject) {
+      subject = new ReplaySubject<SessionEvent>(10, 30000);
+      this.projectEventSubjects.set(event.projectId, subject);
+      this.projectSubscriberCounts.set(event.projectId, 0);
+      this.logger.log(`Created ReplaySubject for project ${event.projectId} (no subscribers yet)`);
+    }
+
+    this.logger.log(`Emitting ${event.type} event for project ${event.projectId}`);
+    subject.next(event);
+  }
+
+  /**
+   * Emit a session.created event.
+   */
+  emitSessionCreated(session: { id: string; projectId: string; name?: string | null; room?: { livekitRoomName: string } }): void {
+    this.emitProjectEvent({
+      type: 'session.created',
+      sessionId: session.id,
+      projectId: session.projectId,
+      sessionName: session.name || session.room?.livekitRoomName || undefined,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit a session.closed event.
+   */
+  emitSessionClosed(sessionId: string, projectId: string, sessionName?: string | null): void {
+    this.emitProjectEvent({
+      type: 'session.closed',
+      sessionId,
+      projectId,
+      sessionName: sessionName || undefined,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Emit a session.deleted event.
+   */
+  emitSessionDeleted(sessionId: string, projectId: string, sessionName?: string | null): void {
+    this.emitProjectEvent({
+      type: 'session.deleted',
+      sessionId,
+      projectId,
+      sessionName: sessionName || undefined,
       timestamp: new Date().toISOString(),
     });
   }

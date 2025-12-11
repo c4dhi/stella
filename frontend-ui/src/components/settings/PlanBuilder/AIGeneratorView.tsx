@@ -147,15 +147,15 @@ export default function AIGeneratorView({ onClose }: AIGeneratorViewProps) {
         <div className="w-full max-w-2xl">
           {/* AI Icon */}
           <motion.div
-            className={`w-16 h-16 rounded-2xl mx-auto mb-6 flex items-center justify-center ${
+            className={`w-16 h-16 rounded-2xl mx-auto mb-6 flex items-center justify-center border ${
               isDark
-                ? 'bg-gradient-to-br from-violet-600/30 to-violet-600/10'
-                : 'bg-gradient-to-br from-violet-500/20 to-violet-500/5'
+                ? 'bg-gradient-to-br from-violet-600/30 to-violet-600/10 border-violet-500/20'
+                : 'bg-gradient-to-br from-neutral-100 to-neutral-50 border-neutral-200'
             }`}
             animate={isGenerating ? { scale: [1, 1.05, 1] } : {}}
             transition={{ duration: 1.5, repeat: isGenerating ? Infinity : 0 }}
           >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-500">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={isDark ? 'text-violet-500' : 'text-neutral-600'}>
               <path d="M12 2L2 7l10 5 10-5-10-5z" />
               <path d="M2 17l10 5 10-5" />
               <path d="M2 12l10 5 10-5" />
@@ -175,8 +175,8 @@ For example: 'A sales process with lead qualification, demo scheduling, proposal
               rows={5}
               className={`w-full px-4 py-3 rounded-xl text-body resize-none transition-all ${
                 isDark
-                  ? 'bg-surface-dark-secondary border-2 border-border-dark focus:border-violet-500 text-content-inverse placeholder:text-content-inverse-tertiary'
-                  : 'bg-white border-2 border-border focus:border-violet-500 text-content placeholder:text-content-tertiary shadow-sm'
+                  ? 'bg-surface-dark-secondary border-2 border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
+                  : 'bg-white border-2 border-neutral-200 focus:border-neutral-900 text-content placeholder:text-content-tertiary shadow-sm'
               } focus:outline-none disabled:opacity-50`}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && e.metaKey && !isGenerating) {
@@ -198,7 +198,7 @@ For example: 'A sales process with lead qualification, demo scheduling, proposal
             className={`w-full py-3.5 rounded-xl font-medium flex items-center justify-center gap-3 transition-all ${
               isDark
                 ? 'bg-violet-600 hover:bg-violet-500 text-white disabled:bg-violet-600/50'
-                : 'bg-content hover:bg-content/90 text-white disabled:bg-content/50'
+                : 'bg-neutral-900 hover:bg-neutral-800 text-white disabled:bg-neutral-400'
             } disabled:cursor-not-allowed shadow-lg`}
             whileHover={!isGenerating && prompt.trim() ? { scale: 1.01, y: -1 } : {}}
             whileTap={!isGenerating && prompt.trim() ? { scale: 0.99 } : {}}

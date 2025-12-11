@@ -6,6 +6,7 @@ import SessionsDashboard from './pages/SessionsDashboard'
 import SessionView from './pages/SessionView'
 import SettingsPage from './pages/SettingsPage'
 import ParticipantJoinPage from './pages/ParticipantJoinPage'
+import PublicProjectJoinPage from './pages/PublicProjectJoinPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { ToastContainer } from './components/Toast'
 import PlanBuilderModal from './components/settings/PlanBuilder/PlanBuilderModal'
@@ -33,6 +34,7 @@ export default function App() {
         {/* Public Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/join/:token" element={<ParticipantJoinPage />} />
+        <Route path="/p/:publicToken" element={<PublicProjectJoinPage />} />
 
         {/* Protected Routes */}
         <Route

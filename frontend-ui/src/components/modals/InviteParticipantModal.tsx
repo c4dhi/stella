@@ -5,8 +5,8 @@ import { Check, Copy, Link2 } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { CreateInvitationDto, CreateInvitationResponse } from '../../lib/api-types'
-import { VISUALIZER_CONFIGS, type VisualizerType } from '../face/types'
-import VisualizerPreview from '../face/VisualizerPreview'
+import type { VisualizerType } from '../face/types'
+import { VisualizerSelectionStep, ExpirationSelectionStep, INVITATION_EXPIRATION_OPTIONS } from '../shared'
 
 interface InviteParticipantModalProps {
   isOpen: boolean
@@ -55,13 +55,6 @@ const INVITATION_TYPES: InvitationTypeConfig[] = [
   },
 ]
 
-const EXPIRATION_OPTIONS = [
-  { value: undefined, label: 'Never expires', description: 'Link remains valid indefinitely' },
-  { value: 1, label: '1 hour', description: 'Expires in 1 hour' },
-  { value: 24, label: '24 hours', description: 'Expires in 1 day' },
-  { value: 72, label: '3 days', description: 'Expires in 3 days' },
-  { value: 168, label: '1 week', description: 'Expires in 7 days' },
-]
 
 // Step configuration for easy extension
 const STEPS: { id: Step; number: number; label: string }[] = [
@@ -480,87 +473,12 @@ export default function InviteParticipantModal({
                   transition={{ duration: 0.2 }}
                   className="p-6"
                 >
-                  <div className="grid grid-cols-4 gap-3">
-                    {/* Let them choose option */}
-                    <button
-                      onClick={() => { setVisualizerType(undefined); setVisualizerLocked(false); }}
-                      className={`
-                        p-4 rounded-xl flex flex-col items-center gap-2 transition-all
-                        ${!visualizerType
-                          ? isDark
-                            ? 'bg-primary-500/20 border-2 border-primary-500'
-                            : 'bg-primary-50 border-2 border-primary-500'
-                          : isDark
-                            ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
-                            : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
-                        }
-                      `}
-                    >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDark ? 'bg-zinc-600' : 'bg-neutral-200'}`}>
-                        <span className="text-xl">🎨</span>
-                      </div>
-                      <span className={`text-xs font-light ${isDark ? 'text-zinc-300' : 'text-neutral-600'}`}>
-                        Their choice
-                      </span>
-                    </button>
-
-                    {/* Visualizer options */}
-                    {VISUALIZER_CONFIGS.map((config) => (
-                      <button
-                        key={config.id}
-                        onClick={() => setVisualizerType(config.id)}
-                        className={`
-                          p-4 rounded-xl flex flex-col items-center gap-2 transition-all
-                          ${visualizerType === config.id
-                            ? isDark
-                              ? 'bg-primary-500/20 border-2 border-primary-500'
-                              : 'bg-primary-50 border-2 border-primary-500'
-                            : isDark
-                              ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
-                              : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
-                          }
-                        `}
-                      >
-                        <div className={`relative w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${config.previewBg}`}>
-                          <VisualizerPreview type={config.id} size="sm" />
-                        </div>
-                        <span className={`text-xs font-light ${isDark ? 'text-zinc-300' : 'text-neutral-600'}`}>
-                          {config.name}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Lock option */}
-                  {visualizerType && (
-                    <label className={`flex items-center gap-3 p-4 rounded-xl cursor-pointer mt-4 ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-50'}`}>
-                      <input
-                        type="checkbox"
-                        checked={visualizerLocked}
-                        onChange={(e) => setVisualizerLocked(e.target.checked)}
-                        className="sr-only"
-                      />
-                      <div className={`
-                        w-10 h-6 rounded-full p-0.5 transition-colors
-                        ${visualizerLocked
-                          ? 'bg-primary-500'
-                          : isDark ? 'bg-zinc-600' : 'bg-neutral-300'
-                        }
-                      `}>
-                        <motion.div
-                          className="w-5 h-5 rounded-full bg-white shadow"
-                          animate={{ x: visualizerLocked ? 16 : 0 }}
-                          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                        />
-                      </div>
-                      <div>
-                        <p className={`text-sm ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}>Lock visualizer</p>
-                        <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                          Participant won't be able to change it
-                        </p>
-                      </div>
-                    </label>
-                  )}
+                  <VisualizerSelectionStep
+                    visualizerType={visualizerType}
+                    visualizerLocked={visualizerLocked}
+                    onVisualizerTypeChange={setVisualizerType}
+                    onVisualizerLockedChange={setVisualizerLocked}
+                  />
                 </motion.div>
               )}
 
@@ -572,39 +490,13 @@ export default function InviteParticipantModal({
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
                   transition={{ duration: 0.2 }}
-                  className="p-6 space-y-3"
+                  className="p-6"
                 >
-                  {EXPIRATION_OPTIONS.map((option) => (
-                    <button
-                      key={option.value ?? 'never'}
-                      onClick={() => setExpiresInHours(option.value)}
-                      className={`
-                        w-full p-4 rounded-xl flex items-center justify-between transition-all
-                        ${expiresInHours === option.value
-                          ? isDark
-                            ? 'bg-primary-500/20 border-2 border-primary-500'
-                            : 'bg-primary-50 border-2 border-primary-500'
-                          : isDark
-                            ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
-                            : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
-                        }
-                      `}
-                    >
-                      <div className="text-left">
-                        <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-neutral-800'}`}>
-                          {option.label}
-                        </p>
-                        <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                          {option.description}
-                        </p>
-                      </div>
-                      {expiresInHours === option.value && (
-                        <div className="w-5 h-5 rounded-full bg-primary-500 flex items-center justify-center">
-                          <Check className="w-3 h-3 text-white" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
+                  <ExpirationSelectionStep
+                    expiresInHours={expiresInHours}
+                    onExpiresInHoursChange={setExpiresInHours}
+                    options={INVITATION_EXPIRATION_OPTIONS}
+                  />
                 </motion.div>
               )}
 

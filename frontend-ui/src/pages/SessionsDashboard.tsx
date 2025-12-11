@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { Users } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import CreateSessionModal from '../components/modals/CreateSessionModal'
 import EditSessionModal from '../components/modals/EditSessionModal'
 import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
+import PublicLinkModal from '../components/modals/PublicLinkModal'
+import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ProfileButton from '../components/layout/ProfileButton'
+import { ProjectOverviewBanner } from '../components/dashboard/ProjectOverviewBanner'
 import { useToastStore } from '../store/toastStore'
-import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus } from '../lib/api-types'
+import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus, ProjectSessionEvent } from '../lib/api-types'
 
 export default function SessionsDashboard() {
   const navigate = useNavigate()
@@ -31,6 +35,8 @@ export default function SessionsDashboard() {
   const [sessionToClose, setSessionToClose] = useState<{ id: string; name: string } | null>(null)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false)
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false)
 
   // Initialize theme on mount
   useEffect(() => {
@@ -107,6 +113,51 @@ export default function SessionsDashboard() {
 
     return () => clearInterval(interval)
   }, [sessions])
+
+  // Subscribe to real-time project events via SSE
+  useEffect(() => {
+    if (!projectId) return
+
+    const unsubscribe = apiClient.subscribeToProjectEvents(
+      projectId,
+      (event: ProjectSessionEvent) => {
+        console.log('[SessionsDashboard] Received project event:', event)
+
+        switch (event.type) {
+          case 'session.created':
+            // Reload sessions to get full session data with counts
+            // No toast - silent update to avoid spam when many participants join
+            loadData()
+            break
+
+          case 'session.closed':
+            // Update session status in local state
+            setSessions(prev =>
+              prev.map(s =>
+                s.id === event.sessionId
+                  ? { ...s, status: 'CLOSED' as SessionStatus }
+                  : s
+              )
+            )
+            break
+
+          case 'session.deleted':
+            // Remove session from local state
+            setSessions(prev => prev.filter(s => s.id !== event.sessionId))
+            break
+        }
+      },
+      (error) => {
+        console.error('[SessionsDashboard] SSE connection error:', error)
+        // EventSource auto-reconnects, just log the error
+      }
+    )
+
+    return () => {
+      console.log('[SessionsDashboard] Cleaning up SSE subscription')
+      unsubscribe()
+    }
+  }, [projectId])
 
   // Handle session creation
   const handleCreateSession = async (name?: string) => {
@@ -230,6 +281,11 @@ export default function SessionsDashboard() {
         </div>
       </header>
 
+      {/* Project Overview Banner - shows for all projects with public/private badge */}
+      {projectId && (
+        <ProjectOverviewBanner projectId={projectId} isPublic={project?.isPublic} />
+      )}
+
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
         {/* Actions Bar */}
@@ -240,15 +296,39 @@ export default function SessionsDashboard() {
           transition={{ duration: 0.3 }}
         >
           <div className="flex gap-3 items-center flex-wrap">
-            {/* Create Button */}
+            {/* Create Button - Show "Invite Participant" for public projects */}
+            {project?.isPublic ? (
+              <button
+                onClick={() => setIsPublicLinkModalOpen(true)}
+                className="btn-primary flex items-center gap-2"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                  <line x1="20" y1="8" x2="20" y2="14" />
+                  <line x1="23" y1="11" x2="17" y2="11" />
+                </svg>
+                Invite Participant
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsCreateModalOpen(true)}
+                className="btn-primary flex items-center gap-2"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                New Session
+              </button>
+            )}
+
+            {/* Share Button */}
             <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="btn-primary flex items-center gap-2"
+              onClick={() => setIsShareModalOpen(true)}
+              className="btn-secondary flex items-center gap-2"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              New Session
+              <Users className="w-4 h-4" />
+              Share
             </button>
 
             {/* Filter by Status */}
@@ -322,28 +402,69 @@ export default function SessionsDashboard() {
             animate={{ opacity: 1, y: 0 }}
             className="text-center py-20"
           >
-            <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
-              isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
-            }`}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className={
-                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
-              } stroke="currentColor" strokeWidth="1.5">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
-              </svg>
-            </div>
-            <h3 className={`text-heading mb-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-              No sessions yet
-            </h3>
-            <p className={`text-body mb-6 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-              Create your first session to start a conversation
-            </p>
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="btn-primary"
-            >
-              Create Session
-            </button>
+            {project?.isPublic ? (
+              // Public project empty state - focus on inviting participants
+              <>
+                <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+                  isDark ? 'bg-violet-500/20' : 'bg-neutral-100'
+                }`}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className={
+                    isDark ? 'text-violet-400' : 'text-neutral-900'
+                  } stroke="currentColor" strokeWidth="1.5">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                </div>
+                <h3 className={`text-heading mb-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                  Ready to invite participants
+                </h3>
+                <p className={`text-body mb-2 max-w-md mx-auto ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                  Share your public link to invite participants. Each person who opens the link will get their own private session with your pre-configured agent.
+                </p>
+                <p className={`text-body-sm mb-6 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                  Sessions will appear here as participants join.
+                </p>
+                <button
+                  onClick={() => setIsPublicLinkModalOpen(true)}
+                  className="btn-primary flex items-center gap-2 mx-auto"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                  </svg>
+                  Get Public Link
+                </button>
+              </>
+            ) : (
+              // Regular project empty state
+              <>
+                <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center ${
+                  isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+                }`}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className={
+                    isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                  } stroke="currentColor" strokeWidth="1.5">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+                  </svg>
+                </div>
+                <h3 className={`text-heading mb-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                  No sessions yet
+                </h3>
+                <p className={`text-body mb-6 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                  Create your first session to start a conversation
+                </p>
+                <button
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="btn-primary"
+                >
+                  Create Session
+                </button>
+              </>
+            )}
           </motion.div>
         )}
 
@@ -579,6 +700,33 @@ export default function SessionsDashboard() {
           setSessionToDelete(null)
         }}
       />
+
+      {/* Public Link Modal */}
+      {project?.isPublic && project?.publicToken && projectId && (
+        <PublicLinkModal
+          isOpen={isPublicLinkModalOpen}
+          onClose={() => setIsPublicLinkModalOpen(false)}
+          projectId={projectId}
+          projectName={project.name}
+          publicToken={project.publicToken}
+          isEnabled={project.publicEnabled}
+          onStatusChange={(enabled) => {
+            // Update local project state to reflect the change
+            setProject(prev => prev ? { ...prev, publicEnabled: enabled } : null)
+          }}
+        />
+      )}
+
+      {/* Share Project Modal */}
+      {project && projectId && (
+        <ShareProjectModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          projectId={projectId}
+          projectName={project.name}
+          isOwner={project.isOwner ?? true}
+        />
+      )}
     </div>
   )
 }

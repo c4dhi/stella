@@ -69,7 +69,7 @@ export default function ProfileSection() {
 
       {/* Avatar Section */}
       <motion.div
-        className={`p-6 rounded-2xl mb-6 ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+        className={`p-6 rounded-2xl mb-6 ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
           }`}
         variants={itemVariants}
         transition={{ type: 'spring', stiffness: 300, damping: 20 }}
@@ -110,7 +110,7 @@ export default function ProfileSection() {
 
       {/* Account Details */}
       <motion.div
-        className={`p-6 rounded-2xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+        className={`p-6 rounded-2xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
           }`}
         variants={itemVariants}
       >
@@ -174,7 +174,7 @@ export default function ProfileSection() {
 
       {/* Sign Out Section */}
       <motion.div
-        className={`p-6 rounded-2xl mt-6 ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+        className={`p-6 rounded-2xl mt-6 ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
           }`}
         variants={itemVariants}
       >

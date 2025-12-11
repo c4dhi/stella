@@ -45,6 +45,13 @@ export default function EnvVarTemplateCard({
     'text-sky-500',
   ]
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Prevent triggering edit when clicking action buttons
+    const target = e.target as HTMLElement
+    if (target.closest('button')) return
+    onEdit()
+  }
+
   return (
     <motion.div
       layout
@@ -53,7 +60,8 @@ export default function EnvVarTemplateCard({
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
       transition={{ delay: index * 0.05, type: 'spring', stiffness: 300, damping: 25 }}
       whileHover={{ y: -4, transition: { duration: 0.2 } }}
-      className={`group relative rounded-2xl overflow-hidden transition-shadow duration-300 ${isDark
+      onClick={handleCardClick}
+      className={`group relative rounded-2xl overflow-hidden transition-shadow duration-300 cursor-pointer ${isDark
         ? 'bg-surface-dark-secondary hover:shadow-xl hover:shadow-black/20'
         : 'bg-white shadow-sm hover:shadow-xl hover:shadow-black/5'
         }`}

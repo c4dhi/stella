@@ -89,7 +89,7 @@ export default function PreferencesSection() {
       {/* Theme Selection */}
       <motion.div
         className={`p-6 rounded-2xl ${
-          isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+          isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
         }`}
         variants={itemVariants}
       >

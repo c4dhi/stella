@@ -118,6 +118,10 @@ export class AgentServerService implements OnModuleDestroy {
       this.sessionsService.emitAgentReady(matchedSessionId, agentId, agentName, request.agentType);
     }
 
+    // Emit internal EventEmitter event for PublicProjectsService to catch
+    // This allows event-based waiting instead of DB polling
+    this.eventEmitter.emit(`agent.ready.${matchedSessionId}`, { agentId });
+
     // NOTE: In the new architecture, agents publish their own "joined" message
     // via LiveKit when they connect directly to the room
 

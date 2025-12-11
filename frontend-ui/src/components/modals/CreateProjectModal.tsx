@@ -1,28 +1,211 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Globe, Lock, Check, Copy, ExternalLink } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
+import { apiClient } from '../../services/ApiClient'
+import EmojiPicker from '../EmojiPicker'
+import type { VisualizerType } from '../face/types'
+import type { AgentType, PlanTemplate, EnvVarTemplate, UpdatePublicConfigDto, PublicAgentConfig } from '../../lib/api-types'
+import { parseAgentRequirements } from '../../lib/api-types'
+import {
+  AgentGalleryStep,
+  PlanSelectionStep,
+  VisualizerSelectionStep,
+  ExpirationSelectionStep,
+  EnvVarsSelectionStep,
+  DEFAULT_EXPIRATION_OPTIONS,
+} from '../shared'
 
 interface CreateProjectModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string) => Promise<void>
+  onSubmit: (name: string) => Promise<string> // Returns projectId
 }
+
+type Step = 'basic' | 'agent' | 'configure' | 'plan' | 'envvars' | 'visualizer' | 'expiration' | 'complete'
+type ProjectType = 'private' | 'public'
+type EnvVarsView = 'select' | 'edit'
+
+// Step configuration for easy extension (excluding basic which has no number)
+const STEPS_CONFIG: { id: Step; number: number; label: string }[] = [
+  { id: 'agent', number: 1, label: 'Select Agent' },
+  { id: 'configure', number: 2, label: 'Configure' },
+  { id: 'plan', number: 3, label: 'Plan' },
+  { id: 'envvars', number: 4, label: 'Env Vars' },
+  { id: 'visualizer', number: 5, label: 'Visualizer' },
+  { id: 'expiration', number: 6, label: 'Expiration' },
+]
 
 export default function CreateProjectModal({
   isOpen,
   onClose,
   onSubmit,
 }: CreateProjectModalProps) {
-  const [name, setName] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Theme
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim() || name.length > 255) {
-      setError('Project name must be 1-255 characters')
+  // Step navigation
+  const [step, setStep] = useState<Step>('basic')
+
+  // Basic info
+  const [name, setName] = useState('')
+  const [projectType, setProjectType] = useState<ProjectType>('private')
+
+  // Agent selection (AgentGalleryStep manages its own loading/fetching)
+  const [selectedAgentType, setSelectedAgentType] = useState<AgentType | null>(null)
+
+  // Agent config
+  const [agentName, setAgentName] = useState('')
+  const [agentIcon, setAgentIcon] = useState('🤖')
+
+  // Plan selection (PlanSelectionStep manages its own loading/fetching)
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>([])
+  const [selectedPlan, setSelectedPlan] = useState<PlanTemplate | null>(null)
+
+  // Env var state (EnvVarsSelectionStep handles fetching templates)
+  const [selectedEnvVarTemplate, setSelectedEnvVarTemplate] = useState<EnvVarTemplate | null>(null)
+  const [envVars, setEnvVars] = useState<Record<string, string>>({})
+  const [envVarsView, setEnvVarsView] = useState<EnvVarsView>('select')
+
+  // Visualizer
+  const [visualizerType, setVisualizerType] = useState<VisualizerType | undefined>(undefined)
+  const [visualizerLocked, setVisualizerLocked] = useState(false)
+
+  // Expiration
+  const [expiresInHours, setExpiresInHours] = useState<number | undefined>(undefined)
+
+  // Submission
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Created project result
+  const [publicLink, setPublicLink] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // Parse agent requirements
+  const agentRequirements = useMemo(() => {
+    if (!selectedAgentType) return { requiresPlan: false, requiredEnvVars: [] as string[] }
+    return parseAgentRequirements(selectedAgentType.configSchema)
+  }, [selectedAgentType])
+
+  // Dynamic steps for public project (excluding basic)
+  const publicSteps = useMemo((): Step[] => {
+    const s: Step[] = ['agent', 'configure']
+    if (agentRequirements.requiresPlan) {
+      s.push('plan')
+    }
+    s.push('envvars', 'visualizer', 'expiration')
+    return s
+  }, [agentRequirements.requiresPlan])
+
+  // Get visible step configs (filtered based on requirements)
+  const visibleStepConfigs = useMemo(() => {
+    return STEPS_CONFIG.filter(s => {
+      if (s.id === 'plan') return agentRequirements.requiresPlan
+      return publicSteps.includes(s.id)
+    }).map((s, idx) => ({ ...s, number: idx + 1 }))
+  }, [publicSteps, agentRequirements.requiresPlan])
+
+  const getStepNumber = (s: Step): number => {
+    const config = visibleStepConfigs.find(c => c.id === s)
+    return config?.number ?? 0
+  }
+
+  const getTotalSteps = () => visibleStepConfigs.length
+
+  const isPublicWizard = projectType === 'public' && step !== 'basic'
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setStep('basic')
+      setName('')
+      setProjectType('private')
+      setSelectedAgentType(null)
+      setAgentName('')
+      setAgentIcon('🤖')
+      setSelectedPlan(null)
+      setSelectedEnvVarTemplate(null)
+      setEnvVars({})
+      setEnvVarsView('select')
+      setVisualizerType(undefined)
+      setVisualizerLocked(false)
+      setExpiresInHours(undefined)
+      setError(null)
+      setPublicLink(null)
+      setCopied(false)
+    }
+  }, [isOpen])
+
+  // Update agent name/icon when agent type is selected
+  useEffect(() => {
+    if (selectedAgentType) {
+      setAgentName(selectedAgentType.name)
+      setAgentIcon(selectedAgentType.icon || '🤖')
+    }
+  }, [selectedAgentType])
+
+  const handleClose = () => {
+    if (!isSubmitting) {
+      onClose()
+    }
+  }
+
+  const handleBack = () => {
+    if (step === 'basic') return
+
+    const currentIndex = publicSteps.indexOf(step as any)
+    if (currentIndex === 0) {
+      setStep('basic')
+    } else if (currentIndex > 0) {
+      setStep(publicSteps[currentIndex - 1])
+    }
+  }
+
+  const handleContinue = () => {
+    if (step === 'basic') {
+      if (projectType === 'private') {
+        handleSubmit()
+      } else {
+        setStep('agent')
+      }
+      return
+    }
+
+    const currentIndex = publicSteps.indexOf(step as any)
+    if (currentIndex < publicSteps.length - 1) {
+      setStep(publicSteps[currentIndex + 1])
+    } else {
+      handleSubmit()
+    }
+  }
+
+  const canProceed = useMemo(() => {
+    switch (step) {
+      case 'basic':
+        return name.trim().length > 0 && name.length <= 255
+      case 'agent':
+        return selectedAgentType !== null
+      case 'configure':
+        return agentName.trim().length > 0
+      case 'plan':
+        return selectedPlan !== null
+      case 'envvars':
+        // Check all required env vars have values
+        return agentRequirements.requiredEnvVars.every(key => envVars[key]?.trim())
+      case 'visualizer':
+        return true
+      case 'expiration':
+        return true
+      default:
+        return false
+    }
+  }, [step, name, selectedAgentType, agentName, selectedPlan, agentRequirements.requiredEnvVars, envVars])
+
+  const handleSubmit = async () => {
+    if (!name.trim()) {
+      setError('Project name is required')
       return
     }
 
@@ -30,9 +213,46 @@ export default function CreateProjectModal({
     setError(null)
 
     try {
-      await onSubmit(name)
-      setName('')
-      onClose()
+      // Create the project
+      const projectId = await onSubmit(name)
+
+      // If public, update the public config
+      if (projectType === 'public' && selectedAgentType) {
+        const agentConfig: PublicAgentConfig = {
+          name: agentName,
+          icon: agentIcon,
+        }
+
+        if (selectedPlan) {
+          agentConfig.plan = selectedPlan.content as unknown as Record<string, unknown>
+        }
+
+        if (selectedEnvVarTemplate) {
+          agentConfig.envVarTemplateId = selectedEnvVarTemplate.id
+        }
+
+        const publicConfig: UpdatePublicConfigDto = {
+          isPublic: true,
+          agentTypeId: selectedAgentType.id,
+          agentConfig,
+          visualizerType: visualizerType || undefined,
+          visualizerLocked,
+          expiresAt: expiresInHours
+            ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
+            : undefined,
+          enabled: true,
+        }
+
+        await apiClient.updateProjectPublicConfig(projectId, publicConfig)
+
+        // Get the public link
+        const linkResponse = await apiClient.getProjectPublicLink(projectId)
+        setPublicLink(linkResponse.publicLink)
+        setStep('complete')
+      } else {
+        // Private project - just close
+        onClose()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project')
     } finally {
@@ -40,13 +260,50 @@ export default function CreateProjectModal({
     }
   }
 
-  const handleClose = () => {
-    if (!isSubmitting) {
-      setName('')
-      setError(null)
-      onClose()
+  const handleCopyLink = async () => {
+    if (publicLink) {
+      try {
+        await navigator.clipboard.writeText(publicLink)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch (err) {
+        console.error('Failed to copy link:', err)
+      }
     }
   }
+
+  const getStepTitle = (): string => {
+    switch (step) {
+      case 'basic': return 'Create Project'
+      case 'agent': return 'Select Agent'
+      case 'configure': return 'Configure Agent'
+      case 'plan': return 'Select Plan'
+      case 'envvars': return 'Environment Variables'
+      case 'visualizer': return 'Choose Visualizer'
+      case 'expiration': return 'Set Expiration'
+      case 'complete': return 'Project Created'
+      default: return ''
+    }
+  }
+
+  const getStepDescription = (): string => {
+    switch (step) {
+      case 'basic': return 'Start a new project to organize your sessions'
+      case 'agent': return 'Choose the agent that will be deployed for each participant'
+      case 'configure': return 'Customize the agent appearance and settings'
+      case 'plan': return 'Select a conversation plan for this agent'
+      case 'envvars': return 'Configure API keys and secrets for this agent'
+      case 'visualizer': return 'Set a default visualizer for participants'
+      case 'expiration': return 'Set how long the public link remains valid'
+      case 'complete': return 'Share this link with participants'
+      default: return ''
+    }
+  }
+
+  // Determine modal size
+  const modalSizeClass = isPublicWizard || step === 'complete'
+    ? 'max-w-2xl'
+    : 'max-w-md'
 
   return (
     <AnimatePresence>
@@ -55,103 +312,554 @@ export default function CreateProjectModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 backdrop-blur-sm"
           onClick={handleClose}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className={`card-elevated w-full max-w-md p-6 ${
-              isDark ? 'bg-surface-dark-secondary' : ''
-            }`}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            layout
+            className={`
+              backdrop-blur-xl rounded-[20px] w-full ${modalSizeClass} overflow-hidden
+              ${isDark
+                ? 'bg-zinc-800 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                : 'bg-white border border-neutral-200 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
+              }
+            `}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="mb-6 relative">
-              <button
-                onClick={handleClose}
-                disabled={isSubmitting}
-                className={`absolute -top-1 -right-1 p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  isDark
-                    ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
-                    : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
-                }`}
-                title="Close"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-              <h2 className={`text-heading-lg ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                Create Project
-              </h2>
-              <p className={`text-body mt-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                Start a new project to organize your sessions
-              </p>
-            </div>
+            {step !== 'complete' && (
+              <div className={`px-6 pt-6 pb-4 ${isPublicWizard ? `border-b ${isDark ? 'border-zinc-700' : 'border-neutral-200'}` : ''}`}>
+                <div className="relative">
+                  <button
+                    onClick={handleClose}
+                    disabled={isSubmitting}
+                    className={`
+                      absolute -top-1 -right-1 p-2 rounded-lg transition-all duration-200
+                      disabled:opacity-60 disabled:cursor-not-allowed
+                      ${isDark
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                        : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                    title="Close"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className={`block text-label uppercase mb-2 ${
-                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-                }`}>
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoFocus
-                  required
-                  maxLength={255}
-                  className="input-field"
-                  placeholder="Enter project name"
-                />
-                <div className={`mt-2 text-caption ${
-                  isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
-                }`}>
-                  {name.length}/255 characters
+                  {/* Step indicator - only for public wizard steps */}
+                  {isPublicWizard && (
+                    <div className="flex items-center gap-3 mb-2">
+                      {visibleStepConfigs.map((s, idx) => (
+                        <div key={s.id} className="flex items-center">
+                          <div className={`
+                            w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
+                            ${getStepNumber(step) >= s.number
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
+                              : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
+                            }
+                          `}>
+                            {s.number}
+                          </div>
+                          {idx < visibleStepConfigs.length - 1 && (
+                            <div className={`w-8 h-0.5 ml-3 ${getStepNumber(step) > s.number
+                              ? isDark ? 'bg-violet-500' : 'bg-neutral-900'
+                              : isDark ? 'bg-zinc-600' : 'bg-neutral-200'
+                            }`} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <h2 className={`text-2xl font-light tracking-wide ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                    {getStepTitle()}
+                  </h2>
+                  <p className={`text-sm font-light mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                    {getStepDescription()}
+                  </p>
                 </div>
               </div>
+            )}
 
-              {/* Error message */}
-              {error && (
+            {/* Content */}
+            <AnimatePresence mode="wait">
+              {/* Basic Step */}
+              {step === 'basic' && (
                 <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`p-3 rounded-lg text-body-sm ${
-                    isDark
-                      ? 'bg-red-500/10 border border-red-500/20 text-red-400'
-                      : 'bg-red-50 border border-red-200 text-red-700'
-                  }`}
+                  key="basic"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6 space-y-6"
                 >
-                  {error}
+                  {/* Project Name */}
+                  <div>
+                    <label className={`block text-xs font-medium uppercase tracking-wider mb-2 ${
+                      isDark ? 'text-zinc-400' : 'text-neutral-500'
+                    }`}>
+                      Project Name
+                    </label>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      autoFocus
+                      required
+                      maxLength={255}
+                      className={`
+                        w-full px-4 py-3 rounded-xl text-sm font-light
+                        focus:outline-none transition-all duration-200
+                        ${isDark
+                          ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
+                          : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                        }
+                      `}
+                      placeholder="Enter project name"
+                    />
+                    <div className={`mt-2 text-xs font-light text-right ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                      {name.length}/255
+                    </div>
+                  </div>
+
+                  {/* Project Type Selection - Card Style */}
+                  <div>
+                    <label className={`block text-xs font-medium uppercase tracking-wider mb-3 ${
+                      isDark ? 'text-zinc-400' : 'text-neutral-500'
+                    }`}>
+                      Project Type
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Private Option */}
+                      <button
+                        onClick={() => setProjectType('private')}
+                        className={`
+                          relative p-4 rounded-xl text-left transition-all duration-200
+                          ${projectType === 'private'
+                            ? isDark
+                              ? 'bg-violet-500/20 border-2 border-violet-500'
+                              : 'bg-neutral-100 border-2 border-neutral-900'
+                            : isDark
+                              ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
+                              : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
+                          }
+                        `}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`
+                            w-10 h-10 rounded-xl flex items-center justify-center
+                            ${projectType === 'private'
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
+                              : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
+                            }
+                          `}>
+                            <Lock className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                              Private
+                            </h3>
+                            <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                              Manual session setup
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Public Option */}
+                      <button
+                        onClick={() => setProjectType('public')}
+                        className={`
+                          relative p-4 rounded-xl text-left transition-all duration-200
+                          ${projectType === 'public'
+                            ? isDark
+                              ? 'bg-violet-500/20 border-2 border-violet-500'
+                              : 'bg-neutral-100 border-2 border-neutral-900'
+                            : isDark
+                              ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
+                              : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
+                          }
+                        `}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`
+                            w-10 h-10 rounded-xl flex items-center justify-center
+                            ${projectType === 'public'
+                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
+                              : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
+                            }
+                          `}>
+                            <Globe className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                              Public
+                            </h3>
+                            <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                              Shareable link access
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Description based on selection */}
+                    <p className={`mt-3 text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                      {projectType === 'private'
+                        ? 'You manually create sessions and invite participants one by one.'
+                        : 'Anyone with the link can start their own session with a pre-configured agent.'}
+                    </p>
+                  </div>
                 </motion.div>
               )}
 
-              {/* Actions */}
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  disabled={isSubmitting}
-                  className="btn-secondary flex-1"
+              {/* Agent Selection Step */}
+              {step === 'agent' && (
+                <motion.div
+                  key="agent"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !name.trim()}
-                  className="btn-primary flex-1"
+                  <AgentGalleryStep
+                    selectedAgentType={selectedAgentType}
+                    onSelectAgentType={setSelectedAgentType}
+                    showMyAgentsTab={false}
+                    showUpload={false}
+                  />
+                </motion.div>
+              )}
+
+              {/* Configure Step - matching DeployAgentModal layout */}
+              {step === 'configure' && (
+                <motion.div
+                  key="configure"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6 space-y-4"
                 >
-                  {isSubmitting ? 'Creating...' : 'Create Project'}
+                  {/* Selected Agent Type info banner */}
+                  {selectedAgentType && (
+                    <div className={`
+                      flex items-center gap-3 p-3 rounded-xl
+                      ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-50'}
+                    `}>
+                      <div className={`
+                        w-10 h-10 rounded-lg flex items-center justify-center text-xl
+                        ${isDark ? 'bg-zinc-600' : 'bg-white border border-neutral-200'}
+                      `}>
+                        {selectedAgentType.icon || '🤖'}
+                      </div>
+                      <div>
+                        <div className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                          {selectedAgentType.name}
+                        </div>
+                        <div className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                          {selectedAgentType.description}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Icon & Name Row - matching DeployAgentModal layout */}
+                  <div className="flex gap-3">
+                    {/* Icon Picker */}
+                    <div>
+                      <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                        Icon
+                      </label>
+                      <EmojiPicker value={agentIcon} onChange={setAgentIcon} />
+                    </div>
+
+                    {/* Name */}
+                    <div className="flex-1">
+                      <label className={`block text-xs font-light tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                        Agent Name
+                      </label>
+                      <input
+                        type="text"
+                        value={agentName}
+                        onChange={(e) => setAgentName(e.target.value)}
+                        required
+                        maxLength={255}
+                        autoFocus
+                        className={`
+                          w-full px-4 py-3 rounded-xl text-sm font-light
+                          focus:outline-none transition-all duration-200
+                          ${isDark
+                            ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
+                            : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
+                          }
+                        `}
+                        placeholder="e.g., Memory Coach"
+                      />
+                    </div>
+                  </div>
+
+                  {error && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`p-3 rounded-lg text-xs font-light ${isDark
+                        ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                        : 'bg-red-50/80 border border-red-200/60 text-red-600'
+                        }`}
+                    >
+                      {error}
+                    </motion.div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* Plan Step */}
+              {step === 'plan' && (
+                <motion.div
+                  key="plan"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <PlanSelectionStep
+                    selectedPlan={selectedPlan}
+                    onSelectPlan={setSelectedPlan}
+                    planTemplates={planTemplates}
+                    onPlanTemplatesChange={setPlanTemplates}
+                  />
+                </motion.div>
+              )}
+
+              {/* Environment Variables Step */}
+              {step === 'envvars' && (
+                <motion.div
+                  key="envvars"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <EnvVarsSelectionStep
+                    agentTypeId={selectedAgentType?.id}
+                    requiredEnvVars={agentRequirements.requiredEnvVars}
+                    selectedEnvVarTemplate={selectedEnvVarTemplate}
+                    onSelectEnvVarTemplate={setSelectedEnvVarTemplate}
+                    envVars={envVars}
+                    onEnvVarsChange={setEnvVars}
+                    envVarsView={envVarsView}
+                    onEnvVarsViewChange={setEnvVarsView}
+                  />
+                </motion.div>
+              )}
+
+              {/* Visualizer Step */}
+              {step === 'visualizer' && (
+                <motion.div
+                  key="visualizer"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <VisualizerSelectionStep
+                    visualizerType={visualizerType}
+                    visualizerLocked={visualizerLocked}
+                    onVisualizerTypeChange={setVisualizerType}
+                    onVisualizerLockedChange={setVisualizerLocked}
+                  />
+                </motion.div>
+              )}
+
+              {/* Expiration Step */}
+              {step === 'expiration' && (
+                <motion.div
+                  key="expiration"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <ExpirationSelectionStep
+                    expiresInHours={expiresInHours}
+                    onExpiresInHoursChange={setExpiresInHours}
+                    options={DEFAULT_EXPIRATION_OPTIONS}
+                  />
+                </motion.div>
+              )}
+
+              {/* Complete Step - Success Screen */}
+              {step === 'complete' && publicLink && (
+                <motion.div
+                  key="complete"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                  className="p-8 text-center"
+                >
+                  {/* Close button */}
+                  <button
+                    onClick={handleClose}
+                    className={`
+                      absolute top-4 right-4 p-2 rounded-lg transition-all duration-200
+                      ${isDark
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                        : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                    title="Close"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+
+                  {/* Success icon */}
+                  <div className="relative w-20 h-20 mx-auto mb-6">
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1.4, opacity: 0 }}
+                      transition={{ duration: 1.5, repeat: Infinity, ease: 'easeOut' }}
+                      className={`absolute inset-0 rounded-full ${isDark ? 'bg-green-500/20' : 'bg-green-100'}`}
+                    />
+                    <div className={`
+                      absolute inset-0 rounded-full flex items-center justify-center
+                      ${isDark ? 'bg-green-500/30' : 'bg-green-100'}
+                    `}>
+                      <Check className="w-10 h-10 text-green-500" />
+                    </div>
+                  </div>
+
+                  <h2 className={`text-2xl font-light mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                    Public Project Created!
+                  </h2>
+                  <p className={`text-sm mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                    Share this link with participants to let them join
+                  </p>
+
+                  {/* Link display */}
+                  <div className={`
+                    flex items-center gap-2 p-4 rounded-xl mb-6
+                    ${isDark ? 'bg-zinc-700/50 border border-zinc-600' : 'bg-neutral-50 border border-neutral-200'}
+                  `}>
+                    <input
+                      type="text"
+                      value={publicLink}
+                      readOnly
+                      className={`flex-1 bg-transparent text-sm font-mono ${isDark ? 'text-zinc-200' : 'text-neutral-700'}`}
+                    />
+                    <button
+                      onClick={handleCopyLink}
+                      className={`
+                        p-2 rounded-lg transition-colors
+                        ${isDark
+                          ? 'hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200'
+                          : 'hover:bg-neutral-200 text-neutral-500 hover:text-neutral-700'
+                        }
+                      `}
+                    >
+                      {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                    <a
+                      href={publicLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`
+                        p-2 rounded-lg transition-colors
+                        ${isDark
+                          ? 'hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200'
+                          : 'hover:bg-neutral-200 text-neutral-500 hover:text-neutral-700'
+                        }
+                      `}
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  </div>
+
+                  <button
+                    onClick={handleClose}
+                    className={`
+                      w-full py-3 rounded-xl text-sm font-medium transition-all
+                      ${isDark
+                        ? 'bg-violet-600 text-white hover:bg-violet-500'
+                        : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                      }
+                    `}
+                  >
+                    Done
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Error message */}
+            {error && (
+              <div className={`mx-6 mb-4 p-3 rounded-xl text-sm ${
+                isDark
+                  ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {error}
+              </div>
+            )}
+
+            {/* Footer Actions */}
+            {step !== 'complete' && (
+              <div className={`px-6 py-4 flex gap-3 ${isPublicWizard ? `border-t ${isDark ? 'border-zinc-700' : 'border-neutral-200'}` : ''}`}>
+                {isPublicWizard && (
+                  <button
+                    onClick={handleBack}
+                    disabled={isSubmitting}
+                    className={`
+                      px-4 py-2.5 rounded-xl text-sm font-medium transition-all
+                      disabled:opacity-60 disabled:cursor-not-allowed
+                      ${isDark
+                        ? 'text-zinc-300 hover:bg-zinc-700'
+                        : 'text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                  >
+                    Back
+                  </button>
+                )}
+                <div className="flex-1" />
+                <button
+                  onClick={handleContinue}
+                  disabled={isSubmitting || !canProceed}
+                  className={`
+                    px-6 py-2.5 rounded-xl text-sm font-medium transition-all
+                    disabled:opacity-60 disabled:cursor-not-allowed
+                    ${isDark
+                      ? 'bg-violet-600 text-white hover:bg-violet-500'
+                      : 'bg-neutral-900 text-white hover:bg-neutral-800'
+                    }
+                  `}
+                >
+                  {isSubmitting
+                    ? 'Creating...'
+                    : step === 'basic' && projectType === 'private'
+                      ? 'Create Project'
+                      : step === 'basic'
+                        ? 'Continue'
+                        : publicSteps.indexOf(step as any) === publicSteps.length - 1
+                          ? 'Create Project'
+                          : 'Continue'}
                 </button>
               </div>
-            </form>
+            )}
           </motion.div>
         </motion.div>
       )}

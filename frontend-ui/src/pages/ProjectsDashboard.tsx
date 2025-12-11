@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { Globe, Users } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
 import EditProjectModal from '../components/modals/EditProjectModal'
+import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import AppHeader from '../components/layout/AppHeader'
 import type { ProjectWithCounts } from '../lib/api-types'
@@ -21,6 +23,7 @@ export default function ProjectsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithCounts | null>(null)
+  const [sharingProject, setSharingProject] = useState<ProjectWithCounts | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null)
 
@@ -45,10 +48,11 @@ export default function ProjectsDashboard() {
     loadProjects()
   }, [])
 
-  const handleCreateProject = async (name: string) => {
+  const handleCreateProject = async (name: string): Promise<string> => {
     const newProject = await apiClient.createProject({ name })
     setProjects(prev => [newProject as ProjectWithCounts, ...prev])
     addToast({ message: `Project "${name}" created`, type: 'success' })
+    return newProject.id
   }
 
   const handleUpdateProject = async (name: string) => {
@@ -186,11 +190,18 @@ export default function ProjectsDashboard() {
                     : 'bg-white border border-border shadow-sm hover:shadow-md hover:border-border-secondary'
                 }`}
               >
-                <h3 className={`text-heading-sm mb-3 ${
-                  isDark ? 'text-content-inverse' : 'text-content'
-                }`}>
-                  {project.name}
-                </h3>
+                <div className="flex items-center gap-2 mb-3">
+                  <h3 className={`text-heading-sm ${
+                    isDark ? 'text-content-inverse' : 'text-content'
+                  }`}>
+                    {project.name}
+                  </h3>
+                  {project.isPublic && (
+                    <Globe className={`w-4 h-4 flex-shrink-0 ${
+                      isDark ? 'text-violet-400' : 'text-violet-600'
+                    }`} />
+                  )}
+                </div>
 
                 {/* Stats */}
                 <div className="space-y-2 mb-4">
@@ -239,6 +250,20 @@ export default function ProjectsDashboard() {
                     className="btn-primary flex-1 text-ui-sm"
                   >
                     View Sessions
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSharingProject(project)
+                    }}
+                    className={`p-2 rounded-lg transition-colors ${
+                      isDark
+                        ? 'text-content-inverse-tertiary hover:text-primary hover:bg-primary/10'
+                        : 'text-content-tertiary hover:text-primary hover:bg-primary/10'
+                    }`}
+                    title="Share"
+                  >
+                    <Users className="w-4 h-4" />
                   </button>
                   <button
                     onClick={(e) => {
@@ -307,6 +332,16 @@ export default function ProjectsDashboard() {
         onConfirm={confirmDeleteProject}
         onCancel={() => { setDeleteConfirmOpen(false); setProjectToDelete(null) }}
       />
+
+      {sharingProject && (
+        <ShareProjectModal
+          isOpen={!!sharingProject}
+          onClose={() => setSharingProject(null)}
+          projectId={sharingProject.id}
+          projectName={sharingProject.name}
+          isOwner={sharingProject.isOwner ?? true}
+        />
+      )}
     </div>
   )
 }

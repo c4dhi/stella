@@ -216,14 +216,14 @@ export default function PlanBuilderSection() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               className={`text-center py-16 px-8 rounded-3xl ${
-                isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+                isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
               }`}
             >
               <motion.div
-                className={`w-20 h-20 rounded-2xl mx-auto mb-6 flex items-center justify-center ${
+                className={`w-20 h-20 rounded-2xl mx-auto mb-6 flex items-center justify-center border ${
                   isDark
-                    ? 'bg-gradient-to-br from-primary/30 to-primary/10'
-                    : 'bg-gradient-to-br from-primary/20 to-primary/5'
+                    ? 'bg-gradient-to-br from-primary/30 to-primary/10 border-primary/20'
+                    : 'bg-gradient-to-br from-primary/20 to-primary/5 border-primary/20'
                 }`}
                 whileHover={{ scale: 1.05, rotate: 5 }}
                 transition={{ type: 'spring', stiffness: 300, damping: 15 }}

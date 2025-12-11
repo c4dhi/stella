@@ -21,6 +21,10 @@ import { AgentBuildModule } from './agent-build/agent-build.module';
 import { AgentUploadModule } from './agent-upload/agent-upload.module';
 import { PlanTemplatesModule } from './plan-templates/plan-templates.module';
 import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.module';
+import { PublicProjectsModule } from './public-projects/public-projects.module';
+import { MetricsModule } from './metrics/metrics.module';
+import { UserMessagesModule } from './user-messages/user-messages.module';
+import { ProjectInvitationsModule } from './project-invitations/project-invitations.module';
 
 @Module({
   imports: [
@@ -45,6 +49,10 @@ import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.mod
     AgentUploadModule,
     PlanTemplatesModule,
     EnvVarTemplatesModule,
+    PublicProjectsModule,
+    MetricsModule,
+    UserMessagesModule,
+    ProjectInvitationsModule,
   ],
   controllers: [AppController],
   providers: [

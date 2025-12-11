@@ -124,14 +124,12 @@ export default function EnvVarBuilderSection() {
           variants={itemVariants}
         >
           <div>
-            <h2 className={`text-heading-lg font-semibold ${
-              isDark ? 'text-content-inverse' : 'text-content'
-            }`}>
+            <h2 className={`text-heading-lg font-semibold ${isDark ? 'text-content-inverse' : 'text-content'
+              }`}>
               Environment Variables
             </h2>
-            <p className={`text-body-sm mt-1.5 max-w-lg ${
-              isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-            }`}>
+            <p className={`text-body-sm mt-1.5 max-w-lg ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+              }`}>
               Create reusable, encrypted environment variable templates for your agents
             </p>
           </div>
@@ -160,9 +158,8 @@ export default function EnvVarBuilderSection() {
               className="flex flex-col items-center justify-center py-20"
             >
               <motion.div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${
-                  isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
-                }`}
+                className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+                  }`}
                 animate={{ rotate: 360 }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
               >
@@ -184,15 +181,13 @@ export default function EnvVarBuilderSection() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className={`p-6 rounded-2xl flex items-start gap-4 ${
-                isDark
+              className={`p-6 rounded-2xl flex items-start gap-4 ${isDark
                   ? 'bg-red-500/10 border border-red-500/20'
                   : 'bg-red-50 border border-red-200'
-              }`}
+                }`}
             >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                isDark ? 'bg-red-500/20' : 'bg-red-100'
-              }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'
+                }`}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={isDark ? 'text-red-400' : 'text-red-600'}>
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
@@ -217,17 +212,14 @@ export default function EnvVarBuilderSection() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className={`text-center py-16 px-8 rounded-3xl ${
-                isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
-              }`}
+              className={`text-center py-16 px-8 rounded-3xl ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
+                }`}
             >
               <motion.div
-                className={`w-20 h-20 rounded-2xl mx-auto mb-6 flex items-center justify-center ${
-                  isDark
-                    ? 'bg-gradient-to-br from-amber-500/30 to-orange-500/10'
-                    : 'bg-gradient-to-br from-amber-500/20 to-orange-500/5'
-                }`}
-                whileHover={{ scale: 1.05, rotate: 5 }}
+                className={`w-20 h-20 rounded-2xl mx-auto mb-6 flex items-center justify-center border ${isDark
+                    ? 'bg-gradient-to-br from-amber-500/30 to-orange-500/10 border-amber-500/20'
+                    : 'bg-gradient-to-br from-amber-500/20 to-orange-500/5 border-amber-500/20'
+                  }`}
                 transition={{ type: 'spring', stiffness: 300, damping: 15 }}
               >
                 <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-amber-500">

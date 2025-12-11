@@ -43,10 +43,20 @@ export interface ProjectWithCounts extends Project {
   activeSessions: number
   activeAgents: number
   totalSessions: number
+  isPublic?: boolean
+  publicToken?: string
+  publicEnabled?: boolean
+  ownerId?: string
+  isOwner?: boolean
 }
 
 export interface ProjectWithSessions extends Project {
   sessions: Session[]
+  isPublic?: boolean
+  publicToken?: string
+  publicEnabled?: boolean
+  ownerId?: string
+  isOwner?: boolean
 }
 
 export interface ProjectStats {
@@ -278,8 +288,17 @@ export interface PackageValidationResult {
 }
 
 export interface SessionEvent {
-  type: 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped' | 'participant.joined' | 'participant.left'
+  type:
+    | 'agent.starting' | 'agent.ready' | 'agent.failed' | 'agent.stopped'
+    | 'participant.joined' | 'participant.left'
+    // Join progress types for public project flow
+    | 'join.session_created' | 'join.agent_deploying' | 'join.agent_starting'
+    | 'join.agent_ready' | 'join.invitation_created' | 'join.complete' | 'join.failed'
+    // Project-level session lifecycle events
+    | 'session.created' | 'session.closed' | 'session.deleted'
   sessionId: string
+  projectId?: string      // For project-level event filtering
+  sessionName?: string    // For display in notifications
   agentId?: string
   agentName?: string
   agentType?: string
@@ -289,6 +308,61 @@ export interface SessionEvent {
   isOnline?: boolean
   error?: string
   timestamp: string
+  // Join progress fields
+  step?: number
+  totalSteps?: number
+  invitationToken?: string
+}
+
+// Project-level session events (for SessionsDashboard real-time updates)
+export type ProjectSessionEventType =
+  | 'session.created'
+  | 'session.closed'
+  | 'session.deleted'
+
+export interface ProjectSessionEvent {
+  type: ProjectSessionEventType
+  sessionId: string
+  projectId: string
+  sessionName?: string
+  timestamp: string
+}
+
+// ============================================================================
+// Project Metrics Types (for ProjectOverviewBanner)
+// ============================================================================
+
+export interface ProjectMetrics {
+  projectId: string
+  timestamp: string
+  sessions: {
+    total: number
+    active: number
+    closed: number
+  }
+  agents: {
+    total: number
+    running: number
+    starting: number
+    failed: number
+    stopped: number
+  }
+  participants: {
+    total: number
+    online: number
+  }
+  messages: {
+    total: number
+    todayCount: number
+  }
+  project: {
+    name: string
+    agentType: string | null
+    agentTypeName: string | null
+    planTemplateName: string | null
+    isPublic: boolean
+    createdAt: string
+  }
 }
 
 // ============================================================================
@@ -714,4 +788,204 @@ export function parseAgentRequirements(
   const requiredEnvVars = (configSchema['x-stella-env-vars'] as string[]) || []
 
   return { requiresPlan, requiredEnvVars }
+}
+
+// ============================================================================
+// Public Project Types
+// ============================================================================
+
+/**
+ * Agent configuration for public projects
+ */
+export interface PublicAgentConfig {
+  name: string
+  icon?: string
+  plan?: Record<string, unknown>
+  envVarTemplateId?: string
+}
+
+/**
+ * DTO for updating public project configuration
+ */
+export interface UpdatePublicConfigDto {
+  isPublic: boolean
+  agentTypeId?: string
+  agentConfig?: PublicAgentConfig
+  visualizerType?: string
+  visualizerLocked?: boolean
+  expiresAt?: string
+  enabled?: boolean
+}
+
+/**
+ * Public project info returned from GET /p/:publicToken
+ */
+export interface PublicProjectInfo {
+  projectName: string
+  agentName: string
+  agentIcon?: string
+  visualizerType?: string
+  visualizerLocked: boolean
+  isExpired: boolean
+  isEnabled: boolean
+}
+
+/**
+ * Response from POST /p/:publicToken/join (blocking/deprecated)
+ */
+export interface JoinPublicProjectResponse {
+  invitationToken: string
+  sessionId: string
+  agentId: string
+}
+
+/**
+ * Response from POST /p/:publicToken/start-join (non-blocking)
+ * Returns immediately, frontend polls for progress updates
+ */
+export interface StartJoinPublicProjectResponse {
+  sessionId: string
+}
+
+/**
+ * Response from GET /p/:publicToken/join/:sessionId/status (polling endpoint)
+ */
+export interface JoinProgressResponse {
+  step: number
+  totalSteps: number
+  status: 'in_progress' | 'complete' | 'failed'
+  message: string
+  agentId?: string
+  invitationToken?: string
+  error?: string
+}
+
+/**
+ * Response from GET /projects/:projectId/public-link
+ */
+export interface PublicLinkResponse {
+  publicLink: string | null
+  isEnabled?: boolean
+}
+
+/**
+ * Extended Project type with public project fields
+ */
+export interface ProjectWithPublicConfig extends Project {
+  isPublic: boolean
+  publicToken?: string
+  publicAgentTypeId?: string
+  publicAgentType?: {
+    id: string
+    name: string
+    slug: string
+    icon?: string
+  }
+  publicAgentConfig?: PublicAgentConfig
+  publicVisualizerType?: string
+  publicVisualizerLocked: boolean
+  publicExpiresAt?: string
+  publicEnabled: boolean
+}
+
+// ============================================================================
+// User Messaging System Types
+// ============================================================================
+
+export enum UserMessageType {
+  PROJECT_INVITATION = 'PROJECT_INVITATION',
+}
+
+export enum ProjectInvitationStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  DECLINED = 'DECLINED',
+}
+
+export interface UserMessageMetadata {
+  projectId?: string
+  projectName?: string
+  inviterName?: string
+  inviterEmail?: string
+  invitationId?: string
+}
+
+export interface UserMessage {
+  id: string
+  type: UserMessageType
+  title: string
+  body: string | null
+  read: boolean
+  createdAt: string
+  relatedEntityId: string | null
+  relatedEntityType: string | null
+  metadata?: UserMessageMetadata
+}
+
+export interface UnreadCountResponse {
+  count: number
+}
+
+export interface PaginatedMessagesResponse {
+  messages: UserMessage[]
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+}
+
+// ============================================================================
+// Project Collaboration Types
+// ============================================================================
+
+export interface Collaborator {
+  userId: string
+  email: string
+  name: string | null
+  role: 'OWNER' | 'COLLABORATOR'
+  joinedAt: string
+}
+
+export interface PendingProjectInvitation {
+  invitationId: string
+  email: string
+  name: string | null
+  status: 'PENDING'
+  invitedAt: string
+}
+
+export interface ProjectCollaboratorsResponse {
+  collaborators: Collaborator[]
+  pendingInvitations: PendingProjectInvitation[]
+}
+
+export interface ProjectInvitationResponse {
+  id: string
+  projectId: string
+  projectName: string
+  inviterId: string
+  inviterName: string | null
+  inviterEmail: string
+  inviteeId: string
+  inviteeName: string | null
+  inviteeEmail: string
+  status: string
+  createdAt: string
+  respondedAt: string | null
+}
+
+export interface InviteCollaboratorDto {
+  email: string
+}
+
+// ============================================================================
+// User Notification Event Types (for SSE)
+// ============================================================================
+
+export interface UserNotificationEvent {
+  type: 'message.created' | 'message.deleted' | 'unread_count.changed'
+  userId: string
+  message?: UserMessage
+  unreadCount?: number
+  timestamp: string
 }

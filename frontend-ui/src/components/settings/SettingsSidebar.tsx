@@ -1,14 +1,15 @@
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
+import { useNotificationStore } from '../../store/notificationStore'
 
-export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars'
+export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'inbox'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
   onSectionChange: (section: SettingsSection) => void
 }
 
-const sections: { id: SettingsSection; label: string; icon: React.ReactNode; description: string }[] = [
+const sections: { id: SettingsSection; label: string; icon: React.ReactNode; description: string; hasBadge?: boolean }[] = [
   {
     id: 'profile',
     label: 'Profile',
@@ -17,6 +18,18 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
         <circle cx="12" cy="7" r="4" />
+      </svg>
+    ),
+  },
+  {
+    id: 'inbox',
+    label: 'Inbox',
+    description: 'Messages & invitations',
+    hasBadge: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+        <polyline points="22,6 12,13 2,6" />
       </svg>
     ),
   },
@@ -59,6 +72,7 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
 export default function SettingsSidebar({ activeSection, onSectionChange }: SettingsSidebarProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const { unreadCount } = useNotificationStore()
 
   return (
     <motion.aside
@@ -120,7 +134,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
               {isActive && (
                 <motion.div
                   className={`absolute inset-0 rounded-xl ${
-                    isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+                    isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200'
                   }`}
                   layoutId="activeSection"
                   transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
@@ -132,26 +146,32 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                 isActive
                   ? isDark
                     ? 'text-primary'
-                    : 'text-black'
+                    : 'text-neutral-900'
                   : isDark
-                    ? 'text-neutral-500'
-                    : 'text-neutral-400'
+                    ? 'text-neutral-400'
+                    : 'text-neutral-500'
               }`}>
                 {section.icon}
               </span>
 
               {/* Text */}
               <div className="relative z-10 flex-1 min-w-0">
-                <div className={`text-body-sm font-semibold ${
+                <div className={`text-body-sm font-semibold flex items-center gap-2 ${
                   isActive
                     ? isDark
                       ? 'text-primary'
-                      : 'text-black'
+                      : 'text-neutral-900'
                     : isDark
-                      ? 'text-neutral-500'
-                      : 'text-neutral-400'
+                      ? 'text-neutral-400'
+                      : 'text-neutral-600'
                 }`}>
                   {section.label}
+                  {/* Unread badge for inbox */}
+                  {section.hasBadge && unreadCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-500 text-white min-w-[18px] text-center">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
                 </div>
                 <div className={`text-caption truncate ${
                   isActive
@@ -159,8 +179,8 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                       ? 'text-primary/60'
                       : 'text-neutral-600'
                     : isDark
-                      ? 'text-neutral-600'
-                      : 'text-neutral-400/80'
+                      ? 'text-neutral-500'
+                      : 'text-neutral-400'
                 }`}>
                   {section.description}
                 </div>
@@ -180,7 +200,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                       ? 'text-primary/60'
                       : 'text-neutral-600'
                     : isDark
-                      ? 'text-neutral-600'
+                      ? 'text-neutral-500'
                       : 'text-neutral-400'
                 }`}
                 initial={{ opacity: 0, x: -5 }}

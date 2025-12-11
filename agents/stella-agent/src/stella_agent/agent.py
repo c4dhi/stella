@@ -60,6 +60,9 @@ class StellaAgent(BaseAgent):
         """
         super().__init__()
 
+        # Set agent type to match the Docker image name (used for gRPC registration)
+        self._agent_type = "stella-agent"
+
         # Determine paths - try multiple locations for Docker compatibility
         if llm_config_path is None:
             llm_config_path = self._find_config_file("config/llm_config.json")
