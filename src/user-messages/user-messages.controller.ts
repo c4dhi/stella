@@ -9,7 +9,10 @@ import {
   UsePipes,
   HttpCode,
   HttpStatus,
+  Sse,
+  MessageEvent,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { UserMessagesService } from './user-messages.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { QueryMessagesDto } from './dto/user-message.dto';
@@ -59,5 +62,14 @@ export class UserMessagesController {
     @Param('messageId') messageId: string,
   ) {
     await this.userMessagesService.deleteMessage(user.userId, messageId);
+  }
+
+  /**
+   * SSE endpoint for real-time user notifications.
+   * Events include: message.created, message.deleted, unread_count.changed
+   */
+  @Sse('events')
+  streamNotifications(@CurrentUser() user: any): Observable<MessageEvent> {
+    return this.userMessagesService.getUserNotificationStream(user.userId);
   }
 }

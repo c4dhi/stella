@@ -1,35 +1,12 @@
-import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
-import { apiClient } from '../../services/ApiClient'
+import { useNotificationStore } from '../../store/notificationStore'
 
 export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'inbox'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
   onSectionChange: (section: SettingsSection) => void
-}
-
-// Hook to fetch unread message count
-function useUnreadCount() {
-  const [unreadCount, setUnreadCount] = useState(0)
-
-  useEffect(() => {
-    const fetchCount = async () => {
-      try {
-        const response = await apiClient.getUnreadMessageCount()
-        setUnreadCount(response.count)
-      } catch (err) {
-        console.debug('Failed to fetch unread count:', err)
-      }
-    }
-
-    fetchCount()
-    const interval = setInterval(fetchCount, 30000)
-    return () => clearInterval(interval)
-  }, [])
-
-  return unreadCount
 }
 
 const sections: { id: SettingsSection; label: string; icon: React.ReactNode; description: string; hasBadge?: boolean }[] = [
@@ -95,7 +72,7 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
 export default function SettingsSidebar({ activeSection, onSectionChange }: SettingsSidebarProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
-  const unreadCount = useUnreadCount()
+  const { unreadCount } = useNotificationStore()
 
   return (
     <motion.aside

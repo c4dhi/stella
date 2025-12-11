@@ -1,15 +1,29 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, MessageEvent } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserMessageType } from '@prisma/client';
+import { Observable, Subject, ReplaySubject, filter, map, finalize } from 'rxjs';
 import {
   QueryMessagesDto,
   UserMessageResponseDto,
   PaginatedMessagesResponseDto,
 } from './dto/user-message.dto';
 
+// Event types for user notifications
+export interface UserNotificationEvent {
+  type: 'message.created' | 'message.deleted' | 'unread_count.changed';
+  userId: string;
+  message?: UserMessageResponseDto;
+  unreadCount?: number;
+  timestamp: Date;
+}
+
 @Injectable()
 export class UserMessagesService {
   private readonly logger = new Logger(UserMessagesService.name);
+
+  // Maps userId -> Subject for SSE streaming
+  private userEventSubjects = new Map<string, ReplaySubject<UserNotificationEvent>>();
+  private subscriberCounts = new Map<string, number>();
 
   constructor(private prisma: PrismaService) {}
 
@@ -115,7 +129,7 @@ export class UserMessagesService {
     inviterName: string,
     invitationId: string,
   ): Promise<void> {
-    await this.prisma.userMessage.create({
+    const message = await this.prisma.userMessage.create({
       data: {
         userId: inviteeId,
         type: UserMessageType.PROJECT_INVITATION,
@@ -129,6 +143,17 @@ export class UserMessagesService {
     this.logger.log(
       `Created project invitation message for user ${inviteeId} from ${inviterId} for project ${projectId}`,
     );
+
+    // Emit real-time notification event
+    const enrichedMessage = await this.enrichMessage(message);
+    const unreadCount = await this.getUnreadCount(inviteeId);
+    this.emitUserEvent(inviteeId, {
+      type: 'message.created',
+      userId: inviteeId,
+      message: enrichedMessage,
+      unreadCount: unreadCount.count,
+      timestamp: new Date(),
+    });
   }
 
   /**
@@ -186,5 +211,69 @@ export class UserMessagesService {
     }
 
     return result;
+  }
+
+  // ============================================================================
+  // SSE Real-time Notification Methods
+  // ============================================================================
+
+  /**
+   * Get an Observable stream of user notification events for SSE.
+   * Events include message.created, message.deleted, unread_count.changed
+   */
+  getUserNotificationStream(userId: string): Observable<MessageEvent> {
+    let subject = this.userEventSubjects.get(userId);
+    if (!subject) {
+      subject = new ReplaySubject<UserNotificationEvent>(5, 30000); // Buffer 5 events, 30 second window
+      this.userEventSubjects.set(userId, subject);
+      this.subscriberCounts.set(userId, 0);
+    }
+
+    const currentCount = this.subscriberCounts.get(userId) || 0;
+    this.subscriberCounts.set(userId, currentCount + 1);
+    this.logger.log(`SSE subscriber added for user ${userId} notifications (total: ${currentCount + 1})`);
+
+    return subject.asObservable().pipe(
+      filter((event) => event.userId === userId),
+      map((event) => ({
+        data: JSON.stringify(event),
+        id: `${Date.now()}`,
+      })),
+      finalize(() => {
+        const count = this.subscriberCounts.get(userId) || 1;
+        this.subscriberCounts.set(userId, count - 1);
+        this.logger.log(`SSE subscriber removed for user ${userId} notifications (remaining: ${count - 1})`);
+
+        if (count - 1 <= 0) {
+          this.userEventSubjects.delete(userId);
+          this.subscriberCounts.delete(userId);
+          this.logger.log(`SSE subject cleaned up for user ${userId} notifications`);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Emit an event to all subscribers for a user
+   */
+  private emitUserEvent(userId: string, event: UserNotificationEvent): void {
+    const subject = this.userEventSubjects.get(userId);
+    if (subject) {
+      subject.next(event);
+      this.logger.debug(`Emitted ${event.type} event for user ${userId}`);
+    }
+  }
+
+  /**
+   * Emit unread count changed event (can be called externally)
+   */
+  async emitUnreadCountChanged(userId: string): Promise<void> {
+    const unreadCount = await this.getUnreadCount(userId);
+    this.emitUserEvent(userId, {
+      type: 'unread_count.changed',
+      userId,
+      unreadCount: unreadCount.count,
+      timestamp: new Date(),
+    });
   }
 }

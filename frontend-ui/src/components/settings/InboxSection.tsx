@@ -4,6 +4,7 @@ import { Mail, Users, Check, X, Trash2, FolderOpen } from 'lucide-react'
 import { apiClient } from '../../services/ApiClient'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
+import { useNotificationStore } from '../../store/notificationStore'
 import type { UserMessage, UserMessageType } from '../../lib/api-types'
 
 const containerVariants = {
@@ -33,25 +34,20 @@ export default function InboxSection() {
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
 
-  const [messages, setMessages] = useState<UserMessage[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  // Use notification store for real-time updates
+  const {
+    messages,
+    isLoading,
+    fetchMessages,
+    markAsRead,
+    deleteMessage: deleteMessageFromStore,
+    removeMessageFromState
+  } = useNotificationStore()
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set())
 
-  const loadMessages = async () => {
-    try {
-      setIsLoading(true)
-      const response = await apiClient.getMessages({ limit: 50 })
-      setMessages(response.messages)
-    } catch (err) {
-      console.error('Failed to load messages:', err)
-      addToast({ message: 'Failed to load messages', type: 'error' })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
+  // Fetch messages on mount
   useEffect(() => {
-    loadMessages()
+    fetchMessages(1, 50)
   }, [])
 
   const handleAcceptInvitation = async (message: UserMessage) => {
@@ -60,7 +56,8 @@ export default function InboxSection() {
     setProcessingIds(prev => new Set(prev).add(message.id))
     try {
       await apiClient.acceptProjectInvitation(message.metadata.invitationId)
-      setMessages(prev => prev.filter(m => m.id !== message.id))
+      // Remove message from local state (backend already deletes it)
+      removeMessageFromState(message.id)
       addToast({
         message: `You're now a collaborator on "${message.metadata.projectName}"`,
         type: 'success'
@@ -85,7 +82,8 @@ export default function InboxSection() {
     setProcessingIds(prev => new Set(prev).add(message.id))
     try {
       await apiClient.declineProjectInvitation(message.metadata.invitationId)
-      setMessages(prev => prev.filter(m => m.id !== message.id))
+      // Remove message from local state (backend already deletes it)
+      removeMessageFromState(message.id)
       addToast({ message: 'Invitation declined', type: 'info' })
     } catch (err: any) {
       addToast({
@@ -104,8 +102,7 @@ export default function InboxSection() {
   const handleDeleteMessage = async (messageId: string) => {
     setProcessingIds(prev => new Set(prev).add(messageId))
     try {
-      await apiClient.deleteMessage(messageId)
-      setMessages(prev => prev.filter(m => m.id !== messageId))
+      await deleteMessageFromStore(messageId)
     } catch (err: any) {
       addToast({
         message: err.message || 'Failed to delete message',

@@ -62,6 +62,7 @@ import type {
   PaginatedMessagesResponse,
   ProjectCollaboratorsResponse,
   ProjectInvitationResponse,
+  UserNotificationEvent,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -1197,6 +1198,52 @@ class SessionManagementClient {
    */
   async deleteMessage(messageId: string): Promise<void> {
     await this.delete<void>(`/user/messages/${messageId}`)
+  }
+
+  /**
+   * Subscribe to real-time user notification events via SSE.
+   * Events: message.created, message.deleted, unread_count.changed
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToUserNotifications(
+    onEvent: (event: UserNotificationEvent) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/user/messages/events`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log('[ApiClient] User notifications SSE connection opened')
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const event: UserNotificationEvent = JSON.parse(e.data)
+        onEvent(event)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse user notification event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] User notifications SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log('[ApiClient] Closing user notifications SSE connection')
+      eventSource.close()
+    }
   }
 
   // ============================================================================

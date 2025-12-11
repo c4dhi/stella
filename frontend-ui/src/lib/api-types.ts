@@ -977,3 +977,15 @@ export interface ProjectInvitationResponse {
 export interface InviteCollaboratorDto {
   email: string
 }
+
+// ============================================================================
+// User Notification Event Types (for SSE)
+// ============================================================================
+
+export interface UserNotificationEvent {
+  type: 'message.created' | 'message.deleted' | 'unread_count.changed'
+  userId: string
+  message?: UserMessage
+  unreadCount?: number
+  timestamp: string
+}

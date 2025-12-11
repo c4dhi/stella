@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useThemeStore } from '../../store/themeStore'
-import { apiClient } from '../../services/ApiClient'
+import { useNotificationStore } from '../../store/notificationStore'
 
 export default function ProfileButton() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
-  const [unreadCount, setUnreadCount] = useState(0)
+  const { unreadCount, initialize, disconnect } = useNotificationStore()
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'User'
   const initials = displayName
@@ -19,23 +19,10 @@ export default function ProfileButton() {
     .toUpperCase()
     .slice(0, 2)
 
-  // Fetch unread count on mount and periodically
+  // Initialize notification store SSE connection on mount
   useEffect(() => {
-    const fetchUnreadCount = async () => {
-      try {
-        const response = await apiClient.getUnreadMessageCount()
-        setUnreadCount(response.count)
-      } catch (err) {
-        // Silently fail - this is not critical
-        console.debug('Failed to fetch unread count:', err)
-      }
-    }
-
-    fetchUnreadCount()
-
-    // Poll every 30 seconds
-    const interval = setInterval(fetchUnreadCount, 30000)
-    return () => clearInterval(interval)
+    initialize()
+    return () => disconnect()
   }, [])
 
   return (
