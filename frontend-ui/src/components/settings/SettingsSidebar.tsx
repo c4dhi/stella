@@ -134,7 +134,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
               {isActive && (
                 <motion.div
                   className={`absolute inset-0 rounded-xl ${
-                    isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'
+                    isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200'
                   }`}
                   layoutId="activeSection"
                   transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
@@ -146,10 +146,10 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                 isActive
                   ? isDark
                     ? 'text-primary'
-                    : 'text-black'
+                    : 'text-neutral-900'
                   : isDark
-                    ? 'text-neutral-500'
-                    : 'text-neutral-400'
+                    ? 'text-neutral-400'
+                    : 'text-neutral-500'
               }`}>
                 {section.icon}
               </span>
@@ -160,10 +160,10 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                   isActive
                     ? isDark
                       ? 'text-primary'
-                      : 'text-black'
+                      : 'text-neutral-900'
                     : isDark
-                      ? 'text-neutral-500'
-                      : 'text-neutral-400'
+                      ? 'text-neutral-400'
+                      : 'text-neutral-600'
                 }`}>
                   {section.label}
                   {/* Unread badge for inbox */}
@@ -179,8 +179,8 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                       ? 'text-primary/60'
                       : 'text-neutral-600'
                     : isDark
-                      ? 'text-neutral-600'
-                      : 'text-neutral-400/80'
+                      ? 'text-neutral-500'
+                      : 'text-neutral-400'
                 }`}>
                   {section.description}
                 </div>
@@ -200,7 +200,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                       ? 'text-primary/60'
                       : 'text-neutral-600'
                     : isDark
-                      ? 'text-neutral-600'
+                      ? 'text-neutral-500'
                       : 'text-neutral-400'
                 }`}
                 initial={{ opacity: 0, x: -5 }}

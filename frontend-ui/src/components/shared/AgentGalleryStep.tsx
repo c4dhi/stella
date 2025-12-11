@@ -178,7 +178,7 @@ export default function AgentGalleryStep({
                 border-2 border-dashed hover:border-solid
                 ${isDark
                   ? 'border-zinc-600 hover:border-primary-500 bg-zinc-800/30 hover:bg-zinc-700/50'
-                  : 'border-neutral-300 hover:border-primary-500 bg-neutral-50/50 hover:bg-primary-50'
+                  : 'border-neutral-300 hover:border-neutral-900 bg-neutral-50/50 hover:bg-neutral-100'
                 }
               `}
             >

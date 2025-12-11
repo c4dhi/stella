@@ -160,7 +160,7 @@ export default function InboxSection() {
       {/* Loading State */}
       {isLoading && (
         <motion.div
-          className={`p-6 rounded-2xl ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'}`}
+          className={`p-6 rounded-2xl ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'}`}
           variants={itemVariants}
         >
           <div className="flex items-center justify-center py-8">
@@ -174,12 +174,12 @@ export default function InboxSection() {
       {/* Empty State */}
       {!isLoading && messages.length === 0 && (
         <motion.div
-          className={`p-6 rounded-2xl ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'}`}
+          className={`p-6 rounded-2xl ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'}`}
           variants={itemVariants}
         >
           <div className="flex flex-col items-center justify-center py-12">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${
-              isDark ? 'bg-surface-dark-tertiary' : 'bg-surface-tertiary'
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 border ${
+              isDark ? 'bg-surface-dark-tertiary border-transparent' : 'bg-neutral-50 border-neutral-200/60'
             }`}>
               <FolderOpen className={`w-8 h-8 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`} />
             </div>
@@ -196,7 +196,7 @@ export default function InboxSection() {
       {/* Messages List */}
       {!isLoading && messages.length > 0 && (
         <motion.div
-          className={`rounded-2xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-surface-secondary'}`}
+          className={`rounded-2xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'}`}
           variants={itemVariants}
         >
           <AnimatePresence>

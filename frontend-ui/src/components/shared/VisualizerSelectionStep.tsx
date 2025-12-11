@@ -33,7 +33,7 @@ export default function VisualizerSelectionStep({
             ${!visualizerType
               ? isDark
                 ? 'bg-primary-500/20 border-2 border-primary-500'
-                : 'bg-primary-50 border-2 border-primary-500'
+                : 'bg-neutral-100 border-2 border-neutral-900'
               : isDark
                 ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
                 : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
@@ -58,7 +58,7 @@ export default function VisualizerSelectionStep({
               ${visualizerType === config.id
                 ? isDark
                   ? 'bg-primary-500/20 border-2 border-primary-500'
-                  : 'bg-primary-50 border-2 border-primary-500'
+                  : 'bg-neutral-100 border-2 border-neutral-900'
                 : isDark
                   ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
                   : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
@@ -87,7 +87,7 @@ export default function VisualizerSelectionStep({
           <div className={`
             w-10 h-6 rounded-full p-0.5 transition-colors
             ${visualizerLocked
-              ? 'bg-primary-500'
+              ? isDark ? 'bg-primary-500' : 'bg-neutral-900'
               : isDark ? 'bg-zinc-600' : 'bg-neutral-300'
             }
           `}>

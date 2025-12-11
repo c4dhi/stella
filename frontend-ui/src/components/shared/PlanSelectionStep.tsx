@@ -146,7 +146,7 @@ export default function PlanSelectionStep({
               ${selectedPlan?.id === plan.id
                 ? isDark
                   ? 'bg-primary-500/20 border-2 border-primary-500 shadow-lg shadow-primary-500/20'
-                  : 'bg-primary-50 border-2 border-primary-500 shadow-lg shadow-primary-500/10'
+                  : 'bg-neutral-100 border-2 border-neutral-900 shadow-lg shadow-neutral-900/10'
                 : isDark
                   ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500 hover:bg-zinc-700/80'
                   : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:shadow-md'
@@ -177,7 +177,7 @@ export default function PlanSelectionStep({
               </motion.div>
               {/* Selection checkmark */}
               {selectedPlan?.id === plan.id && (
-                <svg className={`w-5 h-5 ${isDark ? 'text-primary-400' : 'text-primary-500'}`} fill="currentColor" viewBox="0 0 20 20">
+                <svg className={`w-5 h-5 ${isDark ? 'text-primary-400' : 'text-neutral-900'}`} fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
               )}
@@ -244,7 +244,7 @@ export default function PlanSelectionStep({
           border-2 border-dashed hover:border-solid
           ${isDark
             ? 'border-zinc-600 hover:border-primary-500 bg-zinc-800/30 hover:bg-zinc-700/50'
-            : 'border-neutral-300 hover:border-primary-500 bg-neutral-50/50 hover:bg-primary-50'
+            : 'border-neutral-300 hover:border-neutral-900 bg-neutral-50/50 hover:bg-neutral-100'
           }
         `}
       >

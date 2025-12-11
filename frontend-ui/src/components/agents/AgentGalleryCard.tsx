@@ -26,7 +26,7 @@ export default function AgentGalleryCard({
         ${isSelected
           ? isDark
             ? 'bg-primary-500/20 border-primary-500 shadow-lg shadow-primary-500/20'
-            : 'bg-primary-50 border-primary-500 shadow-lg shadow-primary-500/10'
+            : 'bg-neutral-100 border-neutral-900 shadow-lg shadow-neutral-900/10'
           : isDark
             ? 'bg-zinc-800/50 border-zinc-700/50 hover:bg-zinc-700/50 hover:border-zinc-600'
             : 'bg-white border-neutral-200/60 hover:bg-neutral-50 hover:border-neutral-300 shadow-sm'
@@ -40,7 +40,7 @@ export default function AgentGalleryCard({
           animate={{ scale: 1 }}
           className={`
             absolute top-2 right-2 w-4 h-4 rounded-full flex items-center justify-center
-            ${isDark ? 'bg-primary-500' : 'bg-primary-500'}
+            ${isDark ? 'bg-primary-500' : 'bg-neutral-900'}
           `}
         >
           <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -67,7 +67,7 @@ export default function AgentGalleryCard({
         className={`
           text-sm font-medium mb-0.5
           ${isSelected
-            ? isDark ? 'text-primary-300' : 'text-primary-700'
+            ? isDark ? 'text-primary-300' : 'text-neutral-900'
             : isDark ? 'text-zinc-100' : 'text-neutral-900'
           }
         `}

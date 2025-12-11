@@ -259,7 +259,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
             onClick={() => setXRayMode(!xRayMode)}
             className={`px-4 py-2 rounded-xl text-body-sm font-medium flex items-center gap-2 transition-all ${
               xRayMode
-                ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                ? isDark
+                  ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                  : 'bg-neutral-900 text-white shadow-lg shadow-neutral-900/20'
                 : isDark
                   ? 'bg-surface-dark-secondary text-content-inverse hover:bg-surface-dark-tertiary'
                   : 'bg-surface-secondary text-content hover:bg-surface-tertiary'
@@ -278,7 +280,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <motion.button
             onClick={handleSave}
             disabled={isSaving}
-            className="btn-primary flex items-center gap-2 shadow-lg shadow-primary/20"
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-body-sm font-medium transition-all ${
+              isDark
+                ? 'bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90'
+                : 'bg-neutral-900 text-white shadow-lg shadow-neutral-900/20 hover:bg-neutral-800'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
             whileHover={{ scale: 1.02, y: -1 }}
             whileTap={{ scale: 0.98 }}
           >
@@ -320,15 +326,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           className={`mx-8 mt-4 px-4 py-2.5 rounded-xl flex items-center gap-3 ${
             isDark
               ? 'bg-violet-500/10 border border-violet-500/20'
-              : 'bg-violet-50 border border-violet-200'
+              : 'bg-neutral-100 border border-neutral-200'
           }`}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-500 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={isDark ? 'text-violet-500' : 'text-neutral-600'}>
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
           </svg>
-          <span className={`text-body-sm ${isDark ? 'text-violet-400' : 'text-violet-700'}`}>
+          <span className={`text-body-sm ${isDark ? 'text-violet-400' : 'text-neutral-700'}`}>
             AI-generated plan — review and customize as needed
           </span>
         </motion.div>
@@ -352,10 +358,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               value={name}
               onChange={(e) => { setName(e.target.value); markChanged() }}
               placeholder="Plan name"
-              className={`w-full px-4 py-2.5 rounded-xl text-heading-sm font-semibold bg-transparent border-2 transition-colors ${
+              className={`w-full px-4 py-2.5 rounded-xl text-heading-sm font-semibold border-2 transition-colors ${
                 isDark
-                  ? 'border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
-                  : 'border-border focus:border-primary text-content placeholder:text-content-tertiary'
+                  ? 'bg-transparent border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
+                  : 'bg-white border-neutral-200 focus:border-neutral-900 text-content placeholder:text-content-tertiary shadow-sm'
               } focus:outline-none`}
             />
             <textarea
@@ -363,10 +369,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               onChange={(e) => { setDescription(e.target.value); markChanged() }}
               placeholder="Description (optional)"
               rows={2}
-              className={`w-full mt-3 px-4 py-2.5 rounded-xl text-body-sm bg-transparent border-2 resize-none transition-colors ${
+              className={`w-full mt-3 px-4 py-2.5 rounded-xl text-body-sm border-2 resize-none transition-colors ${
                 isDark
-                  ? 'border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
-                  : 'border-border focus:border-primary text-content placeholder:text-content-tertiary'
+                  ? 'bg-transparent border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
+                  : 'bg-white border-neutral-200 focus:border-neutral-900 text-content placeholder:text-content-tertiary shadow-sm'
               } focus:outline-none`}
             />
 
@@ -387,10 +393,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                 onChange={(e) => { setSystemPrompt(e.target.value); markChanged() }}
                 placeholder="e.g., You are a friendly memory coach helping seniors improve their cognitive abilities..."
                 rows={4}
-                className={`w-full px-4 py-2.5 rounded-xl text-body-sm bg-transparent border-2 resize-none transition-colors ${
+                className={`w-full px-4 py-2.5 rounded-xl text-body-sm border-2 resize-none transition-colors ${
                   isDark
-                    ? 'border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
-                    : 'border-border focus:border-primary text-content placeholder:text-content-tertiary'
+                    ? 'bg-transparent border-border-dark focus:border-primary text-content-inverse placeholder:text-content-inverse-tertiary'
+                    : 'bg-white border-neutral-200 focus:border-neutral-900 text-content placeholder:text-content-tertiary shadow-sm'
                 } focus:outline-none`}
               />
             </div>
@@ -406,7 +412,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               </h3>
               <motion.button
                 onClick={handleAddState}
-                className="text-primary text-body-sm font-medium flex items-center gap-1.5 hover:text-primary/80 transition-colors"
+                className={`text-body-sm font-medium flex items-center gap-1.5 transition-colors ${
+                  isDark
+                    ? 'text-primary hover:text-primary/80'
+                    : 'text-neutral-700 hover:text-neutral-900'
+                }`}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
@@ -457,7 +467,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                         selectedStateIndex === index
                           ? isDark
                             ? 'bg-primary/20 ring-2 ring-primary/30'
-                            : 'bg-primary/10 ring-2 ring-primary/20'
+                            : 'bg-neutral-100 ring-2 ring-neutral-300'
                           : isDark
                             ? 'bg-surface-dark-secondary hover:bg-surface-dark-tertiary'
                             : 'bg-white hover:bg-surface-secondary shadow-sm'
@@ -469,10 +479,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       {/* State number badge */}
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-caption font-semibold ${
                         selectedStateIndex === index
-                          ? 'bg-primary text-white'
+                          ? isDark
+                            ? 'bg-primary text-white'
+                            : 'bg-neutral-900 text-white'
                           : isDark
                             ? 'bg-primary/20 text-primary ring-2 ring-primary/30'
-                            : 'bg-primary/10 text-primary ring-2 ring-primary/20'
+                            : 'bg-neutral-200 text-neutral-700 ring-2 ring-neutral-300'
                       }`}>
                         {index + 1}
                       </div>
@@ -481,7 +493,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       <div className="flex-1 min-w-0">
                         <div className={`text-body-sm font-medium truncate ${
                           selectedStateIndex === index
-                            ? 'text-primary'
+                            ? isDark
+                              ? 'text-primary'
+                              : 'text-neutral-900'
                             : isDark
                               ? 'text-content-inverse'
                               : 'text-content'

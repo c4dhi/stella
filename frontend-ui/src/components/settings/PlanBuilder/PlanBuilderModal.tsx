@@ -96,10 +96,10 @@ export default function PlanBuilderModal() {
           {/* Backdrop - use blur when standalone, solid overlay when nested to avoid double blur */}
           {/* Don't close on click - require explicit close action */}
           <motion.div
-            className={`absolute inset-0 ${
+            className={`absolute inset-0 backdrop-blur-sm ${
               isNested
-                ? 'bg-black/80'  // Solid overlay when opened from another modal
-                : 'bg-black/60 backdrop-blur-sm'  // Blurred when standalone
+                ? isDark ? 'bg-black/70' : 'bg-black/40'  // Solid overlay when opened from another modal
+                : isDark ? 'bg-black/50' : 'bg-black/20'  // Blurred when standalone - lighter for light mode
             }`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

@@ -84,7 +84,7 @@ export default function PlanTaskEditor({
             id={`task-required-${task.id}`}
             checked={task.required}
             onChange={(e) => onChange({ ...task, required: e.target.checked })}
-            className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+            className={`w-4 h-4 rounded ${isDark ? 'border-border-dark text-primary focus:ring-primary' : 'border-neutral-300 text-neutral-900 focus:ring-neutral-400'}`}
           />
           <label
             htmlFor={`task-required-${task.id}`}
@@ -112,7 +112,7 @@ export default function PlanTaskEditor({
             className={`text-caption flex items-center gap-1 transition-colors ${
               isDark
                 ? 'text-primary hover:text-primary/80'
-                : 'text-primary hover:text-primary/80'
+                : 'text-neutral-700 hover:text-neutral-900'
             }`}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

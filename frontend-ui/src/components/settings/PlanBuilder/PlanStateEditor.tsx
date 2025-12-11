@@ -134,7 +134,7 @@ export default function PlanStateEditor({
             className={`text-body-sm flex items-center gap-1 transition-colors ${
               isDark
                 ? 'text-primary hover:text-primary/80'
-                : 'text-primary hover:text-primary/80'
+                : 'text-neutral-700 hover:text-neutral-900'
             }`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
