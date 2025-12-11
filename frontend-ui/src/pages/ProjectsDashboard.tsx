@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { Globe } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
@@ -187,11 +188,18 @@ export default function ProjectsDashboard() {
                     : 'bg-white border border-border shadow-sm hover:shadow-md hover:border-border-secondary'
                 }`}
               >
-                <h3 className={`text-heading-sm mb-3 ${
-                  isDark ? 'text-content-inverse' : 'text-content'
-                }`}>
-                  {project.name}
-                </h3>
+                <div className="flex items-center gap-2 mb-3">
+                  <h3 className={`text-heading-sm ${
+                    isDark ? 'text-content-inverse' : 'text-content'
+                  }`}>
+                    {project.name}
+                  </h3>
+                  {project.isPublic && (
+                    <Globe className={`w-4 h-4 flex-shrink-0 ${
+                      isDark ? 'text-violet-400' : 'text-violet-600'
+                    }`} />
+                  )}
+                </div>
 
                 {/* Stats */}
                 <div className="space-y-2 mb-4">

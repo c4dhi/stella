@@ -128,7 +128,7 @@ export default function PublicProjectJoinPage() {
 
         // Check for errors
         if (!info.isEnabled) {
-          setError('This public project is currently disabled.')
+          setError('This session is no longer accepting new participants. Please contact the organizer for more information.')
           setPageState('ERROR')
           return
         }

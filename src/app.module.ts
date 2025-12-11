@@ -22,6 +22,7 @@ import { AgentUploadModule } from './agent-upload/agent-upload.module';
 import { PlanTemplatesModule } from './plan-templates/plan-templates.module';
 import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.module';
 import { PublicProjectsModule } from './public-projects/public-projects.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PublicProjectsModule } from './public-projects/public-projects.module';
     PlanTemplatesModule,
     EnvVarTemplatesModule,
     PublicProjectsModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [

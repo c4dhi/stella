@@ -9,6 +9,7 @@ import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
 import PublicLinkModal from '../components/modals/PublicLinkModal'
 import ProfileButton from '../components/layout/ProfileButton'
+import { ProjectOverviewBanner } from '../components/dashboard/ProjectOverviewBanner'
 import { useToastStore } from '../store/toastStore'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus, ProjectSessionEvent } from '../lib/api-types'
 
@@ -276,6 +277,11 @@ export default function SessionsDashboard() {
           </div>
         </div>
       </header>
+
+      {/* Project Overview Banner - shows for all projects with public/private badge */}
+      {projectId && (
+        <ProjectOverviewBanner projectId={projectId} isPublic={project?.isPublic} />
+      )}
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
@@ -684,13 +690,18 @@ export default function SessionsDashboard() {
       />
 
       {/* Public Link Modal */}
-      {project?.isPublic && project?.publicToken && (
+      {project?.isPublic && project?.publicToken && projectId && (
         <PublicLinkModal
           isOpen={isPublicLinkModalOpen}
           onClose={() => setIsPublicLinkModalOpen(false)}
+          projectId={projectId}
           projectName={project.name}
           publicToken={project.publicToken}
           isEnabled={project.publicEnabled}
+          onStatusChange={(enabled) => {
+            // Update local project state to reflect the change
+            setProject(prev => prev ? { ...prev, publicEnabled: enabled } : null)
+          }}
         />
       )}
     </div>

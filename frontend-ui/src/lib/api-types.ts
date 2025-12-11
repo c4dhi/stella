@@ -325,6 +325,43 @@ export interface ProjectSessionEvent {
 }
 
 // ============================================================================
+// Project Metrics Types (for ProjectOverviewBanner)
+// ============================================================================
+
+export interface ProjectMetrics {
+  projectId: string
+  timestamp: string
+  sessions: {
+    total: number
+    active: number
+    closed: number
+  }
+  agents: {
+    total: number
+    running: number
+    starting: number
+    failed: number
+    stopped: number
+  }
+  participants: {
+    total: number
+    online: number
+  }
+  messages: {
+    total: number
+    todayCount: number
+  }
+  project: {
+    name: string
+    agentType: string | null
+    agentTypeName: string | null
+    planTemplateName: string | null
+    isPublic: boolean
+    createdAt: string
+  }
+}
+
+// ============================================================================
 // Invitation Types
 // ============================================================================
 

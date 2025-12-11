@@ -1,28 +1,51 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, Copy, ExternalLink, Globe, Users } from 'lucide-react'
+import { Check, Copy, ExternalLink, Globe, Users, XCircle, PlayCircle } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
+import { apiClient } from '../../services/ApiClient'
 
 interface PublicLinkModalProps {
   isOpen: boolean
   onClose: () => void
+  projectId: string
   projectName: string
   publicToken: string
   isEnabled?: boolean
+  onStatusChange?: (enabled: boolean) => void
 }
 
 export default function PublicLinkModal({
   isOpen,
   onClose,
+  projectId,
   projectName,
   publicToken,
   isEnabled = true,
+  onStatusChange,
 }: PublicLinkModalProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const [copied, setCopied] = useState(false)
+  const [isToggling, setIsToggling] = useState(false)
+  const [currentEnabled, setCurrentEnabled] = useState(isEnabled)
 
   const publicLink = `${window.location.origin}/p/${publicToken}`
+
+  const handleToggleStatus = async () => {
+    setIsToggling(true)
+    try {
+      await apiClient.updateProjectPublicConfig(projectId, {
+        isPublic: true,
+        enabled: !currentEnabled,
+      })
+      setCurrentEnabled(!currentEnabled)
+      onStatusChange?.(!currentEnabled)
+    } catch (err) {
+      console.error('Failed to toggle project status:', err)
+    } finally {
+      setIsToggling(false)
+    }
+  }
 
   const handleCopyLink = async () => {
     try {
@@ -88,21 +111,61 @@ export default function PublicLinkModal({
 
             {/* Content */}
             <div className="px-6 pb-6">
-              {/* Status indicator */}
-              {!isEnabled && (
-                <div className={`
-                  flex items-center gap-2 p-3 rounded-xl mb-4
-                  ${isDark ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-amber-50 border border-amber-200'}
-                `}>
-                  <div className="w-2 h-2 rounded-full bg-amber-500" />
-                  <span className={`text-sm ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
-                    Public link is currently disabled
+              {/* Status indicator - now interactive */}
+              <div className={`
+                flex items-center justify-between p-3 rounded-xl mb-4
+                ${currentEnabled
+                  ? isDark ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-emerald-50 border border-emerald-200'
+                  : isDark ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-amber-50 border border-amber-200'
+                }
+              `}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${currentEnabled ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className={`text-sm ${
+                    currentEnabled
+                      ? isDark ? 'text-emerald-400' : 'text-emerald-700'
+                      : isDark ? 'text-amber-400' : 'text-amber-700'
+                  }`}>
+                    {currentEnabled ? 'Accepting new participants' : 'Closed to new participants'}
                   </span>
                 </div>
-              )}
+                <button
+                  onClick={handleToggleStatus}
+                  disabled={isToggling}
+                  className={`
+                    flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    ${currentEnabled
+                      ? isDark
+                        ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
+                        : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                      : isDark
+                        ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                        : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                    }
+                  `}
+                >
+                  {isToggling ? (
+                    <span>...</span>
+                  ) : currentEnabled ? (
+                    <>
+                      <XCircle className="w-3.5 h-3.5" />
+                      Close
+                    </>
+                  ) : (
+                    <>
+                      <PlayCircle className="w-3.5 h-3.5" />
+                      Open
+                    </>
+                  )}
+                </button>
+              </div>
 
               <p className={`text-sm mb-4 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
-                Share this link with participants. Each person who opens the link will get their own private session with the pre-configured agent.
+                {currentEnabled
+                  ? 'Share this link with participants. Each person who opens the link will get their own private session with the pre-configured agent.'
+                  : 'New participants cannot join while the project is closed. Existing sessions remain active.'
+                }
               </p>
 
               {/* Link display */}

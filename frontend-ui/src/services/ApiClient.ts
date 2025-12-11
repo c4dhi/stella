@@ -6,6 +6,7 @@ import type {
   ProjectWithCounts,
   ProjectWithSessions,
   ProjectStats,
+  ProjectMetrics,
   CreateProjectDto,
   SessionWithRoom,
   SessionDetail,
@@ -880,6 +881,65 @@ class SessionManagementClient {
     // Return cleanup function
     return () => {
       console.log(`[ApiClient] Closing SSE connection for project ${projectId}`)
+      eventSource.close()
+    }
+  }
+
+  // ============================================================================
+  // Project Metrics API
+  // ============================================================================
+
+  /**
+   * Get current metrics snapshot for a project.
+   * Includes session counts, agent status, participant counts, and message stats.
+   */
+  async getProjectMetrics(projectId: string): Promise<ProjectMetrics> {
+    return this.request<ProjectMetrics>(`/metrics/projects/${projectId}`)
+  }
+
+  /**
+   * Subscribe to real-time project metrics via SSE.
+   * Receives updates every 5 seconds or immediately when data changes.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToProjectMetrics(
+    projectId: string,
+    onData: (metrics: ProjectMetrics) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/metrics/projects/${projectId}/stream`
+
+    // Get auth token
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log(`[ApiClient] Metrics SSE connection opened for project ${projectId}`)
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const metrics: ProjectMetrics = JSON.parse(e.data)
+        onData(metrics)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse metrics SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Metrics SSE connection error:', e)
+      onError?.(e)
+    }
+
+    // Return cleanup function
+    return () => {
+      console.log(`[ApiClient] Closing metrics SSE connection for project ${projectId}`)
       eventSource.close()
     }
   }
