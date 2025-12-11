@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Globe } from 'lucide-react'
+import { Globe, Users } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
 import EditProjectModal from '../components/modals/EditProjectModal'
+import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import AppHeader from '../components/layout/AppHeader'
 import type { ProjectWithCounts } from '../lib/api-types'
@@ -22,6 +23,7 @@ export default function ProjectsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithCounts | null>(null)
+  const [sharingProject, setSharingProject] = useState<ProjectWithCounts | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null)
 
@@ -252,6 +254,20 @@ export default function ProjectsDashboard() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
+                      setSharingProject(project)
+                    }}
+                    className={`p-2 rounded-lg transition-colors ${
+                      isDark
+                        ? 'text-content-inverse-tertiary hover:text-primary hover:bg-primary/10'
+                        : 'text-content-tertiary hover:text-primary hover:bg-primary/10'
+                    }`}
+                    title="Share"
+                  >
+                    <Users className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
                       setEditingProject(project)
                     }}
                     className={`p-2 rounded-lg transition-colors ${
@@ -316,6 +332,16 @@ export default function ProjectsDashboard() {
         onConfirm={confirmDeleteProject}
         onCancel={() => { setDeleteConfirmOpen(false); setProjectToDelete(null) }}
       />
+
+      {sharingProject && (
+        <ShareProjectModal
+          isOpen={!!sharingProject}
+          onClose={() => setSharingProject(null)}
+          projectId={sharingProject.id}
+          projectName={sharingProject.name}
+          isOwner={sharingProject.isOwner ?? true}
+        />
+      )}
     </div>
   )
 }

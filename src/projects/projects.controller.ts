@@ -34,8 +34,8 @@ export class ProjectsController {
   }
 
   @Get()
-  findAll() {
-    return this.projectsService.findAll();
+  findAll(@CurrentUser() user: any) {
+    return this.projectsService.findAll(user.userId);
   }
 
   @Get(':projectId')

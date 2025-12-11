@@ -36,24 +36,22 @@ function MetricCard({ label, value, icon, live, highlight }: MetricCardProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0.5, scale: 0.95 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className={`text-2xl font-semibold tabular-nums ${
-              highlight
+            className={`text-2xl font-semibold tabular-nums ${highlight
                 ? isDark
                   ? 'text-emerald-400'
                   : 'text-emerald-600'
                 : isDark
                   ? 'text-white'
                   : 'text-neutral-900'
-            }`}
+              }`}
           >
             {formatNumber(value)}
           </motion.span>
         </AnimatePresence>
         {live && (
           <motion.span
-            className={`w-2 h-2 rounded-full ${
-              isDark ? 'bg-emerald-400' : 'bg-emerald-500'
-            }`}
+            className={`w-2 h-2 rounded-full ${isDark ? 'bg-emerald-400' : 'bg-emerald-500'
+              }`}
             animate={{
               opacity: [0.5, 1, 0.5],
               scale: [1, 1.2, 1],
@@ -67,9 +65,8 @@ function MetricCard({ label, value, icon, live, highlight }: MetricCardProps) {
         )}
       </div>
       <span
-        className={`text-[11px] font-medium tracking-wide uppercase ${
-          isDark ? 'text-zinc-500' : 'text-neutral-500'
-        }`}
+        className={`text-[11px] font-medium tracking-wide uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+          }`}
       >
         {label}
       </span>
@@ -87,23 +84,22 @@ function LiveIndicator({ connected }: { connected: boolean }) {
   return (
     <div className="flex items-center gap-2">
       <motion.div
-        className={`w-2 h-2 rounded-full ${
-          connected
+        className={`w-2 h-2 rounded-full ${connected
             ? isDark
               ? 'bg-emerald-400'
               : 'bg-emerald-500'
             : isDark
               ? 'bg-zinc-600'
               : 'bg-neutral-400'
-        }`}
+          }`}
         animate={
           connected
             ? {
-                boxShadow: [
-                  '0 0 0 0 rgba(52, 211, 153, 0.4)',
-                  '0 0 0 4px rgba(52, 211, 153, 0)',
-                ],
-              }
+              boxShadow: [
+                '0 0 0 0 rgba(52, 211, 153, 0.4)',
+                '0 0 0 4px rgba(52, 211, 153, 0)',
+              ],
+            }
             : {}
         }
         transition={{
@@ -113,15 +109,14 @@ function LiveIndicator({ connected }: { connected: boolean }) {
         }}
       />
       <span
-        className={`text-xs font-medium ${
-          connected
+        className={`text-xs font-medium ${connected
             ? isDark
               ? 'text-emerald-400'
               : 'text-emerald-600'
             : isDark
               ? 'text-zinc-500'
               : 'text-neutral-500'
-        }`}
+          }`}
       >
         {connected ? 'Live' : 'Connecting...'}
       </span>
@@ -162,9 +157,8 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
     return (
       <div className="max-w-6xl mx-auto px-6 pt-6">
         <div
-          className={`h-[120px] rounded-2xl animate-pulse ${
-            isDark ? 'bg-zinc-800/50' : 'bg-neutral-100'
-          }`}
+          className={`h-[120px] rounded-2xl animate-pulse ${isDark ? 'bg-zinc-800/50' : 'bg-neutral-100'
+            }`}
         />
       </div>
     )
@@ -181,33 +175,29 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
       className="max-w-6xl mx-auto px-6 pt-6"
     >
       <motion.div
-        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl transition-all duration-300 ${
-          isDark
+        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl transition-all duration-300 ${isDark
             ? 'bg-gradient-to-br from-zinc-900/90 via-zinc-800/90 to-zinc-900/90 border-zinc-700/60 hover:border-zinc-600/80'
             : 'bg-gradient-to-br from-white/95 via-neutral-50/95 to-white/95 border-neutral-200/60 hover:border-neutral-300/80 shadow-[0_1px_30px_rgba(0,0,0,0.04)]'
-        }`}
+          }`}
         whileHover={{ scale: 1.002 }}
         transition={{ duration: 0.2 }}
       >
         {/* Subtle gradient overlay */}
         <div
-          className={`absolute inset-0 opacity-30 pointer-events-none ${
-            isDark
+          className={`absolute inset-0 opacity-30 pointer-events-none ${isDark
               ? 'bg-gradient-to-r from-violet-500/10 via-transparent to-emerald-500/10'
               : 'bg-gradient-to-r from-violet-500/5 via-transparent to-emerald-500/5'
-          }`}
+            }`}
         />
 
         <div className="relative flex items-center justify-between p-5">
           {/* Left: Agent Info with Public/Private Badge */}
           <div className="flex items-center gap-4 min-w-0 flex-shrink-0">
             <motion.div
-              className={`flex items-center justify-center w-12 h-12 rounded-xl ${
-                isDark
+              className={`flex items-center justify-center w-12 h-12 rounded-xl ${isDark
                   ? 'bg-violet-500/20 text-violet-400'
                   : 'bg-violet-100 text-violet-600'
-              }`}
-              whileHover={{ scale: 1.05, rotate: 3 }}
+                }`}
               transition={{ duration: 0.2 }}
             >
               <Bot className="w-6 h-6" />
@@ -215,23 +205,21 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 <p
-                  className={`text-[10px] font-medium tracking-wider uppercase ${
-                    isDark ? 'text-zinc-500' : 'text-neutral-500'
-                  }`}
+                  className={`text-[10px] font-medium tracking-wider uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+                    }`}
                 >
                   Deployed Agent
                 </p>
                 {/* Public/Private Badge */}
                 <div
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
-                    isPublic
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${isPublic
                       ? isDark
                         ? 'bg-violet-500/20 text-violet-400'
                         : 'bg-violet-100 text-violet-600'
                       : isDark
                         ? 'bg-zinc-700/50 text-zinc-400'
                         : 'bg-neutral-100 text-neutral-500'
-                  }`}
+                    }`}
                 >
                   {isPublic ? (
                     <>
@@ -247,17 +235,15 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
                 </div>
               </div>
               <p
-                className={`text-base font-semibold truncate ${
-                  isDark ? 'text-white' : 'text-neutral-900'
-                }`}
+                className={`text-base font-semibold truncate ${isDark ? 'text-white' : 'text-neutral-900'
+                  }`}
               >
                 {agentName}
               </p>
               {planName && (
                 <p
-                  className={`text-xs truncate ${
-                    isDark ? 'text-zinc-500' : 'text-neutral-500'
-                  }`}
+                  className={`text-xs truncate ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+                    }`}
                 >
                   Plan: {planName}
                 </p>
@@ -268,9 +254,8 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
           {/* Center: Metrics Grid */}
           <div className="flex items-center gap-2 sm:gap-4 flex-grow justify-center">
             <div
-              className={`h-12 w-px ${
-                isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
-              }`}
+              className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
+                }`}
             />
 
             <MetricCard
@@ -302,9 +287,8 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
             />
 
             <div
-              className={`h-12 w-px ${
-                isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
-              }`}
+              className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
+                }`}
             />
           </div>
 
@@ -314,9 +298,8 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
             <div className="flex items-center gap-1.5">
               <Clock className={`w-3 h-3 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`} />
               <span
-                className={`text-[10px] ${
-                  isDark ? 'text-zinc-600' : 'text-neutral-400'
-                }`}
+                className={`text-[10px] ${isDark ? 'text-zinc-600' : 'text-neutral-400'
+                  }`}
               >
                 Updated {new Date(metrics.timestamp).toLocaleTimeString()}
               </span>

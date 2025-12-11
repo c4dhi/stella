@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { Users } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import CreateSessionModal from '../components/modals/CreateSessionModal'
@@ -8,6 +9,7 @@ import EditSessionModal from '../components/modals/EditSessionModal'
 import DeleteSessionModal from '../components/modals/DeleteSessionModal'
 import CloseSessionModal from '../components/modals/CloseSessionModal'
 import PublicLinkModal from '../components/modals/PublicLinkModal'
+import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ProfileButton from '../components/layout/ProfileButton'
 import { ProjectOverviewBanner } from '../components/dashboard/ProjectOverviewBanner'
 import { useToastStore } from '../store/toastStore'
@@ -34,6 +36,7 @@ export default function SessionsDashboard() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null)
   const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false)
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false)
 
   // Initialize theme on mount
   useEffect(() => {
@@ -318,6 +321,15 @@ export default function SessionsDashboard() {
                 New Session
               </button>
             )}
+
+            {/* Share Button */}
+            <button
+              onClick={() => setIsShareModalOpen(true)}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Users className="w-4 h-4" />
+              Share
+            </button>
 
             {/* Filter by Status */}
             <select
@@ -702,6 +714,17 @@ export default function SessionsDashboard() {
             // Update local project state to reflect the change
             setProject(prev => prev ? { ...prev, publicEnabled: enabled } : null)
           }}
+        />
+      )}
+
+      {/* Share Project Modal */}
+      {project && projectId && (
+        <ShareProjectModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          projectId={projectId}
+          projectName={project.name}
+          isOwner={project.isOwner ?? true}
         />
       )}
     </div>

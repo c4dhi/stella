@@ -46,6 +46,8 @@ export interface ProjectWithCounts extends Project {
   isPublic?: boolean
   publicToken?: string
   publicEnabled?: boolean
+  ownerId?: string
+  isOwner?: boolean
 }
 
 export interface ProjectWithSessions extends Project {
@@ -53,6 +55,8 @@ export interface ProjectWithSessions extends Project {
   isPublic?: boolean
   publicToken?: string
   publicEnabled?: boolean
+  ownerId?: string
+  isOwner?: boolean
 }
 
 export interface ProjectStats {
@@ -882,4 +886,94 @@ export interface ProjectWithPublicConfig extends Project {
   publicVisualizerLocked: boolean
   publicExpiresAt?: string
   publicEnabled: boolean
+}
+
+// ============================================================================
+// User Messaging System Types
+// ============================================================================
+
+export enum UserMessageType {
+  PROJECT_INVITATION = 'PROJECT_INVITATION',
+}
+
+export enum ProjectInvitationStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  DECLINED = 'DECLINED',
+}
+
+export interface UserMessageMetadata {
+  projectId?: string
+  projectName?: string
+  inviterName?: string
+  inviterEmail?: string
+  invitationId?: string
+}
+
+export interface UserMessage {
+  id: string
+  type: UserMessageType
+  title: string
+  body: string | null
+  read: boolean
+  createdAt: string
+  relatedEntityId: string | null
+  relatedEntityType: string | null
+  metadata?: UserMessageMetadata
+}
+
+export interface UnreadCountResponse {
+  count: number
+}
+
+export interface PaginatedMessagesResponse {
+  messages: UserMessage[]
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+}
+
+// ============================================================================
+// Project Collaboration Types
+// ============================================================================
+
+export interface Collaborator {
+  userId: string
+  email: string
+  name: string | null
+  role: 'OWNER' | 'COLLABORATOR'
+  joinedAt: string
+}
+
+export interface PendingProjectInvitation {
+  invitationId: string
+  email: string
+  name: string | null
+  status: 'PENDING'
+  invitedAt: string
+}
+
+export interface ProjectCollaboratorsResponse {
+  collaborators: Collaborator[]
+  pendingInvitations: PendingProjectInvitation[]
+}
+
+export interface ProjectInvitationResponse {
+  id: string
+  projectId: string
+  projectName: string
+  inviterId: string
+  inviterName: string | null
+  inviterEmail: string
+  inviteeId: string
+  inviteeName: string | null
+  inviteeEmail: string
+  status: string
+  createdAt: string
+  respondedAt: string | null
+}
+
+export interface InviteCollaboratorDto {
+  email: string
 }

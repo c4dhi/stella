@@ -14,17 +14,20 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(uuid())
-  email              String              @unique
-  password           String              // bcrypt hashed
-  name               String?
-  verified           Boolean             @default(false)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  projectMemberships ProjectMembership[]
-  customAgentTypes   AgentType[]         // Custom agents uploaded by this user
-  planTemplates      PlanTemplate[]      // Plan templates created by this user
-  envVarTemplates    EnvVarTemplate[]    // Environment variable templates created by this user
+  id                         String              @id @default(uuid())
+  email                      String              @unique
+  password                   String              // bcrypt hashed
+  name                       String?
+  verified                   Boolean             @default(false)
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+  projectMemberships         ProjectMembership[]
+  customAgentTypes           AgentType[]         // Custom agents uploaded by this user
+  planTemplates              PlanTemplate[]      // Plan templates created by this user
+  envVarTemplates            EnvVarTemplate[]    // Environment variable templates created by this user
+  messages                   UserMessage[]       // Inbox messages for this user
+  sentProjectInvitations     ProjectInvitation[] @relation("SentInvitations")
+  receivedProjectInvitations ProjectInvitation[] @relation("ReceivedInvitations")
 }
 
 enum MemberRole {
@@ -65,6 +68,9 @@ model Project {
   publicVisualizerLocked Boolean    @default(false)
   publicExpiresAt        DateTime?
   publicEnabled          Boolean    @default(true)
+
+  // Project collaboration invitations
+  projectInvitations ProjectInvitation[]
 
   @@index([publicToken])
   @@index([isPublic, publicEnabled])
@@ -360,4 +366,59 @@ model EnvVarTemplate {
 
   @@index([userId])
   @@index([agentTypeId])
+}
+
+// ============================================================================
+// User Messaging System
+// ============================================================================
+
+// Message types for user inbox
+enum UserMessageType {
+  PROJECT_INVITATION // Invitation to collaborate on a project
+  // Future: SYSTEM_ANNOUNCEMENT, PROJECT_UPDATE, etc.
+}
+
+// Project collaboration invitation status
+enum ProjectInvitationStatus {
+  PENDING  // Waiting for response
+  ACCEPTED // User accepted the invitation
+  DECLINED // User declined the invitation
+}
+
+// Generic user inbox message
+model UserMessage {
+  id        String          @id @default(uuid())
+  userId    String          // Recipient
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      UserMessageType
+  title     String
+  body      String?         @db.Text
+  read      Boolean         @default(false)
+  createdAt DateTime        @default(now())
+
+  // Polymorphic reference to related entity
+  relatedEntityId   String?
+  relatedEntityType String? // "ProjectInvitation", etc.
+
+  @@index([userId])
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+// Project collaboration invitation
+model ProjectInvitation {
+  id          String                  @id @default(uuid())
+  projectId   String
+  project     Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inviterId   String                  // User who sent the invitation
+  inviter     User                    @relation("SentInvitations", fields: [inviterId], references: [id])
+  inviteeId   String                  // User being invited
+  invitee     User                    @relation("ReceivedInvitations", fields: [inviteeId], references: [id])
+  status      ProjectInvitationStatus @default(PENDING)
+  createdAt   DateTime                @default(now())
+  respondedAt DateTime?
+
+  @@unique([projectId, inviteeId]) // One invitation per user per project
+  @@index([inviteeId, status])
+  @@index([projectId])
 }

@@ -1,12 +1,15 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useThemeStore } from '../../store/themeStore'
+import { apiClient } from '../../services/ApiClient'
 
 export default function ProfileButton() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const [unreadCount, setUnreadCount] = useState(0)
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'User'
   const initials = displayName
@@ -16,10 +19,29 @@ export default function ProfileButton() {
     .toUpperCase()
     .slice(0, 2)
 
+  // Fetch unread count on mount and periodically
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const response = await apiClient.getUnreadMessageCount()
+        setUnreadCount(response.count)
+      } catch (err) {
+        // Silently fail - this is not critical
+        console.debug('Failed to fetch unread count:', err)
+      }
+    }
+
+    fetchUnreadCount()
+
+    // Poll every 30 seconds
+    const interval = setInterval(fetchUnreadCount, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
   return (
     <button
       onClick={() => navigate('/settings')}
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+      className={`relative flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
         isDark
           ? 'hover:bg-surface-dark-secondary text-content-inverse'
           : 'hover:bg-surface-secondary text-content'
@@ -27,12 +49,16 @@ export default function ProfileButton() {
       title="Settings"
     >
       {/* Avatar */}
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
+      <div className={`relative w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
         isDark
           ? 'bg-primary/20 text-primary'
           : 'bg-primary/10 text-primary'
       }`}>
         {initials}
+        {/* Notification badge */}
+        {unreadCount > 0 && (
+          <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+        )}
       </div>
 
       {/* Name */}

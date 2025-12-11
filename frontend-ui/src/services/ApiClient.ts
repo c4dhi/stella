@@ -57,6 +57,11 @@ import type {
   JoinProgressResponse,
   PublicLinkResponse,
   ProjectWithPublicConfig,
+  UserMessage,
+  UnreadCountResponse,
+  PaginatedMessagesResponse,
+  ProjectCollaboratorsResponse,
+  ProjectInvitationResponse,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -1154,6 +1159,93 @@ class SessionManagementClient {
    */
   async duplicateEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
     return this.post<EnvVarTemplate>(`/env-var-templates/${id}/duplicate`)
+  }
+
+  // ============================================================================
+  // User Messages API (Inbox)
+  // ============================================================================
+
+  /**
+   * Get paginated messages for the current user.
+   */
+  async getMessages(params?: { page?: number; limit?: number }): Promise<PaginatedMessagesResponse> {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', params.page.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    const query = queryParams.toString()
+    return this.get<PaginatedMessagesResponse>(`/user/messages${query ? `?${query}` : ''}`)
+  }
+
+  /**
+   * Get unread message count for the current user.
+   */
+  async getUnreadMessageCount(): Promise<UnreadCountResponse> {
+    return this.get<UnreadCountResponse>('/user/messages/unread-count')
+  }
+
+  /**
+   * Mark a message as read.
+   */
+  async markMessageAsRead(messageId: string): Promise<UserMessage> {
+    return this.request<UserMessage>(`/user/messages/${messageId}/read`, {
+      method: 'PATCH',
+    })
+  }
+
+  /**
+   * Delete a message.
+   */
+  async deleteMessage(messageId: string): Promise<void> {
+    await this.delete<void>(`/user/messages/${messageId}`)
+  }
+
+  // ============================================================================
+  // Project Collaborators API
+  // ============================================================================
+
+  /**
+   * Get all collaborators and pending invitations for a project.
+   */
+  async getProjectCollaborators(projectId: string): Promise<ProjectCollaboratorsResponse> {
+    return this.get<ProjectCollaboratorsResponse>(`/projects/${projectId}/collaborators`)
+  }
+
+  /**
+   * Invite a user to collaborate on a project.
+   */
+  async inviteCollaborator(projectId: string, email: string): Promise<ProjectInvitationResponse> {
+    return this.post<ProjectInvitationResponse>(
+      `/projects/${projectId}/collaborators/invite`,
+      { email }
+    )
+  }
+
+  /**
+   * Remove a collaborator from a project.
+   */
+  async removeCollaborator(projectId: string, userId: string): Promise<void> {
+    await this.delete<void>(`/projects/${projectId}/collaborators/${userId}`)
+  }
+
+  /**
+   * Cancel a pending invitation.
+   */
+  async cancelProjectInvitation(invitationId: string): Promise<void> {
+    await this.delete<void>(`/project-invitations/${invitationId}`)
+  }
+
+  /**
+   * Accept a project invitation.
+   */
+  async acceptProjectInvitation(invitationId: string): Promise<ProjectInvitationResponse> {
+    return this.post<ProjectInvitationResponse>(`/project-invitations/${invitationId}/accept`)
+  }
+
+  /**
+   * Decline a project invitation.
+   */
+  async declineProjectInvitation(invitationId: string): Promise<void> {
+    await this.post<void>(`/project-invitations/${invitationId}/decline`)
   }
 }
 

@@ -35,8 +35,16 @@ export class ProjectsService {
     });
   }
 
-  async findAll() {
+  async findAll(userId: string) {
+    // Get user's project IDs from memberships
+    const memberships = await this.prisma.projectMembership.findMany({
+      where: { userId },
+      select: { projectId: true },
+    });
+    const projectIds = memberships.map((m) => m.projectId);
+
     const projects = await this.prisma.project.findMany({
+      where: { id: { in: projectIds } },
       select: {
         id: true,
         name: true,
@@ -45,6 +53,11 @@ export class ProjectsService {
         isPublic: true,
         publicToken: true,
         publicEnabled: true,
+        memberships: {
+          where: { role: 'OWNER' },
+          select: { userId: true },
+          take: 1,
+        },
         _count: {
           select: {
             sessions: true,
@@ -75,8 +88,17 @@ export class ProjectsService {
           },
         });
 
+        const ownerId = project.memberships[0]?.userId || null;
         return {
-          ...project,
+          id: project.id,
+          name: project.name,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          isPublic: project.isPublic,
+          publicToken: project.publicToken,
+          publicEnabled: project.publicEnabled,
+          ownerId,
+          isOwner: ownerId === userId,
           activeSessions,
           activeAgents,
           totalSessions: project._count.sessions,
