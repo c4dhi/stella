@@ -242,8 +242,27 @@ setup_gpu_support() {
     gpu_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | xargs)
     driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs)
 
-    # Check for nvidia-container-runtime
-    if ! docker info 2>/dev/null | grep -q "nvidia"; then
+    # Check for nvidia-container-runtime (either in Docker or K3s containerd)
+    local nvidia_runtime_found=false
+
+    # Check Docker for nvidia runtime
+    if docker info 2>/dev/null | grep -qi "nvidia"; then
+        nvidia_runtime_found=true
+    fi
+
+    # Check K3s containerd for nvidia runtime
+    if [[ -f /var/lib/rancher/k3s/agent/etc/containerd/config.toml ]]; then
+        if grep -qi "nvidia" /var/lib/rancher/k3s/agent/etc/containerd/config.toml 2>/dev/null; then
+            nvidia_runtime_found=true
+        fi
+    fi
+
+    # Check if nvidia RuntimeClass already exists in K8s (means runtime was previously configured)
+    if kubectl get runtimeclass nvidia &>/dev/null; then
+        nvidia_runtime_found=true
+    fi
+
+    if [[ "$nvidia_runtime_found" != "true" ]]; then
         echo -e "   ${ARROW} GPU: ${YELLOW}${gpu_name}${NC} (container runtime not configured)"
         echo -e "   ${DIM}Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html${NC}"
         export ENABLE_GPU="false"

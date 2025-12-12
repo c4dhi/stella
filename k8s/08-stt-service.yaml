@@ -27,8 +27,7 @@ spec:
       labels:
         app: stt-service
     spec:
-      # Uncomment for GPU deployments (production):
-      # runtimeClassName: nvidia
+      # GPU: runtimeClassName: nvidia
       # ======================================================================
       # Init Container: Download models to PersistentVolume on first startup
       # ======================================================================
@@ -229,18 +228,13 @@ spec:
               optional: true
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
-            # Uncomment for GPU (production with large-v3):
-            # nvidia.com/gpu: "1"
-          limits:
             memory: "2Gi"
-            cpu: "1000m"
-            # Uncomment for GPU (production with large-v3):
-            # nvidia.com/gpu: "1"
-        # Note: For production GPU mode with large-v3, increase to:
-        #   requests: memory: "6Gi"
-        #   limits: memory: "10Gi"
+            cpu: "500m"
+            # GPU: nvidia.com/gpu: "1"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+            # GPU: nvidia.com/gpu: "1"
         readinessProbe:
           exec:
             command:

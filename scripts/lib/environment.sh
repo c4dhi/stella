@@ -159,6 +159,88 @@ configure_urls() {
 }
 
 # =============================================================================
+# GPU Detection and Auto-Configuration
+# =============================================================================
+
+detect_gpu() {
+    # Check if NVIDIA GPU is available
+    if command -v nvidia-smi &>/dev/null; then
+        if nvidia-smi &>/dev/null; then
+            # Get GPU info
+            local gpu_name
+            gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+            local driver_version
+            driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+            local cuda_version
+            cuda_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+
+            export GPU_AVAILABLE="true"
+            export GPU_NAME="${gpu_name:-Unknown}"
+            export GPU_DRIVER="${driver_version:-Unknown}"
+
+            verbose "GPU detected: $GPU_NAME (Driver: $GPU_DRIVER)"
+            return 0
+        fi
+    fi
+
+    export GPU_AVAILABLE="false"
+    export GPU_NAME=""
+    export GPU_DRIVER=""
+    return 1
+}
+
+# Auto-configure GPU settings for production
+configure_gpu_settings() {
+    # First detect GPU
+    detect_gpu
+
+    # In production mode with GPU available, auto-enable GPU if not explicitly set
+    if [[ "$NODE_ENV" == "production" && "$GPU_AVAILABLE" == "true" ]]; then
+        # Only auto-set if ENABLE_GPU was not explicitly configured
+        if [[ -z "${ENABLE_GPU_SET_BY_USER:-}" ]]; then
+            export ENABLE_GPU="true"
+            verbose "Auto-enabled GPU for production (detected: $GPU_NAME)"
+        fi
+
+        # Auto-configure optimal providers for GPU
+        if [[ "$ENABLE_GPU" == "true" ]]; then
+            # STT: Use Whisper with CUDA for best quality
+            if [[ -z "${STT_PROVIDER_SET_BY_USER:-}" ]]; then
+                export STT_PROVIDER="whisper"
+                export WHISPER_DEVICE="cuda"
+                export WHISPER_COMPUTE_TYPE="float16"
+                verbose "Auto-configured STT: whisper (CUDA, float16)"
+            fi
+
+            # TTS: Use Kokoro with CUDA for lowest latency
+            if [[ -z "${TTS_PROVIDER_SET_BY_USER:-}" ]]; then
+                export TTS_PROVIDER="kokoro"
+                verbose "Auto-configured TTS: kokoro (CUDA)"
+            fi
+
+            # ONNX Provider for GPU
+            if [[ -z "${ONNX_PROVIDER_SET_BY_USER:-}" ]]; then
+                export ONNX_PROVIDER="CUDAExecutionProvider,CPUExecutionProvider"
+                verbose "Auto-configured ONNX: CUDAExecutionProvider"
+            fi
+        fi
+    fi
+
+    # Show GPU status in output
+    if [[ "$GPU_AVAILABLE" == "true" ]]; then
+        if [[ "$ENABLE_GPU" == "true" ]]; then
+            echo -e "   ${ARROW} GPU: ${GREEN}${CHECK}${NC} ${GPU_NAME} ${DIM}(CUDA enabled)${NC}"
+        else
+            echo -e "   ${ARROW} GPU: ${YELLOW}${GPU_NAME}${NC} ${DIM}(available but not enabled)${NC}"
+        fi
+    else
+        if [[ "$NODE_ENV" == "production" ]]; then
+            echo -e "   ${ARROW} GPU: ${DIM}Not detected (using CPU)${NC}"
+        fi
+    fi
+}
+
+# =============================================================================
 # Default Values
 # =============================================================================
 
@@ -182,7 +264,13 @@ set_defaults() {
     export ROOM_NAME="${ROOM_NAME:-voice-ai-room}"
     export IDENTITY="${IDENTITY:-python-listener}"
 
-    # STT Configuration
+    # Track if user explicitly set these (before we apply defaults)
+    [[ -n "${ENABLE_GPU:-}" ]] && export ENABLE_GPU_SET_BY_USER="true"
+    [[ -n "${STT_PROVIDER:-}" ]] && export STT_PROVIDER_SET_BY_USER="true"
+    [[ -n "${TTS_PROVIDER:-}" ]] && export TTS_PROVIDER_SET_BY_USER="true"
+    [[ -n "${ONNX_PROVIDER:-}" ]] && export ONNX_PROVIDER_SET_BY_USER="true"
+
+    # STT Configuration (defaults - may be overridden by GPU auto-config)
     export STT_PROVIDER="${STT_PROVIDER:-sherpa}"
     export WHISPER_MODEL="${WHISPER_MODEL:-large-v3}"
     export WHISPER_DEVICE="${WHISPER_DEVICE:-cpu}"
@@ -197,7 +285,7 @@ set_defaults() {
     export PARTIAL_INTERVAL_MS="${PARTIAL_INTERVAL_MS:-1000}"
     export WHISPER_INITIAL_PROMPT="${WHISPER_INITIAL_PROMPT:-}"
 
-    # TTS Configuration
+    # TTS Configuration (defaults - may be overridden by GPU auto-config)
     export TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
     export ELEVENLABS_STABILITY="${ELEVENLABS_STABILITY:-0.5}"
     export ELEVENLABS_SIMILARITY_BOOST="${ELEVENLABS_SIMILARITY_BOOST:-0.8}"
@@ -207,7 +295,7 @@ set_defaults() {
     export KOKORO_VOICES_PATH="${KOKORO_VOICES_PATH:-./kokoro-models/voices-v1.0.bin}"
     export KOKORO_CACHE_DIR="${KOKORO_CACHE_DIR:-/root/.cache/kokoro}"
 
-    # GPU Configuration
+    # GPU Configuration (default - will be auto-detected in production)
     export ENABLE_GPU="${ENABLE_GPU:-false}"
 
     # ONNX Provider (auto-set based on GPU)
@@ -227,6 +315,9 @@ set_defaults() {
     export MIN_INTERRUPTION_DURATION="${MIN_INTERRUPTION_DURATION:-0.5}"
     export MIN_INTERRUPTION_WORDS="${MIN_INTERRUPTION_WORDS:-1}"
     export FALSE_INTERRUPTION_TIMEOUT="${FALSE_INTERRUPTION_TIMEOUT:-2.0}"
+
+    # Auto-configure GPU settings (after defaults are set)
+    configure_gpu_settings
 }
 
 # =============================================================================

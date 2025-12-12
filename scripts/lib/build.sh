@@ -152,8 +152,70 @@ clear_all_checksums() {
 }
 
 # =============================================================================
-# Single-Line Build Progress
+# Single-Line Build Progress with Descriptive Steps
 # =============================================================================
+
+# Parse build log to get human-readable step description
+get_build_step_description() {
+    local log_line="$1"
+    local image_name="$2"
+
+    # Extract the command being run (after RUN, COPY, FROM, etc.)
+    local desc=""
+
+    # Check for specific patterns and provide friendly descriptions
+    if echo "$log_line" | grep -qi "FROM.*nvidia/cuda"; then
+        desc="Pulling NVIDIA CUDA base image"
+    elif echo "$log_line" | grep -qi "FROM.*python"; then
+        desc="Pulling Python base image"
+    elif echo "$log_line" | grep -qi "FROM.*node"; then
+        desc="Pulling Node.js base image"
+    elif echo "$log_line" | grep -qi "apt-get update\|apt-get install"; then
+        desc="Installing system dependencies"
+    elif echo "$log_line" | grep -qi "add-apt-repository"; then
+        desc="Adding package repository"
+    elif echo "$log_line" | grep -qi "pip install.*requirements"; then
+        desc="Installing Python dependencies"
+    elif echo "$log_line" | grep -qi "pip install"; then
+        desc="Installing Python packages"
+    elif echo "$log_line" | grep -qi "npm install\|npm ci"; then
+        desc="Installing Node.js dependencies"
+    elif echo "$log_line" | grep -qi "npm run build"; then
+        desc="Building application"
+    elif echo "$log_line" | grep -qi "npx prisma generate"; then
+        desc="Generating Prisma client"
+    elif echo "$log_line" | grep -qi "grpc_tools.protoc\|protoc"; then
+        desc="Compiling gRPC protobuf"
+    elif echo "$log_line" | grep -qi "COPY.*requirements\|COPY.*package"; then
+        desc="Copying dependency files"
+    elif echo "$log_line" | grep -qi "COPY.*src\|COPY.*\."; then
+        desc="Copying source code"
+    elif echo "$log_line" | grep -qi "WORKDIR"; then
+        desc="Setting up workspace"
+    elif echo "$log_line" | grep -qi "ENV "; then
+        desc="Configuring environment"
+    elif echo "$log_line" | grep -qi "onnxruntime-gpu"; then
+        desc="Installing ONNX Runtime (GPU)"
+    elif echo "$log_line" | grep -qi "onnxruntime"; then
+        desc="Installing ONNX Runtime"
+    elif echo "$log_line" | grep -qi "faster-whisper\|ctranslate2"; then
+        desc="Installing Whisper dependencies"
+    elif echo "$log_line" | grep -qi "sherpa"; then
+        desc="Installing Sherpa-ONNX"
+    elif echo "$log_line" | grep -qi "kokoro"; then
+        desc="Installing Kokoro TTS"
+    elif echo "$log_line" | grep -qi "torch\|pytorch"; then
+        desc="Installing PyTorch"
+    elif echo "$log_line" | grep -qi "EXPOSE"; then
+        desc="Configuring ports"
+    elif echo "$log_line" | grep -qi "exporting to image"; then
+        desc="Finalizing image"
+    elif echo "$log_line" | grep -qi "writing image"; then
+        desc="Writing image layers"
+    fi
+
+    echo "$desc"
+}
 
 build_with_progress() {
     local image_name="$1"
@@ -185,24 +247,61 @@ build_with_progress() {
 
     local build_pid=$!
 
-    # Single-line progress display
+    # Initial status line
     echo -ne "   ${ARROW} ${image_name}... "
 
     local last_step=""
+    local last_desc=""
+    local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local spinner_idx=0
+
     while kill -0 $build_pid 2>/dev/null; do
         if [[ -f "$log_file" ]]; then
-            # Extract current step (e.g., "[5/12]" or "Step 5/12")
-            local current
-            current=$(tail -n 30 "$log_file" 2>/dev/null | \
-                grep -oE '\[#?[0-9]+ [0-9]+/[0-9]+\]|Step [0-9]+/[0-9]+|\[[0-9]+/[0-9]+\]' | tail -1)
+            # Get last meaningful lines from log
+            local recent_log
+            recent_log=$(tail -n 50 "$log_file" 2>/dev/null)
 
-            if [[ -n "$current" && "$current" != "$last_step" ]]; then
-                # Update line in place
-                echo -ne "\r   ${ARROW} ${image_name}... ${DIM}${current}${NC}    "
-                last_step="$current"
+            # Extract current step number (e.g., "[5/12]" or "Step 5/12")
+            local step_num
+            step_num=$(echo "$recent_log" | grep -oE '\[#?[0-9]+ [0-9]+/[0-9]+\]|Step [0-9]+/[0-9]+|\[[0-9]+/[0-9]+\]' | tail -1)
+
+            # Get the line containing RUN/COPY/FROM to understand what's happening
+            local action_line
+            action_line=$(echo "$recent_log" | grep -E '(RUN |COPY |FROM |ENV |WORKDIR |apt-get|pip install|npm |npx |exporting|writing)' | tail -1)
+
+            # Get human-readable description
+            local desc
+            desc=$(get_build_step_description "$action_line" "$image_name")
+
+            # Build display string
+            local display=""
+            if [[ -n "$step_num" ]]; then
+                display="${step_num}"
+            fi
+            if [[ -n "$desc" ]]; then
+                if [[ -n "$display" ]]; then
+                    display="${display} ${desc}"
+                else
+                    display="${desc}"
+                fi
+            fi
+
+            # Update display if changed
+            if [[ -n "$display" && "$display" != "$last_desc" ]]; then
+                # Truncate if too long (terminal width consideration)
+                if [[ ${#display} -gt 50 ]]; then
+                    display="${display:0:47}..."
+                fi
+                printf "\r   ${ARROW} ${image_name}... ${DIM}${display}${NC}%-20s" " "
+                last_desc="$display"
+            else
+                # Show spinner for activity indication
+                local spinner="${spinner_chars[$spinner_idx]}"
+                spinner_idx=$(( (spinner_idx + 1) % ${#spinner_chars[@]} ))
+                printf "\r   ${ARROW} ${image_name}... ${DIM}${last_desc:-Building}${NC} ${CYAN}${spinner}${NC}%-5s" " "
             fi
         fi
-        sleep 0.3
+        sleep 0.2
     done
 
     wait $build_pid
@@ -210,11 +309,16 @@ build_with_progress() {
 
     # Clear line and show final status
     if [[ $exit_code -eq 0 ]]; then
-        echo -e "\r   ${ARROW} ${image_name}... ${GREEN}${CHECK}${NC}                    "
+        printf "\r   ${ARROW} ${image_name}... ${GREEN}${CHECK}${NC}%-60s\n" " "
         rm -f "$log_file"
     else
-        echo -e "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}                    "
+        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
         error "Build failed. Log: $log_file"
+        # Show last few lines of error
+        if [[ -f "$log_file" ]]; then
+            echo -e "   ${DIM}Last error:${NC}"
+            tail -n 5 "$log_file" | sed 's/^/      /'
+        fi
         return 1
     fi
 }

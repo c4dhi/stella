@@ -143,21 +143,34 @@ generate_gpu_manifests() {
     cp k8s/08-stt-service.yaml "${TEMP_DIR}/08-stt-service.yaml"
     cp k8s/09-tts-service.yaml "${TEMP_DIR}/09-tts-service.yaml"
 
-    # Enable GPU runtime class if requested
+    # Enable GPU runtime class and resources if requested
     if [[ "$ENABLE_GPU" == "true" ]]; then
-        verbose "Enabling GPU runtime class..."
+        verbose "Enabling GPU runtime class and resources..."
         # macOS sed requires '' for in-place edit, Linux doesn't
         if [[ "$OS_TYPE" == "macos" ]]; then
+            # Enable runtimeClassName
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/09-tts-service.yaml"
+            # Enable GPU resource requests/limits
+            sed -i '' 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
+                "${TEMP_DIR}/08-stt-service.yaml"
+            sed -i '' 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
         else
+            # Enable runtimeClassName
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
+            # Enable GPU resource requests/limits
+            sed -i 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
+                "${TEMP_DIR}/08-stt-service.yaml"
+            sed -i 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
+                "${TEMP_DIR}/09-tts-service.yaml"
         fi
+        verbose "GPU manifests: runtimeClassName=nvidia, nvidia.com/gpu=1"
     fi
 
     # Add custom DNS configuration if CUSTOM_DNS_SERVERS is set
