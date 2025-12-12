@@ -462,6 +462,144 @@ start_manual_port_forwards() {
 }
 
 # =============================================================================
+# GPU/CPU Status Detection
+# =============================================================================
+
+# Check the runtime status of STT and TTS services (CUDA vs CPU)
+check_service_runtime_status() {
+    local service="$1"
+    local pod_name
+    local status="unknown"
+    local provider="unknown"
+    local details=""
+
+    # Get the pod name
+    pod_name=$(kubectl get pods -n ai-agents -l "app=$service" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+    if [[ -z "$pod_name" ]]; then
+        echo "unknown|unknown|Pod not found"
+        return
+    fi
+
+    # Get recent logs (last 100 lines should be enough for startup)
+    local logs
+    logs=$(kubectl logs "$pod_name" -n ai-agents --tail=100 2>/dev/null || echo "")
+
+    if [[ "$service" == "stt-service" ]]; then
+        # Check for Whisper CUDA success
+        if echo "$logs" | grep -q "device=cuda.*compute_type=float16"; then
+            if echo "$logs" | grep -q "CUDA failed\|CUDA driver version is insufficient"; then
+                status="CPU"
+                provider="sherpa"
+                details="Whisper CUDA failed, fell back to Sherpa CPU"
+            else
+                status="CUDA"
+                provider="whisper"
+                details="Whisper large-v3 (float16)"
+            fi
+        elif echo "$logs" | grep -q "Primary provider: whisper"; then
+            status="CUDA"
+            provider="whisper"
+            details="Whisper GPU"
+        elif echo "$logs" | grep -q "Primary provider: sherpa"; then
+            # Check if Sherpa is using GPU
+            if echo "$logs" | grep -q "provider=cuda\|CUDAExecutionProvider"; then
+                if echo "$logs" | grep -q "Fallback to cpu"; then
+                    status="CPU"
+                    provider="sherpa"
+                    details="Sherpa ONNX (CPU fallback)"
+                else
+                    status="CUDA"
+                    provider="sherpa"
+                    details="Sherpa ONNX (CUDA)"
+                fi
+            else
+                status="CPU"
+                provider="sherpa"
+                details="Sherpa ONNX (CPU)"
+            fi
+        elif echo "$logs" | grep -q "Fallback to cpu"; then
+            status="CPU"
+            provider="sherpa"
+            details="GPU unavailable, using CPU"
+        fi
+
+    elif [[ "$service" == "tts-service" ]]; then
+        # Check for Kokoro CUDA success
+        if echo "$logs" | grep -q "CUDAExecutionProvider"; then
+            if echo "$logs" | grep -q "CUDA failed\|CUDA driver version is insufficient"; then
+                status="CPU"
+                provider="edge_tts"
+                details="Kokoro CUDA failed, fell back to Edge TTS"
+            else
+                status="CUDA"
+                provider="kokoro"
+                details="Kokoro ONNX (CUDA)"
+            fi
+        elif echo "$logs" | grep -q "Primary provider: kokoro\|Provider: kokoro"; then
+            status="CUDA"
+            provider="kokoro"
+            details="Kokoro ONNX"
+        elif echo "$logs" | grep -q "Primary provider: edge_tts\|Provider: edge_tts"; then
+            status="Cloud"
+            provider="edge_tts"
+            details="Microsoft Edge TTS (Cloud)"
+        fi
+    fi
+
+    echo "$status|$provider|$details"
+}
+
+# Display GPU status for both services
+show_gpu_status() {
+    echo ""
+    info "🎮 GPU/CPU Runtime Status"
+    echo ""
+
+    # STT Service
+    local stt_result
+    stt_result=$(check_service_runtime_status "stt-service")
+    local stt_status stt_provider stt_details
+    IFS='|' read -r stt_status stt_provider stt_details <<< "$stt_result"
+
+    echo -n "   ${ARROW} STT Service: "
+    if [[ "$stt_status" == "CUDA" ]]; then
+        echo -e "${GREEN}${CHECK} CUDA${NC} (${stt_provider}) - ${stt_details}"
+    elif [[ "$stt_status" == "CPU" ]]; then
+        echo -e "${YELLOW}${CROSS} CPU${NC} (${stt_provider}) - ${stt_details}"
+    else
+        echo -e "${DIM}${stt_status}${NC}"
+    fi
+
+    # TTS Service
+    local tts_result
+    tts_result=$(check_service_runtime_status "tts-service")
+    local tts_status tts_provider tts_details
+    IFS='|' read -r tts_status tts_provider tts_details <<< "$tts_result"
+
+    echo -n "   ${ARROW} TTS Service: "
+    if [[ "$tts_status" == "CUDA" ]]; then
+        echo -e "${GREEN}${CHECK} CUDA${NC} (${tts_provider}) - ${tts_details}"
+    elif [[ "$tts_status" == "CPU" ]]; then
+        echo -e "${YELLOW}${CROSS} CPU${NC} (${tts_provider}) - ${tts_details}"
+    elif [[ "$tts_status" == "Cloud" ]]; then
+        echo -e "${CYAN}☁ Cloud${NC} (${tts_provider}) - ${tts_details}"
+    else
+        echo -e "${DIM}${tts_status}${NC}"
+    fi
+
+    # Show warning if GPU was expected but not available
+    if [[ "$ENABLE_GPU" == "true" ]]; then
+        if [[ "$stt_status" == "CPU" || "$tts_status" == "CPU" ]]; then
+            echo ""
+            warning "GPU was enabled but some services fell back to CPU. Check logs for details:"
+            echo -e "   ${DIM}kubectl logs -n ai-agents -l app=stt-service --tail=50${NC}"
+            echo -e "   ${DIM}kubectl logs -n ai-agents -l app=tts-service --tail=50${NC}"
+        fi
+    fi
+}
+
+# =============================================================================
 # Summary Display
 # =============================================================================
 
@@ -470,6 +608,9 @@ show_summary() {
         dry_run_summary
         return 0
     fi
+
+    # Show GPU status before the summary box
+    show_gpu_status
 
     summary_box \
         "http://localhost:8080" \
