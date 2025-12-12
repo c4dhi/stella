@@ -23,8 +23,17 @@ export class EncryptionService implements OnModuleInit {
 
   onModuleInit() {
     const keyHex = this.configService.get<string>('ENV_VAR_ENCRYPTION_KEY');
+    const nodeEnv = this.configService.get<string>('NODE_ENV');
+    const isProduction = nodeEnv === 'production';
 
     if (!keyHex) {
+      if (isProduction) {
+        throw new Error(
+          'SECURITY ERROR: ENV_VAR_ENCRYPTION_KEY is required in production. ' +
+            'Environment variables cannot be stored securely without an encryption key. ' +
+            'Generate a key with: openssl rand -hex 32',
+        );
+      }
       this.logger.warn(
         'ENV_VAR_ENCRYPTION_KEY not set. Environment variable encryption will be disabled. ' +
           'Generate a key with: openssl rand -hex 32',
