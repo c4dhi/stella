@@ -4,45 +4,68 @@
 # - faster-whisper: GPU-accelerated model (~3GB for large-v3) - requires ENABLE_GPU=true
 #
 # Build args:
-#   ENABLE_GPU=true - Install CUDA libs and GPU dependencies
-#   WHISPER_MODEL=large-v3 - Whisper model to pre-download (only when ENABLE_GPU=true)
+#   ENABLE_GPU=true - Use NVIDIA CUDA base image with GPU dependencies
+#   ENABLE_GPU=false (default) - Use python:slim for CPU-only builds
 
 ARG ENABLE_GPU=false
 
-FROM python:3.11-slim
+# ============================================================================
+# CPU-only base image
+# ============================================================================
+FROM python:3.11-slim AS base-cpu
 
 WORKDIR /app
 
-# Install system dependencies and conditional CUDA libraries
-ARG ENABLE_GPU
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     wget \
     curl \
-    gnupg \
     ca-certificates \
     libgomp1 \
     git \
-    && if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[STT] Installing CUDA libraries for GPU support..." && \
-        curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
-        echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list && \
-        apt-get update && \
-        apt-get install -y --no-install-recommends \
-            cuda-cudart-12-4 \
-            libcublas-12-4 \
-            libcurand-12-4 \
-            libcufft-12-4 \
-            libcudnn9-cuda-12 \
-        && echo "[STT] CUDA libraries installed successfully"; \
-    else \
-        echo "[STT] Building CPU-only image (ENABLE_GPU=false)"; \
-    fi \
     && rm -rf /var/lib/apt/lists/*
 
-# Set CUDA library paths for GPU builds
-# CUDA 12.4 installs libs to targets/x86_64-linux/lib/ not lib64/
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.4/targets/x86_64-linux/lib:/usr/local/cuda-12.4/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
+# ============================================================================
+# GPU base image (NVIDIA CUDA 12.6 - compatible with driver 13.0+)
+# ============================================================================
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04 AS base-gpu
+
+WORKDIR /app
+
+# Install Python 3.11 and system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    wget \
+    curl \
+    ca-certificates \
+    libgomp1 \
+    git \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && python3 -m pip install --upgrade pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA environment (set by NVIDIA base image, but ensure they're available)
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+# ============================================================================
+# Final image - select base based on ENABLE_GPU
+# ============================================================================
+ARG ENABLE_GPU
+FROM base-cpu AS final-false
+FROM base-gpu AS final-true
+FROM final-${ENABLE_GPU} AS final
+
+WORKDIR /app
 
 # ============================================================================
 # Base requirements (always installed - for Sherpa-ONNX)
@@ -56,7 +79,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 ARG ENABLE_GPU
 COPY requirements-gpu.txt .
 RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[STT] Installing GPU dependencies (faster-whisper, torch)..." && \
+        echo "[STT] Installing GPU dependencies (faster-whisper, torch, ctranslate2)..." && \
         pip install --no-cache-dir -r requirements-gpu.txt && \
         pip install --no-cache-dir onnxruntime-gpu>=1.16.0 && \
         echo "[STT] GPU dependencies installed successfully"; \
