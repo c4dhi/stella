@@ -31,6 +31,18 @@ validate_configuration() {
         errors+=("LIVEKIT_TURN_DOMAIN (required when LIVEKIT_TURN_ENABLED=true)")
     fi
 
+    # Encryption key validation (required in production, recommended in local)
+    if [[ -z "${ENV_VAR_ENCRYPTION_KEY:-}" ]]; then
+        if [[ "$NODE_ENV" == "production" ]]; then
+            errors+=("ENV_VAR_ENCRYPTION_KEY (required in production for secure env var storage)")
+        else
+            warning "ENV_VAR_ENCRYPTION_KEY not set - environment variables will NOT be encrypted"
+            echo -e "   ${DIM}Generate with: openssl rand -hex 32${NC}"
+        fi
+    elif [[ ${#ENV_VAR_ENCRYPTION_KEY} -ne 64 ]]; then
+        errors+=("ENV_VAR_ENCRYPTION_KEY must be 64 hex characters (32 bytes). Generate with: openssl rand -hex 32")
+    fi
+
     # Report errors
     if [[ ${#errors[@]} -gt 0 ]]; then
         error "Missing required environment variables:"
