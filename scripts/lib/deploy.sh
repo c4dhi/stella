@@ -214,31 +214,44 @@ generate_gpu_manifests() {
 # =============================================================================
 # DNS Configuration for Manifests
 # =============================================================================
-# Adds custom DNS configuration to bypass SSL inspection proxies.
-# Injects dnsPolicy: None and dnsConfig with nameservers from CUSTOM_DNS_SERVERS.
+# Adds custom DNS configuration to bypass SSL inspection proxies while
+# maintaining ability to resolve internal Kubernetes services.
+#
+# Uses dnsPolicy: None with:
+# - Kubernetes CoreDNS as first nameserver (for internal service resolution)
+# - Custom external DNS as second nameserver (for bypassing SSL proxy)
+# - K8s search domains (for short service name resolution like "postgres")
 
 add_dns_config_to_manifest() {
     local manifest_file="$1"
 
-    # Convert space-separated DNS servers to YAML array format
+    # Get Kubernetes DNS IP (auto-detected or from env)
+    local k8s_dns_ip="${KUBERNETES_DNS_IP:-}"
+    if [[ -z "$k8s_dns_ip" ]]; then
+        k8s_dns_ip=$(kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "10.43.0.10")
+    fi
+
+    # Build nameservers YAML: K8s DNS first (for internal), then external DNS (for external)
     local dns_yaml=""
+    dns_yaml="${dns_yaml}        - \"${k8s_dns_ip}\"\n"
     for server in $CUSTOM_DNS_SERVERS; do
         dns_yaml="${dns_yaml}        - \"${server}\"\n"
     done
 
     # Find the line with "initContainers:" or "containers:" (first occurrence after spec:)
     # and insert dnsPolicy and dnsConfig before it
-    # This uses awk to inject the DNS config at the right indentation level
     awk -v dns_servers="$dns_yaml" '
     /^[[:space:]]*initContainers:/ && !dns_added {
-        # Get the indentation of initContainers
         match($0, /^[[:space:]]*/)
         indent = substr($0, RSTART, RLENGTH)
-        # Print DNS config with same indentation
         print indent "dnsPolicy: None"
         print indent "dnsConfig:"
         print indent "  nameservers:"
         printf "%s", dns_servers
+        print indent "  searches:"
+        print indent "    - \"ai-agents.svc.cluster.local\""
+        print indent "    - \"svc.cluster.local\""
+        print indent "    - \"cluster.local\""
         dns_added = 1
     }
     { print }
