@@ -143,34 +143,25 @@ generate_gpu_manifests() {
     cp k8s/08-stt-service.yaml "${TEMP_DIR}/08-stt-service.yaml"
     cp k8s/09-tts-service.yaml "${TEMP_DIR}/09-tts-service.yaml"
 
-    # Enable GPU runtime class and resources if requested
+    # Enable GPU runtime class if requested
+    # NOTE: We only enable runtimeClassName (for CUDA access), NOT nvidia.com/gpu resource requests
+    # This allows multiple services (STT + TTS) to share a single GPU via CUDA
+    # If nvidia.com/gpu: 1 is requested, Kubernetes reserves the GPU exclusively for that pod
     if [[ "$ENABLE_GPU" == "true" ]]; then
-        verbose "Enabling GPU runtime class and resources..."
+        verbose "Enabling GPU runtime class (shared GPU mode)..."
         # macOS sed requires '' for in-place edit, Linux doesn't
         if [[ "$OS_TYPE" == "macos" ]]; then
-            # Enable runtimeClassName
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-                "${TEMP_DIR}/09-tts-service.yaml"
-            # Enable GPU resource requests/limits
-            sed -i '' 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
-                "${TEMP_DIR}/08-stt-service.yaml"
-            sed -i '' 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
         else
-            # Enable runtimeClassName
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-                "${TEMP_DIR}/09-tts-service.yaml"
-            # Enable GPU resource requests/limits
-            sed -i 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
-                "${TEMP_DIR}/08-stt-service.yaml"
-            sed -i 's/# GPU: nvidia.com\/gpu:/nvidia.com\/gpu:/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
         fi
-        verbose "GPU manifests: runtimeClassName=nvidia, nvidia.com/gpu=1"
+        verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode)"
     fi
 
     # Add custom DNS configuration if CUSTOM_DNS_SERVERS is set
