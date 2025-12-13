@@ -135,6 +135,47 @@ generate_session_server_manifest() {
 }
 
 # =============================================================================
+# Apply Custom DNS to All Service Manifests
+# =============================================================================
+# Applies custom DNS configuration to bypass SSL inspection proxies.
+# This is needed when corporate proxies intercept HTTPS traffic to external APIs.
+
+apply_dns_to_all_manifests() {
+    if [[ -z "${CUSTOM_DNS_SERVERS:-}" ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN_MODE" == "true" ]]; then
+        verbose "Would apply custom DNS config [dry-run]"
+        return 0
+    fi
+
+    verbose "Applying custom DNS to all services: $CUSTOM_DNS_SERVERS"
+
+    # Copy frontend-ui manifest to temp dir for modification
+    cp k8s/07-frontend-ui.yaml "${TEMP_DIR}/07-frontend-ui-updated.yaml"
+
+    # List of all manifests that need DNS config (services that make external API calls)
+    local manifests=(
+        "${TEMP_DIR}/06-session-management-server-updated.yaml"
+        "${TEMP_DIR}/07-frontend-ui-updated.yaml"
+        "${TEMP_DIR}/06-message-recorder-updated.yaml"
+        "${TEMP_DIR}/08-stt-service.yaml"
+        "${TEMP_DIR}/09-tts-service.yaml"
+    )
+
+    for manifest in "${manifests[@]}"; do
+        if [[ -f "$manifest" ]]; then
+            add_dns_config_to_manifest "$manifest"
+            verbose "DNS config added to: $(basename "$manifest")"
+        fi
+    done
+
+    # Export the updated frontend manifest path
+    export FRONTEND_MANIFEST="${TEMP_DIR}/07-frontend-ui-updated.yaml"
+}
+
+# =============================================================================
 # GPU Manifest Generation
 # =============================================================================
 
@@ -164,20 +205,10 @@ generate_gpu_manifests() {
         verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode)"
     fi
 
-    # Add custom DNS configuration if CUSTOM_DNS_SERVERS is set
-    # This bypasses corporate SSL inspection proxies
-    if [[ -n "$CUSTOM_DNS_SERVERS" ]]; then
-        verbose "Configuring custom DNS: $CUSTOM_DNS_SERVERS"
-        add_dns_config_to_manifest "${TEMP_DIR}/08-stt-service.yaml"
-        add_dns_config_to_manifest "${TEMP_DIR}/09-tts-service.yaml"
-    fi
+    # NOTE: Custom DNS is now applied globally via apply_dns_to_all_manifests()
 
     export STT_MANIFEST="${TEMP_DIR}/08-stt-service.yaml"
     export TTS_MANIFEST="${TEMP_DIR}/09-tts-service.yaml"
-
-    if [[ "$ENABLE_GPU" == "true" ]]; then
-        verbose "GPU manifests: enabled"
-    fi
 }
 
 # =============================================================================
@@ -255,6 +286,9 @@ deploy_services() {
     generate_configmap
     generate_session_server_manifest
     generate_gpu_manifests
+
+    # Apply custom DNS to all manifests (for bypassing SSL inspection proxies)
+    apply_dns_to_all_manifests
 
     if [[ "$DRY_RUN_MODE" == "true" ]]; then
         show_dry_run_deployment
@@ -334,8 +368,9 @@ deploy_services() {
     fi
 
     # Phase 3: Application Services (apply manifests quietly)
+    # All manifests use temp dir versions which may have custom DNS config applied
     kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null
-    kubectl apply -f k8s/07-frontend-ui.yaml >/dev/null
+    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null
     kubectl apply -f "$STT_MANIFEST" >/dev/null
     kubectl apply -f "$TTS_MANIFEST" >/dev/null
     kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null
