@@ -443,6 +443,12 @@ build_images() {
 # K3s Image Import (Linux only)
 # =============================================================================
 
+# Import a single image to K3s with spinner
+import_single_image_to_k3s() {
+    local service="$1"
+    docker save "${service}:latest" | sudo k3s ctr images import - >/dev/null 2>&1
+}
+
 import_images_to_k3s() {
     [[ "$DRY_RUN_MODE" == "true" ]] && return 0
     [[ ${#REBUILT_SERVICES[@]} -eq 0 ]] && return 0
@@ -450,12 +456,29 @@ import_images_to_k3s() {
     info "${EMOJI_GEAR} Importing images to K3s..."
 
     for service in "${REBUILT_SERVICES[@]}"; do
+        # Show spinner while importing
         echo -ne "   ${ARROW} ${service}... "
 
-        if docker save "${service}:latest" | sudo k3s ctr images import - >/dev/null 2>&1; then
-            echo -e "${GREEN}${CHECK}${NC}"
+        # Start import in background
+        docker save "${service}:latest" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
+        local pid=$!
+
+        # Spinner animation
+        local spinner_idx=0
+        while kill -0 $pid 2>/dev/null; do
+            local spinner="${SPINNER_CHARS[$spinner_idx]}"
+            printf "\r   ${ARROW} ${service}... ${CYAN}${spinner}${NC} "
+            spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+            sleep 0.1
+        done
+
+        wait $pid
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            printf "\r   ${ARROW} ${service}... ${GREEN}${CHECK}${NC}    \n"
         else
-            echo -e "${RED}${CROSS}${NC}"
+            printf "\r   ${ARROW} ${service}... ${RED}${CROSS}${NC}    \n"
             warning "Failed to import ${service} to K3s"
         fi
     done
@@ -489,11 +512,29 @@ sync_images_to_k3s() {
     if [[ ${#images_to_sync[@]} -gt 0 ]]; then
         info "${EMOJI_GEAR} Syncing missing images to K3s..."
         for img in "${images_to_sync[@]}"; do
+            # Show spinner while syncing
             echo -ne "   ${ARROW} ${img}... "
-            if docker save "${img}:latest" | sudo k3s ctr images import - >/dev/null 2>&1; then
-                echo -e "${GREEN}${CHECK}${NC}"
+
+            # Start sync in background
+            docker save "${img}:latest" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
+            local pid=$!
+
+            # Spinner animation
+            local spinner_idx=0
+            while kill -0 $pid 2>/dev/null; do
+                local spinner="${SPINNER_CHARS[$spinner_idx]}"
+                printf "\r   ${ARROW} ${img}... ${CYAN}${spinner}${NC} "
+                spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+                sleep 0.1
+            done
+
+            wait $pid
+            local exit_code=$?
+
+            if [[ $exit_code -eq 0 ]]; then
+                printf "\r   ${ARROW} ${img}... ${GREEN}${CHECK}${NC}    \n"
             else
-                echo -e "${RED}${CROSS}${NC}"
+                printf "\r   ${ARROW} ${img}... ${RED}${CROSS}${NC}    \n"
             fi
         done
     fi

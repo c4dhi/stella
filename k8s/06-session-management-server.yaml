@@ -100,6 +100,11 @@ spec:
             secretKeyRef:
               name: stella-ai-secrets
               key: jwt-secret
+        - name: ENV_VAR_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: stella-ai-secrets
+              key: env-var-encryption-key
         - name: LIVEKIT_API_KEY
           valueFrom:
             secretKeyRef:

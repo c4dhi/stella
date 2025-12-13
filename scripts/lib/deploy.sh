@@ -247,6 +247,7 @@ create_secrets() {
         --from-literal=livekit-api-secret="$LIVEKIT_API_SECRET" \
         --from-literal=livekit-webhook-secret="${LIVEKIT_WEBHOOK_SECRET:-webhook-secret}" \
         --from-literal=elevenlabs-api-key="${ELEVENLABS_API_KEY:-}" \
+        --from-literal=env-var-encryption-key="${ENV_VAR_ENCRYPTION_KEY:-}" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
     verbose "Secrets created"
@@ -269,35 +270,74 @@ deploy_services() {
         return 0
     fi
 
+    # Helper function for spinner on kubectl commands
+    apply_with_spinner() {
+        local label="$1"
+        shift
+        local cmd=("$@")
+
+        echo -ne "   ${ARROW} ${label}... "
+
+        # Run command in background
+        "${cmd[@]}" >/dev/null 2>&1 &
+        local pid=$!
+
+        # Spinner animation
+        local spinner_idx=0
+        while kill -0 $pid 2>/dev/null; do
+            local spinner="${SPINNER_CHARS[$spinner_idx]}"
+            printf "\r   ${ARROW} ${label}... ${CYAN}${spinner}${NC} "
+            spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+            sleep 0.1
+        done
+
+        wait $pid
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            printf "\r   ${ARROW} ${label}... ${GREEN}${CHECK}${NC}    \n"
+            return 0
+        else
+            printf "\r   ${ARROW} ${label}... ${RED}${CROSS}${NC}    \n"
+            return 1
+        fi
+    }
+
     # Phase 1: Namespace, RBAC, and Secrets
-    status "Namespace & RBAC"
-    kubectl apply -f k8s/00-namespace.yaml >/dev/null
-    kubectl apply -f k8s/03-secrets.yaml >/dev/null
-    kubectl apply -f k8s/05-rbac.yaml >/dev/null
-    status_ok
+    apply_with_spinner "Namespace & RBAC" bash -c "kubectl apply -f k8s/00-namespace.yaml && kubectl apply -f k8s/03-secrets.yaml && kubectl apply -f k8s/05-rbac.yaml"
 
-    status "Secrets"
-    create_secrets
-    status_ok
+    # Secrets (inline, not backgroundable due to function)
+    echo -ne "   ${ARROW} Secrets... "
+    create_secrets >/dev/null 2>&1
+    printf "\r   ${ARROW} Secrets... ${GREEN}${CHECK}${NC}    \n"
 
-    status "ConfigMap"
-    kubectl apply -f "${TEMP_DIR}/04-configmap-updated.yaml" >/dev/null
-    status_ok
+    apply_with_spinner "ConfigMap" kubectl apply -f "${TEMP_DIR}/04-configmap-updated.yaml"
 
     # Phase 1.5: Model Storage PVCs (for STT/TTS models)
-    status "Model Storage PVCs"
-    kubectl apply -f k8s/02-stt-models-pvc.yaml >/dev/null
-    kubectl apply -f k8s/02-tts-models-pvc.yaml >/dev/null
-    status_ok
+    apply_with_spinner "Model Storage PVCs" bash -c "kubectl apply -f k8s/02-stt-models-pvc.yaml && kubectl apply -f k8s/02-tts-models-pvc.yaml"
 
     # Phase 2: PostgreSQL
-    status "PostgreSQL"
+    echo -ne "   ${ARROW} PostgreSQL... "
     kubectl apply -f k8s/01-postgres-config.yaml >/dev/null 2>&1 || true
-    kubectl apply -f k8s/01-postgres.yaml >/dev/null
-    if kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s >/dev/null 2>&1; then
-        status_ok
+    kubectl apply -f k8s/01-postgres.yaml >/dev/null 2>&1
+
+    # Wait for PostgreSQL with spinner
+    kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s >/dev/null 2>&1 &
+    local pg_pid=$!
+
+    local spinner_idx=0
+    while kill -0 $pg_pid 2>/dev/null; do
+        local spinner="${SPINNER_CHARS[$spinner_idx]}"
+        printf "\r   ${ARROW} PostgreSQL... ${CYAN}${spinner}${NC} "
+        spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+        sleep 0.1
+    done
+
+    wait $pg_pid
+    if [[ $? -eq 0 ]]; then
+        printf "\r   ${ARROW} PostgreSQL... ${GREEN}${CHECK}${NC}    \n"
     else
-        status_fail
+        printf "\r   ${ARROW} PostgreSQL... ${RED}${CROSS}${NC}    \n"
         error "PostgreSQL failed to start"
         return 1
     fi
@@ -385,7 +425,7 @@ restart_services() {
 }
 
 # =============================================================================
-# Wait for Services (Consolidated)
+# Wait for Services (Consolidated) with Spinner Animation
 # =============================================================================
 
 wait_for_services() {
@@ -409,11 +449,28 @@ wait_for_services() {
             "message-recorder") display_name="Message Recorder" ;;
         esac
 
-        status "$display_name"
-        if kubectl rollout status "deployment/$deploy" -n ai-agents --timeout="${timeout}s" >/dev/null 2>&1; then
-            status_ok
+        # Start rollout status check in background
+        echo -ne "   ${ARROW} ${display_name}... "
+
+        kubectl rollout status "deployment/$deploy" -n ai-agents --timeout="${timeout}s" >/dev/null 2>&1 &
+        local pid=$!
+
+        # Spinner animation while waiting
+        local spinner_idx=0
+        while kill -0 $pid 2>/dev/null; do
+            local spinner="${SPINNER_CHARS[$spinner_idx]}"
+            printf "\r   ${ARROW} ${display_name}... ${CYAN}${spinner}${NC} "
+            spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+            sleep 0.1
+        done
+
+        wait $pid
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            printf "\r   ${ARROW} ${display_name}... ${GREEN}${CHECK}${NC}    \n"
         else
-            status_fail
+            printf "\r   ${ARROW} ${display_name}... ${RED}${CROSS}${NC}    \n"
         fi
     done
 }

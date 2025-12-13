@@ -167,6 +167,84 @@ run_cleanup() {
 trap run_cleanup EXIT INT TERM
 
 # =============================================================================
+# Spinner Animation
+# =============================================================================
+
+# Spinner characters for progress indication
+SPINNER_CHARS=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+SPINNER_IDX=0
+
+# Run a command with spinner animation
+# Usage: run_with_spinner "label" command [args...]
+run_with_spinner() {
+    local label="$1"
+    shift
+    local cmd=("$@")
+
+    # Start command in background
+    "${cmd[@]}" &>/dev/null &
+    local pid=$!
+
+    # Show spinner while command runs
+    echo -ne "   ${ARROW} ${label}... "
+
+    local spinner_idx=0
+    while kill -0 $pid 2>/dev/null; do
+        local spinner="${SPINNER_CHARS[$spinner_idx]}"
+        printf "\r   ${ARROW} ${label}... ${CYAN}${spinner}${NC} "
+        spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+        sleep 0.1
+    done
+
+    wait $pid
+    local exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        printf "\r   ${ARROW} ${label}... ${GREEN}${CHECK}${NC}    \n"
+        return 0
+    else
+        printf "\r   ${ARROW} ${label}... ${RED}${CROSS}${NC}    \n"
+        return 1
+    fi
+}
+
+# Run a command with spinner, capturing output to log file
+# Usage: run_with_spinner_logged "label" "log_file" command [args...]
+run_with_spinner_logged() {
+    local label="$1"
+    local log_file="$2"
+    shift 2
+    local cmd=("$@")
+
+    # Start command in background, log output
+    "${cmd[@]}" > "$log_file" 2>&1 &
+    local pid=$!
+
+    # Show spinner while command runs
+    echo -ne "   ${ARROW} ${label}... "
+
+    local spinner_idx=0
+    while kill -0 $pid 2>/dev/null; do
+        local spinner="${SPINNER_CHARS[$spinner_idx]}"
+        printf "\r   ${ARROW} ${label}... ${CYAN}${spinner}${NC} "
+        spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+        sleep 0.1
+    done
+
+    wait $pid
+    local exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        printf "\r   ${ARROW} ${label}... ${GREEN}${CHECK}${NC}    \n"
+        rm -f "$log_file"
+        return 0
+    else
+        printf "\r   ${ARROW} ${label}... ${RED}${CROSS}${NC}    \n"
+        return 1
+    fi
+}
+
+# =============================================================================
 # Logging
 # =============================================================================
 
