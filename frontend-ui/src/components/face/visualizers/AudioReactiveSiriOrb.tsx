@@ -158,13 +158,62 @@ const AudioReactiveSiriOrb: React.FC<AudioReactiveSiriOrbProps> = ({
     return () => cancelAnimationFrame(animationId);
   }, []); // Empty deps - runs once, reads audioLevel from ref
 
+  // Heavily smoothed audio level just for internal animation speed (very damped)
+  const [smoothedAudioForSpeed, setSmoothedAudioForSpeed] = useState(0);
+
+  useEffect(() => {
+    let animationId: number;
+
+    const animate = () => {
+      setSmoothedAudioForSpeed(prev => {
+        const target = audioLevelRef.current;
+        // Very heavily damped for smooth, gradual speed transitions
+        // Attack (0.03) - very gentle rise, Decay (0.02) - very slow fade
+        const factor = target > prev ? 0.03 : 0.02;
+        return prev + (target - prev) * factor;
+      });
+      animationId = requestAnimationFrame(animate);
+    };
+
+    animationId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationId);
+  }, []);
+
   // Calculate scale - subtle but noticeable effect when speaking
-  // With smoothedSpeaking=1 and smoothedAudio=0.7, this gives ~1.084 (8.4% larger)
   const audioScale = 1 + smoothedSpeaking * smoothedAudio * 0.12;
 
-  // Dynamic glow intensity
+  // Dynamic glow intensity - reacts to speaking state
   const glowIntensity = 1 + smoothedSpeaking * smoothedAudio * 0.4;
+
+  // Brightness filter for outer wrapper
   const brightnessFilter = 1 + smoothedSpeaking * smoothedAudio * 0.15;
+
+  // Internal orb subtle reactivity - very gentle changes
+  const saturationFilter = 1 + smoothedAudio * 0.03;        // Subtle color boost
+  const animationSpeed = 20 - smoothedAudioForSpeed * 0.8;  // Subtle speed increase (~4% faster max, heavily damped)
+
+  // Breathing animation - subtle continuous scale oscillation with smooth easing
+  const [breathingScale, setBreathingScale] = useState(1);
+
+  useEffect(() => {
+    let startTime = Date.now();
+    let animationId: number;
+
+    const animateBreathing = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      // Slower 5 second cycle for more relaxed feel
+      const t = (1 - Math.cos(elapsed * Math.PI * 0.4)) / 2; // 0 to 1, naturally eased
+      // Apply smoothstep for extra damping at peaks: t² * (3 - 2t)
+      const smoothed = t * t * (3 - 2 * t);
+      // 1.5% scale variation centered around 1
+      const breath = 1 + (smoothed - 0.5) * 0.03;
+      setBreathingScale(breath);
+      animationId = requestAnimationFrame(animateBreathing);
+    };
+
+    animationId = requestAnimationFrame(animateBreathing);
+    return () => cancelAnimationFrame(animationId);
+  }, []);
 
   // Glow sizes based on sphere size
   const baseGlowSize = size * 0.25;
@@ -195,17 +244,30 @@ const AudioReactiveSiriOrb: React.FC<AudioReactiveSiriOrbProps> = ({
       style={{
         width: size,
         height: size,
+        // GPU acceleration for the container
+        transform: 'translateZ(0)',
+        willChange: 'transform',
       }}
     >
+      {/* Subtle neutral background - ensures sphere is never fully transparent */}
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          background: 'radial-gradient(circle at 50% 50%, rgba(30, 25, 45, 0.95) 0%, rgba(15, 12, 25, 0.9) 70%, rgba(10, 8, 18, 0.85) 100%)',
+          transform: 'translateZ(0)',
+        }}
+      />
+
       {/* Outer glow layer - audio reactive */}
       <div
         className="absolute inset-0 rounded-full"
         style={{
           background: `radial-gradient(circle at 50% 50%, ${glowColors.primary} 0%, transparent 70%)`,
           filter: `blur(${baseGlowSize}px)`,
-          transform: `scale(${1.2 * glowIntensity})`,
+          transform: `scale3d(${1.2 * glowIntensity}, ${1.2 * glowIntensity}, 1)`,
           opacity: 0.5 + smoothedSpeaking * smoothedAudio * 0.3,
           transition: 'opacity 0.2s ease-out',
+          willChange: 'transform, opacity',
         }}
       />
 
@@ -215,25 +277,26 @@ const AudioReactiveSiriOrb: React.FC<AudioReactiveSiriOrbProps> = ({
         style={{
           background: `radial-gradient(circle at 50% 50%, ${glowColors.secondary} 0%, transparent 60%)`,
           filter: `blur(${outerGlowSize}px)`,
-          transform: `scale(${1.4 * glowIntensity})`,
+          transform: `scale3d(${1.4 * glowIntensity}, ${1.4 * glowIntensity}, 1)`,
           opacity: 0.3 + smoothedSpeaking * smoothedAudio * 0.2,
           transition: 'opacity 0.2s ease-out',
+          willChange: 'transform, opacity',
         }}
       />
 
-      {/* SiriOrb with audio-reactive transform */}
+      {/* SiriOrb with audio-reactive transform and breathing */}
       <div
         className="absolute inset-0 flex items-center justify-center"
         style={{
-          transform: `scale(${audioScale})`,
-          filter: `brightness(${brightnessFilter})`,
-          // No CSS transition since JS already smooths the values
+          transform: `scale3d(${audioScale * breathingScale}, ${audioScale * breathingScale}, 1)`,
+          filter: `brightness(${brightnessFilter}) saturate(${saturationFilter})`,
+          willChange: 'transform, filter',
         }}
       >
         <SiriOrb
           size={`${size}px`}
           colors={colors}
-          animationDuration={20}
+          animationDuration={animationSpeed}
           className="w-full h-full"
         />
       </div>
@@ -245,6 +308,8 @@ const AudioReactiveSiriOrb: React.FC<AudioReactiveSiriOrbProps> = ({
           background: `radial-gradient(circle at 50% 50%, ${glowColors.primary} 0%, transparent 50%)`,
           opacity: smoothedSpeaking * (0.2 + smoothedAudio * 0.4),
           transition: 'opacity 0.15s ease-out',
+          transform: 'translateZ(0)',
+          willChange: 'opacity',
         }}
       />
     </div>

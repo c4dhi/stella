@@ -199,6 +199,10 @@ const SiriOrb: React.FC<SiriOrbProps> = ({
           boxShadow: `inset var(--bg) 0 0 var(--shadow-spread) calc(var(--shadow-spread) * 0.2)`,
           filter: `blur(var(--blur-amount)) contrast(var(--contrast-amount))`,
           animation: `siri-orb-rotate var(--animation-duration) linear infinite`,
+          // GPU acceleration
+          transform: 'translateZ(0)',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
         }}
       />
     </div>

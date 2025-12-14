@@ -191,108 +191,154 @@ export function ProjectOverviewBanner({ projectId, isPublic = false }: ProjectOv
         />
 
         <div className="relative flex items-center justify-between p-5">
-          {/* Left: Agent Info with Public/Private Badge */}
-          <div className="flex items-center gap-4 min-w-0 flex-shrink-0">
-            <motion.div
-              className={`flex items-center justify-center w-12 h-12 rounded-xl ${isDark
-                  ? 'bg-violet-500/20 text-violet-400'
-                  : 'bg-violet-100 text-violet-600'
-                }`}
-              transition={{ duration: 0.2 }}
-            >
-              <Bot className="w-6 h-6" />
-            </motion.div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <p
-                  className={`text-[10px] font-medium tracking-wider uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+          {isPublic ? (
+            <>
+              {/* Left: Agent Info with Public Badge (only for public projects) */}
+              <div className="flex items-center gap-4 min-w-0 flex-shrink-0">
+                <motion.div
+                  className={`flex items-center justify-center w-12 h-12 rounded-xl ${isDark
+                      ? 'bg-violet-500/20 text-violet-400'
+                      : 'bg-violet-100 text-violet-600'
                     }`}
+                  transition={{ duration: 0.2 }}
                 >
-                  Deployed Agent
-                </p>
-                {/* Public/Private Badge */}
-                <div
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${isPublic
-                      ? isDark
-                        ? 'bg-violet-500/20 text-violet-400'
-                        : 'bg-violet-100 text-violet-600'
-                      : isDark
-                        ? 'bg-zinc-700/50 text-zinc-400'
-                        : 'bg-neutral-100 text-neutral-500'
-                    }`}
-                >
-                  {isPublic ? (
-                    <>
+                  <Bot className="w-6 h-6" />
+                </motion.div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p
+                      className={`text-[10px] font-medium tracking-wider uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+                        }`}
+                    >
+                      Deployed Agent
+                    </p>
+                    {/* Public Badge */}
+                    <div
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${isDark
+                          ? 'bg-violet-500/20 text-violet-400'
+                          : 'bg-violet-100 text-violet-600'
+                        }`}
+                    >
                       <Globe className="w-2.5 h-2.5" />
                       Public
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-2.5 h-2.5" />
-                      Private
-                    </>
+                    </div>
+                  </div>
+                  <p
+                    className={`text-base font-semibold truncate ${isDark ? 'text-white' : 'text-neutral-900'
+                      }`}
+                  >
+                    {agentName}
+                  </p>
+                  {planName && (
+                    <p
+                      className={`text-xs truncate ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+                        }`}
+                    >
+                      Plan: {planName}
+                    </p>
                   )}
                 </div>
               </div>
-              <p
-                className={`text-base font-semibold truncate ${isDark ? 'text-white' : 'text-neutral-900'
-                  }`}
-              >
-                {agentName}
-              </p>
-              {planName && (
-                <p
-                  className={`text-xs truncate ${isDark ? 'text-zinc-500' : 'text-neutral-500'
+
+              {/* Center: Metrics Grid (for public projects) */}
+              <div className="flex items-center gap-2 sm:gap-4 flex-grow justify-center">
+                <div
+                  className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
+                    }`}
+                />
+
+                <MetricCard
+                  label="Active"
+                  value={metrics.sessions.active}
+                  icon={<Activity className="w-4 h-4" />}
+                  highlight={metrics.sessions.active > 0}
+                />
+
+                <MetricCard
+                  label="Online"
+                  value={metrics.participants.online}
+                  icon={<Users className="w-4 h-4" />}
+                  live={metrics.participants.online > 0}
+                  highlight={metrics.participants.online > 0}
+                />
+
+                <MetricCard
+                  label="Agents"
+                  value={metrics.agents.running}
+                  icon={<Zap className="w-4 h-4" />}
+                  highlight={metrics.agents.running > 0}
+                />
+
+                <MetricCard
+                  label="Messages"
+                  value={metrics.messages.total}
+                  icon={<MessageSquare className="w-4 h-4" />}
+                />
+
+                <div
+                  className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
+                    }`}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Left: Private Badge + Metrics (for private projects) */}
+              <div className="flex items-center gap-4 min-w-0 flex-shrink-0">
+                {/* Private Badge */}
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium ${isDark
+                      ? 'bg-zinc-700/50 text-zinc-400'
+                      : 'bg-neutral-100 text-neutral-500'
                     }`}
                 >
-                  Plan: {planName}
-                </p>
-              )}
-            </div>
-          </div>
+                  <Lock className="w-3.5 h-3.5" />
+                  Private
+                </div>
 
-          {/* Center: Metrics Grid */}
-          <div className="flex items-center gap-2 sm:gap-4 flex-grow justify-center">
-            <div
-              className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
-                }`}
-            />
+                <div
+                  className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
+                    }`}
+                />
 
-            <MetricCard
-              label="Active"
-              value={metrics.sessions.active}
-              icon={<Activity className="w-4 h-4" />}
-              highlight={metrics.sessions.active > 0}
-            />
+                {/* Metrics on the left for private projects */}
+                <div className="flex items-center gap-2 sm:gap-4">
+                  <MetricCard
+                    label="Active"
+                    value={metrics.sessions.active}
+                    icon={<Activity className="w-4 h-4" />}
+                    highlight={metrics.sessions.active > 0}
+                  />
 
-            <MetricCard
-              label="Online"
-              value={metrics.participants.online}
-              icon={<Users className="w-4 h-4" />}
-              live={metrics.participants.online > 0}
-              highlight={metrics.participants.online > 0}
-            />
+                  <MetricCard
+                    label="Online"
+                    value={metrics.participants.online}
+                    icon={<Users className="w-4 h-4" />}
+                    live={metrics.participants.online > 0}
+                    highlight={metrics.participants.online > 0}
+                  />
 
-            <MetricCard
-              label="Agents"
-              value={metrics.agents.running}
-              icon={<Zap className="w-4 h-4" />}
-              highlight={metrics.agents.running > 0}
-            />
+                  <MetricCard
+                    label="Agents"
+                    value={metrics.agents.running}
+                    icon={<Zap className="w-4 h-4" />}
+                    highlight={metrics.agents.running > 0}
+                  />
 
-            <MetricCard
-              label="Messages"
-              value={metrics.messages.total}
-              icon={<MessageSquare className="w-4 h-4" />}
-            />
+                  <MetricCard
+                    label="Messages"
+                    value={metrics.messages.total}
+                    icon={<MessageSquare className="w-4 h-4" />}
+                  />
+                </div>
+              </div>
 
-            <div
-              className={`h-12 w-px ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-200/80'
-                }`}
-            />
-          </div>
+              {/* Spacer for private projects */}
+              <div className="flex-grow" />
+            </>
+          )}
 
-          {/* Right: Status Indicator */}
+          {/* Right: Status Indicator (same for both) */}
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
             <LiveIndicator connected={isConnected} />
             <div className="flex items-center gap-1.5">
