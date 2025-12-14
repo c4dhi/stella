@@ -1,11 +1,11 @@
 /**
  * Weather Visualizer
  * Multiple weather-themed visualizations with particle effects
- * Uses unified ThemeSphere component from landing page
+ * Uses AudioReactiveSiriOrb component for the central sphere
  */
 
 import React, { useEffect, useState } from 'react';
-import ThemeSphere from './ThemeSphere';
+import AudioReactiveSiriOrb from './AudioReactiveSiriOrb';
 import { useResponsiveSphereSize } from './useResponsiveSphereSize';
 
 type WeatherTheme = 'galaxy' | 'rainy' | 'snowy' | 'christmas' | 'sunny';
@@ -218,8 +218,8 @@ const WeatherVisualizer: React.FC<WeatherVisualizerProps> = ({
         </div>
       )}
 
-      {/* Central sphere - unified component from landing page */}
-      <ThemeSphere
+      {/* Central sphere - SiriOrb with audio reactivity */}
+      <AudioReactiveSiriOrb
         theme={theme}
         size={sphereSize}
         audioLevel={audioLevel}

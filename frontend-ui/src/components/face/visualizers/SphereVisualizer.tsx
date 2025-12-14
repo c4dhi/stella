@@ -1,12 +1,11 @@
 /**
  * Sphere Visualizer
- * Animated gradient orb from stella-landingpage with audio reactivity
- * Uses unified ThemeSphere component
+ * Animated gradient orb using SiriOrb from stella-landingpage with audio reactivity
  */
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import ThemeSphere from './ThemeSphere';
+import AudioReactiveSiriOrb from './AudioReactiveSiriOrb';
 import { useResponsiveSphereSize } from './useResponsiveSphereSize';
 
 interface SphereVisualizerProps {
@@ -43,8 +42,8 @@ const SphereVisualizer: React.FC<SphereVisualizerProps> = ({
         }}
       />
 
-      {/* Main sphere - unified component from landing page */}
-      <ThemeSphere
+      {/* Main sphere - SiriOrb with audio reactivity */}
+      <AudioReactiveSiriOrb
         theme="sphere"
         size={sphereSize}
         audioLevel={audioLevel}

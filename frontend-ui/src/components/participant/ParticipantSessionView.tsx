@@ -78,6 +78,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showSubtitles, setShowSubtitles] = useState(true)
   const [showControls, setShowControls] = useState(true)
+  const [audioEnabled, setAudioEnabled] = useState(false)  // Tracks if user has enabled audio via interaction
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
@@ -95,6 +96,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const publishedAudioTrackRef = useRef<LocalTrackPublication | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
+  const pendingAudioElementRef = useRef<HTMLAudioElement | null>(null)  // Audio element waiting for user interaction
 
   // Connect to LiveKit room
   useEffect(() => {
@@ -335,10 +337,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
   // Handle track subscribed (for receiving agent audio)
   const handleTrackSubscribed = useCallback(
-    (track: RemoteTrack, publication: RemoteTrackPublication) => {
+    (track: RemoteTrack, _publication: RemoteTrackPublication, _participant: RemoteParticipant) => {
       if (track.kind === Track.Kind.Audio) {
         const audioElement = track.attach()
-        audioElement.autoplay = true
         audioElement.volume = 1.0
         audioElement.muted = false
 
@@ -346,15 +347,20 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         audioElement.style.display = 'none'
         document.body.appendChild(audioElement)
 
-        audioElement.play().catch(err => {
-          console.error('[Participant] Audio play failed:', err)
-        })
-
         // Store track reference for audio analysis
         remoteAudioTrackRef.current = track
 
-        // Set up Web Audio API for accurate speech detection
-        setupRemoteAudioAnalysis(track)
+        // Store the audio element - we'll try to play it, but if blocked we need user interaction
+        pendingAudioElementRef.current = audioElement
+
+        // Try to play immediately (will work if user has already interacted)
+        audioElement.play().then(() => {
+          setAudioEnabled(true)
+          // Set up Web Audio API for accurate speech detection
+          setupRemoteAudioAnalysis(track)
+        }).catch(() => {
+          // Audio blocked by browser autoplay policy - user needs to click to enable
+        })
       }
     },
     []
@@ -611,9 +617,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
       // Resume AudioContext if suspended (browsers require user interaction)
       if (audioContextRef.current.state === 'suspended') {
-        console.log('[Participant] AudioContext is suspended, attempting to resume...')
         await audioContextRef.current.resume()
-        console.log('[Participant] AudioContext resumed, state:', audioContextRef.current.state)
       }
 
       // Create source from remote track's MediaStreamTrack
@@ -631,27 +635,15 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
       // Start audio level monitoring at 60 FPS
       let lastSpeakingState = false
-      let resumeAttempted = false
 
-      const analyzeAudio = async () => {
+      const analyzeAudio = () => {
         if (!analyserRef.current || !remoteAudioTrackRef.current) return
 
         let audioLevelValue = 0
         let isSpeaking = false
 
-        // Try to resume AudioContext if it's suspended (user interaction may have happened)
-        if (audioContextRef.current && audioContextRef.current.state === 'suspended' && !resumeAttempted) {
-          resumeAttempted = true
-          try {
-            await audioContextRef.current.resume()
-            console.log('[Participant] AudioContext resumed during monitoring')
-          } catch (err) {
-            console.warn('[Participant] Could not resume AudioContext:', err)
-          }
-        }
-
+        // Only analyze if AudioContext is running (resumed by user interaction via resumeAudioContext)
         if (analyserRef.current && audioContextRef.current?.state === 'running') {
-          // Use Web Audio API for accurate audio content analysis
           const bufferLength = analyserRef.current.frequencyBinCount
           const dataArray = new Uint8Array(bufferLength)
 
@@ -683,11 +675,47 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
       // Start the analysis loop
       audioAnalysisFrameRef.current = requestAnimationFrame(analyzeAudio)
-      console.log('[Participant] Started audio level monitoring (Web Audio RMS analysis)')
     } catch (error) {
       console.error('[Participant] Error setting up audio analysis:', error)
     }
   }
+
+  // Resume AudioContext - call this after any user interaction to enable audio analysis
+  const resumeAudioContext = useCallback(async () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      try {
+        await audioContextRef.current.resume()
+      } catch {
+        // Could not resume AudioContext
+      }
+    }
+  }, [])
+
+  // Enable audio - called on first user interaction to start audio playback
+  const enableAudio = useCallback(async () => {
+    if (audioEnabled) return  // Already enabled
+
+    // Resume AudioContext first
+    await resumeAudioContext()
+
+    // Play the pending audio element if we have one
+    if (pendingAudioElementRef.current) {
+      try {
+        await pendingAudioElementRef.current.play()
+        setAudioEnabled(true)
+
+        // Now set up audio analysis since we have user interaction
+        if (remoteAudioTrackRef.current) {
+          setupRemoteAudioAnalysis(remoteAudioTrackRef.current)
+        }
+      } catch {
+        // Audio play still blocked
+      }
+    } else {
+      // No pending audio yet, but mark as enabled for when it arrives
+      setAudioEnabled(true)
+    }
+  }, [audioEnabled, resumeAudioContext])
 
   // Toggle microphone - explicitly publish/unpublish audio track (matching session screen approach)
   const toggleMicrophone = useCallback(async () => {
@@ -695,6 +723,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       console.warn('[Participant] Cannot toggle microphone - room not connected')
       return
     }
+
+    // Enable audio on user interaction (browser requirement)
+    await enableAudio()
 
     try {
       if (isMuted) {
@@ -762,7 +793,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     } catch (error) {
       console.error('[Participant] ✗ Error toggling microphone:', error)
     }
-  }, [room, isMuted])
+  }, [room, isMuted, enableAudio])
 
   // Cleanup audio resources
   const cleanupAudio = () => {
@@ -978,6 +1009,38 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           isUserSpeaking={!isMuted}
         />
       </div>
+
+      {/* Audio Enable Overlay - shown until user clicks to enable audio */}
+      <AnimatePresence>
+        {!audioEnabled && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 flex items-center justify-center z-30 cursor-pointer bg-black/70"
+            onClick={enableAudio}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="bg-black/80 backdrop-blur-md rounded-2xl p-8 text-center max-w-md mx-4 border border-white/10"
+            >
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-violet-500/20 flex items-center justify-center">
+                <svg className="w-8 h-8 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+              </div>
+              <h3 className="text-white text-lg font-medium mb-2">Tap to Enable Audio</h3>
+              <p className="text-white/60 text-sm">
+                Click anywhere to enable audio playback and visualizer animations
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Top-right control buttons */}
       <motion.div

@@ -191,8 +191,8 @@ detect_gpu() {
 
 # Auto-configure GPU settings for production
 configure_gpu_settings() {
-    # First detect GPU
-    detect_gpu
+    # First detect GPU (|| true to prevent exit on no GPU)
+    detect_gpu || true
 
     # In production mode with GPU available, auto-enable GPU if not explicitly set
     if [[ "$NODE_ENV" == "production" && "$GPU_AVAILABLE" == "true" ]]; then
