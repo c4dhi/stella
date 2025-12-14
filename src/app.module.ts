@@ -25,6 +25,7 @@ import { PublicProjectsModule } from './public-projects/public-projects.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { UserMessagesModule } from './user-messages/user-messages.module';
 import { ProjectInvitationsModule } from './project-invitations/project-invitations.module';
+import { AgentRegistryModule } from './agent-registry/agent-registry.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { ProjectInvitationsModule } from './project-invitations/project-invitati
     MetricsModule,
     UserMessagesModule,
     ProjectInvitationsModule,
+    AgentRegistryModule,
   ],
   controllers: [AppController],
   providers: [

@@ -28,33 +28,6 @@ export interface AgentTypeInfo {
   configSchema: Record<string, unknown> | null;  // JSON Schema for agent config (includes x-stella-* extensions)
 }
 
-// Metadata for each agent type (fallback when database is empty)
-const AGENT_TYPE_METADATA: Record<string, {
-  name: string;
-  description: string;
-  icon: string;
-  defaultConfig: Record<string, unknown>;
-}> = {
-  'stella-agent': {
-    name: 'Stella Agent',
-    description: 'Full-featured conversational AI with expert consultation',
-    icon: '👩‍⚕️',
-    defaultConfig: { plan_id: 'stella_smalltalk' },
-  },
-  'stella-light-agent': {
-    name: 'Stella Light',
-    description: 'Lightweight conversational AI with prompt-based guardrails',
-    icon: '💡',
-    defaultConfig: { plan_id: 'stella_smalltalk' },
-  },
-  'echo-agent': {
-    name: 'Echo Agent',
-    description: 'Simple test agent that echoes user input',
-    icon: '🔊',
-    defaultConfig: {},
-  },
-};
-
 @Injectable()
 export class AgentImageService {
   private readonly logger = new Logger(AgentImageService.name);
@@ -157,44 +130,22 @@ export class AgentImageService {
   }
 
   /**
-   * Get all registered agent types with metadata.
-   * Tries database first, falls back to hardcoded metadata.
+   * Get all registered agent types with metadata from database.
+   * Throws error if database is not seeded - no fallback to prevent silent failures.
    */
   async getAgentTypesWithInfo(): Promise<AgentTypeInfo[]> {
-    try {
-      // Try to get agent types from database
-      const dbTypes = await this.agentTypeService.getAgentTypesForGallery();
+    const dbTypes = await this.agentTypeService.getAgentTypesForGallery();
 
-      if (dbTypes.length > 0) {
-        this.logger.debug(`Loaded ${dbTypes.length} agent types from database`);
-        return dbTypes;
-      }
-    } catch (error) {
-      this.logger.warn(`Failed to load agent types from database: ${error.message}`);
+    if (dbTypes.length === 0) {
+      this.logger.error('No agent types found in database. Database must be seeded.');
+      throw new Error(
+        'No agent types found. Please run: npx prisma db seed\n' +
+        'This will read agent.yaml manifests from agents/ directory and populate the database.'
+      );
     }
 
-    // Fallback to hardcoded metadata (for backward compatibility)
-    this.logger.debug('Using hardcoded agent type metadata');
-    return Array.from(this.agentRegistry.keys()).map((slug) => {
-      const metadata = AGENT_TYPE_METADATA[slug] || {
-        name: slug,
-        description: 'No description available',
-        icon: '🤖',
-        defaultConfig: {},
-      };
-      return {
-        id: slug,  // Use slug as ID for backward compat
-        slug,
-        name: metadata.name,
-        description: metadata.description,
-        icon: metadata.icon,
-        version: '1.0.0',
-        isBuiltIn: true,
-        capabilities: [],
-        defaultConfig: metadata.defaultConfig,
-        configSchema: null,  // Fallback has no configSchema - agents require DB seed
-      };
-    });
+    this.logger.debug(`Loaded ${dbTypes.length} agent types from database`);
+    return dbTypes;
   }
 
   /**

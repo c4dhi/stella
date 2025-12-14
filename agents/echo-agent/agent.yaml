@@ -1,0 +1,31 @@
+version: "1.0"
+
+metadata:
+  name: "Echo Agent"
+  slug: "echo-agent"
+  version: "1.0.0"
+  description: "Simple test agent that echoes user input back. Great for testing audio pipelines."
+  icon: "🔊"
+  tags:
+    - testing
+    - audio
+
+capabilities:
+  - voice
+  - text
+
+image:
+  dockerfile: "Dockerfile"
+
+resources:
+  memory:
+    request: "256Mi"
+    limit: "512Mi"
+  cpu:
+    request: "100m"
+    limit: "500m"
+
+defaultConfig: {}
+
+sdk:
+  minVersion: "0.4.0"

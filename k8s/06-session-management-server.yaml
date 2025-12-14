@@ -62,6 +62,7 @@ spec:
           echo "✓ Migrations completed successfully"
 
           echo "Running database seed..."
+          echo "  AGENT_WORKSPACE_ROOT: $AGENT_WORKSPACE_ROOT"
           npx prisma db seed
           SEED_RESULT=$?
           if [ $SEED_RESULT -ne 0 ]; then
@@ -76,6 +77,14 @@ spec:
             secretKeyRef:
               name: stella-ai-secrets
               key: database-url
+        # Path to mounted project directory for reading agent.yaml manifests
+        - name: AGENT_WORKSPACE_ROOT
+          value: "/workspace/stella-backend"
+        volumeMounts:
+        # Mount project directory for agent manifest discovery during seeding
+        - name: project-dir
+          mountPath: /workspace/stella-backend
+          readOnly: true
 
       containers:
       - name: server

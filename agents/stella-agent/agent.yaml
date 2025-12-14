@@ -1,0 +1,54 @@
+version: "1.0"
+
+metadata:
+  name: "Stella Agent"
+  slug: "stella-agent"
+  version: "1.0.0"
+  description: "Full-featured conversational AI with expert consultation and plan execution."
+  icon: "👩‍⚕️"
+  tags:
+    - voice
+    - ai
+    - expert-consultation
+
+capabilities:
+  - voice
+  - text
+  - plans
+  - experts
+
+image:
+  dockerfile: "Dockerfile"
+
+resources:
+  memory:
+    request: "512Mi"
+    limit: "2Gi"
+  cpu:
+    request: "250m"
+    limit: "1000m"
+
+configSchema:
+  type: object
+  properties:
+    plan:
+      type: object
+      description: "Plan configuration with states, tasks, and deliverables"
+      x-stella-requires-plan: true
+    llm:
+      type: object
+      description: "LLM configuration (model, temperature, etc.)"
+      properties:
+        model:
+          type: string
+          default: "gpt-4o"
+        temperature:
+          type: number
+          default: 0.7
+  x-stella-env-vars:
+    - OPENAI_API_KEY
+
+defaultConfig: {}
+
+sdk:
+  minVersion: "0.4.0"
