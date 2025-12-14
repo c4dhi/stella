@@ -8,9 +8,10 @@ import ProfileSection from '../components/settings/ProfileSection'
 import PreferencesSection from '../components/settings/PreferencesSection'
 import PlanBuilderSection from '../components/settings/PlanBuilderSection'
 import EnvVarBuilderSection from '../components/settings/EnvVarBuilderSection'
+import AgentLibrarySection from '../components/settings/AgentLibrarySection'
 import InboxSection from '../components/settings/InboxSection'
 
-const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars', 'inbox']
+const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars', 'agent-library', 'inbox']
 
 // Animation variants for page transitions
 const pageVariants = {
@@ -67,6 +68,8 @@ export default function SettingsPage() {
         return <PlanBuilderSection />
       case 'env-vars':
         return <EnvVarBuilderSection />
+      case 'agent-library':
+        return <AgentLibrarySection />
       case 'inbox':
         return <InboxSection />
       default:

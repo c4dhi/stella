@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useNotificationStore } from '../../store/notificationStore'
 
-export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'inbox'
+export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'agent-library' | 'inbox'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
@@ -41,6 +41,19 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="12" r="3" />
         <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+      </svg>
+    ),
+  },
+  {
+    id: 'agent-library',
+    label: 'Agent Library',
+    description: 'Browse & upload agents',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <circle cx="8.5" cy="8.5" r="1.5" />
+        <circle cx="15.5" cy="8.5" r="1.5" />
+        <path d="M9 15h6" />
       </svg>
     ),
   },
