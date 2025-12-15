@@ -31,6 +31,7 @@ class LightPromptBuilder:
         progress = context.get("progress", {})
         state_just_changed = context.get("state_just_changed", False)
         current_task = context.get("current_task")
+        available_tasks = context.get("available_tasks", [])
         plan_system_prompt = context.get("plan_system_prompt")
 
         parts = [
@@ -42,7 +43,7 @@ class LightPromptBuilder:
 
         # Add context if state machine is initialized
         if state:
-            parts.append(self._build_context(state, mode, progress, current_task))
+            parts.append(self._build_context(state, mode, progress, current_task, available_tasks))
 
         # Add state transition warning if applicable
         if state_just_changed:
@@ -120,14 +121,27 @@ You MUST respond using this EXACT format:
 
 MESSAGE: [Your conversational response here - 30-50 words, max 1 question]
 DELIVERABLES: [JSON object with extracted values] or [NONE]
+COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
 
 Example responses:
 
 MESSAGE: That's wonderful to hear, Sarah! I love how passionate you are about gardening. It sounds like such a peaceful hobby. What kinds of plants do you enjoy growing the most?
 DELIVERABLES: {"user_name": {"value": "Sarah", "reasoning": "User introduced herself as Sarah"}}
+COMPLETED_TASKS: [NONE]
 
 MESSAGE: Thanks for sharing that with me! I'd love to learn more about you. What do you enjoy doing in your free time?
-DELIVERABLES: [NONE]"""
+DELIVERABLES: [NONE]
+COMPLETED_TASKS: [NONE]
+
+MESSAGE: Hello! I'm STELLA, your AI companion for cognitive wellness. I was developed at the Centre for Digital Health Interventions in Switzerland. I'm here to have meaningful conversations and support your cognitive health. What's your name?
+DELIVERABLES: [NONE]
+COMPLETED_TASKS: ["warm_introduction"]
+
+### COMPLETED_TASKS Rules
+- Use COMPLETED_TASKS to mark tasks as done when they DON'T require data collection
+- Only mark tasks that you have actually performed in your MESSAGE
+- Tasks that collect deliverables are automatically completed when all deliverables are collected
+- Format: JSON array of task IDs, e.g., ["tell_joke", "say_goodbye"]"""
 
     def _build_deliverable_rules(self, deliverables: List[Dict]) -> str:
         """Build deliverable extraction rules."""
@@ -164,7 +178,8 @@ No deliverables to collect currently. Focus on natural conversation."""
         state: Dict,
         mode: str,
         progress: Dict,
-        current_task: Optional[Dict]
+        current_task: Optional[Dict],
+        available_tasks: Optional[List[Dict]] = None
     ) -> str:
         """Build current conversation context."""
         parts = ["## Current Context"]
@@ -179,6 +194,18 @@ No deliverables to collect currently. Focus on natural conversation."""
             parts.append(f"\n**Current Focus:** {current_task.get('description', '')}")
             if current_task.get('instruction'):
                 parts.append(f"**Instruction:** {current_task.get('instruction')}")
+
+        # Show tasks without deliverables that need explicit completion
+        if available_tasks:
+            tasks_without_deliverables = [
+                t for t in available_tasks
+                if not t.get('has_deliverables', True)
+            ]
+            if tasks_without_deliverables:
+                parts.append("\n**Tasks to complete (no data collection needed):**")
+                for t in tasks_without_deliverables:
+                    parts.append(f"- {t.get('id')}: {t.get('description', '')}")
+                parts.append("Mark these as done using COMPLETED_TASKS when you perform them.")
 
         return "\n".join(parts)
 

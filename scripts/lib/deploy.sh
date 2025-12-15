@@ -289,6 +289,79 @@ create_secrets() {
 }
 
 # =============================================================================
+# Database Migrations
+# =============================================================================
+# Runs Prisma migrations against the PostgreSQL database.
+# This ensures the database schema is up-to-date before starting application services.
+
+run_database_migrations() {
+    if [[ "$DRY_RUN_MODE" == "true" ]]; then
+        echo -e "   ${ARROW} Database migrations... ${YELLOW}[dry-run]${NC}"
+        return 0
+    fi
+
+    echo -ne "   ${ARROW} Database migrations... "
+
+    # Use a different local port to avoid conflicts with any existing port-forwards
+    local pg_local_port=5433
+    local pg_forward_pid=""
+
+    # Start port-forward to PostgreSQL in background
+    kubectl port-forward svc/postgres ${pg_local_port}:5432 -n ai-agents >/dev/null 2>&1 &
+    pg_forward_pid=$!
+
+    # Wait for port-forward to be ready
+    local max_wait=30
+    local waited=0
+    while ! nc -z localhost ${pg_local_port} 2>/dev/null; do
+        sleep 1
+        waited=$((waited + 1))
+        if [[ $waited -ge $max_wait ]]; then
+            kill $pg_forward_pid 2>/dev/null || true
+            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+            error "Timeout waiting for PostgreSQL port-forward"
+            return 1
+        fi
+    done
+
+    # Build the DATABASE_URL for migrations
+    local migration_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${pg_local_port}/${POSTGRES_DB}?schema=public"
+
+    # Run Prisma migrations
+    local migration_output
+    local migration_exit_code
+
+    # Change to project directory and run migration
+    pushd "$PROJECT_DIR" > /dev/null
+    migration_output=$(DATABASE_URL="$migration_db_url" npx prisma migrate deploy 2>&1)
+    migration_exit_code=$?
+    popd > /dev/null
+
+    # Clean up port-forward
+    kill $pg_forward_pid 2>/dev/null || true
+    wait $pg_forward_pid 2>/dev/null || true
+
+    if [[ $migration_exit_code -eq 0 ]]; then
+        printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
+
+        # Show migration details in verbose mode
+        if [[ "$VERBOSE_MODE" == "true" ]]; then
+            echo "$migration_output" | grep -E "applied|Already|migration" | head -5 | while read -r line; do
+                verbose "  $line"
+            done
+        fi
+        return 0
+    else
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        echo ""
+        error "Prisma migration failed:"
+        echo "$migration_output" | tail -20
+        echo ""
+        return 1
+    fi
+}
+
+# =============================================================================
 # Main Deployment Function
 # =============================================================================
 
@@ -377,6 +450,13 @@ deploy_services() {
     else
         printf "\r   ${ARROW} PostgreSQL... ${RED}${CROSS}${NC}    \n"
         error "PostgreSQL failed to start"
+        return 1
+    fi
+
+    # Phase 2.5: Run database migrations
+    run_database_migrations
+    if [[ $? -ne 0 ]]; then
+        error "Database migration failed - stopping deployment"
         return 1
     fi
 

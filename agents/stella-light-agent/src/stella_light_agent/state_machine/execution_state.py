@@ -246,6 +246,31 @@ class ExecutionState:
             completed_deliverables=dict(self._deliverable_values)
         )
 
+    def mark_task_completed(self, task_id: str) -> bool:
+        """
+        Mark a task as completed by ID (for tasks without deliverables).
+
+        This allows the agent to explicitly complete tasks that don't require
+        data collection, such as "State your name" or "Tell a joke".
+
+        Args:
+            task_id: The ID of the task to mark as completed
+
+        Returns:
+            True if task was found and marked completed
+        """
+        state = self.current_state
+        if not state:
+            return False
+
+        for task in state.tasks:
+            if task.id == task_id:
+                task.status = TaskStatus.COMPLETED
+                # Reset turn counter since progress was made
+                self.turns_without_deliverable = 0
+                return True
+        return False
+
     def get_context_summary(self) -> Dict[str, Any]:
         """Get a summary of current execution state for logging."""
         state = self.current_state

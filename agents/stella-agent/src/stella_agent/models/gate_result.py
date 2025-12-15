@@ -19,6 +19,7 @@ class GateResult:
     message: str
     experts_to_consult: List[str] = field(default_factory=list)
     deliverables: Dict[str, Any] = field(default_factory=dict)
+    completed_tasks: List[str] = field(default_factory=list)
     state_transition: Optional[str] = None
     reasoning: str = ""
     expert_configuration: Dict[str, Any] = field(default_factory=dict)
@@ -38,6 +39,7 @@ class GateResult:
             "message": self.message,
             "experts_to_consult": self.experts_to_consult,
             "deliverables": self.deliverables,
+            "completed_tasks": self.completed_tasks,
             "state_transition": self.state_transition,
             "reasoning": self.reasoning,
             "expert_configuration": self.expert_configuration,

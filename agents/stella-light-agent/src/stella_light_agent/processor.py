@@ -11,7 +11,7 @@ import asyncio
 import json
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Dict, Any, Optional, List
 
 from stella_agent_sdk.messages.output import AgentOutput
@@ -29,14 +29,18 @@ class ProcessorResult:
     """Result from LightProcessor."""
     message: str
     deliverables: Dict[str, Any]
+    completed_tasks: List[str] = field(default_factory=list)
 
 
 # Markers that indicate the end of MESSAGE section
-_MESSAGE_END_MARKERS = ["DELIVERABLES:"]
+_MESSAGE_END_MARKERS = ["DELIVERABLES:", "COMPLETED_TASKS:"]
 # Partial prefixes to buffer against
 _MESSAGE_END_PREFIXES = [
     "D", "DE", "DEL", "DELI", "DELIV", "DELIVE", "DELIVER",
-    "DELIVERA", "DELIVERAB", "DELIVERABL", "DELIVERABLE", "DELIVERABLES"
+    "DELIVERA", "DELIVERAB", "DELIVERABL", "DELIVERABLE", "DELIVERABLES",
+    "C", "CO", "COM", "COMP", "COMPL", "COMPLE", "COMPLET", "COMPLETE",
+    "COMPLETED", "COMPLETED_", "COMPLETED_T", "COMPLETED_TA", "COMPLETED_TAS",
+    "COMPLETED_TASK", "COMPLETED_TASKS"
 ]
 
 
@@ -159,18 +163,25 @@ class LightStreamingCallback(LLMStreamingCallback):
         await self.token_queue.put(("error", str(error)))
 
     def get_parsed_content(self) -> tuple:
-        """Get the parsed message and deliverables.
+        """Get the parsed message, deliverables, and completed tasks.
 
         Returns:
-            (message, deliverables_dict)
+            (message, deliverables_dict, completed_tasks_list)
         """
         message = self.message_content.strip()
         deliverables = {}
+        completed_tasks = []
 
         # Parse DELIVERABLES section
         if "DELIVERABLES:" in self.accumulated_text:
             deliv_idx = self.accumulated_text.find("DELIVERABLES:") + len("DELIVERABLES:")
             deliv_section = self.accumulated_text[deliv_idx:].strip()
+
+            # Cut off at next section marker if present
+            for marker in ["COMPLETED_TASKS:"]:
+                marker_pos = deliv_section.find(marker)
+                if marker_pos != -1:
+                    deliv_section = deliv_section[:marker_pos].strip()
 
             # Check for [NONE]
             if deliv_section.upper().startswith("[NONE]"):
@@ -179,7 +190,60 @@ class LightStreamingCallback(LLMStreamingCallback):
                 # Try to parse JSON
                 deliverables = self._extract_json(deliv_section)
 
-        return message, deliverables
+        # Parse COMPLETED_TASKS section
+        if "COMPLETED_TASKS:" in self.accumulated_text:
+            tasks_idx = self.accumulated_text.find("COMPLETED_TASKS:") + len("COMPLETED_TASKS:")
+            tasks_section = self.accumulated_text[tasks_idx:].strip()
+
+            # Check for [NONE]
+            if tasks_section.upper().startswith("[NONE]"):
+                completed_tasks = []
+            else:
+                # Try to parse JSON array
+                completed_tasks = self._extract_json_array(tasks_section)
+
+        return message, deliverables, completed_tasks
+
+    def _extract_json_array(self, text: str) -> List[str]:
+        """Extract JSON array from text."""
+        # Find JSON array boundaries
+        start_idx = text.find("[")
+        if start_idx == -1:
+            return []
+
+        # Find matching closing bracket
+        bracket_count = 0
+        end_idx = start_idx
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == "[":
+                bracket_count += 1
+            elif char == "]":
+                bracket_count -= 1
+                if bracket_count == 0:
+                    end_idx = i
+                    break
+
+        if bracket_count != 0:
+            return []
+
+        json_str = text[start_idx:end_idx + 1]
+
+        try:
+            result = json.loads(json_str)
+            if isinstance(result, list):
+                return [str(item) for item in result]
+            return []
+        except json.JSONDecodeError:
+            # Try to fix common issues
+            fixed = json_str.replace("'", '"')
+            try:
+                result = json.loads(fixed)
+                if isinstance(result, list):
+                    return [str(item) for item in result]
+                return []
+            except json.JSONDecodeError:
+                print(f"[LightProcessor] Failed to parse completed_tasks JSON: {json_str[:100]}")
+                return []
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
         """Extract JSON from text, handling common issues."""
@@ -330,9 +394,9 @@ class LightProcessor:
             return
 
         # Get parsed result
-        message, deliverables = callback.get_parsed_content()
+        message, deliverables, completed_tasks = callback.get_parsed_content()
 
         # Return result via a special output that the agent will catch
-        yield ProcessorResult(message=message, deliverables=deliverables)
+        yield ProcessorResult(message=message, deliverables=deliverables, completed_tasks=completed_tasks)
 
         self._current_callback = None

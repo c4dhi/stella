@@ -340,8 +340,48 @@ class StellaAgent(BaseAgent):
                         key=key,
                         value=value
                     )
-            else:
-                # No deliverables extracted - increment turn counter
+
+            # Handle explicitly completed tasks (tasks without deliverables)
+            if gate_result.completed_tasks:
+                print(f"[StellaAgent] Explicitly completed tasks: {gate_result.completed_tasks}")
+
+                yield AgentOutput.debug(
+                    input.session_id,
+                    f"Explicitly completed {len(gate_result.completed_tasks)} tasks",
+                    component="agent",
+                    completed_task_ids=gate_result.completed_tasks
+                )
+
+                if self.state_machine.is_initialized:
+                    self.state_machine.mark_tasks_completed(gate_result.completed_tasks)
+
+                    # Check for state transitions after marking tasks complete
+                    result = self.state_machine.process_deliverables({})
+                    if result.should_advance and result.next_state_id:
+                        old_state = self.state_machine.current_state
+                        old_state_id = old_state.id if old_state else "Unknown"
+                        old_state_title = old_state.title if old_state else "Unknown"
+
+                        if self.state_machine.advance_state():
+                            new_state = self.state_machine.current_state
+                            new_state_id = new_state.id if new_state else "Unknown"
+                            new_state_title = new_state.title if new_state else "Unknown"
+
+                            yield AgentOutput.debug(
+                                input.session_id,
+                                f"State transition: {old_state_title} -> {new_state_title}",
+                                component="state_machine",
+                                stage="state_transition",
+                                from_state_id=old_state_id,
+                                from_state_title=old_state_title,
+                                to_state_id=new_state_id,
+                                to_state_title=new_state_title,
+                                transition_reason="explicit_task_completion",
+                                completed_tasks=gate_result.completed_tasks
+                            )
+
+            # No deliverables or completed tasks - increment turn counter
+            if not gate_result.deliverables and not gate_result.completed_tasks:
                 if self.state_machine.is_initialized:
                     self.state_machine.increment_turn()
 

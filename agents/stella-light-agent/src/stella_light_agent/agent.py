@@ -245,8 +245,21 @@ class StellaLightAgent(BaseAgent):
                     else:
                         value = data
                     yield AgentOutput.deliverable(input.session_id, key=key, value=value)
-            else:
-                # No deliverables extracted - increment turn counter
+
+            # Handle explicitly completed tasks (tasks without deliverables)
+            if result and result.completed_tasks:
+                print(f"[StellaLightAgent] Explicitly completed tasks: {result.completed_tasks}")
+
+                if self.state_machine.is_initialized:
+                    self.state_machine.mark_tasks_completed(result.completed_tasks)
+
+                    # Check for state transitions after marking tasks complete
+                    sm_result = self.state_machine.process_deliverables({})
+                    if sm_result.should_advance and sm_result.next_state_id:
+                        self.state_machine.advance_state()
+
+            # No deliverables or completed tasks - increment turn counter
+            if result and not result.deliverables and not result.completed_tasks:
                 if self.state_machine.is_initialized:
                     self.state_machine.increment_turn()
 

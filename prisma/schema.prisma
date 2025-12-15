@@ -212,6 +212,10 @@ model AgentInstance {
   createdAt     DateTime     @default(now())
   stoppedAt     DateTime?
 
+  // Environment variable template (for API keys like OPENAI_API_KEY)
+  envVarTemplateId String?
+  envVarTemplate   EnvVarTemplate? @relation(fields: [envVarTemplateId], references: [id])
+
   // Health tracking (Phase 3.2)
   healthState       String?   @default("unknown")  // Agent state: initializing, ready, processing, error, etc.
   lastHealthCheck   DateTime?                      // Last time health check was performed
@@ -222,6 +226,7 @@ model AgentInstance {
   @@index([sessionId])
   @@index([status])
   @@index([agentTypeId])
+  @@index([envVarTemplateId])
 }
 
 model Participant {
@@ -360,6 +365,9 @@ model EnvVarTemplate {
   // Optional: scope to specific agent type
   agentTypeId String?
   agentType   AgentType? @relation(fields: [agentTypeId], references: [id])
+
+  // Agents using this template
+  agents      AgentInstance[]
 
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt

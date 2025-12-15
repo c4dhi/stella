@@ -33,9 +33,10 @@ if TYPE_CHECKING:
     from stella_agent.prompts.builder import PromptBuilder
 
 # Markers that indicate the end of MESSAGE section
-_MESSAGE_END_MARKERS = ["DELIVERABLES:", "STATE_TRANSITION:"]
+_MESSAGE_END_MARKERS = ["DELIVERABLES:", "COMPLETED_TASKS:", "STATE_TRANSITION:"]
 # Partial prefixes to buffer against (avoid streaming partial markers)
 _MESSAGE_END_PREFIXES = ["D", "DE", "DEL", "DELI", "DELIV", "DELIVE", "DELIVER", "DELIVERA", "DELIVERAB", "DELIVERABL", "DELIVERABLE", "DELIVERABLES",
+                         "C", "CO", "COM", "COMP", "COMPL", "COMPLE", "COMPLET", "COMPLETE", "COMPLETED", "COMPLETED_", "COMPLETED_T", "COMPLETED_TA", "COMPLETED_TAS", "COMPLETED_TASK", "COMPLETED_TASKS",
                          "S", "ST", "STA", "STAT", "STATE", "STATE_", "STATE_T", "STATE_TR", "STATE_TRA", "STATE_TRAN", "STATE_TRANS", "STATE_TRANSI", "STATE_TRANSIT", "STATE_TRANSITI", "STATE_TRANSITIO", "STATE_TRANSITION"]
 
 
@@ -61,6 +62,7 @@ class StreamingInputGateCallback(LLMStreamingCallback):
         self.verdict_detected = False
         self.verdict = None
         self.experts = None
+        self.completed_tasks = None
         self.state_transition = None
         self.message_started = False
         self.message_ended = False  # Once True, no more tokens are streamed
@@ -230,11 +232,62 @@ class StreamingInputGateCallback(LLMStreamingCallback):
         if deliverables_str and deliverables_str != "[NONE]":
             deliverables = self._parse_deliverables_json(deliverables_str)
 
+        # Extract COMPLETED_TASKS
+        completed_tasks = []
+        completed_tasks_str = self._extract_completed_tasks(self.accumulated_text)
+        if completed_tasks_str:
+            completed_tasks = completed_tasks_str
+
         # Extract MESSAGE
-        message_match = re.search(r'MESSAGE: (.+?)(?=DELIVERABLES:|STATE_TRANSITION:|$)', self.accumulated_text, re.DOTALL)
+        message_match = re.search(r'MESSAGE: (.+?)(?=DELIVERABLES:|COMPLETED_TASKS:|STATE_TRANSITION:|$)', self.accumulated_text, re.DOTALL)
         message = message_match.group(1).strip() if message_match else ""
 
-        return thought, verdict, experts, deliverables, state_transition, message
+        return thought, verdict, experts, deliverables, completed_tasks, state_transition, message
+
+    def _extract_completed_tasks(self, text: str) -> List[str]:
+        """Extract COMPLETED_TASKS array from text."""
+        completed_tasks_start = text.find('COMPLETED_TASKS: ')
+        if completed_tasks_start == -1:
+            return []
+
+        start_pos = completed_tasks_start + len('COMPLETED_TASKS: ')
+        remaining_text = text[start_pos:].strip()
+
+        # Check for [NONE]
+        if remaining_text.upper().startswith('[NONE]'):
+            return []
+
+        # Find JSON array
+        if remaining_text.startswith('['):
+            # Find matching closing bracket
+            bracket_count = 0
+            end_pos = 0
+            for i, char in enumerate(remaining_text):
+                if char == '[':
+                    bracket_count += 1
+                elif char == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        end_pos = i + 1
+                        break
+
+            if end_pos > 0:
+                json_str = remaining_text[:end_pos]
+                try:
+                    result = json.loads(json_str)
+                    if isinstance(result, list):
+                        return [str(item) for item in result]
+                except json.JSONDecodeError:
+                    # Try to fix common issues
+                    fixed = json_str.replace("'", '"')
+                    try:
+                        result = json.loads(fixed)
+                        if isinstance(result, list):
+                            return [str(item) for item in result]
+                    except json.JSONDecodeError:
+                        print(f"[InputGate] Failed to parse completed_tasks JSON: {json_str[:100]}")
+
+        return []
 
     def _extract_deliverables_json(self, text: str) -> Optional[str]:
         """Extract deliverables JSON from text."""
@@ -494,9 +547,9 @@ class InputGate:
                 return
 
             # Parse the structured response (internal fields)
-            thought, verdict, experts, deliverables, state_transition, clean_response = callback.get_parsed_content()
+            thought, verdict, experts, deliverables, completed_tasks, state_transition, clean_response = callback.get_parsed_content()
 
-            print(f"[InputGate] Verdict: {verdict}, Experts: {experts}")
+            print(f"[InputGate] Verdict: {verdict}, Experts: {experts}, Completed tasks: {completed_tasks}")
 
             # Determine route based on LLM verdict
             route = GateRoute.SAFE if verdict == "safe" else GateRoute.UNSAFE
@@ -539,6 +592,7 @@ class InputGate:
                 message=clean_response,
                 experts_to_consult=experts,
                 deliverables=deliverables,
+                completed_tasks=completed_tasks,
                 state_transition=state_transition,
                 reasoning=thought,
                 expert_configuration=expert_configuration or {}
@@ -564,6 +618,7 @@ class InputGate:
                 message="I'm having some technical difficulties. Let me try to help you anyway!",
                 experts_to_consult=[],
                 deliverables={},
+                completed_tasks=[],
                 state_transition=None,
                 reasoning="Error fallback",
                 expert_configuration={}
