@@ -3,6 +3,12 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
+# Configure npm for better network reliability
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 300000
+
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma/
@@ -18,6 +24,10 @@ COPY . .
 
 # Build the application
 RUN npm run build
+
+# Compile prisma seed script separately (NestJS only builds src/, not prisma/)
+# This ensures the seed runs reliably in Node.js 20 ESM mode
+RUN npx tsc prisma/seed.ts --outDir dist/prisma --esModuleInterop --resolveJsonModule --module nodenext --moduleResolution nodenext --target ES2023 --skipLibCheck
 
 # Production stage
 FROM node:20-slim
@@ -43,15 +53,24 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+# Configure npm for better network reliability
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 300000
+
 # Copy package files
 COPY package*.json ./
 COPY prisma ./prisma/
 
 # Install production dependencies only
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
+
+# Copy compiled seed script (compiled in builder stage)
+COPY --from=builder /app/dist/prisma/seed.js ./prisma/seed.js
 
 # Copy proto files for gRPC client (STT service)
 # Proto is expected at dist/proto relative to dist/src/main.js (__dirname/../proto)
