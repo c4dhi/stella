@@ -148,7 +148,16 @@ class ExecutionState:
     def is_current_state_complete(self) -> bool:
         """Check if the current state is complete."""
         state = self.current_state
-        return state.is_complete() if state else True
+        if not state:
+            return True
+
+        # Debug: log task statuses
+        task_statuses = [(t.id, t.required, t.status.value) for t in state.tasks]
+        is_complete = state.is_complete()
+        print(f"[StateMachine] is_current_state_complete: {is_complete}")
+        print(f"[StateMachine]   Task statuses: {task_statuses}")
+
+        return is_complete
 
     def evaluate_transitions(self) -> Optional[str]:
         """
@@ -164,10 +173,16 @@ class ExecutionState:
             key=lambda t: t.priority
         )
 
+        print(f"[StateMachine] evaluate_transitions: checking {len(sorted_transitions)} transitions")
+
         for transition in sorted_transitions:
-            if self._evaluate_condition(transition):
+            condition_met = self._evaluate_condition(transition)
+            print(f"[StateMachine]   Transition to '{transition.target_state_id}' "
+                  f"(condition: {transition.condition_type}): {condition_met}")
+            if condition_met:
                 return transition.target_state_id
 
+        print(f"[StateMachine]   No transition conditions met")
         return None
 
     def _evaluate_condition(self, transition) -> bool:
@@ -261,14 +276,22 @@ class ExecutionState:
         """
         state = self.current_state
         if not state:
+            print(f"[StateMachine] mark_task_completed('{task_id}'): FAILED - no current state")
             return False
 
+        available_task_ids = [t.id for t in state.tasks]
         for task in state.tasks:
             if task.id == task_id:
+                old_status = task.status
                 task.status = TaskStatus.COMPLETED
                 # Reset turn counter since progress was made
                 self.turns_without_deliverable = 0
+                print(f"[StateMachine] mark_task_completed('{task_id}'): SUCCESS "
+                      f"({old_status.value} -> {task.status.value})")
                 return True
+
+        print(f"[StateMachine] mark_task_completed('{task_id}'): FAILED - task not found")
+        print(f"[StateMachine]   Available task IDs in current state: {available_task_ids}")
         return False
 
     def get_context_summary(self) -> Dict[str, Any]:

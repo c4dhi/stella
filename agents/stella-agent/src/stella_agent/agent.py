@@ -343,7 +343,7 @@ class StellaAgent(BaseAgent):
 
             # Handle explicitly completed tasks (tasks without deliverables)
             if gate_result.completed_tasks:
-                print(f"[StellaAgent] Explicitly completed tasks: {gate_result.completed_tasks}")
+                print(f"[StellaAgent] Explicitly completed tasks from LLM: {gate_result.completed_tasks}")
 
                 yield AgentOutput.debug(
                     input.session_id,
@@ -353,11 +353,17 @@ class StellaAgent(BaseAgent):
                 )
 
                 if self.state_machine.is_initialized:
-                    self.state_machine.mark_tasks_completed(gate_result.completed_tasks)
+                    marked = self.state_machine.mark_tasks_completed(gate_result.completed_tasks)
+                    print(f"[StellaAgent] Successfully marked tasks: {marked}")
 
                     # Check for state transitions after marking tasks complete
                     result = self.state_machine.process_deliverables({})
+                    print(f"[StellaAgent] After process_deliverables: "
+                          f"state_complete={result.state_complete}, "
+                          f"should_advance={result.should_advance}, "
+                          f"next_state={result.next_state_id}")
                     if result.should_advance and result.next_state_id:
+                        print(f"[StellaAgent] Advancing to state: {result.next_state_id}")
                         old_state = self.state_machine.current_state
                         old_state_id = old_state.id if old_state else "Unknown"
                         old_state_title = old_state.title if old_state else "Unknown"

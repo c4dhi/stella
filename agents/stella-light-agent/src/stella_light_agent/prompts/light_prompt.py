@@ -125,17 +125,20 @@ COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
 
 Example responses:
 
+Example 1 - Collecting a deliverable (user provided their name):
 MESSAGE: That's wonderful to hear, Sarah! I love how passionate you are about gardening. It sounds like such a peaceful hobby. What kinds of plants do you enjoy growing the most?
 DELIVERABLES: {"user_name": {"value": "Sarah", "reasoning": "User introduced herself as Sarah"}}
 COMPLETED_TASKS: [NONE]
 
+Example 2 - No deliverables collected this turn:
 MESSAGE: Thanks for sharing that with me! I'd love to learn more about you. What do you enjoy doing in your free time?
 DELIVERABLES: [NONE]
 COMPLETED_TASKS: [NONE]
 
-MESSAGE: Hello! I'm STELLA, your AI companion for cognitive wellness. I was developed at the Centre for Digital Health Interventions in Switzerland. I'm here to have meaningful conversations and support your cognitive health. What's your name?
+Example 3 - Completing a task that has NO deliverables (like telling a joke):
+MESSAGE: Here's one for you - Why don't scientists trust atoms? Because they make up everything! I hope that gave you a little chuckle. It was truly wonderful chatting with you today.
 DELIVERABLES: [NONE]
-COMPLETED_TASKS: ["warm_introduction"]
+COMPLETED_TASKS: ["tell_joke"]
 
 ### COMPLETED_TASKS Rules
 - Use COMPLETED_TASKS to mark tasks as done when they DON'T require data collection

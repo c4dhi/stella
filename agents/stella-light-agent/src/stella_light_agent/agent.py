@@ -248,14 +248,20 @@ class StellaLightAgent(BaseAgent):
 
             # Handle explicitly completed tasks (tasks without deliverables)
             if result and result.completed_tasks:
-                print(f"[StellaLightAgent] Explicitly completed tasks: {result.completed_tasks}")
+                print(f"[StellaLightAgent] Explicitly completed tasks from LLM: {result.completed_tasks}")
 
                 if self.state_machine.is_initialized:
-                    self.state_machine.mark_tasks_completed(result.completed_tasks)
+                    marked = self.state_machine.mark_tasks_completed(result.completed_tasks)
+                    print(f"[StellaLightAgent] Successfully marked tasks: {marked}")
 
                     # Check for state transitions after marking tasks complete
                     sm_result = self.state_machine.process_deliverables({})
+                    print(f"[StellaLightAgent] After process_deliverables: "
+                          f"state_complete={sm_result.state_complete}, "
+                          f"should_advance={sm_result.should_advance}, "
+                          f"next_state={sm_result.next_state_id}")
                     if sm_result.should_advance and sm_result.next_state_id:
+                        print(f"[StellaLightAgent] Advancing to state: {sm_result.next_state_id}")
                         self.state_machine.advance_state()
 
             # No deliverables or completed tasks - increment turn counter
