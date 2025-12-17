@@ -1,0 +1,434 @@
+import { Controller, Logger } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+import { StateMachineService } from './state-machine.service';
+
+/**
+ * StateMachineGrpcController - gRPC endpoints for state machine operations.
+ *
+ * Implements the StateMachineService defined in state_machine.proto.
+ * Agents call these methods to manage conversation state.
+ */
+@Controller()
+export class StateMachineGrpcController {
+  private readonly logger = new Logger(StateMachineGrpcController.name);
+
+  constructor(private readonly stateMachineService: StateMachineService) {}
+
+  /**
+   * Initialize state machine for a session
+   */
+  @GrpcMethod('StateMachineService', 'Initialize')
+  async initialize(request: {
+    sessionId: string;
+    planJson: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    currentStateId?: string;
+  }> {
+    this.logger.log(`Initialize called for session: ${request.sessionId}`);
+
+    try {
+      const plan = JSON.parse(request.planJson);
+      const state = await this.stateMachineService.initializeForSession(
+        request.sessionId,
+        plan,
+      );
+
+      return {
+        success: true,
+        currentStateId: state.currentStateId,
+      };
+    } catch (error) {
+      this.logger.error(`Initialize error: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Complete a task by ID
+   */
+  @GrpcMethod('StateMachineService', 'CompleteTask')
+  async completeTask(request: {
+    sessionId: string;
+    taskId: string;
+    reasoning: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    taskCompleted?: string;
+    transitioned?: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    progress?: number;
+  }> {
+    this.logger.log(`CompleteTask called for session: ${request.sessionId}, task: ${request.taskId}`);
+
+    const result = await this.stateMachineService.completeTask(
+      request.sessionId,
+      request.taskId,
+      request.reasoning,
+    );
+
+    return {
+      success: result.success,
+      error: result.error,
+      taskCompleted: result.taskCompleted,
+      transitioned: result.transitioned,
+      newStateId: result.newStateId,
+      newStateTitle: result.newStateTitle,
+      progress: result.progress,
+    };
+  }
+
+  /**
+   * Set a deliverable value
+   */
+  @GrpcMethod('StateMachineService', 'SetDeliverable')
+  async setDeliverable(request: {
+    sessionId: string;
+    key: string;
+    value: string;
+    reasoning: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    taskCompleted?: string;
+    transitioned?: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    progress?: number;
+  }> {
+    this.logger.log(`SetDeliverable called for session: ${request.sessionId}, key: ${request.key}`);
+
+    // Parse the JSON value
+    let parsedValue: unknown;
+    try {
+      parsedValue = JSON.parse(request.value);
+    } catch {
+      // If not valid JSON, treat as string
+      parsedValue = request.value;
+    }
+
+    const result = await this.stateMachineService.setDeliverable(
+      request.sessionId,
+      request.key,
+      parsedValue,
+      request.reasoning,
+    );
+
+    return {
+      success: result.success,
+      error: result.error,
+      taskCompleted: result.taskCompleted,
+      transitioned: result.transitioned,
+      newStateId: result.newStateId,
+      newStateTitle: result.newStateTitle,
+      progress: result.progress,
+    };
+  }
+
+  /**
+   * Get current state info
+   */
+  @GrpcMethod('StateMachineService', 'GetCurrentState')
+  async getCurrentState(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    stateId?: string;
+    stateTitle?: string;
+    stateType?: string;
+    progress?: number;
+    turnsWithoutProgress?: number;
+    totalTurns?: number;
+  }> {
+    this.logger.debug(`GetCurrentState called for session: ${request.sessionId}`);
+
+    const state = await this.stateMachineService.getCurrentState(request.sessionId);
+
+    if (!state) {
+      return {
+        success: false,
+        error: 'State machine not initialized for this session',
+      };
+    }
+
+    return {
+      success: true,
+      stateId: state.stateId,
+      stateTitle: state.stateTitle,
+      stateType: state.stateType,
+      progress: state.progress,
+      turnsWithoutProgress: state.turnsWithoutProgress,
+      totalTurns: state.totalTurns,
+    };
+  }
+
+  /**
+   * Get pending tasks in current state
+   * Returns tasks filtered by mode:
+   * - LOOSE: All pending tasks
+   * - STRICT: Current task + next task as preview
+   */
+  @GrpcMethod('StateMachineService', 'GetPendingTasks')
+  async getPendingTasks(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    tasks?: Array<{
+      id: string;
+      description: string;
+      instruction?: string;
+      required: boolean;
+      hasDeliverables: boolean;
+      deliverableKeys: string[];
+      isPreview?: boolean;
+    }>;
+  }> {
+    this.logger.debug(`GetPendingTasks called for session: ${request.sessionId}`);
+
+    try {
+      const tasks = await this.stateMachineService.getPendingTasks(request.sessionId);
+
+      return {
+        success: true,
+        tasks: tasks.map(t => ({
+          id: t.id,
+          description: t.description,
+          instruction: t.instruction,
+          required: t.required,
+          hasDeliverables: t.hasDeliverables,
+          deliverableKeys: t.deliverableKeys,
+          isPreview: t.isPreview,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get pending deliverables in current state
+   */
+  @GrpcMethod('StateMachineService', 'GetPendingDeliverables')
+  async getPendingDeliverables(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    deliverables?: Array<{
+      key: string;
+      description: string;
+      type: string;
+      required: boolean;
+      acceptanceCriteria?: string;
+      examples: string[];
+      taskId: string;
+    }>;
+  }> {
+    this.logger.debug(`GetPendingDeliverables called for session: ${request.sessionId}`);
+
+    try {
+      const deliverables = await this.stateMachineService.getPendingDeliverables(
+        request.sessionId,
+      );
+
+      return {
+        success: true,
+        deliverables: deliverables.map(d => ({
+          key: d.key,
+          description: d.description,
+          type: d.type,
+          required: d.required,
+          acceptanceCriteria: d.acceptanceCriteria,
+          examples: d.examples,
+          taskId: d.taskId,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Increment turn counter
+   */
+  @GrpcMethod('StateMachineService', 'IncrementTurn')
+  async incrementTurn(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    turnsWithoutProgress?: number;
+  }> {
+    this.logger.debug(`IncrementTurn called for session: ${request.sessionId}`);
+
+    try {
+      const turnsWithoutProgress = await this.stateMachineService.incrementTurn(
+        request.sessionId,
+      );
+
+      return {
+        success: true,
+        turnsWithoutProgress,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get all collected deliverables
+   */
+  @GrpcMethod('StateMachineService', 'GetCollectedDeliverables')
+  async getCollectedDeliverables(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    deliverables?: Array<{
+      key: string;
+      value: string;
+    }>;
+  }> {
+    this.logger.debug(`GetCollectedDeliverables called for session: ${request.sessionId}`);
+
+    try {
+      const deliverables = await this.stateMachineService.getCollectedDeliverables(
+        request.sessionId,
+      );
+
+      return {
+        success: true,
+        deliverables: Object.entries(deliverables).map(([key, value]) => ({
+          key,
+          value: JSON.stringify(value),
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get full state machine state (for frontend updates)
+   */
+  @GrpcMethod('StateMachineService', 'GetFullState')
+  async getFullState(request: {
+    sessionId: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    planId?: string;
+    planTitle?: string;
+    currentStateId?: string;
+    progress?: number;
+    totalTurns?: number;
+    turnsWithoutProgress?: number;
+    states?: Array<{
+      id: string;
+      title: string;
+      type: string;
+      status: string;
+      tasks: Array<{
+        id: string;
+        description: string;
+        instruction?: string;
+        required: boolean;
+        status: string;
+        deliverables: Array<{
+          key: string;
+          description: string;
+          type: string;
+          required: boolean;
+          status: string;
+          value?: string;
+          collectedAt?: string;
+          acceptanceCriteria?: string;
+          reasoning?: string;
+        }>;
+      }>;
+    }>;
+    collectedDeliverables?: Record<string, string>;
+  }> {
+    this.logger.debug(`GetFullState called for session: ${request.sessionId}`);
+
+    try {
+      const fullState = await this.stateMachineService.getFullState(request.sessionId);
+
+      if (!fullState) {
+        return {
+          success: false,
+          error: 'State machine not initialized for this session',
+        };
+      }
+
+      // Convert to proto-compatible format
+      const states = fullState.states.map(state => ({
+        id: state.id,
+        title: state.title,
+        type: state.type,
+        status: state.status,
+        tasks: state.tasks.map(task => ({
+          id: task.id,
+          description: task.description,
+          instruction: task.instruction,
+          required: task.required,
+          status: task.status,
+          deliverables: task.deliverables.map(d => ({
+            key: d.key,
+            description: d.description,
+            type: d.type,
+            required: d.required,
+            status: d.status,
+            value: d.value !== undefined ? JSON.stringify(d.value) : undefined,
+            collectedAt: d.collectedAt,
+            acceptanceCriteria: d.acceptanceCriteria,
+            reasoning: d.reasoning,
+          })),
+        })),
+      }));
+
+      // Convert collected deliverables to JSON strings
+      const collectedDeliverables: Record<string, string> = {};
+      for (const [key, value] of Object.entries(fullState.collectedDeliverables)) {
+        collectedDeliverables[key] = JSON.stringify(value);
+      }
+
+      return {
+        success: true,
+        planId: fullState.planId,
+        planTitle: fullState.planTitle,
+        currentStateId: fullState.currentStateId,
+        progress: fullState.progress,
+        totalTurns: fullState.totalTurns,
+        turnsWithoutProgress: fullState.turnsWithoutProgress,
+        states,
+        collectedDeliverables,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+}

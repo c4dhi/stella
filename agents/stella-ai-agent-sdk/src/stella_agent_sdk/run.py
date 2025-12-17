@@ -294,12 +294,23 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         # 10c. Register callback to re-send progress when new participants join
         def on_participant_joined(participant_identity: str):
             # Use the agent's stored progress payload (updated by audio loop)
+            logger.info(f"[PARTICIPANT JOINED] {participant_identity} - _last_progress_payload exists: {agent._last_progress_payload is not None}")
             if agent._last_progress_payload:
                 logger.info(f"[PARTICIPANT JOINED] {participant_identity} - re-sending progress state")
                 # Schedule the async publish_data call
                 asyncio.create_task(audio_pipeline._room.publish_data(agent._last_progress_payload))
+            else:
+                logger.warning(f"[PARTICIPANT JOINED] {participant_identity} - no progress payload to send!")
 
         room_manager.on_participant_joined(on_participant_joined)
+
+        # 10d. Send progress to any participants already in the room
+        if agent._last_progress_payload and room_manager._room:
+            existing_participants = list(room_manager._room.remote_participants.values())
+            logger.info(f"[EXISTING PARTICIPANTS] Found {len(existing_participants)} participants already in room")
+            for participant in existing_participants:
+                logger.info(f"[EXISTING PARTICIPANTS] Sending progress to {participant.identity}")
+                await audio_pipeline._room.publish_data(agent._last_progress_payload)
 
         # 11. Run the agent's audio loop until shutdown
         audio_loop_task = asyncio.create_task(agent.run_audio_loop())

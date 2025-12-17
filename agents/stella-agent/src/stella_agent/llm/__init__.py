@@ -7,6 +7,7 @@ from stella_agent.llm.service import (
     LLMMessage,
     LLMResponse,
     LLMStreamingCallback,
+    LLMToolCall,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "LLMMessage",
     "LLMResponse",
     "LLMStreamingCallback",
+    "LLMToolCall",
 ]

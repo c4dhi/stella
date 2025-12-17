@@ -214,6 +214,12 @@ export class KubernetesService {
                 name: 'TTS_SERVICE_ADDRESS',
                 value: this.configService.get<string>('TTS_SERVICE_ADDRESS', 'tts-service:50052'),
               },
+              // State machine service address for tool-based state management
+              // Shares the same gRPC port as agent registration (both on 50051)
+              {
+                name: 'STATE_MACHINE_ADDRESS',
+                value: this.configService.get<string>('STATE_MACHINE_ADDRESS', 'session-management-server:50051'),
+              },
               // Environment mode (for conditional gateway IP setup)
               {
                 name: 'NODE_ENV',

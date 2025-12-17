@@ -102,10 +102,43 @@ model Session {
   invitations  Invitation[]
   messages     Message[]
   events       RoomEvent[]
+  state        SessionState?   // State machine execution state
 
   @@index([projectId])
   @@index([status])
   @@index([createdAt])
+}
+
+// State machine execution state for conversation progress tracking
+// Persists the plan execution state externally from agents
+model SessionState {
+  id                   String   @id @default(uuid())
+  sessionId            String   @unique
+  session              Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Plan data
+  planId               String?  // Reference to plan ID
+  planData             Json     // Full plan definition (states, tasks, deliverables)
+
+  // Current execution state
+  currentStateId       String   // Current state in the plan
+  completedTasks       String[] @default([]) // Task IDs that have been completed
+  skippedTasks         String[] @default([]) // Task IDs that were skipped
+
+  // Collected deliverables
+  deliverables         Json     @default("{}") // { key: { value, reasoning, collectedAt } }
+
+  // Progress tracking
+  turnsWithoutProgress Int      @default(0) // Turns since last deliverable/task completion
+  totalTurns           Int      @default(0) // Total conversation turns
+
+  // Timestamps
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  lastTransitionAt     DateTime? // When state last changed
+
+  @@index([sessionId])
+  @@index([planId])
 }
 
 model Room {

@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package stella.statemachine.v1;
+
+// StateMachineService - Service for managing conversation state machine
+// Agents call this service to track conversation progress
+service StateMachineService {
+  // Initialize state machine for a session
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+
+  // Complete a task by ID
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+
+  // Set a deliverable value
+  rpc SetDeliverable(SetDeliverableRequest) returns (SetDeliverableResponse);
+
+  // Get current state info
+  rpc GetCurrentState(GetCurrentStateRequest) returns (GetCurrentStateResponse);
+
+  // Get pending tasks in current state
+  rpc GetPendingTasks(GetPendingTasksRequest) returns (GetPendingTasksResponse);
+
+  // Get pending deliverables in current state
+  rpc GetPendingDeliverables(GetPendingDeliverablesRequest) returns (GetPendingDeliverablesResponse);
+
+  // Increment turn counter (no progress made)
+  rpc IncrementTurn(IncrementTurnRequest) returns (IncrementTurnResponse);
+
+  // Get all collected deliverables
+  rpc GetCollectedDeliverables(GetCollectedDeliverablesRequest) returns (GetCollectedDeliverablesResponse);
+
+  // Get full state machine state (for frontend updates)
+  rpc GetFullState(GetFullStateRequest) returns (GetFullStateResponse);
+}
+
+// ============================================================================
+// INITIALIZE
+// ============================================================================
+
+message InitializeRequest {
+  string session_id = 1;
+  string plan_json = 2;  // Full plan as JSON string
+}
+
+message InitializeResponse {
+  bool success = 1;
+  string error = 2;
+  string current_state_id = 3;
+}
+
+// ============================================================================
+// COMPLETE TASK
+// ============================================================================
+
+message CompleteTaskRequest {
+  string session_id = 1;
+  string task_id = 2;
+  string reasoning = 3;
+}
+
+message CompleteTaskResponse {
+  bool success = 1;
+  string error = 2;
+  string task_completed = 3;
+  bool transitioned = 4;
+  string new_state_id = 5;
+  string new_state_title = 6;
+  int32 progress = 7;
+}
+
+// ============================================================================
+// SET DELIVERABLE
+// ============================================================================
+
+message SetDeliverableRequest {
+  string session_id = 1;
+  string key = 2;
+  string value = 3;  // JSON-encoded value
+  string reasoning = 4;
+}
+
+message SetDeliverableResponse {
+  bool success = 1;
+  string error = 2;
+  string task_completed = 3;
+  bool transitioned = 4;
+  string new_state_id = 5;
+  string new_state_title = 6;
+  int32 progress = 7;
+}
+
+// ============================================================================
+// GET CURRENT STATE
+// ============================================================================
+
+message GetCurrentStateRequest {
+  string session_id = 1;
+}
+
+message GetCurrentStateResponse {
+  bool success = 1;
+  string error = 2;
+  string state_id = 3;
+  string state_title = 4;
+  string state_type = 5;  // "strict" or "loose"
+  int32 progress = 6;
+  int32 turns_without_progress = 7;
+  int32 total_turns = 8;
+}
+
+// ============================================================================
+// GET PENDING TASKS
+// ============================================================================
+
+message GetPendingTasksRequest {
+  string session_id = 1;
+}
+
+message PendingTask {
+  string id = 1;
+  string description = 2;
+  string instruction = 3;
+  bool required = 4;
+  bool has_deliverables = 5;
+  repeated string deliverable_keys = 6;
+  bool is_preview = 7;  // True for "next task" preview in strict mode
+}
+
+message GetPendingTasksResponse {
+  bool success = 1;
+  string error = 2;
+  repeated PendingTask tasks = 3;
+}
+
+// ============================================================================
+// GET PENDING DELIVERABLES
+// ============================================================================
+
+message GetPendingDeliverablesRequest {
+  string session_id = 1;
+}
+
+message PendingDeliverable {
+  string key = 1;
+  string description = 2;
+  string type = 3;
+  bool required = 4;
+  string acceptance_criteria = 5;
+  repeated string examples = 6;
+  string task_id = 7;
+}
+
+message GetPendingDeliverablesResponse {
+  bool success = 1;
+  string error = 2;
+  repeated PendingDeliverable deliverables = 3;
+}
+
+// ============================================================================
+// INCREMENT TURN
+// ============================================================================
+
+message IncrementTurnRequest {
+  string session_id = 1;
+}
+
+message IncrementTurnResponse {
+  bool success = 1;
+  string error = 2;
+  int32 turns_without_progress = 3;
+}
+
+// ============================================================================
+// GET COLLECTED DELIVERABLES
+// ============================================================================
+
+message GetCollectedDeliverablesRequest {
+  string session_id = 1;
+}
+
+message CollectedDeliverable {
+  string key = 1;
+  string value = 2;  // JSON-encoded value
+}
+
+message GetCollectedDeliverablesResponse {
+  bool success = 1;
+  string error = 2;
+  repeated CollectedDeliverable deliverables = 3;
+}
+
+// ============================================================================
+// GET FULL STATE (for frontend todo list updates)
+// ============================================================================
+
+message GetFullStateRequest {
+  string session_id = 1;
+}
+
+message FullStateDeliverable {
+  string key = 1;
+  string description = 2;
+  string type = 3;
+  bool required = 4;
+  string status = 5;  // "pending", "completed", "partial", "skipped"
+  string value = 6;   // JSON-encoded value if set
+  string collected_at = 7;
+  string acceptance_criteria = 8;
+  string reasoning = 9;
+}
+
+message FullStateTask {
+  string id = 1;
+  string description = 2;
+  string instruction = 3;
+  bool required = 4;
+  string status = 5;  // "pending", "in_progress", "completed"
+  repeated FullStateDeliverable deliverables = 6;
+}
+
+message FullStateState {
+  string id = 1;
+  string title = 2;
+  string type = 3;  // "strict" or "loose"
+  string status = 4;  // "pending", "active", "completed"
+  repeated FullStateTask tasks = 5;
+}
+
+message GetFullStateResponse {
+  bool success = 1;
+  string error = 2;
+  string plan_id = 3;
+  string plan_title = 4;
+  string current_state_id = 5;
+  int32 progress = 6;
+  int32 total_turns = 7;
+  int32 turns_without_progress = 8;
+  repeated FullStateState states = 9;
+  map<string, string> collected_deliverables = 10;  // key -> JSON value
+}

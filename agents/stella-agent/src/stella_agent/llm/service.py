@@ -24,6 +24,14 @@ class LLMProvider(Enum):
 
 
 @dataclass
+class LLMToolCall:
+    """Represents a tool call from the LLM."""
+    id: str
+    name: str
+    arguments: Dict[str, Any]
+
+
+@dataclass
 class LLMConfig:
     """Configuration for LLM requests."""
     model: str = "gpt-4o-mini"
@@ -36,14 +44,21 @@ class LLMConfig:
     retry_delay: float = 1.0
     base_url: Optional[str] = None
     context_length: int = 4096
+    # Tool calling configuration
+    tools: Optional[List[Dict[str, Any]]] = None  # OpenAI-format tool schemas
+    tool_choice: str = "auto"  # "auto", "none", "required", or specific tool name
 
 
 @dataclass
 class LLMMessage:
     """Standard message format for LLM interactions."""
-    role: str  # "system", "user", "assistant"
+    role: str  # "system", "user", "assistant", "tool"
     content: str
     metadata: Optional[Dict[str, Any]] = None
+    # For assistant messages with tool calls
+    tool_calls: Optional[List[LLMToolCall]] = None
+    # For tool result messages
+    tool_call_id: Optional[str] = None
 
 
 @dataclass
@@ -56,6 +71,8 @@ class LLMResponse:
     cost_usd: float = 0.0
     response_time: float = 0.0
     metadata: Optional[Dict[str, Any]] = None
+    # Tool calls made by the LLM
+    tool_calls: Optional[List[LLMToolCall]] = None
 
 
 class LLMStreamingCallback(ABC):
@@ -74,6 +91,14 @@ class LLMStreamingCallback(ABC):
     @abstractmethod
     async def on_error(self, error: Exception) -> None:
         """Called when an error occurs."""
+        pass
+
+    async def on_tool_call(self, tool_call: LLMToolCall) -> None:
+        """Called when a tool call is made by the LLM.
+
+        Default implementation does nothing. Override if you need to handle
+        tool calls during streaming.
+        """
         pass
 
 
@@ -400,6 +425,237 @@ class OllamaProvider(LLMProviderInterface):
         return "\n\n".join(prompt_parts)
 
 
+class OpenAIDirectProvider(LLMProviderInterface):
+    """Direct OpenAI provider with full tool calling support."""
+
+    def __init__(self):
+        self.available = False
+        self.openai = None
+        self._initialize()
+
+    def _initialize(self):
+        """Initialize the OpenAI client."""
+        try:
+            import openai
+            self.openai = openai
+            self.client = openai.AsyncOpenAI()
+            self.available = True
+            print("[LLMService] OpenAI Direct provider initialized")
+        except ImportError as e:
+            print(f"[LLMService] OpenAI Direct provider not available: {e}")
+            self.available = False
+
+    def get_provider_name(self) -> str:
+        return "openai_direct"
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def _convert_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
+        """Convert LLMMessage to OpenAI API format."""
+        result = []
+        for msg in messages:
+            message_dict: Dict[str, Any] = {
+                "role": msg.role,
+                "content": msg.content or ""
+            }
+            # Handle tool call results
+            if msg.role == "tool" and msg.tool_call_id:
+                message_dict["tool_call_id"] = msg.tool_call_id
+            # Handle assistant messages with tool calls
+            if msg.tool_calls:
+                message_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments)
+                        }
+                    }
+                    for tc in msg.tool_calls
+                ]
+            result.append(message_dict)
+        return result
+
+    def _parse_tool_calls(self, openai_tool_calls) -> List[LLMToolCall]:
+        """Parse OpenAI tool calls into LLMToolCall objects."""
+        if not openai_tool_calls:
+            return []
+
+        result = []
+        for tc in openai_tool_calls:
+            try:
+                arguments = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+
+            result.append(LLMToolCall(
+                id=tc.id,
+                name=tc.function.name,
+                arguments=arguments
+            ))
+        return result
+
+    async def generate(
+        self,
+        messages: List[LLMMessage],
+        config: LLMConfig,
+        callback: Optional[LLMStreamingCallback] = None
+    ) -> LLMResponse:
+        """Generate a non-streaming response with tool support."""
+        if not self.available:
+            raise RuntimeError("OpenAI Direct provider not available")
+
+        start_time = time.time()
+
+        try:
+            openai_messages = self._convert_messages(messages)
+
+            # Build request kwargs
+            kwargs = {
+                "model": config.model,
+                "messages": openai_messages,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+            }
+
+            # Add tools if provided
+            if config.tools:
+                kwargs["tools"] = config.tools
+                if config.tool_choice != "auto":
+                    kwargs["tool_choice"] = config.tool_choice
+
+            result = await self.client.chat.completions.create(**kwargs)
+
+            choice = result.choices[0]
+            content = choice.message.content or ""
+            tool_calls = self._parse_tool_calls(choice.message.tool_calls)
+
+            response_time = time.time() - start_time
+
+            response = LLMResponse(
+                content=content,
+                model=config.model,
+                provider=self.get_provider_name(),
+                response_time=response_time,
+                usage_tokens=result.usage.total_tokens if result.usage else 0,
+                cost_usd=0.0,
+                tool_calls=tool_calls if tool_calls else None
+            )
+
+            if callback:
+                # Notify about tool calls
+                for tc in tool_calls:
+                    await callback.on_tool_call(tc)
+                await callback.on_complete(response)
+
+            return response
+
+        except Exception as e:
+            if callback:
+                await callback.on_error(e)
+            raise
+
+    async def generate_stream(
+        self,
+        messages: List[LLMMessage],
+        config: LLMConfig,
+        callback: LLMStreamingCallback
+    ) -> LLMResponse:
+        """Generate a streaming response with tool support."""
+        if not self.available:
+            raise RuntimeError("OpenAI Direct provider not available")
+
+        start_time = time.time()
+        accumulated_content = ""
+        tool_calls_builder: Dict[int, Dict[str, Any]] = {}
+
+        try:
+            openai_messages = self._convert_messages(messages)
+
+            # Build request kwargs
+            kwargs = {
+                "model": config.model,
+                "messages": openai_messages,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+                "stream": True,
+            }
+
+            # Add tools if provided
+            if config.tools:
+                kwargs["tools"] = config.tools
+                if config.tool_choice != "auto":
+                    kwargs["tool_choice"] = config.tool_choice
+
+            stream = await self.client.chat.completions.create(**kwargs)
+
+            async for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+
+                if delta:
+                    # Handle content tokens
+                    if delta.content:
+                        accumulated_content += delta.content
+                        await callback.on_token(delta.content, accumulated_content)
+
+                    # Handle tool call deltas
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_builder:
+                                tool_calls_builder[idx] = {
+                                    "id": "",
+                                    "name": "",
+                                    "arguments": ""
+                                }
+
+                            if tc_delta.id:
+                                tool_calls_builder[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_builder[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_builder[idx]["arguments"] += tc_delta.function.arguments
+
+            # Build final tool calls list
+            tool_calls = []
+            for idx in sorted(tool_calls_builder.keys()):
+                tc_data = tool_calls_builder[idx]
+                try:
+                    arguments = json.loads(tc_data["arguments"]) if tc_data["arguments"] else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+
+                tc = LLMToolCall(
+                    id=tc_data["id"],
+                    name=tc_data["name"],
+                    arguments=arguments
+                )
+                tool_calls.append(tc)
+                await callback.on_tool_call(tc)
+
+            response_time = time.time() - start_time
+
+            response = LLMResponse(
+                content=accumulated_content,
+                model=config.model,
+                provider=self.get_provider_name(),
+                response_time=response_time,
+                usage_tokens=int(len(accumulated_content.split()) * 1.3),
+                cost_usd=0.0,
+                tool_calls=tool_calls if tool_calls else None
+            )
+
+            await callback.on_complete(response)
+            return response
+
+        except Exception as e:
+            await callback.on_error(e)
+            raise
+
+
 class MockLLMProvider(LLMProviderInterface):
     """Mock provider for testing."""
 
@@ -494,9 +750,13 @@ class LLMService:
 
     def _initialize_providers(self):
         """Initialize all available providers."""
-        openai_provider = OpenAILangChainProvider()
-        if openai_provider.is_available():
-            self.providers[LLMProvider.OPENAI_LANGCHAIN] = openai_provider
+        openai_langchain_provider = OpenAILangChainProvider()
+        if openai_langchain_provider.is_available():
+            self.providers[LLMProvider.OPENAI_LANGCHAIN] = openai_langchain_provider
+
+        openai_direct_provider = OpenAIDirectProvider()
+        if openai_direct_provider.is_available():
+            self.providers[LLMProvider.OPENAI_DIRECT] = openai_direct_provider
 
         ollama_provider = OllamaProvider()
         if ollama_provider.is_available():
