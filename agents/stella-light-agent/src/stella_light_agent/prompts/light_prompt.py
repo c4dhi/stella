@@ -170,7 +170,8 @@ Remember: You are a supportive companion, not a replacement for professional adv
         parts = ["""## Response Guidelines
 - Respond naturally and conversationally (30-50 words)
 - Ask only ONE question at a time
-- Use the provided tools to track conversation progress
+- Always include a complete, conversational response
+- Your response will be spoken aloud - make it sound natural
 
 ## Tool Usage
 You have tools to track conversation progress. Use them appropriately:
