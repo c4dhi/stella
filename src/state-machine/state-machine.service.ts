@@ -165,26 +165,66 @@ export class StateMachineService {
   constructor(private prisma: PrismaService) {}
 
   /**
+   * Ensure all states have transitions defined.
+   * If a state doesn't have transitions, auto-generate a transition to the next state.
+   */
+  private ensureTransitions(plan: PlanData): PlanData {
+    const statesWithTransitions = plan.states.map((state, index) => {
+      // If state already has transitions, keep them
+      if (state.transitions && state.transitions.length > 0) {
+        return state;
+      }
+
+      // If this is the last state, no transition needed
+      if (index === plan.states.length - 1) {
+        return { ...state, transitions: [] };
+      }
+
+      // Generate default transition to next state
+      const nextStateId = plan.states[index + 1].id;
+      this.logger.log(
+        `Auto-generating transition for state '${state.id}' -> '${nextStateId}'`,
+      );
+
+      return {
+        ...state,
+        transitions: [
+          {
+            target_state_id: nextStateId,
+            condition_type: 'all_tasks_complete' as const,
+            priority: 1,
+          },
+        ],
+      };
+    });
+
+    return { ...plan, states: statesWithTransitions };
+  }
+
+  /**
    * Initialize state machine for a session with a plan
    */
   async initializeForSession(
     sessionId: string,
     plan: PlanData,
   ): Promise<SessionState> {
-    const initialStateId = plan.initial_state_id || plan.states[0]?.id;
+    // Ensure all states have transitions
+    const normalizedPlan = this.ensureTransitions(plan);
+
+    const initialStateId = normalizedPlan.initial_state_id || normalizedPlan.states[0]?.id;
 
     if (!initialStateId) {
       throw new BadRequestException('Plan must have at least one state');
     }
 
-    this.logger.log(`Initializing state machine for session ${sessionId} with plan ${plan.id}`);
+    this.logger.log(`Initializing state machine for session ${sessionId} with plan ${normalizedPlan.id}`);
 
     return this.prisma.sessionState.upsert({
       where: { sessionId },
       create: {
         sessionId,
-        planId: plan.id,
-        planData: plan as unknown as Prisma.InputJsonValue,
+        planId: normalizedPlan.id,
+        planData: normalizedPlan as unknown as Prisma.InputJsonValue,
         currentStateId: initialStateId,
         completedTasks: [],
         skippedTasks: [],
@@ -193,8 +233,8 @@ export class StateMachineService {
         totalTurns: 0,
       },
       update: {
-        planId: plan.id,
-        planData: plan as unknown as Prisma.InputJsonValue,
+        planId: normalizedPlan.id,
+        planData: normalizedPlan as unknown as Prisma.InputJsonValue,
         currentStateId: initialStateId,
         completedTasks: [],
         skippedTasks: [],
@@ -358,10 +398,13 @@ export class StateMachineService {
       },
     });
 
-    this.logger.log(`Deliverable ${key} set for session ${sessionId}`);
+    this.logger.log(`[setDeliverable] Deliverable '${key}' set for session ${sessionId}, value: ${JSON.stringify(value)}`);
+    this.logger.log(`[setDeliverable] Task '${foundTask.id}' complete: ${taskComplete}, completedTasks: ${JSON.stringify(updatedCompletedTasks)}`);
 
     // Check for state transitions
+    this.logger.log(`[setDeliverable] Calling evaluateAndTransition...`);
     const transitionResult = await this.evaluateAndTransition(sessionId);
+    this.logger.log(`[setDeliverable] Transition result: ${JSON.stringify(transitionResult)}`);
 
     return {
       success: true,
@@ -599,26 +642,57 @@ export class StateMachineService {
   ): boolean {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
+    this.logger.log(
+      `[isCurrentStateComplete] Checking state '${currentState.id}' with ${currentState.tasks.length} tasks`,
+    );
+    this.logger.log(
+      `[isCurrentStateComplete] Collected deliverables: ${JSON.stringify(Object.keys(deliverables))}`,
+    );
+    this.logger.log(
+      `[isCurrentStateComplete] Completed tasks: ${JSON.stringify(state.completedTasks)}`,
+    );
+
     for (const task of currentState.tasks) {
-      if (task.required === false) continue;
+      if (task.required === false) {
+        this.logger.log(`[isCurrentStateComplete] Task '${task.id}' is optional, skipping`);
+        continue;
+      }
 
       const taskDeliverables = task.deliverables || [];
       if (taskDeliverables.length === 0) {
         // Task without deliverables - check if completed
         if (!state.completedTasks.includes(task.id)) {
+          this.logger.log(
+            `[isCurrentStateComplete] Task '${task.id}' has no deliverables and is NOT in completedTasks - state NOT complete`,
+          );
           return false;
         }
+        this.logger.log(
+          `[isCurrentStateComplete] Task '${task.id}' has no deliverables but IS in completedTasks`,
+        );
       } else {
         // Task with deliverables - check if all required are collected
         for (const d of taskDeliverables) {
-          if (d.required === false) continue;
+          if (d.required === false) {
+            this.logger.log(
+              `[isCurrentStateComplete] Deliverable '${d.key}' is optional, skipping`,
+            );
+            continue;
+          }
           if (!(d.key in deliverables)) {
+            this.logger.log(
+              `[isCurrentStateComplete] Required deliverable '${d.key}' NOT found - state NOT complete`,
+            );
             return false;
           }
+          this.logger.log(
+            `[isCurrentStateComplete] Required deliverable '${d.key}' found with value: ${JSON.stringify(deliverables[d.key]?.value)}`,
+          );
         }
       }
     }
 
+    this.logger.log(`[isCurrentStateComplete] All required tasks/deliverables complete - state IS complete`);
     return true;
   }
 
@@ -626,14 +700,35 @@ export class StateMachineService {
     sessionId: string,
   ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
     const state = await this.getState(sessionId);
-    if (!state) return { transitioned: false };
-
-    const plan = state.planData as unknown as PlanData;
-    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
-
-    if (!currentState || !currentState.transitions) {
+    if (!state) {
+      this.logger.log(`[evaluateAndTransition] No state found for session ${sessionId}`);
       return { transitioned: false };
     }
+
+    // Normalize the plan to ensure transitions exist (fixes plans created without transitions)
+    const rawPlan = state.planData as unknown as PlanData;
+    const plan = this.ensureTransitions(rawPlan);
+    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
+
+    this.logger.log(
+      `[evaluateAndTransition] Session ${sessionId}, current state: '${state.currentStateId}'`,
+    );
+
+    if (!currentState) {
+      this.logger.log(`[evaluateAndTransition] Current state not found in plan`);
+      return { transitioned: false };
+    }
+
+    if (!currentState.transitions || currentState.transitions.length === 0) {
+      this.logger.log(
+        `[evaluateAndTransition] State '${currentState.id}' has no transitions defined`,
+      );
+      return { transitioned: false };
+    }
+
+    this.logger.log(
+      `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
+    );
 
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
@@ -645,9 +740,16 @@ export class StateMachineService {
     for (const transition of sortedTransitions) {
       let conditionMet = false;
 
+      this.logger.log(
+        `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
+      );
+
       switch (transition.condition_type) {
         case 'all_tasks_complete':
           conditionMet = this.isCurrentStateComplete(state, currentState);
+          this.logger.log(
+            `[evaluateAndTransition] 'all_tasks_complete' condition result: ${conditionMet}`,
+          );
           break;
 
         case 'deliverable_value':
@@ -655,17 +757,32 @@ export class StateMachineService {
           const expected = transition.condition_config?.value;
           const actual = deliverables[key]?.value;
           conditionMet = actual === expected;
+          this.logger.log(
+            `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
+          );
           break;
 
         case 'deliverable_exists':
           const existsKey = transition.condition_config?.key as string;
           conditionMet = existsKey in deliverables;
+          this.logger.log(
+            `[evaluateAndTransition] 'deliverable_exists' condition: ${existsKey} exists=${conditionMet}`,
+          );
           break;
+
+        default:
+          this.logger.log(
+            `[evaluateAndTransition] Unknown condition type: '${transition.condition_type}'`,
+          );
       }
 
       if (conditionMet) {
         const targetState = plan.states.find(s => s.id === transition.target_state_id);
         if (targetState) {
+          this.logger.log(
+            `[evaluateAndTransition] Condition met! Transitioning from '${state.currentStateId}' to '${transition.target_state_id}'`,
+          );
+
           await this.prisma.sessionState.update({
             where: { sessionId },
             data: {
@@ -684,10 +801,15 @@ export class StateMachineService {
             newStateId: transition.target_state_id,
             newStateTitle: targetState.title || targetState.id,
           };
+        } else {
+          this.logger.warn(
+            `[evaluateAndTransition] Target state '${transition.target_state_id}' not found in plan`,
+          );
         }
       }
     }
 
+    this.logger.log(`[evaluateAndTransition] No transition conditions met`);
     return { transitioned: false };
   }
 
