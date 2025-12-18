@@ -302,12 +302,63 @@ run_database_migrations() {
 
     echo -ne "   ${ARROW} Database migrations... "
 
+    # ==========================================================================
+    # Prerequisite checks - fail with clear error messages
+    # ==========================================================================
+
+    # Check for required commands
+    if ! command -v nc &>/dev/null; then
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        error "Missing required command: nc (netcat)"
+        echo "  Install with: sudo apt install netcat-openbsd"
+        return 1
+    fi
+
+    if ! command -v npx &>/dev/null; then
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        error "Missing required command: npx (Node.js)"
+        echo "  Install Node.js with:"
+        echo "    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+        echo "    sudo apt-get install -y nodejs"
+        echo "  Then run: npm install"
+        return 1
+    fi
+
+    # Check that Prisma is available
+    if [[ ! -d "$PROJECT_DIR/node_modules/.prisma" && ! -d "$PROJECT_DIR/node_modules/prisma" ]]; then
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        error "Prisma not installed in project"
+        echo "  Run: cd $PROJECT_DIR && npm install"
+        return 1
+    fi
+
+    # ==========================================================================
+    # Setup port-forward to PostgreSQL
+    # ==========================================================================
+
     # Use a different local port to avoid conflicts with any existing port-forwards
     local pg_local_port=5433
     local pg_forward_pid=""
 
+    # Check if port is already in use
+    if nc -z localhost ${pg_local_port} 2>/dev/null; then
+        # Port already open - check if it's a stale port-forward
+        verbose "Port ${pg_local_port} already in use, attempting cleanup..."
+        pkill -f "kubectl port-forward.*${pg_local_port}" 2>/dev/null || true
+        sleep 1
+
+        if nc -z localhost ${pg_local_port} 2>/dev/null; then
+            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+            error "Port ${pg_local_port} is already in use"
+            echo "  Check what's using it: sudo lsof -i :${pg_local_port}"
+            echo "  Or try: pkill -f 'port-forward.*${pg_local_port}'"
+            return 1
+        fi
+    fi
+
     # Start port-forward to PostgreSQL in background
-    kubectl port-forward svc/postgres ${pg_local_port}:5432 -n ai-agents >/dev/null 2>&1 &
+    local pf_error_file="/tmp/stella-pf-error-$$.log"
+    kubectl port-forward svc/postgres ${pg_local_port}:5432 -n ai-agents 2>"$pf_error_file" &
     pg_forward_pid=$!
 
     # Wait for port-forward to be ready
@@ -316,30 +367,64 @@ run_database_migrations() {
     while ! nc -z localhost ${pg_local_port} 2>/dev/null; do
         sleep 1
         waited=$((waited + 1))
+
+        # Check if port-forward process died
+        if ! kill -0 $pg_forward_pid 2>/dev/null; then
+            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+            error "PostgreSQL port-forward failed to start"
+            if [[ -f "$pf_error_file" ]]; then
+                echo "  Error: $(cat "$pf_error_file")"
+                rm -f "$pf_error_file"
+            fi
+            return 1
+        fi
+
         if [[ $waited -ge $max_wait ]]; then
             kill $pg_forward_pid 2>/dev/null || true
             printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-            error "Timeout waiting for PostgreSQL port-forward"
+            error "Timeout waiting for PostgreSQL port-forward (${max_wait}s)"
+            echo "  Check PostgreSQL pod: kubectl get pods -n ai-agents -l app=postgres"
+            echo "  Check logs: kubectl logs -n ai-agents -l app=postgres --tail=20"
+            rm -f "$pf_error_file"
             return 1
         fi
     done
+    rm -f "$pf_error_file"
+
+    # ==========================================================================
+    # Run Prisma migrations
+    # ==========================================================================
 
     # Build the DATABASE_URL for migrations
     local migration_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${pg_local_port}/${POSTGRES_DB}?schema=public"
 
     # Run Prisma migrations
-    local migration_output
-    local migration_exit_code
+    local migration_output=""
+    local migration_exit_code=0
 
     # Change to project directory and run migration
-    pushd "$PROJECT_DIR" > /dev/null
+    # Use set +e to prevent script from exiting on migration failure
+    set +e
+    if ! cd "$PROJECT_DIR" 2>/dev/null; then
+        set -e
+        kill $pg_forward_pid 2>/dev/null || true
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        error "Cannot access project directory: $PROJECT_DIR"
+        return 1
+    fi
+
     migration_output=$(DATABASE_URL="$migration_db_url" npx prisma migrate deploy 2>&1)
     migration_exit_code=$?
-    popd > /dev/null
+    cd - > /dev/null 2>&1 || true
+    set -e
 
     # Clean up port-forward
     kill $pg_forward_pid 2>/dev/null || true
     wait $pg_forward_pid 2>/dev/null || true
+
+    # ==========================================================================
+    # Report results
+    # ==========================================================================
 
     if [[ $migration_exit_code -eq 0 ]]; then
         printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
@@ -354,9 +439,15 @@ run_database_migrations() {
     else
         printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
         echo ""
-        error "Prisma migration failed:"
-        echo "$migration_output" | tail -20
+        error "Prisma migration failed (exit code: $migration_exit_code)"
         echo ""
+        echo "--- Migration Output ---"
+        echo "$migration_output" | tail -30
+        echo "------------------------"
+        echo ""
+        echo "  To debug manually:"
+        echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+        echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" npx prisma migrate deploy"
         return 1
     fi
 }

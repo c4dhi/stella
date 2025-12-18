@@ -64,6 +64,9 @@ validate_configuration() {
     # Validate kubectl
     validate_kubectl
 
+    # Validate Node.js (required for Prisma migrations)
+    validate_nodejs
+
     # Validate ports (in local mode)
     if [[ "$NODE_ENV" != "production" ]]; then
         validate_ports
@@ -111,6 +114,54 @@ validate_kubectl() {
     fi
 
     verbose "kubectl: $(kubectl version --client --short 2>/dev/null || echo 'installed')"
+}
+
+# =============================================================================
+# Node.js Validation (required for Prisma migrations)
+# =============================================================================
+
+validate_nodejs() {
+    # Check for Node.js
+    if ! command_exists node; then
+        error "Node.js is not installed (required for database migrations)"
+        echo ""
+        echo -e "   ${DIM}Install Node.js:${NC}"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            echo -e "   ${DIM}  brew install node${NC}"
+        else
+            echo -e "   ${DIM}  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -${NC}"
+            echo -e "   ${DIM}  sudo apt-get install -y nodejs${NC}"
+        fi
+        exit 1
+    fi
+
+    # Check for npm/npx
+    if ! command_exists npx; then
+        error "npx is not available (usually installed with Node.js)"
+        echo ""
+        echo -e "   ${DIM}Reinstall Node.js to get npm/npx${NC}"
+        exit 1
+    fi
+
+    # Check for node_modules (Prisma must be installed)
+    if [[ ! -d "$PROJECT_DIR/node_modules" ]]; then
+        error "Node modules not installed"
+        echo ""
+        echo -e "   ${DIM}Run: cd $PROJECT_DIR && npm install${NC}"
+        exit 1
+    fi
+
+    # Check specifically for Prisma
+    if [[ ! -d "$PROJECT_DIR/node_modules/prisma" && ! -d "$PROJECT_DIR/node_modules/.prisma" ]]; then
+        error "Prisma is not installed in node_modules"
+        echo ""
+        echo -e "   ${DIM}Run: cd $PROJECT_DIR && npm install${NC}"
+        exit 1
+    fi
+
+    local node_version
+    node_version=$(node --version 2>/dev/null || echo "unknown")
+    verbose "Node.js: $node_version"
 }
 
 install_kubectl() {
