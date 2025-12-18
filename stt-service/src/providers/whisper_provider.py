@@ -402,7 +402,7 @@ class WhisperProvider(STTProvider):
         self.model_size = os.getenv("WHISPER_MODEL", "large-v3")
         self.device = os.getenv("WHISPER_DEVICE", "cuda")
         self.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
-        self.language = os.getenv("WHISPER_LANGUAGE", None)  # None = auto-detect
+        self.language = os.getenv("WHISPER_LANGUAGE", None) or None  # None or empty = auto-detect
         self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
 
         # VAD configuration
@@ -412,7 +412,7 @@ class WhisperProvider(STTProvider):
         self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
 
         # Initial prompt for domain context (improves accuracy for specific vocabulary)
-        self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None)
+        self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}, "
