@@ -214,6 +214,12 @@ export class KubernetesService {
                 name: 'TTS_SERVICE_ADDRESS',
                 value: this.configService.get<string>('TTS_SERVICE_ADDRESS', 'tts-service:50052'),
               },
+              // State machine service address for tool-based state management
+              // Shares the same gRPC port as agent registration (both on 50051)
+              {
+                name: 'STATE_MACHINE_ADDRESS',
+                value: this.configService.get<string>('STATE_MACHINE_ADDRESS', 'session-management-server:50051'),
+              },
               // Environment mode (for conditional gateway IP setup)
               {
                 name: 'NODE_ENV',
@@ -226,18 +232,12 @@ export class KubernetesService {
               requests: {
                 memory: '512Mi',
                 cpu: '250m',
-                // Allocate GPU for production (Tesla T4) to enable GPU-accelerated TTS/STT
-                ...(process.env.NODE_ENV === 'production' && {
-                  'nvidia.com/gpu': '1',
-                }),
+                // Note: Agents do NOT need GPU - they communicate with STT/TTS services via gRPC
+                // The STT and TTS services have GPU access via runtimeClassName: nvidia
               },
               limits: {
                 memory: '2Gi',
                 cpu: '1000m',
-                // Limit GPU allocation to 1 GPU per pod in production
-                ...(process.env.NODE_ENV === 'production' && {
-                  'nvidia.com/gpu': '1',
-                }),
               },
             },
           },

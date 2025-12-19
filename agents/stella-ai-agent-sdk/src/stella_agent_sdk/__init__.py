@@ -94,8 +94,15 @@ from stella_agent_sdk.plan import (
     # Migration utilities
     normalize_plan,
 )
+from stella_agent_sdk.tools import (
+    BaseTool,
+    ToolResult,
+    ToolCall,
+    ToolRegistry,
+    ToolExecutor,
+)
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     # Message types
@@ -132,4 +139,10 @@ __all__ = [
     # History client (for advanced use cases)
     "HistoryClient",
     "HistoryClientError",
+    # Tool infrastructure
+    "BaseTool",
+    "ToolResult",
+    "ToolCall",
+    "ToolRegistry",
+    "ToolExecutor",
 ]

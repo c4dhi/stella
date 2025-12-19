@@ -6,9 +6,14 @@ for intelligent conversation handling with expert consultation.
 
 Includes State Machine integration for plan-based conversation flow
 with task tracking and deliverable collection.
+
+Supports both:
+- Tool-based state management (via gRPC to external state machine service)
+- Legacy text-parsing state management (local state machine)
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 import uuid
@@ -17,6 +22,9 @@ from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
 from stella_agent_sdk.messages.types import StatusSubtype
+from stella_agent_sdk.tools import ToolRegistry
+from stella_agent_sdk.tools.state_machine import create_state_machine_tools
+from stella_agent_sdk.services.state_machine_client import StateMachineClient
 
 from stella_agent.llm.service import LLMService
 from stella_agent.pipeline.input_gate import InputGate
@@ -49,7 +57,9 @@ class StellaAgent(BaseAgent):
     def __init__(
         self,
         llm_config_path: Optional[str] = None,
-        experts_dir: Optional[str] = None
+        experts_dir: Optional[str] = None,
+        use_tools: bool = False,  # Default to legacy mode for stella-agent
+        state_machine_address: Optional[str] = None
     ):
         """
         Initialize the Stella Agent.
@@ -57,11 +67,17 @@ class StellaAgent(BaseAgent):
         Args:
             llm_config_path: Path to LLM configuration JSON file
             experts_dir: Path to directory containing expert JSON configs
+            use_tools: If True, use tool-based state management via gRPC.
+                      If False, use legacy text parsing with local state machine.
+            state_machine_address: gRPC address for state machine service
         """
         super().__init__()
 
         # Set agent type to match the Docker image name (used for gRPC registration)
         self._agent_type = "stella-agent"
+
+        # Mode configuration
+        self._use_tools = use_tools
 
         # Determine paths - try multiple locations for Docker compatibility
         if llm_config_path is None:
@@ -78,9 +94,21 @@ class StellaAgent(BaseAgent):
         self.expert_pool = ExpertPool(llm_service=self.llm_service, agents_dir=experts_dir)
         self.aggregator = Aggregator(llm_service=self.llm_service)
 
-        # Initialize state machine and prompt builder
-        self.state_machine = StateMachine()
+        # Initialize prompt builder
         self.prompt_builder = PromptBuilder()
+
+        # Tool-based components (initialized per session)
+        # State machine shares the same gRPC port as agent registration (50051)
+        self._state_machine_address = state_machine_address or os.environ.get(
+            "STATE_MACHINE_ADDRESS", "localhost:50051"
+        )
+        self.sm_client: Optional[StateMachineClient] = None
+        self.tool_registry: Optional[ToolRegistry] = None
+
+        # Legacy state machine (for backward compatibility)
+        self.state_machine: Optional[StateMachine] = None
+        if not use_tools:
+            self.state_machine = StateMachine()
 
         # Timekeeper threshold (turns without deliverable before invoking)
         self.timekeeper_threshold = 2
@@ -94,7 +122,8 @@ class StellaAgent(BaseAgent):
         # Custom system prompt from plan (set in on_session_start)
         self._plan_system_prompt: Optional[str] = None
 
-        print(f"[StellaAgent] Initialized with {len(self.expert_pool.agents)} experts")
+        mode_str = "tool-based" if use_tools else "legacy"
+        print(f"[StellaAgent] Initialized ({mode_str} mode) with {len(self.expert_pool.agents)} experts")
 
     async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """
@@ -340,8 +369,54 @@ class StellaAgent(BaseAgent):
                         key=key,
                         value=value
                     )
-            else:
-                # No deliverables extracted - increment turn counter
+
+            # Handle explicitly completed tasks (tasks without deliverables)
+            if gate_result.completed_tasks:
+                print(f"[StellaAgent] Explicitly completed tasks from LLM: {gate_result.completed_tasks}")
+
+                yield AgentOutput.debug(
+                    input.session_id,
+                    f"Explicitly completed {len(gate_result.completed_tasks)} tasks",
+                    component="agent",
+                    completed_task_ids=gate_result.completed_tasks
+                )
+
+                if self.state_machine.is_initialized:
+                    marked = self.state_machine.mark_tasks_completed(gate_result.completed_tasks)
+                    print(f"[StellaAgent] Successfully marked tasks: {marked}")
+
+                    # Check for state transitions after marking tasks complete
+                    result = self.state_machine.process_deliverables({})
+                    print(f"[StellaAgent] After process_deliverables: "
+                          f"state_complete={result.state_complete}, "
+                          f"should_advance={result.should_advance}, "
+                          f"next_state={result.next_state_id}")
+                    if result.should_advance and result.next_state_id:
+                        print(f"[StellaAgent] Advancing to state: {result.next_state_id}")
+                        old_state = self.state_machine.current_state
+                        old_state_id = old_state.id if old_state else "Unknown"
+                        old_state_title = old_state.title if old_state else "Unknown"
+
+                        if self.state_machine.advance_state():
+                            new_state = self.state_machine.current_state
+                            new_state_id = new_state.id if new_state else "Unknown"
+                            new_state_title = new_state.title if new_state else "Unknown"
+
+                            yield AgentOutput.debug(
+                                input.session_id,
+                                f"State transition: {old_state_title} -> {new_state_title}",
+                                component="state_machine",
+                                stage="state_transition",
+                                from_state_id=old_state_id,
+                                from_state_title=old_state_title,
+                                to_state_id=new_state_id,
+                                to_state_title=new_state_title,
+                                transition_reason="explicit_task_completion",
+                                completed_tasks=gate_result.completed_tasks
+                            )
+
+            # No deliverables or completed tasks - increment turn counter
+            if not gate_result.deliverables and not gate_result.completed_tasks:
                 if self.state_machine.is_initialized:
                     self.state_machine.increment_turn()
 
@@ -410,9 +485,34 @@ class StellaAgent(BaseAgent):
         from datetime import datetime
         self._session_started_at = datetime.utcnow().isoformat() + "Z"
         self.config = config
-        self._plan_system_prompt: Optional[str] = None  # Store plan's custom system prompt
+        self._plan_system_prompt = None
 
-        # Initialize state machine from plan
+        # Load plan configuration
+        plan = self._load_plan_config(config)
+
+        if self._use_tools:
+            # Initialize tool-based state management
+            await self._init_tool_mode(session_id, plan)
+        else:
+            # Initialize legacy state machine
+            await self._init_legacy_mode(plan)
+
+        # Extract custom system prompt from plan if provided
+        if plan and "system_prompt" in plan:
+            self._plan_system_prompt = plan["system_prompt"]
+            print("[StellaAgent] Using custom system prompt from plan")
+
+        # Apply any config overrides
+        if "model" in config:
+            self.llm_service.default_config.model = config["model"]
+        if "temperature" in config:
+            self.llm_service.default_config.temperature = config["temperature"]
+
+        print(f"[StellaAgent] Session started: {session_id}")
+        print(f"[StellaAgent] Config keys: {list(config.keys())}")
+
+    def _load_plan_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Load plan configuration from config or disk."""
         plan = None
 
         # First check for plan_id - load plan from disk
@@ -427,29 +527,45 @@ class StellaAgent(BaseAgent):
         # Legacy support: direct plan in config
         elif "plan" in config:
             plan = config["plan"]
-            print(f"[StellaAgent] Using direct plan from config")
+            print("[StellaAgent] Using direct plan from config")
 
-        # Initialize state machine if we have a plan
+        return plan
+
+    async def _init_tool_mode(
+        self, session_id: str, plan: Optional[Dict[str, Any]]
+    ) -> None:
+        """Initialize tool-based state management."""
+        # Create state machine client
+        self.sm_client = StateMachineClient(
+            session_id=session_id,
+            address=self._state_machine_address
+        )
+
+        # Initialize state machine with plan
+        if plan:
+            try:
+                result = await self.sm_client.initialize(plan)
+                print(f"[StellaAgent] State machine initialized via gRPC: {result.get('success')}")
+            except Exception as e:
+                print(f"[StellaAgent] Failed to initialize state machine: {e}")
+
+        # Create tool registry and register state machine tools
+        self.tool_registry = ToolRegistry()
+        sm_tools = create_state_machine_tools(self.sm_client)
+        for tool in sm_tools:
+            self.tool_registry.register(tool)
+
+        print(f"[StellaAgent] Registered {len(sm_tools)} state machine tools")
+
+    async def _init_legacy_mode(self, plan: Optional[Dict[str, Any]]) -> None:
+        """Initialize legacy text-parsing state management."""
         if plan:
             if self.state_machine.initialize(plan):
                 print(f"[StellaAgent] State machine initialized with plan: {plan.get('title', 'Unknown')}")
-                # Extract custom system prompt from plan if provided (snake_case per SDK convention)
-                if "system_prompt" in plan:
-                    self._plan_system_prompt = plan["system_prompt"]
-                    print(f"[StellaAgent] Using custom system prompt from plan")
             else:
-                print(f"[StellaAgent] Failed to initialize state machine from plan")
+                print("[StellaAgent] Failed to initialize state machine from plan")
         else:
-            print(f"[StellaAgent] No plan_id or plan in config - state machine disabled")
-
-        # Apply any config overrides
-        if "model" in config:
-            self.llm_service.default_config.model = config["model"]
-        if "temperature" in config:
-            self.llm_service.default_config.temperature = config["temperature"]
-
-        print(f"[StellaAgent] Session started: {session_id}")
-        print(f"[StellaAgent] Config keys: {list(config.keys())}")
+            print("[StellaAgent] No plan_id or plan in config - state machine disabled")
 
     async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
         """
@@ -490,12 +606,29 @@ class StellaAgent(BaseAgent):
 
         # Build summary
         summary = {
+            "agent": "stella-agent",
+            "mode": "tool-based" if self._use_tools else "legacy",
             "llm_stats": self.llm_service.get_usage_stats(),
             **result
         }
 
-        # Add state machine summary if initialized
-        if self.state_machine.is_initialized:
+        if self._use_tools and self.sm_client:
+            # Get summary from external state machine
+            try:
+                state = await self.sm_client.get_current_state()
+                deliverables = await self.sm_client.get_collected_deliverables()
+                summary["deliverables"] = deliverables
+                summary["progress"] = state.get("progress", 0) if state else 0
+            except Exception as e:
+                print(f"[StellaAgent] Failed to get session summary: {e}")
+
+            # Close state machine client
+            await self.sm_client.close()
+            self.sm_client = None
+            self.tool_registry = None
+
+        elif self.state_machine and self.state_machine.is_initialized:
+            # Add state machine summary if initialized (legacy mode)
             todo_list = self.state_machine.get_todo_list()
             if todo_list:
                 summary["state_machine"] = {
@@ -505,9 +638,8 @@ class StellaAgent(BaseAgent):
                     "progress_percentage": todo_list.progress_percentage,
                     "completed_deliverables": todo_list.completed_deliverables
                 }
-
-        # Reset state machine for next session
-        self.state_machine = StateMachine()
+            # Reset state machine for next session
+            self.state_machine = StateMachine()
 
         # Clear config
         self.config = {}

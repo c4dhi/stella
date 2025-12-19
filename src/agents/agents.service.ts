@@ -325,6 +325,7 @@ export class AgentsService {
         icon: createAgentDto.icon || '🤖',
         agentConfig: agentConfig as Prisma.InputJsonValue,
         agentType,
+        envVarTemplateId: createAgentDto.envVarTemplateId || null,  // Store for restarts
         status: AgentStatus.STARTING,
         healthState: 'initializing',
       },
@@ -466,6 +467,7 @@ export class AgentsService {
         icon: createAgentDto.icon || '🤖',
         agentConfig: (createAgentDto.config || {}) as Prisma.InputJsonValue,
         agentType,  // Store agent type for restarts
+        envVarTemplateId: createAgentDto.envVarTemplateId || null,  // Store for restarts
         status: AgentStatus.STARTING,
         healthState: 'initializing',
         grpcAddress: grpcAddress || null,
@@ -860,7 +862,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType: agent.agentType || 'stella-agent',  // Use stored agent type for image selection
-        // Note: envVarTemplateId not passed on restart - uses same config as original
+        envVarTemplateId: agent.envVarTemplateId || undefined,  // Pass stored env var template for API keys
       });
 
       // Update agent with new pod info

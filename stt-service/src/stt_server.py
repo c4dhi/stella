@@ -60,12 +60,16 @@ class STTEngine:
                     if await provider.initialize():
                         self.provider = provider
                         self.provider_name = provider.name
-                        print(f"[STT Engine] Primary provider: {provider.name}")
+                        print(f"[STT Engine] ✓ PRIMARY PROVIDER: {provider.name}")
                         break
+                    else:
+                        print(f"[STT Engine] ✗ {provider.name} initialization returned False")
                 except Exception as e:
-                    print(f"[STT Engine] {provider.name} initialization failed: {e}")
+                    print(f"[STT Engine] ✗ {provider.name} initialization failed: {e}")
+                    import traceback
+                    traceback.print_exc()
             else:
-                print(f"[STT Engine] {provider.name} not available (dependencies missing)")
+                print(f"[STT Engine] ✗ {provider.name} not available (dependencies missing)")
 
         if not self.provider:
             print("[STT Engine] CRITICAL: No STT provider available!")
@@ -180,9 +184,9 @@ async def serve():
     status = engine.get_status()
     print("=" * 60)
     print(f"[STT Service] Server started on port {port}")
-    print(f"[STT Service] Primary: {status['primary_provider']}")
-    print(f"[STT Service] Fallback: {status['fallback_provider']}")
-    print(f"[STT Service] Capabilities: {status['capabilities']}")
+    print(f"[STT Service] ★ ACTIVE PROVIDER: {status['primary_provider']}")
+    print(f"[STT Service]   Fallback: {status['fallback_provider']}")
+    print(f"[STT Service]   Capabilities ({status['primary_provider']}): {status['capabilities']}")
     print("=" * 60)
 
     await server.wait_for_termination()

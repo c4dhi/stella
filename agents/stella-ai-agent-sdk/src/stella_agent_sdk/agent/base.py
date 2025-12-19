@@ -614,19 +614,39 @@ class BaseAgent(ABC):
                             await self.audio._room.publish_data(error_payload)
 
                         elif output.type == OutputType.METADATA:
-                            # Forward metadata messages (deliverables, progress, etc.) as debug
-                            subtype = output.metadata_subtype.value if output.metadata_subtype else "metadata"
-                            metadata_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": f"[{subtype}] {output.content}",
-                                    "component": "metadata",
-                                    "level": "info",
-                                    "metadata": output.metadata or {}
+                            # Handle different metadata subtypes
+                            subtype = output.metadata_subtype
+                            metadata = output.metadata or {}
+
+                            if subtype == MetadataSubtype.DELIVERABLE:
+                                # Send as plan_deliverable_update for frontend
+                                deliverable_payload = {
+                                    "type": "plan_deliverable_update",
+                                    "data": {
+                                        "deliverable_key": metadata.get("key"),
+                                        "deliverable_value": metadata.get("value"),
+                                        "confidence": metadata.get("confidence", 1.0),
+                                        "reasoning": metadata.get("reasoning"),
+                                        "state_id": metadata.get("state_id"),
+                                        "task_id": metadata.get("task_id"),
+                                    }
                                 }
-                            }
-                            logger.info(f"[METADATA MESSAGE] Publishing: {metadata_payload}")
-                            await self.audio._room.publish_data(metadata_payload)
+                                logger.info(f"[DELIVERABLE] Publishing: {deliverable_payload}")
+                                await self.audio._room.publish_data(deliverable_payload)
+                            else:
+                                # Forward other metadata messages as debug
+                                subtype_value = subtype.value if subtype else "metadata"
+                                metadata_payload = {
+                                    "type": "debug",
+                                    "data": {
+                                        "content": f"[{subtype_value}] {output.content}",
+                                        "component": "metadata",
+                                        "level": "info",
+                                        "metadata": metadata
+                                    }
+                                }
+                                logger.info(f"[METADATA MESSAGE] Publishing: {metadata_payload}")
+                                await self.audio._room.publish_data(metadata_payload)
 
                         elif output.type == OutputType.PROGRESS_UPDATE:
                             # Forward progress updates to frontend for task panel display

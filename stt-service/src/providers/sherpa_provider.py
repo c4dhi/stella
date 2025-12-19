@@ -384,8 +384,10 @@ class SherpaProvider(STTProvider):
     def get_capabilities(self) -> dict:
         return {
             "supports_streaming": True,
-            "supports_gpu": True,
-            "supported_languages": ["en"],
+            "supports_gpu": False,  # Sherpa uses CPU (ONNX)
+            "supports_auto_detect": False,  # Sherpa uses fixed language model
+            "supported_languages": ["de"],  # German zipformer model
+            "model": "sherpa-onnx-zipformer-de",
             "model_size_mb": 180,
             "latency_ms": "real-time",
         }

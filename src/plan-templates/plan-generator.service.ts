@@ -387,6 +387,37 @@ Respond ONLY with valid JSON matching the schema above.`;
       response.content.initial_state_id = response.content.states[0].id;
     }
 
+    // Auto-generate transitions if missing
+    // Each state (except the last) gets a transition to the next state
+    response.content.states = response.content.states.map((state, index) => {
+      // If state already has transitions, keep them
+      if (state.transitions && state.transitions.length > 0) {
+        return state;
+      }
+
+      // If this is the last state, no transition needed
+      if (index === response.content.states.length - 1) {
+        return { ...state, transitions: [] };
+      }
+
+      // Generate default transition to next state
+      const nextStateId = response.content.states[index + 1].id;
+      return {
+        ...state,
+        transitions: [
+          {
+            target_state_id: nextStateId,
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+        ],
+      };
+    });
+
+    this.logger.log(
+      `Generated transitions for ${response.content.states.length} states`,
+    );
+
     // Ensure we have suggested name and description
     response.suggestedName = response.suggestedName || 'Generated Plan';
     response.suggestedDescription =

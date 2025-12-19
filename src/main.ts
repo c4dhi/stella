@@ -10,17 +10,33 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
-  // Add gRPC microservice for agent connections
+  // Determine proto path
+  // In Docker: __dirname is /app/dist/src, proto files are at /app/dist/proto (../proto)
+  // In local dev: __dirname is <project>/dist/src, proto files are at <project>/proto (../../proto)
+  // Use PROTO_PATH env var if set, otherwise check for Docker path first, then local path
+  const dockerProtoPath = join(__dirname, '../proto');
+  const localProtoPath = join(__dirname, '../../proto');
+  const protoDir =
+    process.env.PROTO_PATH ||
+    (require('fs').existsSync(join(dockerProtoPath, 'agent.proto'))
+      ? dockerProtoPath
+      : localProtoPath);
+
+  // Add gRPC microservice for agent connections and state machine
+  // Both services run on the same port - gRPC multiplexes by package name
   const grpcPort = process.env.GRPC_PORT || '50051';
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
-      package: 'stella.agent.v1',
-      protoPath: join(__dirname, '../proto/agent.proto'),
+      package: ['stella.agent.v1', 'stella.statemachine.v1'],
+      protoPath: [
+        join(protoDir, 'agent.proto'),
+        join(protoDir, 'state_machine.proto'),
+      ],
       url: `0.0.0.0:${grpcPort}`,
     },
   });
-  logger.log(`🔌 gRPC server configured on port ${grpcPort}`);
+  logger.log(`🔌 gRPC server configured on port ${grpcPort} (AgentService + StateMachineService)`);
 
   // Global validation pipe
   app.useGlobalPipes(

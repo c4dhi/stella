@@ -47,7 +47,14 @@ VERDICT: [SAFE] or [UNSAFE]
 EXPERTS: [comma-separated list] or [NONE]
 MESSAGE: [Your response to the user - ~30-50 words, max 1 question]
 DELIVERABLES: [JSON with extracted values] or [NONE]
+COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
 STATE_TRANSITION: ["READY"] or [NONE]
+
+COMPLETED_TASKS Rules:
+- Use COMPLETED_TASKS to mark tasks as done when they DON'T require data collection
+- Only mark tasks that you have actually performed in your MESSAGE
+- Tasks that collect deliverables are automatically completed when all deliverables are collected
+- Format: JSON array of task IDs, e.g., ["tell_joke", "say_goodbye"]
 
 IMPORTANT: Use this EXACT format with NO numbers or prefixes before labels. The system parses these labels to process your response."""
 
@@ -238,6 +245,17 @@ Turns without deliverable: {progress.get('turns_without_deliverable', 0)}""")
         if state.get('type') == 'loose' and len(available_tasks) > 1:
             task_list = ", ".join(t.get('description', t.get('id', '')) for t in available_tasks)
             lines.append(f"\nAvailable tasks (any order): {task_list}")
+
+        # Show tasks without deliverables that need explicit completion
+        tasks_without_deliverables = [
+            t for t in available_tasks
+            if not t.get('has_deliverables', True)
+        ]
+        if tasks_without_deliverables:
+            lines.append("\nTasks to complete (no data collection needed):")
+            for t in tasks_without_deliverables:
+                lines.append(f"- {t.get('id')}: {t.get('description', '')}")
+            lines.append("Mark these as done using COMPLETED_TASKS when you perform them.")
 
         lines.append("\n--- END CONTEXT ---")
         return "\n".join(lines)

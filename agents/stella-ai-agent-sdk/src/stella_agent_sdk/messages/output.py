@@ -251,7 +251,8 @@ class AgentOutput:
 
         Args:
             session_id: The session ID.
-            progress_state: The complete progress state (from stella_agent_sdk.progress).
+            progress_state: The complete progress state (from stella_agent_sdk.progress)
+                           or a dict in the same format.
             update_trigger: What triggered this update (e.g., "turn_completion",
                            "state_change", "item_collected").
             **extra_metadata: Additional metadata to include.
@@ -278,7 +279,14 @@ class AgentOutput:
         import json
         from datetime import datetime
 
-        data = progress_state.to_dict()
+        # Support both ProgressState objects and plain dicts
+        if hasattr(progress_state, 'to_dict'):
+            data = progress_state.to_dict()
+        elif isinstance(progress_state, dict):
+            data = progress_state.copy()
+        else:
+            raise TypeError(f"progress_state must be ProgressState or dict, got {type(progress_state)}")
+
         data["update_trigger"] = update_trigger
         data["timestamp"] = datetime.utcnow().isoformat() + "Z"
 

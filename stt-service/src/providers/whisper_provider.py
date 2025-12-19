@@ -84,7 +84,9 @@ class WhisperSession(STTSession):
         self.detected_language = None
 
         # Audio preprocessing settings
-        self.max_partial_seconds = 5  # Only transcribe last 5s for partials
+        # max_partial_seconds = context window (NOT delay). Partials still come every PARTIAL_INTERVAL_MS
+        # More context = more stable transcription, but slower inference
+        self.max_partial_seconds = 10  # 10s context window balances quality vs speed
         self.min_language_confidence = 0.5  # Filter low-confidence results
 
         # Precompute high-pass filter coefficients (80Hz cutoff for noise removal)
@@ -249,9 +251,13 @@ class WhisperSession(STTSession):
             audio_float = self._preprocess_audio(audio_float)
 
             # Use cached detected language or configured language
-            language = self.detected_language or self.config.get('language')
+            # Ensure empty string is treated as None (auto-detect)
+            config_lang = self.config.get('language')
+            language = self.detected_language or (config_lang if config_lang else None)
 
             # Transcribe with faster-whisper
+            # temperature=0 for deterministic output (critical for stability)
+            # compression_ratio_threshold filters hallucinations
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=language,
@@ -260,6 +266,10 @@ class WhisperSession(STTSession):
                 word_timestamps=False,
                 condition_on_previous_text=False,
                 initial_prompt=self.config.get('initial_prompt'),
+                temperature=0.0,  # Deterministic output - prevents flickering
+                compression_ratio_threshold=2.4,  # Filter hallucinations
+                log_prob_threshold=-1.0,  # Filter low-confidence outputs
+                no_speech_threshold=0.6,  # Better silence detection
             )
 
             # Cache detected language for future transcriptions in this session
@@ -315,9 +325,11 @@ class WhisperSession(STTSession):
             audio_float = self._preprocess_audio(audio_float)
 
             # Use cached detected language or configured language
-            language = self.detected_language or self.config.get('language')
+            # Ensure empty string is treated as None (auto-detect)
+            config_lang = self.config.get('language')
+            language = self.detected_language or (config_lang if config_lang else None)
 
-            # Final transcription
+            # Final transcription - use same stable settings as partials
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=language,
@@ -326,6 +338,10 @@ class WhisperSession(STTSession):
                 word_timestamps=False,
                 condition_on_previous_text=False,
                 initial_prompt=self.config.get('initial_prompt'),
+                temperature=0.0,  # Deterministic output
+                compression_ratio_threshold=2.4,  # Filter hallucinations
+                log_prob_threshold=-1.0,  # Filter low-confidence outputs
+                no_speech_threshold=0.6,  # Better silence detection
             )
 
             # Cache detected language for future transcriptions in this session
@@ -402,7 +418,7 @@ class WhisperProvider(STTProvider):
         self.model_size = os.getenv("WHISPER_MODEL", "large-v3")
         self.device = os.getenv("WHISPER_DEVICE", "cuda")
         self.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
-        self.language = os.getenv("WHISPER_LANGUAGE", None)  # None = auto-detect
+        self.language = os.getenv("WHISPER_LANGUAGE", None) or None  # None or empty = auto-detect
         self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
 
         # VAD configuration
@@ -412,7 +428,7 @@ class WhisperProvider(STTProvider):
         self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
 
         # Initial prompt for domain context (improves accuracy for specific vocabulary)
-        self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None)
+        self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}, "
@@ -524,7 +540,12 @@ class WhisperProvider(STTProvider):
         return {
             "supports_streaming": True,
             "supports_gpu": True,
-            "supported_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko"],
+            "supports_auto_detect": True,
+            "model": f"faster-whisper-{self.model_size}",
+            "device": self.device,
+            "compute_type": self.compute_type,
+            "language": self.language or "auto",
+            "supported_languages": ["auto", "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi", "fo", "fr", "gl", "gu", "ha", "haw", "he", "hi", "hr", "ht", "hu", "hy", "id", "is", "it", "ja", "jw", "ka", "kk", "km", "kn", "ko", "la", "lb", "ln", "lo", "lt", "lv", "mg", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "ne", "nl", "nn", "no", "oc", "pa", "pl", "ps", "pt", "ro", "ru", "sa", "sd", "si", "sk", "sl", "sn", "so", "sq", "sr", "su", "sv", "sw", "ta", "te", "tg", "th", "tk", "tl", "tr", "tt", "uk", "ur", "uz", "vi", "yi", "yo", "zh", "yue"],
             "model_size_mb": 3000 if "large" in self.model_size else 1500,
             "latency_ms": "300-600 (VAD-chunked)",
         }

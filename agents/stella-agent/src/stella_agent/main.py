@@ -44,10 +44,24 @@ def main():
     config_path = os.environ.get("LLM_CONFIG_PATH")
     experts_dir = os.environ.get("EXPERTS_DIR")
 
+    # Tool mode configuration
+    # USE_TOOLS: Set to "true" or "1" to use tool-based state management
+    # Default is "false" for stella-agent (legacy mode)
+    use_tools_env = os.environ.get("USE_TOOLS", "false").lower()
+    use_tools = use_tools_env in ("true", "1", "yes")
+
+    # STATE_MACHINE_ADDRESS: gRPC address for state machine service
+    state_machine_address = os.environ.get("STATE_MACHINE_ADDRESS")
+
     agent = StellaAgent(
         llm_config_path=config_path,
         experts_dir=experts_dir,
+        use_tools=use_tools,
+        state_machine_address=state_machine_address
     )
+
+    mode_str = "tool-based" if use_tools else "legacy"
+    logger.info(f"Running in {mode_str} mode")
 
     asyncio.run(run_agent_from_env(agent))
 

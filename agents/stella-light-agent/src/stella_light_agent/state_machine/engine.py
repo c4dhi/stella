@@ -137,7 +137,8 @@ class StateMachine:
                     "id": t.id,
                     "description": t.description,
                     "instruction": t.instruction,
-                    "required": t.required
+                    "required": t.required,
+                    "has_deliverables": len(t.deliverables) > 0
                 }
                 for t in available_tasks
             ],
@@ -273,6 +274,30 @@ class StateMachine:
         """Clear the state changed flag after it's been processed."""
         if self.execution_state:
             self.execution_state.clear_state_changed_flag()
+
+    def mark_tasks_completed(self, task_ids: List[str]) -> List[str]:
+        """
+        Mark multiple tasks as completed by their IDs.
+
+        This is used for tasks without deliverables that the agent
+        explicitly marks as complete after performing them.
+
+        Args:
+            task_ids: List of task IDs to mark as completed
+
+        Returns:
+            List of task IDs that were successfully marked completed
+        """
+        if not self.execution_state:
+            return []
+
+        completed = []
+        for task_id in task_ids:
+            if self.execution_state.mark_task_completed(task_id):
+                completed.append(task_id)
+                print(f"[StateMachine] Task explicitly completed: {task_id}")
+
+        return completed
 
     def get_status_summary(self) -> Dict[str, Any]:
         """Get a summary of state machine status for logging."""

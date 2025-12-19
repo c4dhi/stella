@@ -36,6 +36,9 @@ data:
   # TTS Service (microservices architecture)
   TTS_SERVICE_URL: "tts-service:50052"
 
+  # State Machine Service (shares gRPC port with agent registration on session-management-server)
+  STATE_MACHINE_ADDRESS: "session-management-server:50051"
+
   # DNS Configuration (production only)
   # CUSTOM_DNS_SERVERS: External DNS to bypass SSL inspection for model downloads (STT/TTS init containers)
   # KUBERNETES_DNS_IP: K8s CoreDNS IP for agent pods to resolve internal services
