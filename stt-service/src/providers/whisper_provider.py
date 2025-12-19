@@ -84,7 +84,9 @@ class WhisperSession(STTSession):
         self.detected_language = None
 
         # Audio preprocessing settings
-        self.max_partial_seconds = 5  # Only transcribe last 5s for partials
+        # max_partial_seconds = context window (NOT delay). Partials still come every PARTIAL_INTERVAL_MS
+        # More context = more stable transcription, but slower inference
+        self.max_partial_seconds = 10  # 10s context window balances quality vs speed
         self.min_language_confidence = 0.5  # Filter low-confidence results
 
         # Precompute high-pass filter coefficients (80Hz cutoff for noise removal)
@@ -254,6 +256,8 @@ class WhisperSession(STTSession):
             language = self.detected_language or (config_lang if config_lang else None)
 
             # Transcribe with faster-whisper
+            # temperature=0 for deterministic output (critical for stability)
+            # compression_ratio_threshold filters hallucinations
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=language,
@@ -262,6 +266,10 @@ class WhisperSession(STTSession):
                 word_timestamps=False,
                 condition_on_previous_text=False,
                 initial_prompt=self.config.get('initial_prompt'),
+                temperature=0.0,  # Deterministic output - prevents flickering
+                compression_ratio_threshold=2.4,  # Filter hallucinations
+                log_prob_threshold=-1.0,  # Filter low-confidence outputs
+                no_speech_threshold=0.6,  # Better silence detection
             )
 
             # Cache detected language for future transcriptions in this session
@@ -321,7 +329,7 @@ class WhisperSession(STTSession):
             config_lang = self.config.get('language')
             language = self.detected_language or (config_lang if config_lang else None)
 
-            # Final transcription
+            # Final transcription - use same stable settings as partials
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=language,
@@ -330,6 +338,10 @@ class WhisperSession(STTSession):
                 word_timestamps=False,
                 condition_on_previous_text=False,
                 initial_prompt=self.config.get('initial_prompt'),
+                temperature=0.0,  # Deterministic output
+                compression_ratio_threshold=2.4,  # Filter hallucinations
+                log_prob_threshold=-1.0,  # Filter low-confidence outputs
+                no_speech_threshold=0.6,  # Better silence detection
             )
 
             # Cache detected language for future transcriptions in this session
