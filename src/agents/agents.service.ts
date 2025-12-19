@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { KubernetesService } from '../kubernetes/kubernetes.service';
 import { AgentServerService } from '../agent-server/agent-server.service';
 import { SessionsService } from '../sessions/sessions.service';
+import { AgentImageService } from '../agent-image/agent-image.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 
@@ -27,6 +28,7 @@ export class AgentsService {
     private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
+    @Optional() private agentImageService?: AgentImageService,
   ) {
     // Validate OpenAI API key on startup
     this.validateOpenAIKey();
@@ -135,6 +137,62 @@ export class AgentsService {
 
     return sanitize(config, 0);
   }
+
+
+    /**
+   * Validate that agent config includes a plan if the agent type requires it.
+   */
+  private async validatePlanRequirement(agentType: string, agentConfig: Record<string, unknown>): Promise<void> {
+    // Check if agent type requires a plan by looking up its config schema
+    if (!this.agentImageService) {
+      // If agentImageService is not available, skip validation (shouldn't happen in normal operation)
+      this.logger.warn('AgentImageService not available, skipping plan validation');
+      return;
+    }
+
+    try {
+      const agentTypes = await this.agentImageService.getAgentTypesWithInfo();
+      const agentTypeInfo = agentTypes.find(type => type.slug === agentType);
+
+      if (!agentTypeInfo || !agentTypeInfo.configSchema) {
+        // If we can't find the agent type or it has no schema, skip validation
+        this.logger.warn(`Could not find config schema for agent type ${agentType}, skipping plan validation`);
+        return;
+      }
+
+      // Check if any property in the schema has x-stella-requires-plan: true
+      const properties = (agentTypeInfo.configSchema.properties as Record<string, any>) || {};
+      const requiresPlan = Object.values(properties).some(
+        (prop: any) => prop?.['x-stella-requires-plan'] === true
+      );
+
+      if (requiresPlan) {
+        // Check if plan is present in agent config
+        if (!agentConfig.plan || typeof agentConfig.plan !== 'object') {
+          throw new BadRequestException(
+            `Agent type "${agentType}" requires a plan configuration. ` +
+            `Please provide a plan in the agent config.`
+          );
+        }
+
+        // Validate plan has required structure
+        const plan = agentConfig.plan as Record<string, unknown>;
+        if (!plan.states || !Array.isArray(plan.states) || plan.states.length === 0) {
+          throw new BadRequestException(
+            `Plan configuration is invalid: plan must have at least one state with tasks.`
+          );
+        }
+      }
+    } catch (error) {
+      // Re-throw BadRequestException as-is
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      // Log other errors but don't fail agent creation (validation is best-effort)
+      this.logger.error(`Error validating plan requirement: ${error.message}`);
+    }
+  }
+
 
   /**
    * Map Kubernetes pod phase to AgentStatus
@@ -316,6 +374,9 @@ export class AgentsService {
 
     // Security: Validate and sanitize agent config
     const agentConfig = this.sanitizeAgentConfig(createAgentDto.config || {});
+
+    // Validate plan requirement for agent types that need it
+    await this.validatePlanRequirement(agentType, agentConfig);
 
     // 1. Create agent record (status=STARTING, no podName yet)
     const agent = await this.prisma.agentInstance.create({
@@ -579,18 +640,40 @@ export class AgentsService {
 
       // Check if agent failed during pod creation
       if (agent.status === 'FAILED') {
-        callback(`[Pod creation failed: ${agent.lastError || 'Unknown error'}]\n`);
-        throw new BadRequestException(`Pod creation failed: ${agent.lastError || 'Unknown error'}`);
+        const errorMsg = agent.lastError || 'Unknown error';
+        callback(`[Pod creation failed: ${errorMsg}]\n`);
+        const error = new BadRequestException(`Pod creation failed: ${errorMsg}`);
+        if (onError) onError(error);
+        throw error;
       }
     }
 
     if (!agent.podName) {
       callback(`[Timeout waiting for pod creation after ${maxWaitMs / 1000}s]\n`);
-      throw new BadRequestException('Timeout waiting for pod creation');
+      const error = new BadRequestException('Timeout waiting for pod creation');
+      if (onError) onError(error);
+      throw error;
     }
 
     callback(`[Connected to pod: ${agent.podName}]\n`);
-    return await this.k8s.streamPodLogs(agent.podName, callback, onError);
+
+    // Wrap onError to provide better error messages
+    const wrappedOnError = (error: Error) => {
+      // Check if it's a pod not found error
+      if (error.message?.includes('not found') || error.message?.includes('Pod not found')) {
+        callback(`\n[Error] Agent pod not found. The agent may have been stopped or failed to start.\n`);
+        callback(`Pod name: ${agent.podName}\n`);
+        callback(`Agent status: ${agent.status}\n`);
+        if (agent.lastError) {
+          callback(`Last error: ${agent.lastError}\n`);
+        }
+      }
+      if (onError) {
+        onError(error);
+      }
+    };
+
+    return await this.k8s.streamPodLogs(agent.podName, callback, wrappedOnError);
   }
 
   // ============================================================================

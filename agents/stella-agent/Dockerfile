@@ -11,6 +11,9 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libglib2.0-0 \
+    libgstreamer1.0-0 \
+    libgstreamer-plugins-base1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy SDK first (dependency)
@@ -28,6 +31,6 @@ RUN pip install --no-cache-dir /app/stella-agent
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run agent - server address will be passed via environment or args
+# Run agent - all configuration comes from environment variables
 WORKDIR /app/stella-agent
-CMD ["python", "-m", "stella_agent", "--server", "session-management-server:50051"]
+CMD ["python", "-m", "stella_agent"]

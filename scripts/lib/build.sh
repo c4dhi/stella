@@ -553,6 +553,8 @@ cleanup_for_rebuild() {
     if [[ "$RESET_DB_MODE" == "true" ]]; then
         kubectl delete pods -n ai-agents --all --grace-period=5 2>/dev/null || true
         kubectl delete pvc -n ai-agents --all 2>/dev/null || true
+        # Wait for PVCs to be fully deleted before continuing (critical on macOS)
+        kubectl wait --for=delete pvc --all -n ai-agents --timeout=60s 2>/dev/null || true
     else
         kubectl delete pods -n ai-agents -l app!=postgres --grace-period=5 2>/dev/null || true
     fi

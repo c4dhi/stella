@@ -8,6 +8,8 @@ import {
   Sse,
   ValidationPipe,
   UsePipes,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { Observable, interval } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -70,13 +72,43 @@ export class AgentsController {
           });
         },
         (error) => {
-          // Handle errors
-          observer.error(error);
+          // Handle errors with user-friendly messages
+          let errorMessage = 'Failed to stream logs';
+
+          if (error.message?.includes('not found') || error.message?.includes('Pod not found')) {
+            errorMessage = 'Agent pod not found. The agent may have been stopped or failed to start.';
+          } else if (error.message?.includes('Timeout')) {
+            errorMessage = 'Timeout waiting for agent pod to be created.';
+          } else if (error.message) {
+            errorMessage = error.message;
+          }
+
+          // Send error message as log data before closing
+          observer.next({
+            data: `\n[Error] ${errorMessage}\n`,
+          });
+
+          // Close the stream gracefully
+          observer.complete();
         }
       ).then((cleanupFn) => {
         cleanup = cleanupFn;
       }).catch((error) => {
-        observer.error(error);
+        // Handle initialization errors
+        let errorMessage = 'Failed to start log stream';
+
+        if (error instanceof NotFoundException) {
+          errorMessage = 'Agent not found.';
+        } else if (error instanceof BadRequestException) {
+          errorMessage = error.message;
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+
+        observer.next({
+          data: `\n[Error] ${errorMessage}\n`,
+        });
+        observer.complete();
       });
 
       // Cleanup when client disconnects

@@ -117,8 +117,33 @@ export class PlanGeneratorService {
       if (error instanceof InternalServerErrorException) {
         throw error;
       }
+
+
+      // Handle OpenAI API errors with specific messages
+      if (error.status) {
+        if (error.status === 401) {
+          throw new InternalServerErrorException(
+            'OpenAI API authentication failed. Check your API key.'
+          );
+        }
+        if (error.status === 429) {
+          throw new InternalServerErrorException(
+            'OpenAI API rate limit exceeded. Please try again later.'
+          );
+        }
+        if (error.status === 404) {
+          throw new InternalServerErrorException(
+            'OpenAI model not found. The gpt-4o model may not be available for your API key.'
+          );
+        }
+        throw new InternalServerErrorException(
+          `OpenAI API error (${error.status}): ${error.message}`
+        );
+      }
+
+
       throw new InternalServerErrorException(
-        'Failed to generate plan. Please try again.',
+        `Failed to generate plan: ${error.message}`,
       );
     }
   }
