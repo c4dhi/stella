@@ -249,7 +249,9 @@ class WhisperSession(STTSession):
             audio_float = self._preprocess_audio(audio_float)
 
             # Use cached detected language or configured language
-            language = self.detected_language or self.config.get('language')
+            # Ensure empty string is treated as None (auto-detect)
+            config_lang = self.config.get('language')
+            language = self.detected_language or (config_lang if config_lang else None)
 
             # Transcribe with faster-whisper
             segments, info = self.whisper_model.transcribe(
@@ -315,7 +317,9 @@ class WhisperSession(STTSession):
             audio_float = self._preprocess_audio(audio_float)
 
             # Use cached detected language or configured language
-            language = self.detected_language or self.config.get('language')
+            # Ensure empty string is treated as None (auto-detect)
+            config_lang = self.config.get('language')
+            language = self.detected_language or (config_lang if config_lang else None)
 
             # Final transcription
             segments, info = self.whisper_model.transcribe(
@@ -524,7 +528,12 @@ class WhisperProvider(STTProvider):
         return {
             "supports_streaming": True,
             "supports_gpu": True,
-            "supported_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko"],
+            "supports_auto_detect": True,
+            "model": f"faster-whisper-{self.model_size}",
+            "device": self.device,
+            "compute_type": self.compute_type,
+            "language": self.language or "auto",
+            "supported_languages": ["auto", "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi", "fo", "fr", "gl", "gu", "ha", "haw", "he", "hi", "hr", "ht", "hu", "hy", "id", "is", "it", "ja", "jw", "ka", "kk", "km", "kn", "ko", "la", "lb", "ln", "lo", "lt", "lv", "mg", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "ne", "nl", "nn", "no", "oc", "pa", "pl", "ps", "pt", "ro", "ru", "sa", "sd", "si", "sk", "sl", "sn", "so", "sq", "sr", "su", "sv", "sw", "ta", "te", "tg", "th", "tk", "tl", "tr", "tt", "uk", "ur", "uz", "vi", "yi", "yo", "zh", "yue"],
             "model_size_mb": 3000 if "large" in self.model_size else 1500,
             "latency_ms": "300-600 (VAD-chunked)",
         }
