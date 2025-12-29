@@ -15,6 +15,9 @@ interface AgentSidebarProps {
 }
 
 export default function AgentSidebar({ sessionId, initialAgents = [], onDeployClick }: AgentSidebarProps) {
+  // Build verification timestamp
+  console.log('[AgentSidebar] Code last modified: 2025-12-20 23:20 | Loaded at:', new Date().toLocaleString())
+
   const { addToast } = useToastStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
@@ -134,8 +137,8 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   }, [sessionId])
 
   // Deploy new agent
-  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => {
-    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType })
+  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string) => {
+    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType, envVarTemplateId })
     setAgents(prev => [...prev, newAgent])
 
     // Auto-expand console to show deployment progress

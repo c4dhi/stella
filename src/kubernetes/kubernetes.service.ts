@@ -260,6 +260,10 @@ export class KubernetesService {
   private async createSecret(secretName: string, config: AgentPodConfig): Promise<void> {
     // Fetch custom env vars from template if specified
     let customEnvVars: Record<string, string> = {};
+
+    // DEBUG: Log what we received
+    this.logger.log(`createSecret called with envVarTemplateId: ${config.envVarTemplateId}, userId: ${config.userId}`);
+
     if (config.envVarTemplateId && config.userId) {
       try {
         this.logger.log(`Fetching env var template ${config.envVarTemplateId} for user ${config.userId}`);
