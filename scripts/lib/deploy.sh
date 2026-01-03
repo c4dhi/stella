@@ -777,14 +777,14 @@ check_service_runtime_status() {
                 provider="whisper"
                 details="Whisper large-v3 (float16)"
             fi
-        elif echo "$logs" | grep -q "Primary provider: whisper"; then
+        elif echo "$logs" | grep -iq "Primary.provider.*whisper\|PRIMARY PROVIDER.*whisper"; then
             status="CUDA"
             provider="whisper"
             details="Whisper GPU"
-        elif echo "$logs" | grep -q "Primary provider: sherpa"; then
+        elif echo "$logs" | grep -iq "Primary.provider.*sherpa\|PRIMARY PROVIDER.*sherpa"; then
             # Check if Sherpa is using GPU
-            if echo "$logs" | grep -q "provider=cuda\|CUDAExecutionProvider"; then
-                if echo "$logs" | grep -q "Fallback to cpu"; then
+            if echo "$logs" | grep -iq "provider=cuda\|CUDAExecutionProvider"; then
+                if echo "$logs" | grep -iq "Fallback to cpu"; then
                     status="CPU"
                     provider="sherpa"
                     details="Sherpa ONNX (CPU fallback)"
@@ -806,8 +806,8 @@ check_service_runtime_status() {
 
     elif [[ "$service" == "tts-service" ]]; then
         # Check for Kokoro CUDA success
-        if echo "$logs" | grep -q "CUDAExecutionProvider"; then
-            if echo "$logs" | grep -q "CUDA failed\|CUDA driver version is insufficient"; then
+        if echo "$logs" | grep -iq "CUDAExecutionProvider"; then
+            if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
                 status="CPU"
                 provider="edge_tts"
                 details="Kokoro CUDA failed, fell back to Edge TTS"
@@ -816,11 +816,11 @@ check_service_runtime_status() {
                 provider="kokoro"
                 details="Kokoro ONNX (CUDA)"
             fi
-        elif echo "$logs" | grep -q "Primary provider: kokoro\|Provider: kokoro"; then
+        elif echo "$logs" | grep -iq "Primary.provider.*kokoro\|Provider.*kokoro"; then
             status="CUDA"
             provider="kokoro"
             details="Kokoro ONNX"
-        elif echo "$logs" | grep -q "Primary provider: edge_tts\|Provider: edge_tts"; then
+        elif echo "$logs" | grep -iq "Primary.provider.*edge_tts\|Provider.*edge_tts"; then
             status="Cloud"
             provider="edge_tts"
             details="Microsoft Edge TTS (Cloud)"
