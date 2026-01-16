@@ -1,0 +1,28 @@
+{
+  "id": "agent-sdk/tools",
+  "title": "🔧 Tools",
+  "description": "Tools allow agents to execute custom functions during conversations, enabling them to search databases, call APIs, and perform actions beyond simple text generation.",
+  "source": "@site/docs/agent-sdk/tools.md",
+  "sourceDirName": "agent-sdk",
+  "slug": "/agent-sdk/tools",
+  "permalink": "/STELLA_backend/docs/agent-sdk/tools",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agent-sdk/tools.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 7,
+  "frontMatter": {
+    "sidebar_position": 7,
+    "title": "🔧 Tools"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "📊 Progress Tracking",
+    "permalink": "/STELLA_backend/docs/agent-sdk/progress-tracking"
+  },
+  "next": {
+    "title": "🛠️ Building Custom Agents",
+    "permalink": "/STELLA_backend/docs/agent-sdk/building-custom-agent"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "agent-sdk/audio-pipeline",
+  "title": "🎙️ Audio Pipeline",
+  "description": "The Audio Pipeline manages the flow of audio through your agent, handling speech-to-text (STT) and text-to-speech (TTS) conversion.",
+  "source": "@site/docs/agent-sdk/audio-pipeline.md",
+  "sourceDirName": "agent-sdk",
+  "slug": "/agent-sdk/audio-pipeline",
+  "permalink": "/STELLA_backend/docs/agent-sdk/audio-pipeline",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agent-sdk/audio-pipeline.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 5,
+  "frontMatter": {
+    "sidebar_position": 5,
+    "title": "🎙️ Audio Pipeline"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "💬 Message Types",
+    "permalink": "/STELLA_backend/docs/agent-sdk/message-types"
+  },
+  "next": {
+    "title": "📊 Progress Tracking",
+    "permalink": "/STELLA_backend/docs/agent-sdk/progress-tracking"
+  }
+}

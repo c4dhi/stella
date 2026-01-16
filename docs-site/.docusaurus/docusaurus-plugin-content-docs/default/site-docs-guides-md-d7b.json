@@ -1,0 +1,28 @@
+{
+  "id": "guides",
+  "title": "Guides",
+  "description": "Practical guides for common tasks and advanced configurations.",
+  "source": "@site/docs/guides.md",
+  "sourceDirName": ".",
+  "slug": "/guides",
+  "permalink": "/STELLA_backend/docs/guides",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/guides.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 5,
+  "frontMatter": {
+    "sidebar_position": 5,
+    "title": "Guides"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "🛠️ Building Custom Agents",
+    "permalink": "/STELLA_backend/docs/agent-sdk/building-custom-agent"
+  },
+  "next": {
+    "title": "☸️ Kubernetes",
+    "permalink": "/STELLA_backend/docs/deployment/kubernetes"
+  }
+}

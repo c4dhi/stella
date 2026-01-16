@@ -1,0 +1,28 @@
+{
+  "id": "getting-started/quick-start",
+  "title": "🚀 Quick Start",
+  "description": "Get the entire STELLA system running in 3 commands.",
+  "source": "@site/docs/getting-started/quick-start.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/quick-start",
+  "permalink": "/STELLA_backend/docs/getting-started/quick-start",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/getting-started/quick-start.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1,
+    "title": "🚀 Quick Start"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Introduction",
+    "permalink": "/STELLA_backend/docs/"
+  },
+  "next": {
+    "title": "📦 Installation",
+    "permalink": "/STELLA_backend/docs/getting-started/installation"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "agents/stella-light-agent",
+  "title": "💫 stella-light-agent",
+  "description": "A lightweight conversational AI agent optimized for fast responses and lower resource usage.",
+  "source": "@site/docs/agents/stella-light-agent.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/stella-light-agent",
+  "permalink": "/STELLA_backend/docs/agents/stella-light-agent",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/stella-light-agent.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "sidebar_position": 3,
+    "title": "💫 stella-light-agent"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "🌟 stella-agent",
+    "permalink": "/STELLA_backend/docs/agents/stella-agent"
+  },
+  "next": {
+    "title": "🔊 echo-agent",
+    "permalink": "/STELLA_backend/docs/agents/echo-agent"
+  }
+}

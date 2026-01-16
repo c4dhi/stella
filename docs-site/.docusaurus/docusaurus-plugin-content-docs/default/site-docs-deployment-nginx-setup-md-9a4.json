@@ -1,0 +1,28 @@
+{
+  "id": "deployment/nginx-setup",
+  "title": "🌐 Nginx Setup",
+  "description": "Guide for configuring Nginx as a reverse proxy for STELLA in production.",
+  "source": "@site/docs/deployment/nginx-setup.md",
+  "sourceDirName": "deployment",
+  "slug": "/deployment/nginx-setup",
+  "permalink": "/STELLA_backend/docs/deployment/nginx-setup",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/deployment/nginx-setup.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "sidebar_position": 3,
+    "title": "🌐 Nginx Setup"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "🏭 Production",
+    "permalink": "/STELLA_backend/docs/deployment/production"
+  },
+  "next": {
+    "title": "🔀 Reverse Proxy",
+    "permalink": "/STELLA_backend/docs/deployment/reverse-proxy"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "agents/overview",
+  "title": "🤖 Overview",
+  "description": "STELLA supports multiple agent types, each designed for different use cases. All agents connect to LiveKit rooms for real-time voice and data communication.",
+  "source": "@site/docs/agents/overview.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/overview",
+  "permalink": "/STELLA_backend/docs/agents/overview",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/overview.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1,
+    "title": "🤖 Overview"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "🎯 First Agent",
+    "permalink": "/STELLA_backend/docs/getting-started/first-agent"
+  },
+  "next": {
+    "title": "🌟 stella-agent",
+    "permalink": "/STELLA_backend/docs/agents/stella-agent"
+  }
+}

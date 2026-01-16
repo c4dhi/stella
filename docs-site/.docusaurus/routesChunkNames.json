@@ -1,0 +1,150 @@
+{
+  "/STELLA_backend/__docusaurus/debug-5a6": {
+    "__comp": "__comp---theme-debug-config-23-a-2ff",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/config-8f2": {
+    "__comp": "__comp---theme-debug-config-23-a-2ff",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/content-2e2": {
+    "__comp": "__comp---theme-debug-contentba-8-ce7",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    },
+    "__props": "__props---stella-backend-docusaurus-debug-content-97-e-c9c"
+  },
+  "/STELLA_backend/__docusaurus/debug/globalData-9ca": {
+    "__comp": "__comp---theme-debug-global-dataede-0fa",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/metadata-478": {
+    "__comp": "__comp---theme-debug-site-metadata-68-e-3d4",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/registry-ff1": {
+    "__comp": "__comp---theme-debug-registry-679-501",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/routes-ca1": {
+    "__comp": "__comp---theme-debug-routes-946-699",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/docs-393": {
+    "__comp": "__comp---theme-docs-root-5-e-9-0b6",
+    "__context": {
+      "plugin": "plugin---stella-backend-docsaba-74a"
+    }
+  },
+  "/STELLA_backend/docs-aff": {
+    "__comp": "__comp---theme-doc-version-roota-7-b-5de",
+    "__props": "__props---stella-backend-docs-2-ec-65d"
+  },
+  "/STELLA_backend/docs-0bd": {
+    "__comp": "__comp---theme-doc-roota-94-67a"
+  },
+  "/STELLA_backend/docs-248": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docsc-37-918"
+  },
+  "/STELLA_backend/docs/agent-sdk/audio-pipeline-34d": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-audio-pipeline-890-278"
+  },
+  "/STELLA_backend/docs/agent-sdk/base-agent-fad": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-base-agent-12-b-4e1"
+  },
+  "/STELLA_backend/docs/agent-sdk/building-custom-agent-4bc": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-building-custom-agentcd-9-6cd"
+  },
+  "/STELLA_backend/docs/agent-sdk/getting-started-6d2": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-getting-startedd-90-f82"
+  },
+  "/STELLA_backend/docs/agent-sdk/message-types-8b3": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-message-typesc-9-c-680"
+  },
+  "/STELLA_backend/docs/agent-sdk/overview-01f": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-overview-851-f21"
+  },
+  "/STELLA_backend/docs/agent-sdk/progress-tracking-a52": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-progress-trackingc-19-760"
+  },
+  "/STELLA_backend/docs/agent-sdk/tools-493": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-toolsb-64-865"
+  },
+  "/STELLA_backend/docs/agents/echo-agent-760": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-echo-agent-5-ab-e83"
+  },
+  "/STELLA_backend/docs/agents/overview-23c": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-overview-8-fd-0ef"
+  },
+  "/STELLA_backend/docs/agents/stella-agent-f71": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agentec-1-afa"
+  },
+  "/STELLA_backend/docs/agents/stella-light-agent-987": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-light-agent-980-e5e"
+  },
+  "/STELLA_backend/docs/deployment/kubernetes-bb5": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-kubernetes-04-d-40b"
+  },
+  "/STELLA_backend/docs/deployment/nginx-setup-a5f": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-nginx-setup-9-a-4-93d"
+  },
+  "/STELLA_backend/docs/deployment/production-5d6": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-production-197-5ef"
+  },
+  "/STELLA_backend/docs/deployment/reverse-proxy-5bb": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-reverse-proxyd-15-810"
+  },
+  "/STELLA_backend/docs/getting-started/first-agent-9f8": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-first-agent-92-e-0d8"
+  },
+  "/STELLA_backend/docs/getting-started/installation-cfb": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-installation-54-f-34d"
+  },
+  "/STELLA_backend/docs/getting-started/quick-start-cb3": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-quick-start-588-7b2"
+  },
+  "/STELLA_backend/docs/guides-917": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-guidesd-7-b-af8"
+  },
+  "/STELLA_backend/docs/integration/livekit-342": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-integration-livekit-1-fb-25c"
+  },
+  "/STELLA_backend/docs/integration/livekit-production-369": {
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-integration-livekit-production-131-0be"
+  }
+}

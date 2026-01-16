@@ -1,0 +1,28 @@
+{
+  "id": "agents/echo-agent",
+  "title": "🔊 echo-agent",
+  "description": "A simple test agent that echoes back messages for development and debugging.",
+  "source": "@site/docs/agents/echo-agent.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/echo-agent",
+  "permalink": "/STELLA_backend/docs/agents/echo-agent",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/echo-agent.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 4,
+  "frontMatter": {
+    "sidebar_position": 4,
+    "title": "🔊 echo-agent"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "💫 stella-light-agent",
+    "permalink": "/STELLA_backend/docs/agents/stella-light-agent"
+  },
+  "next": {
+    "title": "📚 Overview",
+    "permalink": "/STELLA_backend/docs/agent-sdk/overview"
+  }
+}
