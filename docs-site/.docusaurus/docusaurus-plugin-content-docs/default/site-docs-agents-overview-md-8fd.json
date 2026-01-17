@@ -18,8 +18,8 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "🎯 First Agent",
-    "permalink": "/STELLA_backend/docs/getting-started/first-agent"
+    "title": "Kubernetes Orchestration",
+    "permalink": "/STELLA_backend/docs/architecture/kubernetes-orchestration"
   },
   "next": {
     "title": "🌟 stella-agent",

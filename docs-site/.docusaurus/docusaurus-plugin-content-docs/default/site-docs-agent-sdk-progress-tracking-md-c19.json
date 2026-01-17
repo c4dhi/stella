@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 6,
     "title": "📊 Progress Tracking"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🎙️ Audio Pipeline",
-    "permalink": "/STELLA_backend/docs/agent-sdk/audio-pipeline"
-  },
-  "next": {
-    "title": "🔧 Tools",
-    "permalink": "/STELLA_backend/docs/agent-sdk/tools"
   }
 }

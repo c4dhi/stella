@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 4,
     "title": "🔀 Reverse Proxy"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🌐 Nginx Setup",
-    "permalink": "/STELLA_backend/docs/deployment/nginx-setup"
-  },
-  "next": {
-    "title": "📡 LiveKit",
-    "permalink": "/STELLA_backend/docs/integration/livekit"
   }
 }

@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 7,
     "title": "🔧 Tools"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "📊 Progress Tracking",
-    "permalink": "/STELLA_backend/docs/agent-sdk/progress-tracking"
-  },
-  "next": {
-    "title": "🛠️ Building Custom Agents",
-    "permalink": "/STELLA_backend/docs/agent-sdk/building-custom-agent"
   }
 }

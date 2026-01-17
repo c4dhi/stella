@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 3,
     "title": "🧱 Base Agent"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🏁 Getting Started",
-    "permalink": "/STELLA_backend/docs/agent-sdk/getting-started"
-  },
-  "next": {
-    "title": "💬 Message Types",
-    "permalink": "/STELLA_backend/docs/agent-sdk/message-types"
   }
 }

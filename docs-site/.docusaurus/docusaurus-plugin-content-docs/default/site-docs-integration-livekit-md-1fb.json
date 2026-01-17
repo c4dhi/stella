@@ -18,11 +18,11 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "🔀 Reverse Proxy",
-    "permalink": "/STELLA_backend/docs/deployment/reverse-proxy"
+    "title": "Monitoring",
+    "permalink": "/STELLA_backend/docs/deployment/monitoring"
   },
   "next": {
-    "title": "🔒 LiveKit Production",
-    "permalink": "/STELLA_backend/docs/integration/livekit-production"
+    "title": "Frontend Integration",
+    "permalink": "/STELLA_backend/docs/integration/frontend"
   }
 }

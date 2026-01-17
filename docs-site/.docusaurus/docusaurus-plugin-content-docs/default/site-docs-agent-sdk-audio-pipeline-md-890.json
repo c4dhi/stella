@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 5,
     "title": "🎙️ Audio Pipeline"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "💬 Message Types",
-    "permalink": "/STELLA_backend/docs/agent-sdk/message-types"
-  },
-  "next": {
-    "title": "📊 Progress Tracking",
-    "permalink": "/STELLA_backend/docs/agent-sdk/progress-tracking"
   }
 }

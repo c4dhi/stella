@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 2,
     "title": "📦 Installation"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🚀 Quick Start",
-    "permalink": "/STELLA_backend/docs/getting-started/quick-start"
-  },
-  "next": {
-    "title": "🎯 First Agent",
-    "permalink": "/STELLA_backend/docs/getting-started/first-agent"
   }
 }

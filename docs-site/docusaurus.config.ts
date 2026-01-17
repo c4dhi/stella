@@ -16,7 +16,12 @@ const config: Config = {
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
+
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -49,11 +54,6 @@ const config: Config = {
     },
     navbar: {
       title: 'STELLA',
-      logo: {
-        alt: 'STELLA Logo',
-        src: 'img/stella-logo.svg',
-        srcDark: 'img/stella-logo-dark.svg',
-      },
       items: [
         {
           type: 'docSidebar',
@@ -76,15 +76,15 @@ const config: Config = {
           items: [
             {
               label: 'Getting Started',
-              to: '/docs/getting-started/quick-start',
+              to: '/docs/guides/getting-started',
             },
             {
-              label: 'Agents',
-              to: '/docs/agents/overview',
+              label: 'Architecture',
+              to: '/docs/architecture/overview',
             },
             {
-              label: 'Agent SDK',
-              to: '/docs/agent-sdk/overview',
+              label: 'SDK Reference',
+              to: '/docs/sdk/overview',
             },
           ],
         },
@@ -96,14 +96,18 @@ const config: Config = {
               to: '/docs/deployment/kubernetes',
             },
             {
-              label: 'Production',
-              to: '/docs/deployment/production',
+              label: 'Production Checklist',
+              to: '/docs/deployment/production-checklist',
             },
           ],
         },
         {
           title: 'More',
           items: [
+            {
+              label: 'Contributing',
+              to: '/docs/contributing',
+            },
             {
               label: 'GitHub',
               href: 'https://github.com/c4dhi/STELLA_backend',

@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 4,
     "title": "💬 Message Types"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🧱 Base Agent",
-    "permalink": "/STELLA_backend/docs/agent-sdk/base-agent"
-  },
-  "next": {
-    "title": "🎙️ Audio Pipeline",
-    "permalink": "/STELLA_backend/docs/agent-sdk/audio-pipeline"
   }
 }

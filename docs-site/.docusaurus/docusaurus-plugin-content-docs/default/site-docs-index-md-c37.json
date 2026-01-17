@@ -19,7 +19,7 @@
   },
   "sidebar": "docsSidebar",
   "next": {
-    "title": "🚀 Quick Start",
-    "permalink": "/STELLA_backend/docs/getting-started/quick-start"
+    "title": "Getting Started",
+    "permalink": "/STELLA_backend/docs/guides/getting-started"
   }
 }

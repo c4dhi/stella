@@ -5,7 +5,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'doc',
       id: 'index',
-      label: 'Introduction',
+      label: '🏠 Welcome',
     },
     {
       type: 'html',
@@ -13,12 +13,12 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Getting Started',
+      label: '🚀 Guides',
       collapsed: false,
       items: [
-        'getting-started/quick-start',
-        'getting-started/installation',
-        'getting-started/first-agent',
+        'guides/getting-started',
+        'guides/create-your-own-agent',
+        'guides/add-custom-ui',
       ],
     },
     {
@@ -27,8 +27,22 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Agents',
+      label: '🏗️ Architecture',
       collapsed: false,
+      items: [
+        'architecture/overview',
+        'architecture/data-flow',
+        'architecture/session-lifecycle',
+        'architecture/kubernetes-orchestration',
+      ],
+    },
+    {
+      type: 'html',
+      value: '<div class="sidebar-section-spacer"></div>',
+    },
+    {
+      type: 'category',
+      label: '🤖 Agents',
       items: [
         'agents/overview',
         'agents/stella-agent',
@@ -42,17 +56,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Agent SDK',
-      collapsed: true,
+      label: '📦 SDK Reference',
       items: [
-        'agent-sdk/overview',
-        'agent-sdk/getting-started',
-        'agent-sdk/base-agent',
-        'agent-sdk/message-types',
-        'agent-sdk/audio-pipeline',
-        'agent-sdk/progress-tracking',
-        'agent-sdk/tools',
-        'agent-sdk/building-custom-agent',
+        'sdk/overview',
+        'sdk/base-agent',
+        'sdk/message-types',
+        'sdk/tools',
+        'sdk/streaming',
       ],
     },
     {
@@ -60,23 +70,12 @@ const sidebars: SidebarsConfig = {
       value: '<div class="sidebar-section-spacer"></div>',
     },
     {
-      type: 'doc',
-      id: 'guides',
-      label: 'Guides',
-    },
-    {
-      type: 'html',
-      value: '<div class="sidebar-section-spacer"></div>',
-    },
-    {
       type: 'category',
-      label: 'Deployment',
-      collapsed: true,
+      label: '🚢 Deployment',
       items: [
         'deployment/kubernetes',
-        'deployment/production',
-        'deployment/nginx-setup',
-        'deployment/reverse-proxy',
+        'deployment/production-checklist',
+        'deployment/monitoring',
       ],
     },
     {
@@ -85,11 +84,25 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Integration',
-      collapsed: true,
+      label: '🔗 Integration',
       items: [
         'integration/livekit',
-        'integration/livekit-production',
+        'integration/frontend',
+      ],
+    },
+    {
+      type: 'html',
+      value: '<div class="sidebar-section-spacer"></div>',
+    },
+    {
+      type: 'category',
+      label: '🤝 Contributing',
+      items: [
+        'contributing/index',
+        'contributing/development-setup',
+        'contributing/coding-standards',
+        'contributing/pull-request-process',
+        'contributing/release-process',
       ],
     },
   ],

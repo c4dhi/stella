@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 1,
     "title": "📚 Overview"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🔊 echo-agent",
-    "permalink": "/STELLA_backend/docs/agents/echo-agent"
-  },
-  "next": {
-    "title": "🏁 Getting Started",
-    "permalink": "/STELLA_backend/docs/agent-sdk/getting-started"
   }
 }

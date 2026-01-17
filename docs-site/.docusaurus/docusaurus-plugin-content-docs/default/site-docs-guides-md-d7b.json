@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 5,
     "title": "Guides"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "🛠️ Building Custom Agents",
-    "permalink": "/STELLA_backend/docs/agent-sdk/building-custom-agent"
-  },
-  "next": {
-    "title": "☸️ Kubernetes",
-    "permalink": "/STELLA_backend/docs/deployment/kubernetes"
   }
 }

@@ -14,6 +14,23 @@ export default {
   "deploymentBranch": "gh-pages",
   "trailingSlash": false,
   "onBrokenLinks": "throw",
+  "markdown": {
+    "hooks": {
+      "onBrokenMarkdownLinks": "warn",
+      "onBrokenMarkdownImages": "throw"
+    },
+    "format": "mdx",
+    "mermaid": false,
+    "emoji": true,
+    "mdx1Compat": {
+      "comments": true,
+      "admonitions": true,
+      "headingIds": true
+    },
+    "anchors": {
+      "maintainCase": false
+    }
+  },
   "i18n": {
     "defaultLocale": "en",
     "locales": [
@@ -47,11 +64,6 @@ export default {
     },
     "navbar": {
       "title": "STELLA",
-      "logo": {
-        "alt": "STELLA Logo",
-        "src": "img/stella-logo.svg",
-        "srcDark": "img/stella-logo-dark.svg"
-      },
       "items": [
         {
           "type": "docSidebar",
@@ -75,15 +87,15 @@ export default {
           "items": [
             {
               "label": "Getting Started",
-              "to": "/docs/getting-started/quick-start"
+              "to": "/docs/guides/getting-started"
             },
             {
-              "label": "Agents",
-              "to": "/docs/agents/overview"
+              "label": "Architecture",
+              "to": "/docs/architecture/overview"
             },
             {
-              "label": "Agent SDK",
-              "to": "/docs/agent-sdk/overview"
+              "label": "SDK Reference",
+              "to": "/docs/sdk/overview"
             }
           ]
         },
@@ -95,14 +107,18 @@ export default {
               "to": "/docs/deployment/kubernetes"
             },
             {
-              "label": "Production",
-              "to": "/docs/deployment/production"
+              "label": "Production Checklist",
+              "to": "/docs/deployment/production-checklist"
             }
           ]
         },
         {
           "title": "More",
           "items": [
+            {
+              "label": "Contributing",
+              "to": "/docs/contributing"
+            },
             {
               "label": "GitHub",
               "href": "https://github.com/c4dhi/STELLA_backend"
@@ -376,22 +392,5 @@ export default {
   "stylesheets": [],
   "clientModules": [],
   "titleDelimiter": "|",
-  "noIndex": false,
-  "markdown": {
-    "format": "mdx",
-    "mermaid": false,
-    "emoji": true,
-    "mdx1Compat": {
-      "comments": true,
-      "admonitions": true,
-      "headingIds": true
-    },
-    "anchors": {
-      "maintainCase": false
-    },
-    "hooks": {
-      "onBrokenMarkdownLinks": "warn",
-      "onBrokenMarkdownImages": "throw"
-    }
-  }
+  "noIndex": false
 };

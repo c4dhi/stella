@@ -15,10 +15,5 @@
   "frontMatter": {
     "sidebar_position": 2,
     "title": "🔒 LiveKit Production"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "📡 LiveKit",
-    "permalink": "/STELLA_backend/docs/integration/livekit"
   }
 }

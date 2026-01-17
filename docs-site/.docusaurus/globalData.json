@@ -12,43 +12,35 @@
           "docs": [
             {
               "id": "agent-sdk/audio-pipeline",
-              "path": "/STELLA_backend/docs/agent-sdk/audio-pipeline",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/audio-pipeline"
             },
             {
               "id": "agent-sdk/base-agent",
-              "path": "/STELLA_backend/docs/agent-sdk/base-agent",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/base-agent"
             },
             {
               "id": "agent-sdk/building-custom-agent",
-              "path": "/STELLA_backend/docs/agent-sdk/building-custom-agent",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/building-custom-agent"
             },
             {
               "id": "agent-sdk/getting-started",
-              "path": "/STELLA_backend/docs/agent-sdk/getting-started",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/getting-started"
             },
             {
               "id": "agent-sdk/message-types",
-              "path": "/STELLA_backend/docs/agent-sdk/message-types",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/message-types"
             },
             {
               "id": "agent-sdk/overview",
-              "path": "/STELLA_backend/docs/agent-sdk/overview",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/overview"
             },
             {
               "id": "agent-sdk/progress-tracking",
-              "path": "/STELLA_backend/docs/agent-sdk/progress-tracking",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/progress-tracking"
             },
             {
               "id": "agent-sdk/tools",
-              "path": "/STELLA_backend/docs/agent-sdk/tools",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/agent-sdk/tools"
             },
             {
               "id": "agents/echo-agent",
@@ -71,48 +63,116 @@
               "sidebar": "docsSidebar"
             },
             {
+              "id": "architecture/data-flow",
+              "path": "/STELLA_backend/docs/architecture/data-flow",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "architecture/kubernetes-orchestration",
+              "path": "/STELLA_backend/docs/architecture/kubernetes-orchestration",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "architecture/overview",
+              "path": "/STELLA_backend/docs/architecture/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "architecture/session-lifecycle",
+              "path": "/STELLA_backend/docs/architecture/session-lifecycle",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards",
+              "path": "/STELLA_backend/docs/contributing/coding-standards",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/development-setup",
+              "path": "/STELLA_backend/docs/contributing/development-setup",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/index",
+              "path": "/STELLA_backend/docs/contributing/",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/pull-request-process",
+              "path": "/STELLA_backend/docs/contributing/pull-request-process",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/release-process",
+              "path": "/STELLA_backend/docs/contributing/release-process",
+              "sidebar": "docsSidebar"
+            },
+            {
               "id": "deployment/kubernetes",
               "path": "/STELLA_backend/docs/deployment/kubernetes",
               "sidebar": "docsSidebar"
             },
             {
-              "id": "deployment/nginx-setup",
-              "path": "/STELLA_backend/docs/deployment/nginx-setup",
+              "id": "deployment/monitoring",
+              "path": "/STELLA_backend/docs/deployment/monitoring",
               "sidebar": "docsSidebar"
             },
             {
+              "id": "deployment/nginx-setup",
+              "path": "/STELLA_backend/docs/deployment/nginx-setup"
+            },
+            {
               "id": "deployment/production",
-              "path": "/STELLA_backend/docs/deployment/production",
+              "path": "/STELLA_backend/docs/deployment/production"
+            },
+            {
+              "id": "deployment/production-checklist",
+              "path": "/STELLA_backend/docs/deployment/production-checklist",
               "sidebar": "docsSidebar"
             },
             {
               "id": "deployment/reverse-proxy",
-              "path": "/STELLA_backend/docs/deployment/reverse-proxy",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/deployment/reverse-proxy"
             },
             {
               "id": "getting-started/first-agent",
-              "path": "/STELLA_backend/docs/getting-started/first-agent",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/getting-started/first-agent"
             },
             {
               "id": "getting-started/installation",
-              "path": "/STELLA_backend/docs/getting-started/installation",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/getting-started/installation"
             },
             {
               "id": "getting-started/quick-start",
-              "path": "/STELLA_backend/docs/getting-started/quick-start",
-              "sidebar": "docsSidebar"
+              "path": "/STELLA_backend/docs/getting-started/quick-start"
             },
             {
               "id": "guides",
-              "path": "/STELLA_backend/docs/guides",
+              "path": "/STELLA_backend/docs/guides"
+            },
+            {
+              "id": "guides/add-custom-ui",
+              "path": "/STELLA_backend/docs/guides/add-custom-ui",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/create-your-own-agent",
+              "path": "/STELLA_backend/docs/guides/create-your-own-agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/getting-started",
+              "path": "/STELLA_backend/docs/guides/getting-started",
               "sidebar": "docsSidebar"
             },
             {
               "id": "index",
               "path": "/STELLA_backend/docs/",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "integration/frontend",
+              "path": "/STELLA_backend/docs/integration/frontend",
               "sidebar": "docsSidebar"
             },
             {
@@ -122,7 +182,31 @@
             },
             {
               "id": "integration/livekit-production",
-              "path": "/STELLA_backend/docs/integration/livekit-production",
+              "path": "/STELLA_backend/docs/integration/livekit-production"
+            },
+            {
+              "id": "sdk/base-agent",
+              "path": "/STELLA_backend/docs/sdk/base-agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "sdk/message-types",
+              "path": "/STELLA_backend/docs/sdk/message-types",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "sdk/overview",
+              "path": "/STELLA_backend/docs/sdk/overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "sdk/streaming",
+              "path": "/STELLA_backend/docs/sdk/streaming",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "sdk/tools",
+              "path": "/STELLA_backend/docs/sdk/tools",
               "sidebar": "docsSidebar"
             }
           ],
@@ -131,7 +215,7 @@
             "docsSidebar": {
               "link": {
                 "path": "/STELLA_backend/docs/",
-                "label": "Introduction"
+                "label": "🏠 Welcome"
               }
             }
           }

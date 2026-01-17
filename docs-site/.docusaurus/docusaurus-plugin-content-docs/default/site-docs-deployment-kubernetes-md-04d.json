@@ -18,11 +18,11 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "Guides",
-    "permalink": "/STELLA_backend/docs/guides"
+    "title": "Streaming",
+    "permalink": "/STELLA_backend/docs/sdk/streaming"
   },
   "next": {
-    "title": "🏭 Production",
-    "permalink": "/STELLA_backend/docs/deployment/production"
+    "title": "Production Checklist",
+    "permalink": "/STELLA_backend/docs/deployment/production-checklist"
   }
 }

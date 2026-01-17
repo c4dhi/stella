@@ -15,14 +15,5 @@
   "frontMatter": {
     "sidebar_position": 2,
     "title": "🏁 Getting Started"
-  },
-  "sidebar": "docsSidebar",
-  "previous": {
-    "title": "📚 Overview",
-    "permalink": "/STELLA_backend/docs/agent-sdk/overview"
-  },
-  "next": {
-    "title": "🧱 Base Agent",
-    "permalink": "/STELLA_backend/docs/agent-sdk/base-agent"
   }
 }
