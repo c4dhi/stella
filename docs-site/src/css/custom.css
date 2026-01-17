@@ -511,9 +511,39 @@ div[class*='codeBlockContainer'] {
   overflow: hidden;
   margin-bottom: 1.25rem;
   box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+  position: relative;
 }
 
-/* Code block header with terminal dots */
+/* Terminal header for ALL code blocks (including those without titles) */
+div[class*='codeBlockContainer']::before {
+  content: '';
+  display: block;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 0.75rem 0.875rem;
+  position: relative;
+}
+
+/* Terminal dots for code blocks without titles */
+div[class*='codeBlockContainer']::after {
+  content: '';
+  position: absolute;
+  top: 0.625rem;
+  left: 0.875rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 16px 0 0 #eab308, 32px 0 0 #22c55e;
+}
+
+/* Hide the pseudo-element header when there's a real title */
+div[class*='codeBlockContainer']:has(div[class*='codeBlockTitle'])::before,
+div[class*='codeBlockContainer']:has(div[class*='codeBlockTitle'])::after {
+  display: none;
+}
+
+/* Code block header with terminal dots (when title exists) */
 div[class*='codeBlockTitle'] {
   background: #1a1a1a;
   border-bottom: 1px solid #2a2a2a;

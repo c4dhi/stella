@@ -26,7 +26,7 @@ STELLA agents are Python applications that:
 
 Set up your agent project with the following structure:
 
-```
+```text title=""
 my-agent/
 ├── src/
 │   ├── __init__.py
@@ -38,7 +38,7 @@ my-agent/
 └── .env
 ```
 
-```bash
+```bash title="terminal"
 mkdir -p my-agent/src
 cd my-agent
 touch src/__init__.py src/agent.py src/tools.py src/config.py
@@ -244,7 +244,7 @@ class MyCustomAgent(BaseAgent):
 
 When the LLM wants to use a tool, handle it in your response generation:
 
-```python
+```python title=""
 async def generate_response(self, user_input: str) -> str:
     messages = [
         {"role": "system", "content": self.system_prompt},
@@ -313,7 +313,7 @@ CMD ["python", "-m", "src.agent"]
 
 ### Build and Push
 
-```bash
+```bash title="terminal"
 # Build the image
 docker build -t my-custom-agent:latest .
 

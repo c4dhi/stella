@@ -18,7 +18,7 @@ The STELLA frontend is built with:
 - **LiveKit React SDK** for real-time communication
 - **Zustand** for state management
 
-```
+```text title=""
 frontend-ui/
 ├── src/
 │   ├── components/        # Reusable UI components
@@ -73,7 +73,7 @@ module.exports = {
 
 STELLA supports automatic dark mode. Toggle it in your components:
 
-```tsx
+```tsx title=""
 import { useTheme } from '@/hooks/useTheme';
 
 function ThemeToggle() {
@@ -325,7 +325,7 @@ export function AgentStatus() {
 
 ## Building for Production
 
-```bash
+```bash title="terminal"
 # Install dependencies
 npm install
 
