@@ -1,6 +1,6 @@
 {
   "id": "deployment/kubernetes",
-  "title": "☸️ Kubernetes",
+  "title": "Kubernetes",
   "description": "This guide explains how to deploy the STELLA system to Kubernetes.",
   "source": "@site/docs/deployment/kubernetes.md",
   "sourceDirName": "deployment",
@@ -14,7 +14,7 @@
   "sidebarPosition": 1,
   "frontMatter": {
     "sidebar_position": 1,
-    "title": "☸️ Kubernetes"
+    "title": "Kubernetes"
   },
   "sidebar": "docsSidebar",
   "previous": {

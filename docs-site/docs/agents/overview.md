@@ -1,9 +1,9 @@
 ---
 sidebar_position: 1
-title: "🤖 Overview"
+title: "Overview"
 ---
 
-# 🤖 Agents Overview
+# Agents Overview
 
 STELLA supports multiple agent types, each designed for different use cases. All agents connect to LiveKit rooms for real-time voice and data communication.
 
@@ -17,7 +17,7 @@ STELLA supports multiple agent types, each designed for different use cases. All
 
 ## Architecture
 
-All STELLA agents follow a similar pipeline architecture:
+All STELLA agents follow a similar pipeline architecture and can be configured with **Plans** — JSON-based conversation blueprints that define states, tasks, and data collection. See the [Plan Structure](/docs/plan-structure) documentation for details.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

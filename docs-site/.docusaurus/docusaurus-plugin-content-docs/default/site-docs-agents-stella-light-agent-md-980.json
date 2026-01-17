@@ -18,8 +18,8 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "🌟 stella-agent",
-    "permalink": "/STELLA_backend/docs/agents/stella-agent"
+    "title": "Custom Experts",
+    "permalink": "/STELLA_backend/docs/agents/stella-agent/custom-experts"
   },
   "next": {
     "title": "🔊 echo-agent",

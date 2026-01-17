@@ -1,9 +1,9 @@
 ---
 sidebar_position: 1
-title: "📡 LiveKit"
+title: LiveKit
 ---
 
-# 📡 LiveKit Integration
+# LiveKit Integration
 
 Guide for integrating LiveKit client in your frontend to connect to STELLA sessions.
 

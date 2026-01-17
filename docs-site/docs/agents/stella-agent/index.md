@@ -1,9 +1,9 @@
 ---
-sidebar_position: 2
-title: "🌟 stella-agent"
+sidebar_position: 1
+title: "Overview"
 ---
 
-# 🌟 stella-agent
+# stella-agent
 
 The full-featured conversational AI agent with advanced capabilities for production deployments.
 
@@ -16,6 +16,7 @@ The full-featured conversational AI agent with advanced capabilities for product
 - Real-time audio streaming via LiveKit
 - Tool/function calling support
 - Progress tracking and todo management
+- **[Expert Pool System](/docs/agents/stella-agent/expert-pool-overview)** for safe handling of sensitive topics
 
 ## Features
 
@@ -216,6 +217,7 @@ class SearchKnowledgeBase(Tool):
 
 ## See Also
 
+- [Expert Pool System](/docs/agents/stella-agent/expert-pool-overview) - Safe handling of sensitive queries
 - [Agent SDK Overview](/docs/agent-sdk/overview)
 - [Building Custom Agents](/docs/agent-sdk/building-custom-agent)
 - [Audio Pipeline](/docs/agent-sdk/audio-pipeline)

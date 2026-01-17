@@ -1,9 +1,9 @@
 ---
 sidebar_position: 1
-title: "☸️ Kubernetes"
+title: Kubernetes
 ---
 
-# ☸️ Kubernetes Deployment
+# Kubernetes Deployment
 
 This guide explains how to deploy the STELLA system to Kubernetes.
 

@@ -1,6 +1,6 @@
 {
   "id": "integration/livekit",
-  "title": "📡 LiveKit",
+  "title": "LiveKit",
   "description": "Guide for integrating LiveKit client in your frontend to connect to STELLA sessions.",
   "source": "@site/docs/integration/livekit.md",
   "sourceDirName": "integration",
@@ -14,7 +14,7 @@
   "sidebarPosition": 1,
   "frontMatter": {
     "sidebar_position": 1,
-    "title": "📡 LiveKit"
+    "title": "LiveKit"
   },
   "sidebar": "docsSidebar",
   "previous": {

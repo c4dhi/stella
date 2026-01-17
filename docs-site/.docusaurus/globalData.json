@@ -53,8 +53,28 @@
               "sidebar": "docsSidebar"
             },
             {
-              "id": "agents/stella-agent",
-              "path": "/STELLA_backend/docs/agents/stella-agent",
+              "id": "agents/stella-agent/configuration",
+              "path": "/STELLA_backend/docs/agents/stella-agent/configuration",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-agent/custom-experts",
+              "path": "/STELLA_backend/docs/agents/stella-agent/custom-experts",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-agent/default-experts",
+              "path": "/STELLA_backend/docs/agents/stella-agent/default-experts",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-agent/expert-pool-overview",
+              "path": "/STELLA_backend/docs/agents/stella-agent/expert-pool-overview",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-agent/index",
+              "path": "/STELLA_backend/docs/agents/stella-agent/",
               "sidebar": "docsSidebar"
             },
             {
@@ -83,8 +103,33 @@
               "sidebar": "docsSidebar"
             },
             {
-              "id": "contributing/coding-standards",
-              "path": "/STELLA_backend/docs/contributing/coding-standards",
+              "id": "contributing/coding-standards/git",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/git",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards/index",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards/python",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/python",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards/react",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/react",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards/testing",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/testing",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "contributing/coding-standards/typescript",
+              "path": "/STELLA_backend/docs/contributing/coding-standards/typescript",
               "sidebar": "docsSidebar"
             },
             {
@@ -183,6 +228,31 @@
             {
               "id": "integration/livekit-production",
               "path": "/STELLA_backend/docs/integration/livekit-production"
+            },
+            {
+              "id": "plan-structure/deliverables",
+              "path": "/STELLA_backend/docs/plan-structure/deliverables",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "plan-structure/examples",
+              "path": "/STELLA_backend/docs/plan-structure/examples",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "plan-structure/index",
+              "path": "/STELLA_backend/docs/plan-structure/",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "plan-structure/states",
+              "path": "/STELLA_backend/docs/plan-structure/states",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "plan-structure/tasks",
+              "path": "/STELLA_backend/docs/plan-structure/tasks",
+              "sidebar": "docsSidebar"
             },
             {
               "id": "sdk/base-agent",

@@ -4,15 +4,15 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 export default [
   {
     path: '/STELLA_backend/docs',
-    component: ComponentCreator('/STELLA_backend/docs', 'f1b'),
+    component: ComponentCreator('/STELLA_backend/docs', '367'),
     routes: [
       {
         path: '/STELLA_backend/docs',
-        component: ComponentCreator('/STELLA_backend/docs', '444'),
+        component: ComponentCreator('/STELLA_backend/docs', '263'),
         routes: [
           {
             path: '/STELLA_backend/docs',
-            component: ComponentCreator('/STELLA_backend/docs', '625'),
+            component: ComponentCreator('/STELLA_backend/docs', '678'),
             routes: [
               {
                 path: '/STELLA_backend/docs',
@@ -74,7 +74,31 @@ export default [
               },
               {
                 path: '/STELLA_backend/docs/agents/stella-agent',
-                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent', 'f71'),
+                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent', '12e'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/agents/stella-agent/configuration',
+                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent/configuration', '5ee'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/agents/stella-agent/custom-experts',
+                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent/custom-experts', '55b'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/agents/stella-agent/default-experts',
+                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent/default-experts', '918'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/agents/stella-agent/expert-pool-overview',
+                component: ComponentCreator('/STELLA_backend/docs/agents/stella-agent/expert-pool-overview', 'f6f'),
                 exact: true,
                 sidebar: "docsSidebar"
               },
@@ -116,7 +140,37 @@ export default [
               },
               {
                 path: '/STELLA_backend/docs/contributing/coding-standards',
-                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards', '269'),
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards', 'c67'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/contributing/coding-standards/git',
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards/git', '081'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/contributing/coding-standards/python',
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards/python', '08e'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/contributing/coding-standards/react',
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards/react', '78c'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/contributing/coding-standards/testing',
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards/testing', '6cd'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/contributing/coding-standards/typescript',
+                component: ComponentCreator('/STELLA_backend/docs/contributing/coding-standards/typescript', 'cb7'),
                 exact: true,
                 sidebar: "docsSidebar"
               },
@@ -225,6 +279,36 @@ export default [
                 path: '/STELLA_backend/docs/integration/livekit-production',
                 component: ComponentCreator('/STELLA_backend/docs/integration/livekit-production', '1e0'),
                 exact: true
+              },
+              {
+                path: '/STELLA_backend/docs/plan-structure',
+                component: ComponentCreator('/STELLA_backend/docs/plan-structure', '6a7'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/plan-structure/deliverables',
+                component: ComponentCreator('/STELLA_backend/docs/plan-structure/deliverables', 'a17'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/plan-structure/examples',
+                component: ComponentCreator('/STELLA_backend/docs/plan-structure/examples', '6ec'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/plan-structure/states',
+                component: ComponentCreator('/STELLA_backend/docs/plan-structure/states', '932'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/plan-structure/tasks',
+                component: ComponentCreator('/STELLA_backend/docs/plan-structure/tasks', '2d4'),
+                exact: true,
+                sidebar: "docsSidebar"
               },
               {
                 path: '/STELLA_backend/docs/sdk/base-agent',

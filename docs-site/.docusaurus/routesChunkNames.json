@@ -1,15 +1,15 @@
 {
-  "/STELLA_backend/docs-f1b": {
+  "/STELLA_backend/docs-367": {
     "__comp": "5e95c892",
     "__context": {
       "plugin": "aba21aa0"
     }
   },
-  "/STELLA_backend/docs-444": {
+  "/STELLA_backend/docs-263": {
     "__comp": "a7bd4aaa",
     "__props": "2ec714f2"
   },
-  "/STELLA_backend/docs-625": {
+  "/STELLA_backend/docs-678": {
     "__comp": "a94703ab"
   },
   "/STELLA_backend/docs-e69": {
@@ -56,9 +56,25 @@
     "__comp": "17896441",
     "content": "8fd4bb5c"
   },
-  "/STELLA_backend/docs/agents/stella-agent-f71": {
+  "/STELLA_backend/docs/agents/stella-agent-12e": {
     "__comp": "17896441",
-    "content": "ec1a8828"
+    "content": "1a41e15b"
+  },
+  "/STELLA_backend/docs/agents/stella-agent/configuration-5ee": {
+    "__comp": "17896441",
+    "content": "c516e731"
+  },
+  "/STELLA_backend/docs/agents/stella-agent/custom-experts-55b": {
+    "__comp": "17896441",
+    "content": "f990c9a6"
+  },
+  "/STELLA_backend/docs/agents/stella-agent/default-experts-918": {
+    "__comp": "17896441",
+    "content": "27bca629"
+  },
+  "/STELLA_backend/docs/agents/stella-agent/expert-pool-overview-f6f": {
+    "__comp": "17896441",
+    "content": "d82e9b7d"
   },
   "/STELLA_backend/docs/agents/stella-light-agent-987": {
     "__comp": "17896441",
@@ -84,9 +100,29 @@
     "__comp": "17896441",
     "content": "234918e4"
   },
-  "/STELLA_backend/docs/contributing/coding-standards-269": {
+  "/STELLA_backend/docs/contributing/coding-standards-c67": {
     "__comp": "17896441",
-    "content": "fffe19ca"
+    "content": "047f1178"
+  },
+  "/STELLA_backend/docs/contributing/coding-standards/git-081": {
+    "__comp": "17896441",
+    "content": "99b5f0c0"
+  },
+  "/STELLA_backend/docs/contributing/coding-standards/python-08e": {
+    "__comp": "17896441",
+    "content": "abe24518"
+  },
+  "/STELLA_backend/docs/contributing/coding-standards/react-78c": {
+    "__comp": "17896441",
+    "content": "aed27678"
+  },
+  "/STELLA_backend/docs/contributing/coding-standards/testing-6cd": {
+    "__comp": "17896441",
+    "content": "12d4e65c"
+  },
+  "/STELLA_backend/docs/contributing/coding-standards/typescript-cb7": {
+    "__comp": "17896441",
+    "content": "eac9c4d4"
   },
   "/STELLA_backend/docs/contributing/development-setup-7b7": {
     "__comp": "17896441",
@@ -163,6 +199,26 @@
   "/STELLA_backend/docs/integration/livekit-production-1e0": {
     "__comp": "17896441",
     "content": "1319fdf9"
+  },
+  "/STELLA_backend/docs/plan-structure-6a7": {
+    "__comp": "17896441",
+    "content": "ec248ab5"
+  },
+  "/STELLA_backend/docs/plan-structure/deliverables-a17": {
+    "__comp": "17896441",
+    "content": "13e6c24f"
+  },
+  "/STELLA_backend/docs/plan-structure/examples-6ec": {
+    "__comp": "17896441",
+    "content": "315169aa"
+  },
+  "/STELLA_backend/docs/plan-structure/states-932": {
+    "__comp": "17896441",
+    "content": "40d6ea0b"
+  },
+  "/STELLA_backend/docs/plan-structure/tasks-2d4": {
+    "__comp": "17896441",
+    "content": "54e39465"
   },
   "/STELLA_backend/docs/sdk/base-agent-791": {
     "__comp": "17896441",

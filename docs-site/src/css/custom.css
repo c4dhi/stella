@@ -401,9 +401,9 @@ article {
 
 .markdown h2 {
   font-weight: 600;
-  margin-top: 2.5rem;
-  margin-bottom: 0.875rem;
-  padding-bottom: 0.5rem;
+  margin-top: 4rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.625rem;
   border-bottom: 1px solid var(--ifm-border-color);
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -411,7 +411,7 @@ article {
 
 .markdown h3 {
   font-weight: 600;
-  margin-top: 2rem;
+  margin-top: 1.75rem;
   margin-bottom: 0.625rem;
   letter-spacing: -0.01em;
   line-height: 1.35;
@@ -419,7 +419,7 @@ article {
 
 .markdown h4 {
   font-weight: 600;
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
   margin-bottom: 0.5rem;
   line-height: 1.4;
   color: var(--ifm-font-color-base);
@@ -503,6 +503,57 @@ article {
 
 [data-theme='light'] .prism-code {
   background: #0f0f0f !important;
+}
+
+/* Fix string colors for light mode (dark terminal background) */
+[data-theme='light'] .prism-code .token.string,
+[data-theme='light'] .prism-code .token.url,
+[data-theme='light'] .prism-code .token.attr-value {
+  color: #a5d6ff !important;
+}
+
+[data-theme='light'] .prism-code .token.plain {
+  color: #e6edf3 !important;
+}
+
+[data-theme='light'] .prism-code .token.comment {
+  color: #8b949e !important;
+}
+
+[data-theme='light'] .prism-code .token.keyword {
+  color: #ff7b72 !important;
+}
+
+[data-theme='light'] .prism-code .token.function {
+  color: #d2a8ff !important;
+}
+
+[data-theme='light'] .prism-code .token.number {
+  color: #79c0ff !important;
+}
+
+[data-theme='light'] .prism-code .token.operator,
+[data-theme='light'] .prism-code .token.punctuation {
+  color: #c9d1d9 !important;
+}
+
+/* Bash/shell specific tokens */
+[data-theme='light'] .prism-code .token.builtin,
+[data-theme='light'] .prism-code .token.class-name,
+[data-theme='light'] .prism-code .token.constant {
+  color: #79c0ff !important;
+}
+
+[data-theme='light'] .prism-code .token.parameter,
+[data-theme='light'] .prism-code .token.property {
+  color: #ffa657 !important;
+}
+
+/* Ensure all plain/unrecognized text is light colored */
+[data-theme='light'] .prism-code,
+[data-theme='light'] .prism-code code,
+[data-theme='light'] .prism-code .token {
+  color: #e6edf3 !important;
 }
 
 div[class*='codeBlockContainer'] {

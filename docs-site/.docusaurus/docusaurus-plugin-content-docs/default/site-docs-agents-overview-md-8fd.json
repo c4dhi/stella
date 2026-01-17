@@ -1,6 +1,6 @@
 {
   "id": "agents/overview",
-  "title": "🤖 Overview",
+  "title": "Overview",
   "description": "STELLA supports multiple agent types, each designed for different use cases. All agents connect to LiveKit rooms for real-time voice and data communication.",
   "source": "@site/docs/agents/overview.md",
   "sourceDirName": "agents",
@@ -14,7 +14,7 @@
   "sidebarPosition": 1,
   "frontMatter": {
     "sidebar_position": 1,
-    "title": "🤖 Overview"
+    "title": "Overview"
   },
   "sidebar": "docsSidebar",
   "previous": {
@@ -22,7 +22,7 @@
     "permalink": "/STELLA_backend/docs/architecture/kubernetes-orchestration"
   },
   "next": {
-    "title": "🌟 stella-agent",
-    "permalink": "/STELLA_backend/docs/agents/stella-agent"
+    "title": "Overview",
+    "permalink": "/STELLA_backend/docs/agents/stella-agent/"
   }
 }
