@@ -1,250 +1,293 @@
 {
-  "/STELLA_backend/docs-367": {
-    "__comp": "5e95c892",
+  "/STELLA_backend/__docusaurus/debug-5a6": {
+    "__comp": "__comp---theme-debug-config-23-a-2ff",
     "__context": {
-      "plugin": "aba21aa0"
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/config-8f2": {
+    "__comp": "__comp---theme-debug-config-23-a-2ff",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/content-2e2": {
+    "__comp": "__comp---theme-debug-contentba-8-ce7",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    },
+    "__props": "__props---stella-backend-docusaurus-debug-content-97-e-c9c"
+  },
+  "/STELLA_backend/__docusaurus/debug/globalData-9ca": {
+    "__comp": "__comp---theme-debug-global-dataede-0fa",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/metadata-478": {
+    "__comp": "__comp---theme-debug-site-metadata-68-e-3d4",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/registry-ff1": {
+    "__comp": "__comp---theme-debug-registry-679-501",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/__docusaurus/debug/routes-ca1": {
+    "__comp": "__comp---theme-debug-routes-946-699",
+    "__context": {
+      "plugin": "plugin---stella-backend-docusaurus-debugb-38-cac"
+    }
+  },
+  "/STELLA_backend/docs-367": {
+    "__comp": "__comp---theme-docs-root-5-e-9-0b6",
+    "__context": {
+      "plugin": "plugin---stella-backend-docsaba-74a"
     }
   },
   "/STELLA_backend/docs-263": {
-    "__comp": "a7bd4aaa",
-    "__props": "2ec714f2"
+    "__comp": "__comp---theme-doc-version-roota-7-b-5de",
+    "__props": "__props---stella-backend-docs-2-ec-65d"
   },
   "/STELLA_backend/docs-678": {
-    "__comp": "a94703ab"
+    "__comp": "__comp---theme-doc-roota-94-67a"
   },
   "/STELLA_backend/docs-e69": {
-    "__comp": "17896441",
-    "content": "4edc808e"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-4-ed-009"
   },
   "/STELLA_backend/docs/agent-sdk/audio-pipeline-668": {
-    "__comp": "17896441",
-    "content": "8901f887"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-audio-pipeline-890-278"
   },
   "/STELLA_backend/docs/agent-sdk/base-agent-496": {
-    "__comp": "17896441",
-    "content": "12b99b64"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-base-agent-12-b-4e1"
   },
   "/STELLA_backend/docs/agent-sdk/building-custom-agent-acf": {
-    "__comp": "17896441",
-    "content": "cd93adc3"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-building-custom-agentcd-9-6cd"
   },
   "/STELLA_backend/docs/agent-sdk/getting-started-468": {
-    "__comp": "17896441",
-    "content": "d90af130"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-getting-startedd-90-f82"
   },
   "/STELLA_backend/docs/agent-sdk/message-types-864": {
-    "__comp": "17896441",
-    "content": "c9c9b1c0"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-message-typesc-9-c-680"
   },
   "/STELLA_backend/docs/agent-sdk/overview-4b6": {
-    "__comp": "17896441",
-    "content": "851cb215"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-overview-851-f21"
   },
   "/STELLA_backend/docs/agent-sdk/progress-tracking-250": {
-    "__comp": "17896441",
-    "content": "c19fadf1"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-progress-trackingc-19-760"
   },
   "/STELLA_backend/docs/agent-sdk/tools-eb1": {
-    "__comp": "17896441",
-    "content": "b64cf4e6"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agent-sdk-toolsb-64-865"
   },
   "/STELLA_backend/docs/agents/echo-agent-760": {
-    "__comp": "17896441",
-    "content": "5abf42dd"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-echo-agent-5-ab-e83"
   },
   "/STELLA_backend/docs/agents/overview-23c": {
-    "__comp": "17896441",
-    "content": "8fd4bb5c"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-overview-8-fd-0ef"
   },
   "/STELLA_backend/docs/agents/stella-agent-12e": {
-    "__comp": "17896441",
-    "content": "1a41e15b"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agent-1-a-4-e78"
   },
   "/STELLA_backend/docs/agents/stella-agent/configuration-5ee": {
-    "__comp": "17896441",
-    "content": "c516e731"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agent-configurationc-51-693"
   },
   "/STELLA_backend/docs/agents/stella-agent/custom-experts-55b": {
-    "__comp": "17896441",
-    "content": "f990c9a6"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agent-custom-expertsf-99-bda"
   },
   "/STELLA_backend/docs/agents/stella-agent/default-experts-918": {
-    "__comp": "17896441",
-    "content": "27bca629"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agent-default-experts-27-b-ddd"
   },
   "/STELLA_backend/docs/agents/stella-agent/expert-pool-overview-f6f": {
-    "__comp": "17896441",
-    "content": "d82e9b7d"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-agent-expert-pool-overviewd-82-3b9"
   },
   "/STELLA_backend/docs/agents/stella-light-agent-987": {
-    "__comp": "17896441",
-    "content": "980c244d"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-agents-stella-light-agent-980-e5e"
   },
   "/STELLA_backend/docs/architecture/data-flow-314": {
-    "__comp": "17896441",
-    "content": "9ba7a03a"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-architecture-data-flow-9-ba-3c0"
   },
   "/STELLA_backend/docs/architecture/kubernetes-orchestration-181": {
-    "__comp": "17896441",
-    "content": "63ac29d3"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-architecture-kubernetes-orchestration-63-a-41e"
   },
   "/STELLA_backend/docs/architecture/overview-c2d": {
-    "__comp": "17896441",
-    "content": "0b1ac180"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-architecture-overview-0-b-1-af6"
   },
   "/STELLA_backend/docs/architecture/session-lifecycle-ad9": {
-    "__comp": "17896441",
-    "content": "8db29c4b"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-architecture-session-lifecycle-8-db-bd7"
   },
   "/STELLA_backend/docs/contributing-42e": {
-    "__comp": "17896441",
-    "content": "234918e4"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-234-23c"
   },
   "/STELLA_backend/docs/contributing/coding-standards-c67": {
-    "__comp": "17896441",
-    "content": "047f1178"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-047-acf"
   },
   "/STELLA_backend/docs/contributing/coding-standards/git-081": {
-    "__comp": "17896441",
-    "content": "99b5f0c0"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-git-99-b-c8c"
   },
   "/STELLA_backend/docs/contributing/coding-standards/python-08e": {
-    "__comp": "17896441",
-    "content": "abe24518"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-pythonabe-aeb"
   },
   "/STELLA_backend/docs/contributing/coding-standards/react-78c": {
-    "__comp": "17896441",
-    "content": "aed27678"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-reactaed-741"
   },
   "/STELLA_backend/docs/contributing/coding-standards/testing-6cd": {
-    "__comp": "17896441",
-    "content": "12d4e65c"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-testing-12-d-39e"
   },
   "/STELLA_backend/docs/contributing/coding-standards/typescript-cb7": {
-    "__comp": "17896441",
-    "content": "eac9c4d4"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-coding-standards-typescripteac-5a0"
   },
   "/STELLA_backend/docs/contributing/development-setup-7b7": {
-    "__comp": "17896441",
-    "content": "8d1658f6"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-development-setup-8-d-1-572"
   },
   "/STELLA_backend/docs/contributing/pull-request-process-3fd": {
-    "__comp": "17896441",
-    "content": "7696f2e0"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-pull-request-process-769-9b8"
   },
   "/STELLA_backend/docs/contributing/release-process-6de": {
-    "__comp": "17896441",
-    "content": "6b42455d"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-contributing-release-process-6-b-4-a93"
   },
   "/STELLA_backend/docs/deployment/kubernetes-bb5": {
-    "__comp": "17896441",
-    "content": "04da809a"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-kubernetes-04-d-40b"
   },
   "/STELLA_backend/docs/deployment/monitoring-8e1": {
-    "__comp": "17896441",
-    "content": "2fd99a78"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-monitoring-2-fd-1cf"
   },
   "/STELLA_backend/docs/deployment/nginx-setup-26a": {
-    "__comp": "17896441",
-    "content": "9a4df4ac"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-nginx-setup-9-a-4-93d"
   },
   "/STELLA_backend/docs/deployment/production-82d": {
-    "__comp": "17896441",
-    "content": "1973956f"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-production-197-5ef"
   },
   "/STELLA_backend/docs/deployment/production-checklist-609": {
-    "__comp": "17896441",
-    "content": "3b84e690"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-production-checklist-3-b-8-6fa"
   },
   "/STELLA_backend/docs/deployment/reverse-proxy-c53": {
-    "__comp": "17896441",
-    "content": "d155309a"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-deployment-reverse-proxyd-15-810"
   },
   "/STELLA_backend/docs/getting-started/first-agent-83e": {
-    "__comp": "17896441",
-    "content": "92eeeb13"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-first-agent-92-e-0d8"
   },
   "/STELLA_backend/docs/getting-started/installation-fcc": {
-    "__comp": "17896441",
-    "content": "54f44165"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-installation-54-f-34d"
   },
   "/STELLA_backend/docs/getting-started/quick-start-e36": {
-    "__comp": "17896441",
-    "content": "588bd741"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-getting-started-quick-start-588-7b2"
   },
   "/STELLA_backend/docs/guides-405": {
-    "__comp": "17896441",
-    "content": "d7b8612d"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-guidesd-7-b-af8"
   },
   "/STELLA_backend/docs/guides/add-custom-ui-de1": {
-    "__comp": "17896441",
-    "content": "41a8f6d7"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-guides-add-custom-ui-41-a-2ea"
   },
   "/STELLA_backend/docs/guides/create-your-own-agent-96c": {
-    "__comp": "17896441",
-    "content": "2bb0ac44"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-guides-create-your-own-agent-2-bb-28e"
   },
   "/STELLA_backend/docs/guides/getting-started-3c8": {
-    "__comp": "17896441",
-    "content": "c9ea0dcf"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-guides-getting-startedc-9-e-298"
   },
   "/STELLA_backend/docs/integration/frontend-a1f": {
-    "__comp": "17896441",
-    "content": "fea0edbe"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-integration-frontendfea-193"
   },
   "/STELLA_backend/docs/integration/livekit-342": {
-    "__comp": "17896441",
-    "content": "1fbf26a4"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-integration-livekit-1-fb-25c"
   },
   "/STELLA_backend/docs/integration/livekit-production-1e0": {
-    "__comp": "17896441",
-    "content": "1319fdf9"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-integration-livekit-production-131-0be"
   },
   "/STELLA_backend/docs/plan-structure-6a7": {
-    "__comp": "17896441",
-    "content": "ec248ab5"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-plan-structureec-2-9e3"
   },
   "/STELLA_backend/docs/plan-structure/deliverables-a17": {
-    "__comp": "17896441",
-    "content": "13e6c24f"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-plan-structure-deliverables-13-e-fb6"
   },
   "/STELLA_backend/docs/plan-structure/examples-6ec": {
-    "__comp": "17896441",
-    "content": "315169aa"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-plan-structure-examples-315-552"
   },
   "/STELLA_backend/docs/plan-structure/states-932": {
-    "__comp": "17896441",
-    "content": "40d6ea0b"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-plan-structure-states-40-d-85c"
   },
   "/STELLA_backend/docs/plan-structure/tasks-2d4": {
-    "__comp": "17896441",
-    "content": "54e39465"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-plan-structure-tasks-54-e-54d"
   },
   "/STELLA_backend/docs/sdk/base-agent-791": {
-    "__comp": "17896441",
-    "content": "54d6b8e0"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-sdk-base-agent-54-d-cfa"
   },
   "/STELLA_backend/docs/sdk/message-types-6da": {
-    "__comp": "17896441",
-    "content": "7592f65b"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-sdk-message-types-759-69c"
   },
   "/STELLA_backend/docs/sdk/overview-d45": {
-    "__comp": "17896441",
-    "content": "d81f4320"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-sdk-overviewd-81-398"
   },
   "/STELLA_backend/docs/sdk/streaming-fd6": {
-    "__comp": "17896441",
-    "content": "a1616e1e"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-sdk-streaminga-16-86b"
   },
   "/STELLA_backend/docs/sdk/tools-78b": {
-    "__comp": "17896441",
-    "content": "929b2849"
+    "__comp": "__comp---theme-doc-item-178-a40",
+    "content": "content---stella-backend-docs-sdk-tools-929-071"
   },
   "/STELLA_backend/-467": {
-    "__comp": "1df93b7f",
+    "__comp": "__comp---site-src-pages-index-tsx-1-df-d3e",
     "__context": {
-      "plugin": "a7456010"
+      "plugin": "plugin---stella-backend-a-74-913"
     },
-    "config": "5e9f5e1a"
+    "config": "config---stella-backend-5-e-9-868"
   }
 }
