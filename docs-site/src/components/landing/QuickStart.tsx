@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Link from '@docusaurus/Link';
 import { ArrowRight } from 'lucide-react';
+import { AnimatedSection } from './AnimatedSection';
 
 const steps = [
   {
@@ -48,41 +49,46 @@ const QuickStart = () => {
   return (
     <section id="quick-start" className="section-dark">
       <div className="section-container">
-        <div className="section-header">
-          <h2 className="section-title">Quick Start</h2>
-          <p className="section-subtitle">Get up and running in minutes</p>
-        </div>
+        <AnimatedSection animation="fade-up">
+          <div className="section-header">
+            <h2 className="section-title">Quick Start</h2>
+            <p className="section-subtitle">Get up and running in minutes</p>
+          </div>
+        </AnimatedSection>
 
         <div className="quickstart-grid">
           {/* Steps */}
-          <div className="quickstart-steps">
-            {steps.map((step) => (
-              <div
-                key={step.number}
-                className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
-                onMouseEnter={() => setActiveStep(step.number)}
-                onMouseLeave={() => setActiveStep(null)}
-              >
-                <div className="quickstart-step-inner">
-                  <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
-                    {step.number}
-                  </div>
-                  <div>
-                    <h3 className="quickstart-step-title">{step.title}</h3>
-                    <p className="quickstart-step-desc">{step.description}</p>
+          <AnimatedSection animation="fade-right" delay={100}>
+            <div className="quickstart-steps">
+              {steps.map((step) => (
+                <div
+                  key={step.number}
+                  className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
+                  onMouseEnter={() => setActiveStep(step.number)}
+                  onMouseLeave={() => setActiveStep(null)}
+                >
+                  <div className="quickstart-step-inner">
+                    <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
+                      {step.number}
+                    </div>
+                    <div>
+                      <h3 className="quickstart-step-title">{step.title}</h3>
+                      <p className="quickstart-step-desc">{step.description}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
 
-            {/* Read Full Guide Link */}
-            <Link to="/docs/guides/getting-started" className="quickstart-link">
-              Read the full guide
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
+              {/* Read Full Guide Link */}
+              <Link to="/docs/guides/getting-started" className="quickstart-link">
+                Read the full guide
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </AnimatedSection>
 
           {/* Terminal */}
+          <AnimatedSection animation="fade-left" delay={200}>
           <div className="quickstart-terminal">
             <div className="terminal-header">
               <div className="terminal-dot terminal-dot--red" />
@@ -113,6 +119,7 @@ const QuickStart = () => {
               ))}
             </div>
           </div>
+          </AnimatedSection>
         </div>
       </div>
     </section>

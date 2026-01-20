@@ -1,6 +1,7 @@
 import { ArrowRight, Github, Star } from 'lucide-react';
 import Link from '@docusaurus/Link';
 import { Button } from '../ui/button';
+import { AnimatedSection } from './AnimatedSection';
 
 const Hero = () => {
   return (
@@ -11,45 +12,54 @@ const Hero = () => {
       <div className="hero-content">
         <div className="hero-inner">
           {/* Open Source Badge */}
-          <div className="hero-badge">
-            <Star className="hero-badge-icon" />
-            <span>Open Source</span>
-          </div>
+          <AnimatedSection animation="fade-up">
+            <div className="hero-badge">
+              <Star className="hero-badge-icon" />
+              <span>Open Source</span>
+            </div>
+          </AnimatedSection>
 
           {/* Headline */}
-          <h1 className="hero-title">
-            Build conversational agents{' '}
-            <span className="hero-title-gradient">that speak</span>
-          </h1>
+          <AnimatedSection animation="fade-up" delay={100}>
+            <h1 className="hero-title">
+              Build conversational agents{' '}
+              <span className="hero-title-gradient">that speak</span>
+            </h1>
+          </AnimatedSection>
 
           {/* Subtitle */}
-          <p className="hero-subtitle">
-            STELLA handles the entire voice AI stack—build your agent, deploy it, and share a link.
-            Users can start talking to your agent instantly, with full session orchestration handled automatically.
-          </p>
+          <AnimatedSection animation="fade-up" delay={200}>
+            <p className="hero-subtitle">
+              STELLA handles the entire voice AI stack—build your agent, deploy it, and share a link.
+              Users can start talking to your agent instantly, with full session orchestration handled automatically.
+            </p>
+          </AnimatedSection>
 
           {/* CTA Buttons */}
-          <div className="hero-buttons">
-            <Button asChild size="lg" className="hero-btn-primary">
-              <Link to="/docs/guides/getting-started">
-                Get Started
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Link>
-            </Button>
-            <Button
-              asChild
-              size="lg"
-              variant="outline"
-              className="hero-btn-secondary"
-            >
-              <Link to="https://github.com/c4dhi/STELLA_backend">
-                <Github className="mr-2 w-5 h-5" />
-                GitHub
-              </Link>
-            </Button>
-          </div>
+          <AnimatedSection animation="fade-up" delay={300}>
+            <div className="hero-buttons">
+              <Button asChild size="lg" className="hero-btn-primary">
+                <Link to="/docs/guides/getting-started">
+                  Get Started
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Link>
+              </Button>
+              <Button
+                asChild
+                size="lg"
+                variant="outline"
+                className="hero-btn-secondary"
+              >
+                <Link to="https://github.com/c4dhi/STELLA_backend">
+                  <Github className="mr-2 w-5 h-5" />
+                  GitHub
+                </Link>
+              </Button>
+            </div>
+          </AnimatedSection>
 
           {/* Browser Mockup */}
+          <AnimatedSection animation="fade-up" delay={400}>
           <div className="hero-browser">
             <div className="hero-browser-window">
               {/* Browser Header */}
@@ -84,6 +94,7 @@ const Hero = () => {
               </div>
             </div>
           </div>
+          </AnimatedSection>
         </div>
       </div>
     </section>

@@ -41,6 +41,17 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs', // Serve docs at /docs/
           editUrl: 'https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/',
+          // Versioning configuration
+          // When you release a version, run: npm run docusaurus docs:version X.Y.Z
+          // Then update this config to set lastVersion and add banner: 'unreleased' to current
+          lastVersion: 'current',
+          versions: {
+            current: {
+              label: '0.2.0',
+              path: '',
+              // banner: 'unreleased', // Enable this after creating first versioned release
+            },
+          },
         },
         blog: false, // Disable blog
         theme: {
@@ -65,6 +76,11 @@ const config: Config = {
           sidebarId: 'docsSidebar',
           position: 'left',
           label: 'Docs',
+        },
+        {
+          to: '/docs/changelog',
+          label: 'Changelog',
+          position: 'left',
         },
         {
           type: 'html',
@@ -112,6 +128,10 @@ const config: Config = {
             {
               label: 'Contributing',
               to: '/docs/contributing',
+            },
+            {
+              label: 'Changelog',
+              to: '/docs/changelog',
             },
             {
               label: 'GitHub',

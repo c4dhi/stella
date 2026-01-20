@@ -3,6 +3,8 @@ sidebar_position: 2
 title: "📦 Installation"
 ---
 
+import {EnvVarReference} from '@site/src/components';
+
 # 📦 Installation
 
 Detailed guide for installing STELLA and its prerequisites.
@@ -55,27 +57,28 @@ Create a `.env` file from the example:
 cp .env.example .env
 ```
 
-### Required Variables
+### Essential Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://app:app@localhost:5432/app` |
-| `LIVEKIT_URL` | LiveKit server URL (internal) | `wss://your-livekit-server.com` |
-| `PUBLIC_LIVEKIT_URL` | LiveKit URL for browser clients | `wss://your-livekit-server.com` |
-| `LIVEKIT_API_KEY` | LiveKit API key | `devkey` |
-| `LIVEKIT_API_SECRET` | LiveKit API secret | `secret` |
-| `OPENAI_API_KEY` | OpenAI API key (for agents) | `sk-proj-xxxxx` |
+Configure the minimum required variables to get started:
 
-### Optional Variables
+```bash
+# Database
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stella?schema=public"
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | `3000` |
-| `NODE_ENV` | Environment mode | `development` |
-| `KUBERNETES_NAMESPACE` | K8s namespace for agents | `ai-agents` |
-| `AGENT_IMAGE` | Docker image for agents | `conversational-ai-server:latest` |
-| `STT_PROVIDER` | Speech-to-text provider | `sherpa` |
-| `TTS_PROVIDER` | Text-to-speech provider | `kokoro` |
+# LiveKit
+LIVEKIT_URL=ws://localhost:7880
+PUBLIC_LIVEKIT_URL=ws://localhost:7880
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+
+# AI
+OPENAI_API_KEY=sk-your-openai-key
+```
+
+<EnvVarReference
+  text="Complete Environment Variables Reference"
+  description="See all available configuration options including STT/TTS providers, GPU settings, and Kubernetes configuration."
+/>
 
 ## Local Development (Standalone)
 
@@ -96,6 +99,8 @@ npm run start:dev
 ```
 
 ## Database Migrations
+
+STELLA uses Prisma ORM with PostgreSQL. See [Database Schema](/docs/architecture/database) for the complete data model.
 
 ```bash
 # Create a new migration
@@ -162,4 +167,5 @@ curl http://localhost:5173
 ## Next Steps
 
 - [First Agent](/docs/getting-started/first-agent) - Deploy your first agent
+- [Database Schema](/docs/architecture/database) - Understand the data model
 - [Kubernetes Deployment](/docs/deployment/kubernetes) - Production Kubernetes setup

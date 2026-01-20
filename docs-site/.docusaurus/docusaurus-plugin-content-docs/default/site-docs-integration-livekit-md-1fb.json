@@ -22,7 +22,7 @@
     "permalink": "/STELLA_backend/docs/deployment/monitoring"
   },
   "next": {
-    "title": "Frontend Integration",
-    "permalink": "/STELLA_backend/docs/integration/frontend"
+    "title": "LiveKit Production",
+    "permalink": "/STELLA_backend/docs/integration/livekit-production"
   }
 }

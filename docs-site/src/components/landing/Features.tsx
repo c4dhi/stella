@@ -8,6 +8,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import Link from '@docusaurus/Link';
+import { AnimatedSection } from './AnimatedSection';
 
 const features = [
   {
@@ -52,34 +53,41 @@ const Features = () => {
   return (
     <section id="features" className="features-section">
       <div className="features-container">
-        <div className="features-header">
-          <h2 className="features-title">
-            Everything you need to build voice AI
-          </h2>
-          <p className="features-subtitle">
-            A complete platform for building, deploying, and scaling conversational AI agents
-          </p>
-        </div>
+        <AnimatedSection animation="fade-up">
+          <div className="features-header">
+            <h2 className="features-title">
+              Everything you need to build voice AI
+            </h2>
+            <p className="features-subtitle">
+              A complete platform for building, deploying, and scaling conversational AI agents
+            </p>
+          </div>
+        </AnimatedSection>
 
         <div className="features-grid">
-          {features.map((feature) => (
-            <Link
+          {features.map((feature, index) => (
+            <AnimatedSection
               key={feature.title}
-              to={feature.link}
-              className="feature-card"
+              animation="fade-up"
+              delay={index * 100}
             >
-              <div className="feature-card-icon">
-                <feature.icon className="w-6 h-6" />
-              </div>
-              <h3 className="feature-card-title">{feature.title}</h3>
-              <p className="feature-card-description">
-                {feature.description}
-              </p>
-              <div className="feature-card-link">
-                Learn more
-                <ArrowRight className="ml-1 w-4 h-4" />
-              </div>
-            </Link>
+              <Link
+                to={feature.link}
+                className="feature-card"
+              >
+                <div className="feature-card-icon">
+                  <feature.icon className="w-6 h-6" />
+                </div>
+                <h3 className="feature-card-title">{feature.title}</h3>
+                <p className="feature-card-description">
+                  {feature.description}
+                </p>
+                <div className="feature-card-link">
+                  Learn more
+                  <ArrowRight className="ml-1 w-4 h-4" />
+                </div>
+              </Link>
+            </AnimatedSection>
           ))}
         </div>
       </div>

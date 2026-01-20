@@ -1,18 +1,21 @@
-# TypeScript Type Definitions
+---
+sidebar_position: 6
+title: "TypeScript Types"
+---
 
-Complete TypeScript interfaces for the Session Management Server API.
+# TypeScript Types
+
+Complete TypeScript interfaces for the STELLA Session Management API.
 
 ## Installation
 
-You can copy these types directly into your project or create an npm package.
+Copy these types directly into your project:
 
 ```typescript
 // src/types/session-management.ts
 ```
 
-## Core Types
-
-### Enums
+## Enums
 
 ```typescript
 export enum SessionStatus {
@@ -279,7 +282,7 @@ export interface ApiError {
 }
 ```
 
-## API Client Type
+## API Client Interface
 
 ```typescript
 export interface ApiClient {
@@ -328,11 +331,9 @@ export interface ApiClient {
 import {
   ApiClient,
   CreateProjectDto,
-  CreateSessionDto,
   SessionDetail,
 } from './types/session-management';
 
-// Implement the API client
 class SessionManagementClient implements ApiClient {
   constructor(private baseUrl: string) {}
 
@@ -360,7 +361,7 @@ const session = await client.createSession(project.id, {
 // session is typed as SessionWithRoom
 ```
 
-## React Hooks Example
+## React Hooks
 
 ```typescript
 import { useState, useEffect } from 'react';
@@ -436,7 +437,6 @@ export function useAgent(agentId: string, pollInterval = 2000) {
 ## Validation Helpers
 
 ```typescript
-// Validation functions matching server-side validation
 export const validators = {
   projectName: (name: string): boolean => {
     return name.length >= 1 && name.length <= 255;
@@ -450,8 +450,11 @@ export const validators = {
     return skip >= 0 && take >= 1 && take <= 100;
   },
 };
+```
 
-// Type guards
+## Type Guards
+
+```typescript
 export function isApiError(error: any): error is ApiError {
   return (
     error &&
@@ -485,7 +488,13 @@ export const MAX_PAGINATION = {
 
 export const POLL_INTERVALS = {
   SESSIONS: 5000, // 5 seconds
-  AGENTS: 2000, // 2 seconds
+  AGENTS: 2000,   // 2 seconds
   TIMELINE: 3000, // 3 seconds
 } as const;
 ```
+
+## See Also
+
+- [SDK Overview](/docs/sdk/overview)
+- [Message Types](/docs/sdk/message-types)
+- [Frontend Integration](/docs/integration/frontend)

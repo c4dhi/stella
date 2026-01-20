@@ -18,8 +18,8 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "Kubernetes Orchestration",
-    "permalink": "/STELLA_backend/docs/architecture/kubernetes-orchestration"
+    "title": "Environment Variables",
+    "permalink": "/STELLA_backend/docs/architecture/environment-variables"
   },
   "next": {
     "title": "Overview",

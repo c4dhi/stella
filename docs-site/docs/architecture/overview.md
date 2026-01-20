@@ -94,12 +94,15 @@ LiveKit provides the real-time communication infrastructure:
 
 ### PostgreSQL Database
 
-PostgreSQL stores all persistent data:
+PostgreSQL with Prisma ORM stores all persistent data:
 
-- **Sessions**: Conversation state and metadata
-- **Messages**: Full conversation history
-- **Participants**: Users and agents in each session
-- **Projects**: Organizational grouping of sessions
+- **Users & Projects**: Authentication and organizational hierarchy
+- **Sessions & Participants**: Conversation instances and connected users
+- **Agents**: Agent types, instances, and configurations
+- **Messages & Events**: Full conversation history and audit logs
+- **Templates**: Reusable plans and environment configurations
+
+See [Database Schema](/docs/architecture/database) for the complete data model.
 
 ## Technology Stack
 
@@ -163,4 +166,5 @@ Multi-node Kubernetes cluster:
 
 - [Data Flow](/docs/architecture/data-flow) - How messages flow through the system
 - [Session Lifecycle](/docs/architecture/session-lifecycle) - Session states and transitions
+- [Database Schema](/docs/architecture/database) - PostgreSQL data model with Prisma
 - [Kubernetes Orchestration](/docs/architecture/kubernetes-orchestration) - Pod management details

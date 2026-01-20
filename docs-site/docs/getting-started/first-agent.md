@@ -3,6 +3,8 @@ sidebar_position: 3
 title: "🎯 First Agent"
 ---
 
+import {EnvVarReference} from '@site/src/components';
+
 # 🎯 Setting Up Your First Agent
 
 This guide walks you through deploying your first conversational AI agent in STELLA.
@@ -16,20 +18,19 @@ Before deploying an agent, ensure:
 
 ## Step 1: Create an Environment Variable Template
 
-Environment variable templates store API keys and configuration that agents need.
+Environment variable templates store API keys and configuration that agents need. Templates are encrypted and securely injected into agent pods as Kubernetes secrets.
 
 1. Open the **Frontend UI** at http://localhost:5173
 2. Go to **Settings** in the sidebar
 3. Click **"New Template"** in the Environment Variables section
-4. Add your API keys:
-   - `OPENAI_API_KEY` - Your OpenAI API key (required)
-   - `ELEVENLABS_API_KEY` - Optional, for ElevenLabs TTS
-   - Any other environment variables your agent needs
+4. Add your `OPENAI_API_KEY` (required) and any optional keys (e.g., `ELEVENLABS_API_KEY`)
 5. Give the template a name (e.g., "Production Keys") and save
 
-:::tip Security
-Environment variable templates are stored securely and injected into agent pods as Kubernetes secrets. Your API keys never leave your cluster.
-:::
+<EnvVarReference
+  category="agent-environment-variable-injection"
+  text="Agent Environment Variables"
+  description="Learn how environment variables are securely injected into agent pods and which variables are required."
+/>
 
 ## Step 2: Deploy an Agent
 

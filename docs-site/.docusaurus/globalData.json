@@ -5,7 +5,7 @@
       "versions": [
         {
           "name": "current",
-          "label": "Next",
+          "label": "0.2.0",
           "isLast": true,
           "path": "/STELLA_backend/docs",
           "mainDocId": "index",
@@ -88,6 +88,16 @@
               "sidebar": "docsSidebar"
             },
             {
+              "id": "architecture/database",
+              "path": "/STELLA_backend/docs/architecture/database",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "architecture/environment-variables",
+              "path": "/STELLA_backend/docs/architecture/environment-variables",
+              "sidebar": "docsSidebar"
+            },
+            {
               "id": "architecture/kubernetes-orchestration",
               "path": "/STELLA_backend/docs/architecture/kubernetes-orchestration",
               "sidebar": "docsSidebar"
@@ -101,6 +111,10 @@
               "id": "architecture/session-lifecycle",
               "path": "/STELLA_backend/docs/architecture/session-lifecycle",
               "sidebar": "docsSidebar"
+            },
+            {
+              "id": "changelog",
+              "path": "/STELLA_backend/docs/changelog"
             },
             {
               "id": "contributing/coding-standards/git",
@@ -158,13 +172,19 @@
               "sidebar": "docsSidebar"
             },
             {
+              "id": "deployment/message-recording",
+              "path": "/STELLA_backend/docs/deployment/message-recording",
+              "sidebar": "docsSidebar"
+            },
+            {
               "id": "deployment/monitoring",
               "path": "/STELLA_backend/docs/deployment/monitoring",
               "sidebar": "docsSidebar"
             },
             {
               "id": "deployment/nginx-setup",
-              "path": "/STELLA_backend/docs/deployment/nginx-setup"
+              "path": "/STELLA_backend/docs/deployment/nginx-setup",
+              "sidebar": "docsSidebar"
             },
             {
               "id": "deployment/production",
@@ -201,8 +221,18 @@
               "sidebar": "docsSidebar"
             },
             {
+              "id": "guides/authentication",
+              "path": "/STELLA_backend/docs/guides/authentication",
+              "sidebar": "docsSidebar"
+            },
+            {
               "id": "guides/create-your-own-agent",
               "path": "/STELLA_backend/docs/guides/create-your-own-agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "guides/custom-tools",
+              "path": "/STELLA_backend/docs/guides/custom-tools",
               "sidebar": "docsSidebar"
             },
             {
@@ -227,7 +257,8 @@
             },
             {
               "id": "integration/livekit-production",
-              "path": "/STELLA_backend/docs/integration/livekit-production"
+              "path": "/STELLA_backend/docs/integration/livekit-production",
+              "sidebar": "docsSidebar"
             },
             {
               "id": "plan-structure/deliverables",
@@ -277,6 +308,11 @@
             {
               "id": "sdk/tools",
               "path": "/STELLA_backend/docs/sdk/tools",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "sdk/typescript-types",
+              "path": "/STELLA_backend/docs/sdk/typescript-types",
               "sidebar": "docsSidebar"
             }
           ],

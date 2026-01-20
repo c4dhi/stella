@@ -1,6 +1,6 @@
 {
   "id": "integration/livekit-production",
-  "title": "🔒 LiveKit Production",
+  "title": "LiveKit Production",
   "description": "Guide for configuring LiveKit for production with WebRTC and TURN support.",
   "source": "@site/docs/integration/livekit-production.md",
   "sourceDirName": "integration",
@@ -14,6 +14,15 @@
   "sidebarPosition": 2,
   "frontMatter": {
     "sidebar_position": 2,
-    "title": "🔒 LiveKit Production"
+    "title": "LiveKit Production"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "LiveKit",
+    "permalink": "/STELLA_backend/docs/integration/livekit"
+  },
+  "next": {
+    "title": "Frontend Integration",
+    "permalink": "/STELLA_backend/docs/integration/frontend"
   }
 }

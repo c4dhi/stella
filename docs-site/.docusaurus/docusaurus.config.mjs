@@ -49,7 +49,14 @@ export default {
         "docs": {
           "sidebarPath": "./sidebars.ts",
           "routeBasePath": "docs",
-          "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/"
+          "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/",
+          "lastVersion": "current",
+          "versions": {
+            "current": {
+              "label": "0.2.0",
+              "path": ""
+            }
+          }
         },
         "blog": false,
         "theme": {
@@ -73,6 +80,11 @@ export default {
           "sidebarId": "docsSidebar",
           "position": "left",
           "label": "Docs"
+        },
+        {
+          "to": "/docs/changelog",
+          "label": "Changelog",
+          "position": "left"
         },
         {
           "type": "html",
@@ -121,6 +133,10 @@ export default {
             {
               "label": "Contributing",
               "to": "/docs/contributing"
+            },
+            {
+              "label": "Changelog",
+              "to": "/docs/changelog"
             },
             {
               "label": "GitHub",

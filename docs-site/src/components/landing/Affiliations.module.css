@@ -1,0 +1,130 @@
+.section {
+  padding: 4rem 2rem;
+  background: #0a090c;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.label {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #71717a;
+  margin-bottom: 3rem;
+}
+
+/* Desktop: Static grid */
+.logoGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4rem;
+}
+
+@media (min-width: 1024px) {
+  .logoGrid {
+    gap: 5rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .logoGrid {
+    gap: 6rem;
+  }
+}
+
+/* Link wrapper for logos */
+.logoLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-decoration: none;
+  padding: 0.5rem;
+}
+
+.logo {
+  width: auto;
+  max-width: 200px;
+  object-fit: contain;
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+  filter: grayscale(100%);
+}
+
+.logo:hover {
+  opacity: 0.85;
+}
+
+/* For logos with dark/black colors that need to be inverted to white */
+.logoInvert {
+  filter: grayscale(100%) invert(1);
+}
+
+/* Mobile: Infinite carousel */
+.carouselWrapper {
+  width: 100%;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 10%,
+    black 90%,
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 10%,
+    black 90%,
+    transparent
+  );
+}
+
+.carousel {
+  display: flex;
+  align-items: center;
+  gap: 3rem;
+  width: max-content;
+  animation: scroll 25s linear infinite;
+}
+
+.carousel .logoLink {
+  padding: 0 1rem;
+}
+
+.carousel .logo {
+  max-width: 150px;
+}
+
+@keyframes scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* Pause animation on hover */
+.carouselWrapper:hover .carousel {
+  animation-play-state: paused;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767px) {
+  .section {
+    padding: 2.5rem 1rem;
+  }
+
+  .label {
+    font-size: 0.8rem;
+    margin-bottom: 2rem;
+  }
+}

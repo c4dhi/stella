@@ -3,51 +3,16 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 
 export default [
   {
-    path: '/STELLA_backend/__docusaurus/debug',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug', '5a6'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/config',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/config', '8f2'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/content',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/content', '2e2'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/globalData',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/globalData', '9ca'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/metadata',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/metadata', '478'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/registry',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/registry', 'ff1'),
-    exact: true
-  },
-  {
-    path: '/STELLA_backend/__docusaurus/debug/routes',
-    component: ComponentCreator('/STELLA_backend/__docusaurus/debug/routes', 'ca1'),
-    exact: true
-  },
-  {
     path: '/STELLA_backend/docs',
-    component: ComponentCreator('/STELLA_backend/docs', '367'),
+    component: ComponentCreator('/STELLA_backend/docs', '58f'),
     routes: [
       {
         path: '/STELLA_backend/docs',
-        component: ComponentCreator('/STELLA_backend/docs', '263'),
+        component: ComponentCreator('/STELLA_backend/docs', '97d'),
         routes: [
           {
             path: '/STELLA_backend/docs',
-            component: ComponentCreator('/STELLA_backend/docs', '678'),
+            component: ComponentCreator('/STELLA_backend/docs', 'c0f'),
             routes: [
               {
                 path: '/STELLA_backend/docs',
@@ -150,6 +115,18 @@ export default [
                 sidebar: "docsSidebar"
               },
               {
+                path: '/STELLA_backend/docs/architecture/database',
+                component: ComponentCreator('/STELLA_backend/docs/architecture/database', '93b'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/architecture/environment-variables',
+                component: ComponentCreator('/STELLA_backend/docs/architecture/environment-variables', '1c3'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
                 path: '/STELLA_backend/docs/architecture/kubernetes-orchestration',
                 component: ComponentCreator('/STELLA_backend/docs/architecture/kubernetes-orchestration', '181'),
                 exact: true,
@@ -166,6 +143,11 @@ export default [
                 component: ComponentCreator('/STELLA_backend/docs/architecture/session-lifecycle', 'ad9'),
                 exact: true,
                 sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/changelog',
+                component: ComponentCreator('/STELLA_backend/docs/changelog', 'f02'),
+                exact: true
               },
               {
                 path: '/STELLA_backend/docs/contributing',
@@ -234,6 +216,12 @@ export default [
                 sidebar: "docsSidebar"
               },
               {
+                path: '/STELLA_backend/docs/deployment/message-recording',
+                component: ComponentCreator('/STELLA_backend/docs/deployment/message-recording', '16f'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
                 path: '/STELLA_backend/docs/deployment/monitoring',
                 component: ComponentCreator('/STELLA_backend/docs/deployment/monitoring', '8e1'),
                 exact: true,
@@ -241,8 +229,9 @@ export default [
               },
               {
                 path: '/STELLA_backend/docs/deployment/nginx-setup',
-                component: ComponentCreator('/STELLA_backend/docs/deployment/nginx-setup', '26a'),
-                exact: true
+                component: ComponentCreator('/STELLA_backend/docs/deployment/nginx-setup', 'a5f'),
+                exact: true,
+                sidebar: "docsSidebar"
               },
               {
                 path: '/STELLA_backend/docs/deployment/production',
@@ -287,8 +276,20 @@ export default [
                 sidebar: "docsSidebar"
               },
               {
+                path: '/STELLA_backend/docs/guides/authentication',
+                component: ComponentCreator('/STELLA_backend/docs/guides/authentication', '298'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
                 path: '/STELLA_backend/docs/guides/create-your-own-agent',
                 component: ComponentCreator('/STELLA_backend/docs/guides/create-your-own-agent', '96c'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/guides/custom-tools',
+                component: ComponentCreator('/STELLA_backend/docs/guides/custom-tools', 'd3d'),
                 exact: true,
                 sidebar: "docsSidebar"
               },
@@ -312,8 +313,9 @@ export default [
               },
               {
                 path: '/STELLA_backend/docs/integration/livekit-production',
-                component: ComponentCreator('/STELLA_backend/docs/integration/livekit-production', '1e0'),
-                exact: true
+                component: ComponentCreator('/STELLA_backend/docs/integration/livekit-production', '369'),
+                exact: true,
+                sidebar: "docsSidebar"
               },
               {
                 path: '/STELLA_backend/docs/plan-structure',
@@ -372,6 +374,12 @@ export default [
               {
                 path: '/STELLA_backend/docs/sdk/tools',
                 component: ComponentCreator('/STELLA_backend/docs/sdk/tools', '78b'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_backend/docs/sdk/typescript-types',
+                component: ComponentCreator('/STELLA_backend/docs/sdk/typescript-types', '10a'),
                 exact: true,
                 sidebar: "docsSidebar"
               }

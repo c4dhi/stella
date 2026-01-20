@@ -3,6 +3,8 @@ sidebar_position: 1
 title: Kubernetes
 ---
 
+import {EnvVarReference} from '@site/src/components';
+
 # Kubernetes Deployment
 
 This guide explains how to deploy the STELLA system to Kubernetes.
@@ -53,17 +55,23 @@ cp .env.example .env
 nano .env
 ```
 
-Set your credentials:
+Set your essential Kubernetes deployment credentials:
 
 ```bash
+# AI APIs
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
-POSTGRES_DB=session_management
-POSTGRES_USER=your-db-username
-POSTGRES_PASSWORD=your-secure-password
+
+# LiveKit (WebRTC)
 LIVEKIT_URL=wss://your-livekit-server.com
 LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret
 ```
+
+<EnvVarReference
+  category="kubernetes"
+  text="Kubernetes Environment Variables"
+  description="See namespace configuration, DNS settings, and other K8s-specific options."
+/>
 
 :::caution Security
 The `.env` file is gitignored. Your credentials stay local and are injected into Kubernetes secrets during deployment.
@@ -106,6 +114,8 @@ Once deployed:
 - **Service**: `postgres:5432`
 - **Storage**: 10Gi PersistentVolumeClaim
 - **Credentials**: Configured via environment
+
+See [Database Schema](/docs/architecture/database) for the complete data model.
 
 ### LiveKit Server (if self-hosted)
 
@@ -269,6 +279,7 @@ kubectl logs -f -n ai-agents -l app=session-management-server
 
 ## See Also
 
+- [Database Schema](/docs/architecture/database) - PostgreSQL data model
 - [Production Deployment](/docs/deployment/production)
 - [Nginx Setup](/docs/deployment/nginx-setup)
 - [LiveKit Integration](/docs/integration/livekit)

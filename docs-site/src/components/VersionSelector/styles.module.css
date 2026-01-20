@@ -1,0 +1,103 @@
+.versionSelector {
+  padding: 0.75rem 1rem;
+  margin: 0 0.5rem 0.5rem;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 12px;
+}
+
+/* Badge style for single version */
+.versionBadge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.versionBadgeLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.versionBadgeValue {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: 6px;
+}
+
+.versionLabel {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ifm-color-primary);
+  margin-bottom: 0.4rem;
+  opacity: 0.8;
+}
+
+.selectWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.select {
+  appearance: none;
+  width: 100%;
+  padding: 0.5rem 2rem 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ifm-font-color-base);
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.select:hover {
+  border-color: var(--ifm-color-primary);
+  background: var(--ifm-hover-overlay);
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.chevron {
+  position: absolute;
+  right: 0.75rem;
+  pointer-events: none;
+  color: var(--ifm-color-emphasis-600);
+  transition: transform 0.2s ease;
+}
+
+.select:focus + .chevron {
+  transform: rotate(180deg);
+}
+
+/* Dark mode adjustments */
+[data-theme='dark'] .versionSelector {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+[data-theme='dark'] .select {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme='dark'] .select:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--ifm-color-primary);
+}

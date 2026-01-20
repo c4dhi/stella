@@ -1,11 +1,43 @@
 ---
 sidebar_position: 3
-title: "🌐 Nginx Setup"
+title: "Nginx Setup"
 ---
 
-# 🌐 Nginx Configuration
+# Nginx Configuration
 
 Guide for configuring Nginx as a reverse proxy for STELLA in production.
+
+## Routing Options
+
+STELLA supports two deployment modes:
+
+| Option | Best For | URLs |
+|--------|----------|------|
+| **Subdomain-based** | Production, clean separation | `api.domain.com`, `livekit.domain.com` |
+| **Path-based** | Single domain, simpler DNS | `domain.com/api`, `domain.com/livekit` |
+
+### Subdomain-Based (Recommended)
+
+**Pros:**
+- Clean URL structure
+- No path conflicts
+- Better WebSocket support
+- Easier to scale/separate services
+
+**Cons:**
+- Multiple DNS records required
+- Wildcard SSL or multiple certificates
+
+### Path-Based
+
+**Pros:**
+- Single SSL certificate
+- Single DNS A record
+- Simpler DNS management
+
+**Cons:**
+- More complex Nginx configuration
+- Potential path conflicts
 
 ## Recommended Approach
 
@@ -379,8 +411,146 @@ sudo nginx -T | grep -A 10 "location / {"
 sudo systemctl restart stella-port-forwards
 ```
 
+## Path-Based Routing Configuration
+
+If you prefer path-based routing on a single domain:
+
+### DNS Configuration
+
+Add a single A record:
+
+```
+Type: A
+Name: @
+Value: YOUR_SERVER_IP
+```
+
+### Nginx Configuration
+
+```nginx
+# HTTP - Redirect to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name yourdomain.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+}
+
+# HTTPS - Main Configuration
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name yourdomain.com;
+
+    # SSL Configuration
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Backend API routes
+    location ~ ^/(auth|projects|sessions|agents|health|network-info) {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # Internal APIs (Python services)
+    location /internal/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # LiveKit WebSocket
+    location /livekit {
+        proxy_pass http://127.0.0.1:7880;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+        proxy_buffering off;
+    }
+
+    # Frontend - Everything else
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+### Backend Environment
+
+```bash
+NODE_ENV=production
+PORT=3000
+CORS_ORIGIN=https://yourdomain.com
+PUBLIC_SERVER_URL=https://yourdomain.com
+PUBLIC_LIVEKIT_URL=wss://yourdomain.com/livekit
+LIVEKIT_URL=ws://localhost:7880
+```
+
+### Frontend Environment
+
+```bash
+VITE_API_URL=https://yourdomain.com
+VITE_LIVEKIT_URL=wss://yourdomain.com/livekit
+```
+
+## Production Checklist
+
+- [ ] DNS records configured and verified
+- [ ] SSL certificates installed and auto-renewing
+- [ ] Backend `.env` configured for production
+- [ ] Frontend built with production URLs
+- [ ] Nginx configuration tested (`nginx -t`)
+- [ ] Firewall allows ports 80, 443
+- [ ] Services running with PM2 or systemd
+- [ ] PM2 configured to start on boot
+- [ ] CORS configured for specific domain
+- [ ] Internal APIs not publicly accessible
+- [ ] Monitoring and logging configured
+
 ## See Also
 
-- [Reverse Proxy](/docs/deployment/reverse-proxy)
-- [Production Deployment](/docs/deployment/production)
+- [Production Checklist](/docs/deployment/production-checklist)
 - [LiveKit Production](/docs/integration/livekit-production)
+- [Environment Variables](/docs/architecture/environment-variables)

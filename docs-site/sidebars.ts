@@ -18,7 +18,9 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/getting-started',
         'guides/create-your-own-agent',
+        'guides/custom-tools',
         'guides/add-custom-ui',
+        'guides/authentication',
       ],
     },
     {
@@ -33,7 +35,9 @@ const sidebars: SidebarsConfig = {
         'architecture/overview',
         'architecture/data-flow',
         'architecture/session-lifecycle',
+        'architecture/database',
         'architecture/kubernetes-orchestration',
+        'architecture/environment-variables',
       ],
     },
     {
@@ -95,6 +99,7 @@ const sidebars: SidebarsConfig = {
         'sdk/message-types',
         'sdk/tools',
         'sdk/streaming',
+        'sdk/typescript-types',
       ],
     },
     {
@@ -107,6 +112,8 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'deployment/kubernetes',
+        'deployment/nginx-setup',
+        'deployment/message-recording',
         'deployment/production-checklist',
         'deployment/monitoring',
       ],
@@ -121,6 +128,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'integration/livekit',
+        'integration/livekit-production',
         'integration/frontend',
       ],
     },

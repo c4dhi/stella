@@ -1,0 +1,16 @@
+.sidebarWrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.versionSelectorContainer {
+  flex-shrink: 0;
+  padding-top: 0.75rem;
+}
+
+/* Ensure the original sidebar takes remaining space */
+.sidebarWrapper > nav {
+  flex: 1;
+  min-height: 0;
+}

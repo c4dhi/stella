@@ -1,9 +1,9 @@
 ---
 sidebar_position: 2
-title: "🔒 LiveKit Production"
+title: "LiveKit Production"
 ---
 
-# 🔒 LiveKit Production Setup
+# LiveKit Production Setup
 
 Guide for configuring LiveKit for production with WebRTC and TURN support.
 

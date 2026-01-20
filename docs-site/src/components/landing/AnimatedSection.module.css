@@ -1,0 +1,76 @@
+/* Base animated state */
+.animated {
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+
+/* Hidden state before animation */
+.hidden {
+  opacity: 0;
+}
+
+/* Fade In */
+.fadeIn {
+  opacity: 1;
+  transform: none;
+}
+
+.hidden.fadeIn,
+.animated:not(.fadeIn):not(.fadeInUp):not(.fadeInLeft):not(.fadeInRight):not(.scaleIn) {
+  opacity: 0;
+}
+
+/* Fade In Up */
+.fadeInUp {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hidden:not(.fadeInUp) + .fadeInUp,
+.animated.hidden {
+  transform: translateY(30px);
+}
+
+/* Fade In Left */
+.fadeInLeft {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Fade In Right */
+.fadeInRight {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Scale In */
+.scaleIn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Hidden states with transforms */
+.animated.hidden {
+  opacity: 0;
+}
+
+.animated.hidden:has(+ .fadeInUp),
+.animated:not(.fadeInUp).hidden {
+  transform: translateY(30px);
+}
+
+/* Specific hidden transforms */
+:global(.animate-fade-in-up).hidden {
+  transform: translateY(30px);
+}
+
+:global(.animate-fade-in-left).hidden {
+  transform: translateX(-30px);
+}
+
+:global(.animate-fade-in-right).hidden {
+  transform: translateX(30px);
+}
+
+:global(.animate-scale-in).hidden {
+  transform: scale(0.95);
+}

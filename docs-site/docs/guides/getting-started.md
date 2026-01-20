@@ -5,6 +5,7 @@ description: Get STELLA running in minutes with this step-by-step guide
 ---
 
 import {Steps, Step} from '@site/src/components/StepGuide';
+import {EnvVarReference} from '@site/src/components';
 
 # Getting Started with STELLA
 
@@ -46,20 +47,19 @@ Copy the example environment file and add your credentials.
 cp .env.example .env
 ```
 
-Edit the `.env` file with your API keys:
+Edit the `.env` file with your essential configuration:
 
 ```bash title=".env"
-# OpenAI Configuration
-OPENAI_API_KEY=sk-your-openai-key
-
-# LiveKit Configuration
+# LiveKit (required)
 LIVEKIT_URL=wss://your-app.livekit.cloud
 LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret
 
-# Database (default works for local development)
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/stella
+# AI (required)
+OPENAI_API_KEY=sk-your-openai-key
 ```
+
+<EnvVarReference description="See all available configuration options including database, security, and provider settings." />
 
 </Step>
 

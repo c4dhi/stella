@@ -18,11 +18,11 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "Streaming",
-    "permalink": "/STELLA_backend/docs/sdk/streaming"
+    "title": "TypeScript Types",
+    "permalink": "/STELLA_backend/docs/sdk/typescript-types"
   },
   "next": {
-    "title": "Production Checklist",
-    "permalink": "/STELLA_backend/docs/deployment/production-checklist"
+    "title": "Nginx Setup",
+    "permalink": "/STELLA_backend/docs/deployment/nginx-setup"
   }
 }
