@@ -5,10 +5,10 @@
   "source": "@site/docs/agents/stella-light-agent.md",
   "sourceDirName": "agents",
   "slug": "/agents/stella-light-agent",
-  "permalink": "/STELLA_backend/docs/agents/stella-light-agent",
+  "permalink": "/STELLA_Documentation/docs/agents/stella-light-agent",
   "draft": false,
   "unlisted": false,
-  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/stella-light-agent.md",
+  "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/docs/agents/stella-light-agent.md",
   "tags": [],
   "version": "current",
   "sidebarPosition": 3,
@@ -19,10 +19,10 @@
   "sidebar": "docsSidebar",
   "previous": {
     "title": "Custom Experts",
-    "permalink": "/STELLA_backend/docs/agents/stella-agent/custom-experts"
+    "permalink": "/STELLA_Documentation/docs/agents/stella-agent/custom-experts"
   },
   "next": {
     "title": "🔊 echo-agent",
-    "permalink": "/STELLA_backend/docs/agents/echo-agent"
+    "permalink": "/STELLA_Documentation/docs/agents/echo-agent"
   }
 }

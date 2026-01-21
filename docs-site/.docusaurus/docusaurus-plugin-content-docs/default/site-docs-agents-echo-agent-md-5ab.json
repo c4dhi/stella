@@ -5,10 +5,10 @@
   "source": "@site/docs/agents/echo-agent.md",
   "sourceDirName": "agents",
   "slug": "/agents/echo-agent",
-  "permalink": "/STELLA_backend/docs/agents/echo-agent",
+  "permalink": "/STELLA_Documentation/docs/agents/echo-agent",
   "draft": false,
   "unlisted": false,
-  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/echo-agent.md",
+  "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/docs/agents/echo-agent.md",
   "tags": [],
   "version": "current",
   "sidebarPosition": 4,
@@ -19,10 +19,10 @@
   "sidebar": "docsSidebar",
   "previous": {
     "title": "💫 stella-light-agent",
-    "permalink": "/STELLA_backend/docs/agents/stella-light-agent"
+    "permalink": "/STELLA_Documentation/docs/agents/stella-light-agent"
   },
   "next": {
     "title": "Overview",
-    "permalink": "/STELLA_backend/docs/plan-structure/"
+    "permalink": "/STELLA_Documentation/docs/plan-structure/"
   }
 }
