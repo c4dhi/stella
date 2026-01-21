@@ -15,8 +15,8 @@ Get the entire STELLA platform running in minutes. This guide walks you through 
 
 Before you begin, make sure you have:
 
-- **Docker Desktop** (macOS/Windows) or **Docker Engine** (Linux)
-- **kubectl** configured with a Kubernetes cluster (Docker Desktop includes one)
+- **Docker**: [OrbStack](https://orbstack.dev/) (recommended for macOS), Docker Desktop (Windows), or Docker Engine (Linux)
+- **kubectl** configured with a Kubernetes cluster (OrbStack and Docker Desktop include one)
 - **OpenAI API key** for the conversational AI
 - **LiveKit account** (cloud or self-hosted) for real-time communication
 

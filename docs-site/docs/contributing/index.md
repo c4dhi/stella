@@ -6,6 +6,16 @@ description: How to contribute to STELLA
 
 # Contributing to STELLA
 
+:::info Lead Maintainer
+For questions, collaboration inquiries, or guidance on contributing, please reach out to the lead maintainer:
+
+**Felix Moser**
+📧 [felix.moser@unisg.ch](mailto:felix.moser@unisg.ch)
+💼 [LinkedIn](https://www.linkedin.com/in/felix-moser-a2b7a9176/)
+
+We welcome contributions of all kinds and are happy to help you get started!
+:::
+
 Thank you for your interest in contributing to STELLA! This guide will help you get started with contributing code, documentation, and bug reports.
 
 ## Ways to Contribute
@@ -42,14 +52,14 @@ Thank you for your interest in contributing to STELLA! This guide will help you 
 
 ```bash
 # Fork on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/STELLA_backend.git
-cd STELLA_backend
+git clone https://github.com/YOUR_USERNAME/STELLA.git
+cd STELLA
 git checkout -b feature/my-new-feature
 ```
 
 ## Code of Conduct
 
-We are committed to providing a welcoming and inclusive experience for everyone. Please read and follow our [Code of Conduct](https://github.com/c4dhi/STELLA_backend/blob/main/CODE_OF_CONDUCT.md).
+We are committed to providing a welcoming and inclusive experience for everyone. Please read and follow our [Code of Conduct](https://github.com/c4dhi/STELLA/blob/main/CODE_OF_CONDUCT.md).
 
 ## Getting Help
 
@@ -60,7 +70,7 @@ We are committed to providing a welcoming and inclusive experience for everyone.
 ## Repository Structure
 
 ```
-STELLA_backend/
+STELLA/
 ├── src/                    # Backend source (NestJS)
 ├── agents/                 # Agent implementations
 │   ├── stella-agent/       # Full-featured agent

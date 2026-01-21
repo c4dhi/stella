@@ -1437,6 +1437,17 @@ tr:nth-child(even) td {
   border-top: 1px solid #292524;
 }
 
+/* Center footer columns */
+.footer__links {
+  justify-content: center;
+  gap: 6rem;
+}
+
+.footer__col {
+  flex: 0 0 auto !important;
+  width: auto !important;
+}
+
 .footer__title {
   color: #fafaf9;
   font-size: 0.8125rem;
@@ -1453,6 +1464,15 @@ tr:nth-child(even) td {
   font-size: 0.8125rem;
   line-height: 1.6;
   transition: color 0.15s ease;
+}
+
+/* Fix external link icon to be inline */
+.footer__link-item svg {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.25rem;
+  width: 0.75rem;
+  height: 0.75rem;
 }
 
 .footer__link-item:hover {

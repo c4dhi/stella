@@ -135,12 +135,16 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/c4dhi/STELLA_backend',
+              href: 'https://github.com/c4dhi/STELLA',
+            },
+            {
+              label: 'C4DHI',
+              href: 'https://www.c4dhi.org/',
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} STELLA Project. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} STELLA Project. A project by the <a href="https://www.c4dhi.org/" target="_blank" rel="noopener noreferrer">Center for Digital Health Interventions</a>.`,
     },
     prism: {
       theme: prismThemes.github,
