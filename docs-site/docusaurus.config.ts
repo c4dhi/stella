@@ -13,9 +13,9 @@ const config: Config = {
 
   // GitHub Pages configuration
   url: 'https://c4dhi.github.io',
-  baseUrl: '/STELLA_backend/',
+  baseUrl: '/STELLA_Documentation/',
   organizationName: 'c4dhi',
-  projectName: 'STELLA_backend',
+  projectName: 'STELLA_Documentation',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
@@ -40,7 +40,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs', // Serve docs at /docs/
-          editUrl: 'https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/',
+          editUrl: 'https://github.com/c4dhi/STELLA_Documentation/tree/main/',
           // Versioning configuration
           // When you release a version, run: npm run docusaurus docs:version X.Y.Z
           // Then update this config to set lastVersion and add banner: 'unreleased' to current

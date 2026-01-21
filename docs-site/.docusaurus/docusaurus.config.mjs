@@ -11,9 +11,9 @@ export default {
     "/Users/felixmoser/Github/StellaWorkspace/STELLA_backend/docs-site/src/clientModules/scrollDetector.js"
   ],
   "url": "https://c4dhi.github.io",
-  "baseUrl": "/STELLA_backend/",
+  "baseUrl": "/STELLA_Documentation/",
   "organizationName": "c4dhi",
-  "projectName": "STELLA_backend",
+  "projectName": "STELLA_Documentation",
   "deploymentBranch": "gh-pages",
   "trailingSlash": false,
   "onBrokenLinks": "throw",
@@ -49,7 +49,7 @@ export default {
         "docs": {
           "sidebarPath": "./sidebars.ts",
           "routeBasePath": "docs",
-          "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/",
+          "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/",
           "lastVersion": "current",
           "versions": {
             "current": {

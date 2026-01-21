@@ -5,10 +5,10 @@
   "source": "@site/docs/agents/overview.md",
   "sourceDirName": "agents",
   "slug": "/agents/overview",
-  "permalink": "/STELLA_backend/docs/agents/overview",
+  "permalink": "/STELLA_Documentation/docs/agents/overview",
   "draft": false,
   "unlisted": false,
-  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agents/overview.md",
+  "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/docs/agents/overview.md",
   "tags": [],
   "version": "current",
   "sidebarPosition": 1,
@@ -19,10 +19,10 @@
   "sidebar": "docsSidebar",
   "previous": {
     "title": "Environment Variables",
-    "permalink": "/STELLA_backend/docs/architecture/environment-variables"
+    "permalink": "/STELLA_Documentation/docs/architecture/environment-variables"
   },
   "next": {
     "title": "Overview",
-    "permalink": "/STELLA_backend/docs/agents/stella-agent/"
+    "permalink": "/STELLA_Documentation/docs/agents/stella-agent/"
   }
 }

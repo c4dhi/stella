@@ -5,10 +5,10 @@
   "source": "@site/docs/deployment/kubernetes.md",
   "sourceDirName": "deployment",
   "slug": "/deployment/kubernetes",
-  "permalink": "/STELLA_backend/docs/deployment/kubernetes",
+  "permalink": "/STELLA_Documentation/docs/deployment/kubernetes",
   "draft": false,
   "unlisted": false,
-  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/deployment/kubernetes.md",
+  "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/docs/deployment/kubernetes.md",
   "tags": [],
   "version": "current",
   "sidebarPosition": 1,
@@ -19,10 +19,10 @@
   "sidebar": "docsSidebar",
   "previous": {
     "title": "TypeScript Types",
-    "permalink": "/STELLA_backend/docs/sdk/typescript-types"
+    "permalink": "/STELLA_Documentation/docs/sdk/typescript-types"
   },
   "next": {
     "title": "Nginx Setup",
-    "permalink": "/STELLA_backend/docs/deployment/nginx-setup"
+    "permalink": "/STELLA_Documentation/docs/deployment/nginx-setup"
   }
 }

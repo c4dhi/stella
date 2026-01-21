@@ -5,10 +5,10 @@
   "source": "@site/docs/deployment/nginx-setup.md",
   "sourceDirName": "deployment",
   "slug": "/deployment/nginx-setup",
-  "permalink": "/STELLA_backend/docs/deployment/nginx-setup",
+  "permalink": "/STELLA_Documentation/docs/deployment/nginx-setup",
   "draft": false,
   "unlisted": false,
-  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/deployment/nginx-setup.md",
+  "editUrl": "https://github.com/c4dhi/STELLA_Documentation/tree/main/docs/deployment/nginx-setup.md",
   "tags": [],
   "version": "current",
   "sidebarPosition": 3,
@@ -19,10 +19,10 @@
   "sidebar": "docsSidebar",
   "previous": {
     "title": "Kubernetes",
-    "permalink": "/STELLA_backend/docs/deployment/kubernetes"
+    "permalink": "/STELLA_Documentation/docs/deployment/kubernetes"
   },
   "next": {
     "title": "Message Recording",
-    "permalink": "/STELLA_backend/docs/deployment/message-recording"
+    "permalink": "/STELLA_Documentation/docs/deployment/message-recording"
   }
 }
