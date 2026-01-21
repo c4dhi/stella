@@ -1,0 +1,22 @@
+.sidebarWrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.versionSelectorContainer {
+  flex-shrink: 0;
+  /* Push version selector below the fixed navbar (60px) plus minimal padding */
+  padding-top: calc(var(--ifm-navbar-height) + 0.75rem);
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+  padding-bottom: 0.5rem;
+}
+
+/* Remove the default padding-top from the wrapped DocSidebar since we handle it in versionSelectorContainer */
+/* The DocSidebar renders a div with class like sidebar_XXXX that has padding-top: var(--ifm-navbar-height) */
+.sidebarWrapper > div[class*='sidebar_'] {
+  padding-top: 0 !important;
+  flex: 1;
+  min-height: 0;
+}

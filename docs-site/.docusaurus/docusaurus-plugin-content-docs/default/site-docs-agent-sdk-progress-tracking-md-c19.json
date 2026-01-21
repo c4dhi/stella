@@ -1,0 +1,19 @@
+{
+  "id": "agent-sdk/progress-tracking",
+  "title": "📊 Progress Tracking",
+  "description": "STELLA agents can track and display progress through todo lists and progress updates, keeping users informed about ongoing tasks.",
+  "source": "@site/docs/agent-sdk/progress-tracking.md",
+  "sourceDirName": "agent-sdk",
+  "slug": "/agent-sdk/progress-tracking",
+  "permalink": "/STELLA_backend/docs/agent-sdk/progress-tracking",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agent-sdk/progress-tracking.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 6,
+  "frontMatter": {
+    "sidebar_position": 6,
+    "title": "📊 Progress Tracking"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "label": "stella-agent",
+  "position": 2,
+  "collapsed": true,
+  "collapsible": true,
+  "link": {
+    "type": "doc",
+    "id": "agents/stella-agent/index"
+  }
+}

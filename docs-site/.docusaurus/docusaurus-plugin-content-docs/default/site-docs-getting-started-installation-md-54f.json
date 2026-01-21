@@ -1,0 +1,19 @@
+{
+  "id": "getting-started/installation",
+  "title": "📦 Installation",
+  "description": "Detailed guide for installing STELLA and its prerequisites.",
+  "source": "@site/docs/getting-started/installation.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/installation",
+  "permalink": "/STELLA_backend/docs/getting-started/installation",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/getting-started/installation.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2,
+    "title": "📦 Installation"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "agent-sdk/message-types",
+  "title": "💬 Message Types",
+  "description": "STELLA agents communicate via LiveKit's data channel using structured JSON messages. This page documents all message types.",
+  "source": "@site/docs/agent-sdk/message-types.md",
+  "sourceDirName": "agent-sdk",
+  "slug": "/agent-sdk/message-types",
+  "permalink": "/STELLA_backend/docs/agent-sdk/message-types",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agent-sdk/message-types.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 4,
+  "frontMatter": {
+    "sidebar_position": 4,
+    "title": "💬 Message Types"
+  }
+}

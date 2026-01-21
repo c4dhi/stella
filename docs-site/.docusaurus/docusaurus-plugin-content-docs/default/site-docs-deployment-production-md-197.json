@@ -1,0 +1,19 @@
+{
+  "id": "deployment/production",
+  "title": "🏭 Production",
+  "description": "Guide for deploying STELLA in production environments.",
+  "source": "@site/docs/deployment/production.md",
+  "sourceDirName": "deployment",
+  "slug": "/deployment/production",
+  "permalink": "/STELLA_backend/docs/deployment/production",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/deployment/production.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2,
+    "title": "🏭 Production"
+  }
+}

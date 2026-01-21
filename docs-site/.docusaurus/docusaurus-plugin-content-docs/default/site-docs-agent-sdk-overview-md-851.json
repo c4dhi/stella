@@ -1,0 +1,19 @@
+{
+  "id": "agent-sdk/overview",
+  "title": "📚 Overview",
+  "description": "The STELLA Agent SDK lets you build custom voice agents without rebuilding infrastructure. Focus on your agent's logic—STELLA handles everything else.",
+  "source": "@site/docs/agent-sdk/overview.md",
+  "sourceDirName": "agent-sdk",
+  "slug": "/agent-sdk/overview",
+  "permalink": "/STELLA_backend/docs/agent-sdk/overview",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/agent-sdk/overview.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1,
+    "title": "📚 Overview"
+  }
+}

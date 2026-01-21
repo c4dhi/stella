@@ -1,0 +1,28 @@
+{
+  "id": "integration/livekit",
+  "title": "LiveKit",
+  "description": "Guide for integrating LiveKit client in your frontend to connect to STELLA sessions.",
+  "source": "@site/docs/integration/livekit.md",
+  "sourceDirName": "integration",
+  "slug": "/integration/livekit",
+  "permalink": "/STELLA_backend/docs/integration/livekit",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/integration/livekit.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1,
+    "title": "LiveKit"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Monitoring",
+    "permalink": "/STELLA_backend/docs/deployment/monitoring"
+  },
+  "next": {
+    "title": "LiveKit Production",
+    "permalink": "/STELLA_backend/docs/integration/livekit-production"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "deployment/reverse-proxy",
+  "title": "🔀 Reverse Proxy",
+  "description": "Complete guide for deploying STELLA with a reverse proxy, supporting both path-based and subdomain-based routing.",
+  "source": "@site/docs/deployment/reverse-proxy.md",
+  "sourceDirName": "deployment",
+  "slug": "/deployment/reverse-proxy",
+  "permalink": "/STELLA_backend/docs/deployment/reverse-proxy",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/c4dhi/STELLA_backend/tree/main/docs-site/docs/deployment/reverse-proxy.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 4,
+  "frontMatter": {
+    "sidebar_position": 4,
+    "title": "🔀 Reverse Proxy"
+  }
+}

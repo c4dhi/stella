@@ -1,0 +1,67 @@
+---
+sidebar_position: 1
+slug: /
+title: Introduction
+---
+
+import { ArchitectureDiagram } from '@site/src/components';
+
+# STELLA
+
+**System for Testing and Engineering LLM-based Conversational Agents**
+
+STELLA is a NestJS-based control plane for managing conversational AI sessions with LiveKit WebRTC integration and Kubernetes agent orchestration.
+
+## What is STELLA?
+
+STELLA provides a complete infrastructure for building, deploying, and managing voice-enabled AI agents. It handles:
+
+- **Real-time Communication**: WebRTC-based voice and data streaming via LiveKit
+- **Agent Orchestration**: Automatic Kubernetes pod management for AI agents
+- **Session Management**: Track conversations, participants, and messages
+- **Flexible Architecture**: Support for multiple agent types with customizable pipelines
+
+## Architecture
+
+<ArchitectureDiagram />
+
+## Key Components
+
+| Component | Description |
+|-----------|-------------|
+| **LiveKit** | External WebRTC media server (cloud-hosted or self-hosted) |
+| **Backend API** | NestJS server managing sessions, agents, and LiveKit tokens |
+| **Frontend UI** | React app for real-time voice/text communication |
+| **STT/TTS Services** | Microservices for speech recognition and synthesis |
+| **Agent Pods** | Python conversational AI agents, created per session |
+
+## Features
+
+### Project & Session Management
+- Create and organize multiple projects
+- Track sessions, agents, and activity per project
+- Get aggregated statistics
+
+### Agent Orchestration
+- Deploy conversational AI agents to Kubernetes
+- Automatic Secret and Pod creation
+- Pass plan configurations via environment variables
+- Monitor agent status and logs
+- Graceful shutdown and cleanup
+
+### LiveKit Integration
+- JWT token generation for secure room access
+- WebRTC-based real-time communication
+- Data channel for text messages
+
+### Data Persistence
+- PostgreSQL database via Prisma ORM
+- Track participants, messages, and room events
+- Timeline view combining messages and events
+
+## Next Steps
+
+- **[Getting Started](/docs/guides/getting-started)**: Get STELLA running in minutes
+- **[Build Your Own Agent](/docs/guides/build-your-own-agent)**: Build a custom conversational AI agent
+- **[Architecture Overview](/docs/architecture/overview)**: Deep dive into system design
+- **[Agents Overview](/docs/agents/overview)**: Learn about different agent types
