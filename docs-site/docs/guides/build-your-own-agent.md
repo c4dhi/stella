@@ -1,14 +1,28 @@
 ---
 sidebar_position: 2
-title: Create Your Own Agent
+title: Build Your Own Agent
 description: Build a custom conversational AI agent with the STELLA SDK
 ---
 
 import {Steps, Step} from '@site/src/components/StepGuide';
 
-# Create Your Own Agent
+# Build Your Own Agent
 
-Learn how to build a custom conversational AI agent using the STELLA Agent SDK. By the end of this guide, you'll have a working agent that can handle voice conversations, use custom tools, and integrate with your own services.
+The Agent SDK lets you focus purely on your agent's logic. STELLA handles the infrastructure—audio pipeline, WebRTC streaming, session lifecycle, and deployment orchestration—so you can concentrate on what makes your agent unique.
+
+**What STELLA handles:**
+- Audio pipeline (STT and TTS)
+- WebRTC streaming via LiveKit
+- Session creation, state management, and cleanup
+- Deployment and scaling
+- Message recording and transcript storage
+
+**What you implement:**
+- Conversation logic and prompts
+- Tool calls and integrations
+- Business rules and workflows
+
+By the end of this guide, you'll have a working agent that can handle voice conversations, use custom tools, and integrate with your own services.
 
 ## Overview
 
@@ -283,6 +297,66 @@ async def generate_response(self, user_input: str) -> str:
         )
 
     return response.choices[0].message.content
+```
+
+## Accessing Chat History
+
+STELLA automatically records all messages exchanged during a session—you don't need to implement any recording logic. Your agent can retrieve this conversation history using the built-in `get_chat_history()` method.
+
+**No setup required:** The platform handles message recording, storage, and retrieval. Your agent just calls the method.
+
+This is useful for:
+- Building context for LLM prompts
+- Resuming conversations after agent restart
+- Analyzing conversation patterns
+
+### Basic Usage
+
+```python
+class MyAgent(BaseAgent):
+    async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
+        # Get recent conversation history
+        history = await self.get_chat_history(limit=20)
+
+        # Build context for LLM
+        context = "\n".join([
+            f"{msg.role}: {msg.content}"
+            for msg in history
+        ])
+
+        # Use in your prompt
+        response = await self.llm.chat([
+            {"role": "system", "content": f"Previous conversation:\n{context}"},
+            {"role": "user", "content": input.text}
+        ])
+
+        yield AgentOutput.text_final(input.session_id, response)
+```
+
+### Method Reference
+
+```python
+await self.get_chat_history(
+    include_debug: bool = False,  # Include debug/processing messages
+    limit: int = 100,             # Max messages (up to 500)
+) -> List[ChatMessage]
+```
+
+### ChatMessage Structure
+
+Each message includes:
+- `id` - Unique message identifier
+- `timestamp` - ISO 8601 timestamp
+- `role` - Sender role ('user', 'assistant', 'system')
+- `content` - Extracted text content
+- `message_type` - Type ('user_text', 'transcript', 'agent_text')
+- `envelope` - Full original message envelope
+
+### Checking Availability
+
+```python
+if self.has_history:
+    history = await self.get_chat_history()
 ```
 
 ## Building and Deploying

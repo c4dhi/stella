@@ -14,14 +14,14 @@ const features = [
   {
     icon: Radio,
     title: 'Real-time Voice',
-    description: 'WebRTC-powered communication via LiveKit with low-latency streaming, echo cancellation, and noise suppression.',
+    description: 'Full audio pipeline included: STT, TTS, WebRTC streaming, echo cancellation, and noise suppression—all handled by STELLA.',
     link: '/docs/integration/livekit',
   },
   {
     icon: Puzzle,
     title: 'Modular Agents',
-    description: 'Use pre-built agents out of the box, or create your own with pluggable STT, LLM, and TTS providers. Mix and match components.',
-    link: '/docs/guides/create-your-own-agent',
+    description: 'Use pre-built agents or build your own. Swap STT, LLM, and TTS providers without touching infrastructure code.',
+    link: '/docs/guides/build-your-own-agent',
   },
   {
     icon: Wrench,

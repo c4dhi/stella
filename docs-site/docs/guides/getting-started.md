@@ -163,6 +163,6 @@ Verify your LiveKit credentials in `.env` and ensure WebSocket connections are a
 
 ## Next Steps
 
-- [Create Your Own Agent](/docs/guides/create-your-own-agent) - Build a custom voice AI agent
+- [Build Your Own Agent](/docs/guides/build-your-own-agent) - Build a custom voice AI agent
 - [Architecture Overview](/docs/architecture/overview) - Understand how STELLA works
 - [Agent SDK Reference](/docs/sdk/overview) - Explore the Python SDK

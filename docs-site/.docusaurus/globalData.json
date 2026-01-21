@@ -226,8 +226,8 @@
               "sidebar": "docsSidebar"
             },
             {
-              "id": "guides/create-your-own-agent",
-              "path": "/STELLA_backend/docs/guides/create-your-own-agent",
+              "id": "guides/build-your-own-agent",
+              "path": "/STELLA_backend/docs/guides/build-your-own-agent",
               "sidebar": "docsSidebar"
             },
             {

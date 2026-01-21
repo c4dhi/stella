@@ -4,15 +4,15 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 export default [
   {
     path: '/STELLA_backend/docs',
-    component: ComponentCreator('/STELLA_backend/docs', '58f'),
+    component: ComponentCreator('/STELLA_backend/docs', 'c7a'),
     routes: [
       {
         path: '/STELLA_backend/docs',
-        component: ComponentCreator('/STELLA_backend/docs', '97d'),
+        component: ComponentCreator('/STELLA_backend/docs', '173'),
         routes: [
           {
             path: '/STELLA_backend/docs',
-            component: ComponentCreator('/STELLA_backend/docs', 'c0f'),
+            component: ComponentCreator('/STELLA_backend/docs', '8d4'),
             routes: [
               {
                 path: '/STELLA_backend/docs',
@@ -282,8 +282,8 @@ export default [
                 sidebar: "docsSidebar"
               },
               {
-                path: '/STELLA_backend/docs/guides/create-your-own-agent',
-                component: ComponentCreator('/STELLA_backend/docs/guides/create-your-own-agent', '96c'),
+                path: '/STELLA_backend/docs/guides/build-your-own-agent',
+                component: ComponentCreator('/STELLA_backend/docs/guides/build-your-own-agent', 'ea0'),
                 exact: true,
                 sidebar: "docsSidebar"
               },

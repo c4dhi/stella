@@ -1,7 +1,7 @@
 {
   "id": "agent-sdk/overview",
   "title": "📚 Overview",
-  "description": "The STELLA Agent SDK provides the foundation for building custom conversational AI agents that integrate with the STELLA platform.",
+  "description": "The STELLA Agent SDK lets you build custom voice agents without rebuilding infrastructure. Focus on your agent's logic—STELLA handles everything else.",
   "source": "@site/docs/agent-sdk/overview.md",
   "sourceDirName": "agent-sdk",
   "slug": "/agent-sdk/overview",

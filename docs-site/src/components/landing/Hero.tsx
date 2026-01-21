@@ -22,16 +22,16 @@ const Hero = () => {
           {/* Headline */}
           <AnimatedSection animation="fade-up" delay={100}>
             <h1 className="hero-title">
-              Build conversational agents{' '}
-              <span className="hero-title-gradient">that speak</span>
+              Focus on your agent.{' '}
+              <span className="hero-title-gradient">We handle the rest.</span>
             </h1>
           </AnimatedSection>
 
           {/* Subtitle */}
           <AnimatedSection animation="fade-up" delay={200}>
             <p className="hero-subtitle">
-              STELLA handles the entire voice AI stack—build your agent, deploy it, and share a link.
-              Users can start talking to your agent instantly, with full session orchestration handled automatically.
+              STELLA manages the audio pipeline, voice streaming, and session orchestration.
+              Build your agent logic, deploy instantly, and share a link—users start talking immediately.
             </p>
           </AnimatedSection>
 

@@ -5067,7 +5067,7 @@ tr:nth-child(even) td {
   gap: 3rem;
   max-width: 1100px;
   margin: 0 auto;
-  align-items: start;
+  align-items: center;
 }
 
 @media (min-width: 1024px) {
@@ -5079,11 +5079,11 @@ tr:nth-child(even) td {
 .quickstart-steps {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .quickstart-step {
-  padding: 1.5rem;
+  padding: 0.75rem 1.25rem;
   border-radius: 0.75rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.02);
@@ -5103,17 +5103,18 @@ tr:nth-child(even) td {
 
 .quickstart-step-inner {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
 }
 
 .quickstart-step-number {
   flex-shrink: 0;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2rem;
+  height: 2rem;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.05);
   color: #71717a;
+  font-size: 0.875rem;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -5130,12 +5131,13 @@ tr:nth-child(even) td {
   font-size: 1rem;
   font-weight: 600;
   color: #fafafa;
-  margin-bottom: 0.25rem;
+  margin: 0 0 0.25rem 0;
 }
 
 .quickstart-step-desc {
   font-size: 0.875rem;
   color: #71717a;
+  margin: 0;
 }
 
 .quickstart-link {

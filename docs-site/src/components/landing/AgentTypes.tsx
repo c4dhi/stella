@@ -26,7 +26,7 @@ const AgentTypes = () => {
                 </div>
                 <h3 className="agent-card-title">stella-agent</h3>
                 <p className="agent-card-desc">
-                  3-stage pipeline with intelligent routing for complex, agent-supported multi-turn conversations
+                  Multi-stage pipeline with intelligent routing for complex, agent-supported multi-turn conversations
                 </p>
               </div>
               <div className="agent-card-features">
@@ -94,7 +94,7 @@ const AgentTypes = () => {
 
           {/* Build Your Own */}
           <AnimatedSection animation="fade-up" delay={300}>
-            <Link to="/docs/guides/create-your-own-agent" className="agent-card agent-card--custom">
+            <Link to="/docs/guides/build-your-own-agent" className="agent-card agent-card--custom">
               <div className="agent-card-badge agent-card-badge--blue">Customizable</div>
               <div className="agent-card-header">
                 <div className="agent-card-icon agent-card-icon--blue">

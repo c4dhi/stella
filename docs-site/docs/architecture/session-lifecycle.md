@@ -282,6 +282,43 @@ When issues occur, STELLA attempts graceful degradation:
 3. **LLM timeout**: Retry with shorter context
 4. **Network issues**: Buffer and retry
 
+## Message Recording
+
+STELLA automatically records all messages exchanged during a session for transcript retrieval, debugging, and audit purposes.
+
+### What Gets Recorded
+
+| Message Type | Description |
+|--------------|-------------|
+| `transcript` | Final speech-to-text transcriptions (user speech) |
+| `agent_text` | Agent responses (final text, not streaming chunks) |
+| `user_text` | Direct text input from users |
+| `participant_joined/left` | Participant events |
+| `complete_todo_list` | Task list updates |
+| `state_change_notification` | State machine transitions |
+| `debug` | Debug messages (optional retrieval) |
+
+### How It Works
+
+1. **Auto-Discovery**: A message recorder service polls for active sessions
+2. **Room Connection**: Connects to LiveKit rooms without subscribing to media
+3. **Selective Recording**: Filters out audio streaming, partial chunks, and control messages
+4. **Storage**: Messages stored with full envelope, participant attribution, and timestamps
+
+### Retrieving Transcripts
+
+**API Endpoint:**
+```
+GET /sessions/{sessionId}/messages
+```
+
+**Query Parameters:**
+- `limit` - Max messages (1-100, default: 50)
+- `before` - ISO timestamp for pagination
+- `include_debug` - Include debug messages (default: false)
+
+**For agents**, see [Accessing Chat History](/docs/guides/build-your-own-agent#accessing-chat-history).
+
 ## Next Steps
 
 - [Kubernetes Orchestration](/docs/architecture/kubernetes-orchestration) - Pod management

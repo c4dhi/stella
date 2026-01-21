@@ -894,4 +894,4 @@ for tool in tools:
 
 - [SDK Tools Reference](/docs/sdk/tools) - API documentation
 - [Base Agent](/docs/sdk/base-agent) - Full agent API
-- [Create Your Own Agent](/docs/guides/create-your-own-agent) - Complete agent tutorial
+- [Build Your Own Agent](/docs/guides/build-your-own-agent) - Complete agent tutorial

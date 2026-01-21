@@ -404,4 +404,4 @@ async def test_get_weather():
 - [Custom Tools Guide](/docs/guides/custom-tools) - Step-by-step guide to creating tools
 - [Streaming](/docs/sdk/streaming) - Audio streaming
 - [Base Agent](/docs/sdk/base-agent) - Full API reference
-- [Create Your Own Agent](/docs/guides/create-your-own-agent) - Complete tutorial
+- [Build Your Own Agent](/docs/guides/build-your-own-agent) - Complete tutorial

@@ -15,9 +15,9 @@ The Expert Pool provides:
 - **Dynamic expert selection** based on content and risk scoring
 - **Consensus synthesis** that resolves conflicting expert findings
 
-## Three-Stage Pipeline
+## Multi-Stage Pipeline
 
-When user input is classified as potentially sensitive, it flows through a three-stage pipeline:
+When user input is classified as potentially sensitive, it flows through a multi-stage pipeline:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

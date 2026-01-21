@@ -5,17 +5,29 @@ title: "📚 Overview"
 
 # 📚 Agent SDK Overview
 
-The STELLA Agent SDK provides the foundation for building custom conversational AI agents that integrate with the STELLA platform.
+The STELLA Agent SDK lets you build custom voice agents without rebuilding infrastructure. Focus on your agent's logic—STELLA handles everything else.
+
+## Why Use the Agent SDK?
+
+| STELLA Handles | You Build |
+|----------------|-----------|
+| Audio pipeline (STT → TTS) | Conversation logic |
+| WebRTC streaming | Custom tools |
+| Session lifecycle | Business rules |
+| Deployment & scaling | Prompts & workflows |
+
+**The result:** Deploy production-ready voice agents in hours, not weeks. No infrastructure maintenance, no audio engineering—just your agent logic.
 
 ## What is the Agent SDK?
 
-The Agent SDK is a Python framework that handles:
+The Agent SDK is a Python framework that provides:
 
 - **LiveKit Integration**: Connect to rooms, publish/subscribe audio
 - **Audio Pipeline**: STT, LLM, and TTS orchestration
 - **Message Protocol**: Structured data channel communication
 - **Progress Tracking**: Todo lists and status updates
 - **Tool Execution**: Custom function/tool support
+- **Chat History**: Access conversation transcripts for context building
 
 ## Architecture
 
@@ -106,6 +118,21 @@ async def search_database(query: str) -> str:
     results = await db.search(query)
     return results
 ```
+
+### Chat History
+
+Access conversation transcripts for context building. STELLA automatically records all session messages—your agent can retrieve them without any setup:
+
+```python
+# Get recent conversation history
+history = await self.get_chat_history(limit=20)
+
+# Use for LLM context
+for msg in history:
+    print(f"{msg.role}: {msg.content}")
+```
+
+See [Accessing Chat History](/docs/guides/build-your-own-agent#accessing-chat-history) for the full API.
 
 ## Quick Example
 

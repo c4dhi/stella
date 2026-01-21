@@ -17,7 +17,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'guides/getting-started',
-        'guides/create-your-own-agent',
+        'guides/build-your-own-agent',
         'guides/custom-tools',
         'guides/add-custom-ui',
         'guides/authentication',
