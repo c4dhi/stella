@@ -157,6 +157,25 @@ ENV VAD_CONTINUATION_WINDOW_MS=400
 ENV VAD_MIN_FINAL_MS=500
 ENV VAD_PRE_BUFFER_MS=500
 
+# Timeout protection (prevents indefinite speech accumulation)
+ENV VAD_MAX_SPEECH_DURATION_MS=15000
+ENV VAD_STALE_PARTIAL_TIMEOUT_MS=3000
+
+# End-of-speech delta detection (multi-signal detection)
+ENV VAD_EOS_HISTORY_FRAMES=20
+ENV VAD_EOS_PROB_DROP=0.15
+ENV VAD_EOS_ENERGY_DROP=0.4
+ENV VAD_EOS_FLUX_STABLE=0.05
+ENV VAD_EOS_MIN_SIGNALS=2
+
+# Energy gating for speech start
+ENV VAD_START_THRESHOLD=0.7
+ENV VAD_ENERGY_SNR_MARGIN=2.5
+ENV VAD_MIN_START_FRAMES=4
+
+# Spectral gating (noise reduction)
+ENV VAD_ENABLE_SPECTRAL_GATE=true
+
 # ============================================================================
 # Sherpa VAD configuration (RMS-based - energy detection)
 # ============================================================================

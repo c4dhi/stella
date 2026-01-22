@@ -27,6 +27,98 @@ except ImportError as e:
     print(f"[WhisperProvider] torch not available for Silero VAD: {e}")
     TORCH_AVAILABLE = False
 
+from collections import deque
+
+
+class EndOfSpeechDetector:
+    """Multi-signal detector for speech-to-silence transitions."""
+
+    def __init__(self, config: dict):
+        # Rolling history windows (~640ms at 32ms/frame)
+        self.history_size = config.get('eos_history_frames', 20)
+        self.speech_prob_history = deque(maxlen=self.history_size)
+        self.energy_history = deque(maxlen=self.history_size)
+        self.spectral_flux_history = deque(maxlen=self.history_size)
+
+        # Delta thresholds (detect RELATIVE changes)
+        self.prob_drop_threshold = config.get('eos_prob_drop', 0.15)      # 15% drop
+        self.energy_drop_ratio = config.get('eos_energy_drop', 0.4)       # 40% drop
+        self.flux_stable_threshold = config.get('eos_flux_stable', 0.05)  # Low flux = stable
+
+        # Require N signals to agree
+        self.min_signals = config.get('eos_min_signals', 2)
+
+        # Previous frame for spectral flux
+        self.prev_frame = None
+
+    def update(self, speech_prob: float, rms_energy: float, audio_frame: np.ndarray):
+        """Update history and compute spectral flux."""
+        self.speech_prob_history.append(speech_prob)
+        self.energy_history.append(rms_energy)
+
+        # Compute spectral flux
+        flux = self._compute_spectral_flux(audio_frame)
+        self.spectral_flux_history.append(flux)
+        self.prev_frame = audio_frame.copy()
+
+    def _compute_spectral_flux(self, current_frame: np.ndarray) -> float:
+        """Spectral flux: measures rate of spectral change."""
+        if self.prev_frame is None or len(current_frame) != len(self.prev_frame):
+            return 0.0
+
+        # Compute magnitude spectra
+        current_spec = np.abs(np.fft.rfft(current_frame))
+        prev_spec = np.abs(np.fft.rfft(self.prev_frame))
+
+        # Normalize
+        current_spec = current_spec / (np.sum(current_spec) + 1e-10)
+        prev_spec = prev_spec / (np.sum(prev_spec) + 1e-10)
+
+        # Flux = sum of positive differences (onset-focused)
+        diff = current_spec - prev_spec
+        return float(np.sum(np.maximum(diff, 0)))
+
+    def detect_end(self) -> tuple[bool, dict]:
+        """Detect if speech just ended based on signal transitions."""
+        if len(self.speech_prob_history) < 10:
+            return False, {}
+
+        # Signal 1: Speech probability DROP
+        recent_peak = max(list(self.speech_prob_history)[-15:-5]) if len(self.speech_prob_history) >= 15 else max(self.speech_prob_history)
+        current_avg = np.mean(list(self.speech_prob_history)[-3:])
+        prob_drop = recent_peak - current_avg
+        prob_dropped = prob_drop > self.prob_drop_threshold
+
+        # Signal 2: Energy DROP
+        recent_energy = np.mean(list(self.energy_history)[-15:-5]) if len(self.energy_history) >= 15 else np.mean(list(self.energy_history)[:-3])
+        current_energy = np.mean(list(self.energy_history)[-3:])
+        energy_ratio = current_energy / (recent_energy + 1e-10)
+        energy_dropped = energy_ratio < (1 - self.energy_drop_ratio)
+
+        # Signal 3: Spectral flux STABILIZED (speech varies, noise is static)
+        recent_flux = np.mean(list(self.spectral_flux_history)[-5:])
+        flux_stable = recent_flux < self.flux_stable_threshold
+
+        signals = [prob_dropped, energy_dropped, flux_stable]
+        triggered = sum(signals) >= self.min_signals
+
+        metrics = {
+            'prob_drop': prob_drop,
+            'energy_ratio': energy_ratio,
+            'flux': recent_flux,
+            'signals': signals,
+            'triggered': triggered
+        }
+
+        return triggered, metrics
+
+    def reset(self):
+        """Clear history for new utterance."""
+        self.speech_prob_history.clear()
+        self.energy_history.clear()
+        self.spectral_flux_history.clear()
+        self.prev_frame = None
+
 
 class WhisperSession(STTSession):
     """faster-whisper session with VAD-based streaming.
@@ -89,6 +181,37 @@ class WhisperSession(STTSession):
         self.pre_buffer = []  # Circular buffer of recent audio before speech_started
         self.pre_buffer_samples = config.get('pre_buffer_samples', 8000)  # 0.5s of pre-speech audio
 
+        # CRITICAL: Maximum speech duration timeout (prevents indefinite accumulation)
+        self.max_speech_duration_ms = config.get('max_speech_duration_ms', 15000)  # 15 seconds max
+        self.speech_start_time = None  # Track when current utterance started
+
+        # Stale partial detection (forces endpoint if transcript unchanged for too long)
+        self.last_partial_text = ""
+        self.last_partial_change_time = 0
+        self.stale_partial_timeout_ms = config.get('stale_partial_timeout_ms', 3000)  # 3 seconds
+
+        # End-of-speech delta detector (multi-signal detection)
+        self.eos_detector = EndOfSpeechDetector({
+            'eos_history_frames': config.get('eos_history_frames', 20),
+            'eos_prob_drop': config.get('eos_prob_drop', 0.15),
+            'eos_energy_drop': config.get('eos_energy_drop', 0.4),
+            'eos_flux_stable': config.get('eos_flux_stable', 0.05),
+            'eos_min_signals': config.get('eos_min_signals', 2),
+        })
+
+        # Adaptive noise floor estimation
+        self.noise_floor = 0.001  # Initial estimate
+        self.noise_floor_alpha = 0.05  # Adaptation rate (slow)
+        self.energy_snr_margin = config.get('energy_snr_margin', 2.5)  # Require 2.5x noise floor
+
+        # Dual threshold for hysteresis
+        self.start_threshold = config.get('vad_start_threshold', 0.7)  # Higher to START
+        self.continue_threshold = self.vad_threshold  # Lower to CONTINUE (existing 0.6)
+
+        # Consecutive frames for speech start confirmation
+        self.consecutive_speech_frames = 0
+        self.min_start_frames = config.get('min_start_frames', 4)  # ~128ms confirmation
+
         # Hallucination filtering
         self.hallucination_phrases = {
             "bye", "bye bye", "bye-bye", "goodbye", "good bye",
@@ -117,14 +240,57 @@ class WhisperSession(STTSession):
         from scipy import signal
         self.highpass_sos = signal.butter(5, 80, btype='highpass', fs=16000, output='sos')
 
+        # Spectral gating configuration
+        self.enable_spectral_gate = config.get('enable_spectral_gate', True)
+
+    def _spectral_gate(self, audio_float: np.ndarray) -> np.ndarray:
+        """Apply spectral gating to reduce stationary noise."""
+        from scipy import signal as scipy_signal
+
+        # STFT parameters
+        nperseg = 512  # 32ms window
+        noverlap = 256  # 50% overlap
+
+        # Compute STFT
+        f, t, stft = scipy_signal.stft(audio_float, fs=16000, nperseg=nperseg, noverlap=noverlap)
+
+        magnitude = np.abs(stft)
+        phase = np.angle(stft)
+
+        # Estimate noise floor per frequency bin (use bottom 20th percentile)
+        noise_estimate = np.percentile(magnitude, 20, axis=1, keepdims=True)
+
+        # Compute gain: suppress bins close to noise floor
+        # gain = 1 where signal >> noise, gain → 0 where signal ≈ noise
+        snr = magnitude / (noise_estimate + 1e-10)
+        gain = np.clip((snr - 1) / (snr + 1e-10), 0.1, 1.0)  # Soft knee, min gain 0.1
+
+        # Apply gain
+        stft_clean = magnitude * gain * np.exp(1j * phase)
+
+        # Inverse STFT
+        _, audio_clean = scipy_signal.istft(stft_clean, fs=16000, nperseg=nperseg, noverlap=noverlap)
+
+        # Match original length
+        if len(audio_clean) > len(audio_float):
+            audio_clean = audio_clean[:len(audio_float)]
+        elif len(audio_clean) < len(audio_float):
+            audio_clean = np.pad(audio_clean, (0, len(audio_float) - len(audio_clean)))
+
+        return audio_clean.astype(np.float32)
+
     def _preprocess_audio(self, audio_float: np.ndarray) -> np.ndarray:
         """Preprocess audio for better transcription quality."""
         from scipy import signal
 
-        # Apply high-pass filter to remove low-frequency noise/hum
+        # 1. Spectral gating (noise reduction)
+        if self.enable_spectral_gate:
+            audio_float = self._spectral_gate(audio_float)
+
+        # 2. High-pass filter to remove low-frequency noise/hum
         audio_float = signal.sosfilt(self.highpass_sos, audio_float)
 
-        # Normalize audio to 0.95 peak (improves consistency)
+        # 3. Normalize audio to 0.95 peak (improves consistency)
         peak = np.abs(audio_float).max()
         if peak > 0.01:
             audio_float = audio_float / peak * 0.95
@@ -181,6 +347,28 @@ class WhisperSession(STTSession):
                 self.pending_final_event = None
                 self.in_continuation_window = False
                 self.reset()
+
+        # CRITICAL: Check for maximum speech duration timeout
+        if self.speech_detected and self.speech_start_time:
+            speech_duration_ms = (current_time - self.speech_start_time) * 1000
+            if speech_duration_ms >= self.max_speech_duration_ms:
+                print(f"[WhisperSession] TIMEOUT: Speech exceeded {self.max_speech_duration_ms}ms, forcing endpoint")
+                final_event = self._generate_final_event(current_time)
+                if final_event:
+                    events.append(final_event)
+                self.reset()
+                return events
+
+        # Check for stale partial (transcript unchanged for too long while in speech)
+        if self.speech_detected and self.last_partial_text:
+            time_since_change_ms = (current_time - self.last_partial_change_time) * 1000
+            if time_since_change_ms >= self.stale_partial_timeout_ms:
+                print(f"[WhisperSession] STALE: Transcript unchanged for {time_since_change_ms:.0f}ms, forcing endpoint")
+                final_event = self._generate_final_event(current_time)
+                if final_event:
+                    events.append(final_event)
+                self.reset()
+                return events
 
         try:
             # Convert bytes to numpy array (16-bit PCM)
@@ -240,13 +428,19 @@ class WhisperSession(STTSession):
         audio_int16: np.ndarray,
         current_time: float
     ) -> List[stt_pb2.TranscriptEvent]:
-        """Check for speech activity using Silero VAD."""
+        """Check for speech activity using Silero VAD with multi-signal detection."""
         events = []
 
         try:
             # Get speech probability from VAD
             audio_tensor = torch.from_numpy(audio_float)
             speech_prob = self.vad_model(audio_tensor, 16000).item()
+
+            # Compute RMS energy for this window
+            rms_energy = float(np.sqrt(np.mean(audio_float ** 2)))
+
+            # Update end-of-speech detector with all signals
+            self.eos_detector.update(speech_prob, rms_energy, audio_float)
 
             if speech_prob > self.vad_threshold:
                 # Speech detected - check if we're in continuation window
@@ -256,38 +450,61 @@ class WhisperSession(STTSession):
                     self.pending_final_event = None
                     self.in_continuation_window = False
                     self.speech_detected = True
+                    self.consecutive_speech_frames = 0
                     # Keep same transcript_id and speech_buffer - don't reset
                 elif not self.speech_detected:
-                    # Fresh speech start
-                    self.speech_detected = True
-                    print(f"[WhisperSession] Speech started (prob: {speech_prob:.2f})")
+                    # Energy gating: require energy above noise floor
+                    energy_ok = rms_energy > (self.noise_floor * self.energy_snr_margin)
 
-                    # Generate new transcript ID for new utterance
-                    self.transcript_id = f"whisper_{uuid.uuid4().hex[:8]}"
+                    # Use HIGHER threshold for starting speech (hysteresis)
+                    vad_ok = speech_prob > self.start_threshold
 
-                    # Include pre-buffered audio to capture beginning of utterance
-                    self.speech_buffer = self.pre_buffer.copy()  # Start with pre-buffer
-                    self.pre_buffer = []  # Clear pre-buffer
-                    self.accumulated_text = ""
+                    if vad_ok and energy_ok:
+                        self.consecutive_speech_frames += 1
+                    else:
+                        self.consecutive_speech_frames = 0
 
-                    # Emit speech_started event for barge-in detection
-                    events.append(stt_pb2.TranscriptEvent(
-                        text="",
-                        is_final=False,
-                        transcript_id=self.transcript_id,
-                        participant_id=self.participant_id,
-                        confidence=0.0,
-                        timestamp_ms=int(current_time * 1000),
-                        speech_started=True
-                    ))
+                    # Require consecutive frames for confirmation
+                    if self.consecutive_speech_frames >= self.min_start_frames:
+                        # Fresh speech start confirmed
+                        self.speech_detected = True
+                        self.speech_start_time = current_time  # Track when speech started
+                        self.consecutive_speech_frames = 0
+                        print(f"[WhisperSession] Speech started (prob={speech_prob:.2f}, energy={rms_energy:.4f}, noise_floor={self.noise_floor:.4f})")
 
-                # Accumulate speech audio
-                self.speech_buffer.extend(audio_int16.tolist())
-                self.last_speech_time = current_time
-                self.silence_start_time = None
+                        # Generate new transcript ID for new utterance
+                        self.transcript_id = f"whisper_{uuid.uuid4().hex[:8]}"
+
+                        # Include pre-buffered audio to capture beginning of utterance
+                        self.speech_buffer = self.pre_buffer.copy()  # Start with pre-buffer
+                        self.pre_buffer = []  # Clear pre-buffer
+                        self.accumulated_text = ""
+
+                        # Emit speech_started event for barge-in detection
+                        events.append(stt_pb2.TranscriptEvent(
+                            text="",
+                            is_final=False,
+                            transcript_id=self.transcript_id,
+                            participant_id=self.participant_id,
+                            confidence=0.0,
+                            timestamp_ms=int(current_time * 1000),
+                            speech_started=True
+                        ))
+
+                # Accumulate speech audio (when speech is detected or during confirmation)
+                if self.speech_detected:
+                    self.speech_buffer.extend(audio_int16.tolist())
+                    self.last_speech_time = current_time
+                    self.silence_start_time = None
 
             else:
-                # Silence detected - add to pre-buffer (for next speech start)
+                # Silence detected - update noise floor estimate
+                self.noise_floor = (1 - self.noise_floor_alpha) * self.noise_floor + self.noise_floor_alpha * rms_energy
+
+                # Reset consecutive speech frames
+                self.consecutive_speech_frames = 0
+
+                # Add to pre-buffer (for next speech start)
                 self.pre_buffer.extend(audio_int16.tolist())
                 if len(self.pre_buffer) > self.pre_buffer_samples:
                     self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
@@ -314,6 +531,19 @@ class WhisperSession(STTSession):
                             # DON'T reset yet - wait for continuation window
                         else:
                             self.reset()
+
+            # Delta-based end detection (catches transitions even when VAD stays high)
+            if self.speech_detected and len(self.speech_buffer) >= self.min_final_samples:
+                end_detected, metrics = self.eos_detector.detect_end()
+                if end_detected:
+                    print(f"[WhisperSession] DELTA END: prob_drop={metrics['prob_drop']:.2f}, "
+                          f"energy_ratio={metrics['energy_ratio']:.2f}, flux={metrics['flux']:.3f}")
+                    final_event = self._generate_final_event(current_time)
+                    if final_event:
+                        self.pending_final_event = final_event
+                        self.pending_final_time = current_time
+                        self.in_continuation_window = True
+                        self.speech_detected = False
 
         except Exception as e:
             print(f"[WhisperSession] VAD error: {e}")
@@ -376,6 +606,10 @@ class WhisperSession(STTSession):
 
             if transcribed_text and transcribed_text != self.accumulated_text:
                 self.accumulated_text = transcribed_text
+                # Track partial changes for stale detection
+                if transcribed_text != self.last_partial_text:
+                    self.last_partial_text = transcribed_text
+                    self.last_partial_change_time = current_time
                 print(f"[WhisperSession] Partial ({audio_duration_sec:.2f}s): '{transcribed_text[:50]}...'")
 
                 return stt_pb2.TranscriptEvent(
@@ -497,6 +731,13 @@ class WhisperSession(STTSession):
         self.pending_final_event = None
         self.in_continuation_window = False
         self.pending_final_time = 0
+        # Reset timeout tracking state
+        self.speech_start_time = None
+        self.last_partial_text = ""
+        self.last_partial_change_time = 0
+        # Reset delta detector (but KEEP noise_floor - it should persist)
+        self.eos_detector.reset()
+        self.consecutive_speech_frames = 0
 
 
 class WhisperProvider(STTProvider):
@@ -529,6 +770,25 @@ class WhisperProvider(STTProvider):
         self.min_final_ms = int(os.getenv("VAD_MIN_FINAL_MS", "500"))
         self.pre_buffer_ms = int(os.getenv("VAD_PRE_BUFFER_MS", "500"))
 
+        # Timeout configuration (prevents indefinite speech accumulation)
+        self.max_speech_duration_ms = int(os.getenv("VAD_MAX_SPEECH_DURATION_MS", "15000"))
+        self.stale_partial_timeout_ms = int(os.getenv("VAD_STALE_PARTIAL_TIMEOUT_MS", "3000"))
+
+        # End-of-speech delta detection
+        self.eos_history_frames = int(os.getenv("VAD_EOS_HISTORY_FRAMES", "20"))
+        self.eos_prob_drop = float(os.getenv("VAD_EOS_PROB_DROP", "0.15"))
+        self.eos_energy_drop = float(os.getenv("VAD_EOS_ENERGY_DROP", "0.4"))
+        self.eos_flux_stable = float(os.getenv("VAD_EOS_FLUX_STABLE", "0.05"))
+        self.eos_min_signals = int(os.getenv("VAD_EOS_MIN_SIGNALS", "2"))
+
+        # Energy gating for speech start
+        self.vad_start_threshold = float(os.getenv("VAD_START_THRESHOLD", "0.7"))
+        self.energy_snr_margin = float(os.getenv("VAD_ENERGY_SNR_MARGIN", "2.5"))
+        self.min_start_frames = int(os.getenv("VAD_MIN_START_FRAMES", "4"))
+
+        # Spectral gating
+        self.enable_spectral_gate = os.getenv("VAD_ENABLE_SPECTRAL_GATE", "true").lower() == "true"
+
         # Initial prompt for domain context (improves accuracy for specific vocabulary)
         self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
@@ -537,6 +797,13 @@ class WhisperProvider(STTProvider):
               f"initial_prompt={'set' if self.initial_prompt else 'none'}")
         print(f"[WhisperProvider] VAD: threshold={self.vad_threshold}, silence_ms={self.vad_min_silence_ms}, "
               f"continuation_ms={self.continuation_window_ms}, pre_buffer_ms={self.pre_buffer_ms}")
+        print(f"[WhisperProvider] Timeouts: max_speech_ms={self.max_speech_duration_ms}, "
+              f"stale_partial_ms={self.stale_partial_timeout_ms}")
+        print(f"[WhisperProvider] EOS detection: prob_drop={self.eos_prob_drop}, "
+              f"energy_drop={self.eos_energy_drop}, flux_stable={self.eos_flux_stable}")
+        print(f"[WhisperProvider] Speech start: threshold={self.vad_start_threshold}, "
+              f"snr_margin={self.energy_snr_margin}, confirm_frames={self.min_start_frames}")
+        print(f"[WhisperProvider] Spectral gate: enabled={self.enable_spectral_gate}")
 
     @property
     def name(self) -> str:
@@ -627,6 +894,21 @@ class WhisperProvider(STTProvider):
             'continuation_window_ms': self.continuation_window_ms,
             'min_final_samples': int(self.min_final_ms * 16),  # Convert ms to samples at 16kHz
             'pre_buffer_samples': int(self.pre_buffer_ms * 16),  # Convert ms to samples at 16kHz
+            # Timeout configuration (prevents indefinite speech accumulation)
+            'max_speech_duration_ms': self.max_speech_duration_ms,
+            'stale_partial_timeout_ms': self.stale_partial_timeout_ms,
+            # End-of-speech delta detection
+            'eos_history_frames': self.eos_history_frames,
+            'eos_prob_drop': self.eos_prob_drop,
+            'eos_energy_drop': self.eos_energy_drop,
+            'eos_flux_stable': self.eos_flux_stable,
+            'eos_min_signals': self.eos_min_signals,
+            # Energy gating
+            'vad_start_threshold': self.vad_start_threshold,
+            'energy_snr_margin': self.energy_snr_margin,
+            'min_start_frames': self.min_start_frames,
+            # Spectral gating
+            'enable_spectral_gate': self.enable_spectral_gate,
         }
 
         return WhisperSession(
