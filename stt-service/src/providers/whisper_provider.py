@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from typing import List, Optional
+from concurrent.futures import ThreadPoolExecutor, Future
 import numpy as np
 
 from .base import STTProvider, STTSession
@@ -92,6 +93,12 @@ class WhisperSession(STTSession):
         # Transcription state (prevent concurrent transcriptions)
         self.is_transcribing = False
         self.last_transcription_time = 0
+
+        # Async partial transcription (non-blocking)
+        self.transcription_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper_partial")
+        self.pending_partial_future: Optional[Future] = None
+        self.pending_partial_transcript_id = None
+        self.last_partial_text = ""  # Cache to avoid duplicate partials
 
         # Buffer limits (prevent unbounded growth)
         self.max_speech_buffer_samples = 16 * 16000  # 16 seconds @ 16kHz
@@ -215,17 +222,38 @@ class WhisperSession(STTSession):
                 vad_events = self._check_speech_activity(window_float, window_int16, current_time)
                 events.extend(vad_events)
 
-            # Emit partials periodically while speaking (or in MAYBE_ENDING)
-            # Skip if already transcribing to prevent blocking/race conditions
-            if (self.state in ("SPEAKING", "MAYBE_ENDING") and
+            # Check for completed async partial transcription (non-blocking)
+            if self.pending_partial_future is not None and self.pending_partial_future.done():
+                try:
+                    partial_text = self.pending_partial_future.result()
+                    if partial_text and partial_text != self.last_partial_text:
+                        self.last_partial_text = partial_text
+                        # Only emit if we're still in SPEAKING/MAYBE_ENDING and same transcript
+                        if (self.state in ("SPEAKING", "MAYBE_ENDING") and
+                            self.transcript_id == self.pending_partial_transcript_id):
+                            events.append(stt_pb2.TranscriptEvent(
+                                text=partial_text,
+                                is_final=False,
+                                transcript_id=self.transcript_id,
+                                participant_id=self.participant_id,
+                                confidence=0.8,
+                                timestamp_ms=int(current_time * 1000)
+                            ))
+                except Exception as e:
+                    print(f"[WhisperSession] Async partial error: {e}")
+                finally:
+                    self.pending_partial_future = None
+                    self.pending_partial_transcript_id = None
+
+            # Submit new async partial transcription (non-blocking)
+            # Only during SPEAKING, not MAYBE_ENDING (need unblocked VAD for speech resumption)
+            if (self.state == "SPEAKING" and
                 len(self.speech_buffer) >= self.min_speech_samples and
-                not self.is_transcribing):
+                self.pending_partial_future is None):  # No pending future
                 time_since_partial = (current_time - self.last_partial_time) * 1000
                 if time_since_partial >= self.partial_interval_ms:
-                    partial = self._transcribe_partial(current_time)
-                    if partial:
-                        events.append(partial)
-                        self.last_partial_time = current_time
+                    self._submit_async_partial()
+                    self.last_partial_time = current_time
 
         except Exception as e:
             print(f"[WhisperSession] Audio processing error: {e}")
@@ -335,24 +363,34 @@ class WhisperSession(STTSession):
 
         return events
 
-    def _transcribe_partial(self, current_time: float) -> Optional[stt_pb2.TranscriptEvent]:
-        """Transcribe accumulated speech buffer for partial result."""
+    def _submit_async_partial(self) -> None:
+        """Submit partial transcription to background thread (non-blocking)."""
         if len(self.speech_buffer) < self.min_speech_samples:
-            return None
+            return
 
-        # Prevent concurrent transcriptions
-        if self.is_transcribing:
-            return None
+        # Don't submit if there's already a pending future
+        if self.pending_partial_future is not None:
+            return
 
-        self.is_transcribing = True
+        # Snapshot the audio buffer for the background thread
+        max_partial_samples = 10 * 16000
+        audio_snapshot = self.speech_buffer[-max_partial_samples:] if len(self.speech_buffer) > max_partial_samples else self.speech_buffer.copy()
+
+        # Remember which transcript this is for
+        self.pending_partial_transcript_id = self.transcript_id
+
+        # Submit to thread pool (non-blocking)
+        self.pending_partial_future = self.transcription_executor.submit(
+            self._transcribe_partial_worker,
+            audio_snapshot
+        )
+
+    def _transcribe_partial_worker(self, audio_buffer: list) -> Optional[str]:
+        """Worker function for partial transcription (runs in background thread)."""
         start_time = time.time()
 
         try:
-            # Use last 10 seconds for partials (context window)
-            max_partial_samples = 10 * 16000
-            audio_for_partial = self.speech_buffer[-max_partial_samples:] if len(self.speech_buffer) > max_partial_samples else self.speech_buffer
-
-            audio_samples = np.array(audio_for_partial, dtype=np.int16)
+            audio_samples = np.array(audio_buffer, dtype=np.int16)
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
 
@@ -390,25 +428,15 @@ class WhisperSession(STTSession):
             transcribed_text = transcribed_text.strip()
 
             transcription_time = (time.time() - start_time) * 1000
-            self.last_transcription_time = transcription_time
 
             if transcribed_text:
                 print(f"[WhisperSession] Partial ({audio_duration_sec:.2f}s, {transcription_time:.0f}ms): '{transcribed_text[:50]}...'")
-
-                return stt_pb2.TranscriptEvent(
-                    text=transcribed_text,
-                    is_final=False,
-                    transcript_id=self.transcript_id,
-                    participant_id=self.participant_id,
-                    confidence=0.8,
-                    timestamp_ms=int(current_time * 1000)
-                )
+                return transcribed_text
 
         except Exception as e:
             print(f"[WhisperSession] Partial transcription error: {e}")
 
         finally:
-            self.is_transcribing = False
             self._clear_gpu_memory()
 
         return None
@@ -419,10 +447,15 @@ class WhisperSession(STTSession):
             print(f"[WhisperSession] Audio too short: {len(self.speech_buffer)} < {self.min_speech_samples}")
             return None
 
-        # Wait for any ongoing partial transcription to complete (with timeout)
-        wait_start = time.time()
-        while self.is_transcribing and (time.time() - wait_start) < 2.0:
-            time.sleep(0.05)
+        # Wait for any pending async partial to complete (with timeout)
+        if self.pending_partial_future is not None:
+            try:
+                self.pending_partial_future.result(timeout=2.0)
+            except Exception:
+                pass  # Ignore errors, we're generating final anyway
+            finally:
+                self.pending_partial_future = None
+                self.pending_partial_transcript_id = None
 
         self.is_transcribing = True
         start_time = time.time()
@@ -515,6 +548,11 @@ class WhisperSession(STTSession):
         self.transcript_id = None
         self.pending_final_time = None  # Clear continuation window state
         self.is_transcribing = False  # Clear transcription lock
+
+        # Clear async partial state
+        self.pending_partial_future = None
+        self.pending_partial_transcript_id = None
+        self.last_partial_text = ""
 
         # Reset Silero VAD internal state (critical for accurate detection)
         try:
