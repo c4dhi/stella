@@ -150,8 +150,8 @@ ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 # Whisper VAD configuration (Silero VAD - 3-state machine)
 # Industry-standard approach based on LiveKit, OpenAI Realtime, Deepgram
 # ============================================================================
-# Single VAD signal (probability threshold) - industry best practice
-ENV VAD_THRESHOLD=0.5
+# Single VAD signal (probability threshold) - higher = stricter, less noise false positives
+ENV VAD_THRESHOLD=0.55
 # Silence duration to trigger MAYBE_ENDING state
 ENV VAD_SILENCE_DURATION_MS=500
 # Continuation window: additional wait in MAYBE_ENDING before final
@@ -159,8 +159,8 @@ ENV VAD_SILENCE_DURATION_MS=500
 ENV VAD_CONTINUATION_WINDOW_MS=600
 # Maximum total silence before forced endpoint (prevents infinite waiting)
 ENV VAD_MAX_ENDPOINTING_DELAY_MS=2000
-# Minimum speech duration to accept
-ENV VAD_MIN_SPEECH_MS=500
+# Minimum speech duration to accept (filters short noise bursts)
+ENV VAD_MIN_SPEECH_MS=400
 # Safety timeout
 ENV VAD_MAX_SPEECH_DURATION_MS=30000
 # Partial transcript interval
