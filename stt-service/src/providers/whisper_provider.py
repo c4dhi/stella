@@ -78,6 +78,10 @@ class WhisperSession(STTSession):
         self.partial_interval_ms = config.get('partial_interval_ms', 1000)
         self.audio_inactivity_timeout_ms = config.get('audio_inactivity_timeout_ms', 1500)
 
+        # RMS energy gate (filters quiet background noise before VAD)
+        # RMS threshold of 0.01 = -40dB, typical for speech vs ambient noise
+        self.rms_threshold = config.get('rms_threshold', 0.01)
+
         # Tracking
         self.silence_start_time = None
         self.speech_start_time = None
@@ -279,6 +283,35 @@ class WhisperSession(STTSession):
         events = []
 
         try:
+            # RMS energy gate - filter out quiet background noise before VAD
+            # This prevents hallucinations from low-level ambient sounds
+            rms = np.sqrt(np.mean(audio_float ** 2))
+            if rms < self.rms_threshold:
+                # Audio too quiet to be speech - treat as silence
+                # Still update pre-buffer but don't check VAD
+                self.pre_buffer.extend(audio_int16.tolist())
+                if len(self.pre_buffer) > self.pre_buffer_samples:
+                    self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
+
+                # Handle silence in SPEAKING/MAYBE_ENDING states
+                if self.state == "SPEAKING":
+                    if self.silence_start_time is None:
+                        self.silence_start_time = current_time
+                    self._accumulate_speech(audio_int16)
+                    silence_ms = (current_time - self.silence_start_time) * 1000
+                    if silence_ms >= self.silence_duration_ms:
+                        self.state = "MAYBE_ENDING"
+                        self.pending_final_time = current_time
+                elif self.state == "MAYBE_ENDING":
+                    self._accumulate_speech(audio_int16)
+                    time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
+                    if time_in_maybe_ending >= self.continuation_window_ms:
+                        final_event = self._generate_final(current_time)
+                        if final_event:
+                            events.append(final_event)
+                        self._reset()
+                return events
+
             # Get VAD probability (single signal)
             audio_tensor = torch.from_numpy(audio_float)
             speech_prob = self.vad_model(audio_tensor, 16000).item()
@@ -591,7 +624,7 @@ class WhisperProvider(STTProvider):
         self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
         self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
-        # VAD configuration (7 parameters - 3-state machine with continuation window)
+        # VAD configuration (8 parameters - 3-state machine with continuation window)
         self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
         self.silence_duration_ms = int(os.getenv("VAD_SILENCE_DURATION_MS", "500"))
         self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "600"))
@@ -600,6 +633,9 @@ class WhisperProvider(STTProvider):
         self.max_speech_duration_ms = int(os.getenv("VAD_MAX_SPEECH_DURATION_MS", "30000"))
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
         self.audio_inactivity_timeout_ms = int(os.getenv("VAD_AUDIO_INACTIVITY_TIMEOUT_MS", "1500"))
+        # RMS energy gate - filters quiet background noise before VAD
+        # 0.01 = -40dB (good for typical environments), 0.02 = -34dB (noisier environments)
+        self.rms_threshold = float(os.getenv("VAD_RMS_THRESHOLD", "0.015"))
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}")
@@ -608,6 +644,7 @@ class WhisperProvider(STTProvider):
               f"max_endpointing_delay_ms={self.max_endpointing_delay_ms}")
         print(f"[WhisperProvider] VAD limits: min_speech_ms={self.min_speech_ms}, "
               f"max_duration_ms={self.max_speech_duration_ms}, inactivity_ms={self.audio_inactivity_timeout_ms}")
+        print(f"[WhisperProvider] RMS energy gate: threshold={self.rms_threshold} (-{int(20*np.log10(self.rms_threshold))}dB)")
 
     @property
     def name(self) -> str:
@@ -692,6 +729,7 @@ class WhisperProvider(STTProvider):
             'partial_interval_ms': self.partial_interval_ms,
             'audio_inactivity_timeout_ms': self.audio_inactivity_timeout_ms,
             'pre_buffer_samples': 3200,  # 200ms fixed
+            'rms_threshold': self.rms_threshold,
         }
 
         return WhisperSession(

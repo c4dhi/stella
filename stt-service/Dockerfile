@@ -153,6 +153,10 @@ ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 # Single VAD signal (probability threshold) - higher = stricter, less noise false positives
 # 0.6+ recommended to avoid picking up TTS echo from speakers
 ENV VAD_THRESHOLD=0.6
+# RMS energy gate - filters quiet background noise before VAD processing
+# 0.015 = ~-36dB, rejects ambient noise while accepting normal speech
+# Increase to 0.02-0.03 for noisier environments
+ENV VAD_RMS_THRESHOLD=0.015
 # Silence duration to trigger MAYBE_ENDING state
 ENV VAD_SILENCE_DURATION_MS=500
 # Continuation window: additional wait in MAYBE_ENDING before final
