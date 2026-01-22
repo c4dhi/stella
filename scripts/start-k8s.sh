@@ -20,6 +20,25 @@
 set -euo pipefail
 
 # =============================================================================
+# Error Handling - Show where script failed
+# =============================================================================
+
+error_handler() {
+    local exit_code=$?
+    local line_no=$1
+    local command="$2"
+    echo ""
+    echo -e "\033[31m✗ Script failed at line $line_no\033[0m"
+    echo -e "  Command: $command"
+    echo -e "  Exit code: $exit_code"
+    echo ""
+    echo "  Debug: Run with --verbose or check the command manually"
+    exit $exit_code
+}
+
+trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
+
+# =============================================================================
 # Script Setup
 # =============================================================================
 

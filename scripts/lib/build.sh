@@ -235,74 +235,93 @@ get_build_step_description() {
 }
 
 build_with_progress() {
-    local image_name="$1"
-    local tag="$2"
-    local context="$3"
+    local image_name="${1:-}"
+    local tag="${2:-}"
+    local context="${3:-}"
     local build_args="${4:-}"
     local dockerfile="${5:-Dockerfile}"
 
-    local log_file="${LOG_DIR}/docker-build-${image_name}.log"
+    # Validate required parameters
+    if [[ -z "$image_name" || -z "$tag" || -z "$context" ]]; then
+        echo ""
+        error "build_with_progress: missing required parameters"
+        echo "  image_name='$image_name' tag='$tag' context='$context'"
+        exit 1
+    fi
+
+    local log_file="${LOG_DIR:-/tmp}/docker-build-${image_name}.log"
 
     # Dry-run mode
-    if [[ "$DRY_RUN_MODE" == "true" ]]; then
+    if [[ "${DRY_RUN_MODE:-false}" == "true" ]]; then
         echo -e "   ${ARROW} ${image_name}... ${YELLOW}[dry-run]${NC}"
         return 0
     fi
 
     # Ensure log directory exists
-    mkdir -p "$LOG_DIR"
+    mkdir -p "${LOG_DIR:-/tmp}" 2>/dev/null || true
 
     # Clear previous log
-    > "$log_file"
+    : > "$log_file" 2>/dev/null || true
 
     # Build flags
     local no_cache=""
-    [[ "$REBUILD_MODE" == "true" ]] && no_cache="--no-cache"
+    [[ "${REBUILD_MODE:-false}" == "true" ]] && no_cache="--no-cache"
 
     # Check dockerfile exists
     if [[ ! -f "$dockerfile" ]]; then
-        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
+        echo ""
         error "Dockerfile not found: $dockerfile"
+        echo "  Current directory: $(pwd)"
+        echo "  Looking for: $dockerfile"
+        ls -la "$(dirname "$dockerfile")" 2>/dev/null | head -10 || true
         exit 1
     fi
 
     # Check context exists
     if [[ ! -d "$context" && "$context" != "." ]]; then
-        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
+        echo ""
         error "Build context not found: $context"
         exit 1
     fi
 
-    # Start build in background (use set +e to prevent immediate exit on &)
-    set +e
-    if [[ "$USE_BUILDKIT" == "true" ]]; then
-        DOCKER_BUILDKIT=1 docker build --progress=plain ${no_cache} ${build_args} \
-            -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
+    # Check docker is available
+    if ! command -v docker &>/dev/null; then
+        echo ""
+        error "Docker not found in PATH"
+        exit 1
+    fi
+
+    # Check docker daemon is running
+    if ! docker info &>/dev/null; then
+        echo ""
+        error "Docker daemon is not running"
+        echo "  Try: sudo systemctl start docker"
+        exit 1
+    fi
+
+    # Build the docker command
+    local docker_cmd="docker build --progress=plain"
+    [[ -n "$no_cache" ]] && docker_cmd="$docker_cmd $no_cache"
+    [[ -n "$build_args" ]] && docker_cmd="$docker_cmd $build_args"
+    docker_cmd="$docker_cmd -f \"$dockerfile\" --network=host -t \"$tag\" \"$context\""
+
+    # Start build in background
+    if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then
+        DOCKER_BUILDKIT=1 eval "$docker_cmd" > "$log_file" 2>&1 &
     else
-        docker build ${no_cache} ${build_args} \
-            -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
+        eval "$docker_cmd" > "$log_file" 2>&1 &
     fi
     local build_pid=$!
-    set -e
 
-    # Check if build process started
+    # Verify build process started
+    sleep 0.2
     if ! kill -0 $build_pid 2>/dev/null; then
-        # Process already finished (very fast failure)
-        sleep 0.5  # Give it a moment to write to log
-        set +e
-        wait $build_pid
-        local early_exit_code=$?
-        set -e
-
-        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
         echo ""
-        error "Build failed immediately for ${image_name}"
-        if [[ -f "$log_file" && -s "$log_file" ]]; then
-            echo -e "${DIM}--- Build output ---${NC}"
-            cat "$log_file" | tail -30 | sed 's/^/  /'
-            echo -e "${DIM}--------------------${NC}"
-        else
-            echo "  No output captured. Check Docker status: docker info"
+        error "Docker build process failed to start for $image_name"
+        echo "  Command: $docker_cmd"
+        if [[ -f "$log_file" ]]; then
+            echo "  Log contents:"
+            cat "$log_file" | head -20
         fi
         exit 1
     fi
