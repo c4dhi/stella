@@ -65,7 +65,7 @@ calculate_service_checksum() {
 
     local checksum=""
 
-    # Hash source files
+    # Hash source files (with error suppression)
     if [[ "$OS_TYPE" == "macos" ]]; then
         checksum=$(find "$service_dir" -type f \
             \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
@@ -76,7 +76,7 @@ calculate_service_checksum() {
             -o -name "*.prisma" -o -name "*.env.example" \) \
             ! -path "*/node_modules/*" ! -path "*/__pycache__/*" ! -path "*/.git/*" \
             ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/.next/*" \
-            -exec md5 -q {} \; 2>/dev/null | sort | md5 -q)
+            -exec md5 -q {} \; 2>/dev/null | sort | md5 -q 2>/dev/null || echo "fallback-checksum-mac")
     else
         checksum=$(find "$service_dir" -type f \
             \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
@@ -87,24 +87,27 @@ calculate_service_checksum() {
             -o -name "*.prisma" -o -name "*.env.example" \) \
             ! -path "*/node_modules/*" ! -path "*/__pycache__/*" ! -path "*/.git/*" \
             ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/.next/*" \
-            -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+            -exec md5sum {} \; 2>/dev/null | sort | md5sum 2>/dev/null | cut -d' ' -f1 || echo "fallback-checksum-linux")
     fi
 
-    # Add Dockerfile hash
+    # Add Dockerfile hash (with fallback)
     if [[ -f "$dockerfile" ]]; then
-        checksum="${checksum}$(hash_file "$dockerfile")"
+        local df_hash
+        df_hash=$(hash_file "$dockerfile" 2>/dev/null || echo "df")
+        checksum="${checksum}${df_hash}"
     fi
 
-    # KEY IMPROVEMENT: Add .env files to checksum
-    # This ensures rebuilds when ENABLE_GPU, STT_PROVIDER, etc. change
+    # Add .env files to checksum (with error handling)
     for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/.env.local" "$PROJECT_DIR/.env.production"; do
         if [[ -f "$env_file" ]]; then
-            checksum="${checksum}$(hash_file "$env_file")"
+            local env_hash
+            env_hash=$(hash_file "$env_file" 2>/dev/null || echo "env")
+            checksum="${checksum}${env_hash}"
         fi
     done
 
-    # Final combined hash
-    echo "$checksum" | hash_string
+    # Final combined hash (with fallback)
+    echo "$checksum" | hash_string 2>/dev/null || echo "$checksum" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "checksum-error"
 }
 
 # =============================================================================
@@ -116,21 +119,35 @@ service_needs_rebuild() {
     local service_dir="$2"
     local dockerfile="$3"
 
+    # Protect against set -e failures in checksum calculation
+    set +e
     local current_checksum
-    current_checksum=$(calculate_service_checksum "$service_name" "$service_dir" "$dockerfile")
+    current_checksum=$(calculate_service_checksum "$service_name" "$service_dir" "$dockerfile" 2>/dev/null)
+    local calc_exit=$?
+    set -e
+
+    # If checksum calculation failed, force rebuild
+    if [[ $calc_exit -ne 0 || -z "$current_checksum" ]]; then
+        verbose "Checksum calculation failed for $service_name, forcing rebuild"
+        return 0
+    fi
+
     local cached_checksum_file="${CHECKSUM_DIR}/${service_name}.checksum"
+
+    # Ensure checksum directory exists
+    mkdir -p "$CHECKSUM_DIR" 2>/dev/null || true
 
     # No cached checksum = needs rebuild
     if [[ ! -f "$cached_checksum_file" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file"
+        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
     local cached_checksum
-    cached_checksum=$(cat "$cached_checksum_file")
+    cached_checksum=$(cat "$cached_checksum_file" 2>/dev/null || echo "")
 
     if [[ "$current_checksum" != "$cached_checksum" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file"
+        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
@@ -232,11 +249,32 @@ build_with_progress() {
         return 0
     fi
 
+    # Ensure log directory exists
+    mkdir -p "$LOG_DIR"
+
+    # Clear previous log
+    > "$log_file"
+
     # Build flags
     local no_cache=""
     [[ "$REBUILD_MODE" == "true" ]] && no_cache="--no-cache"
 
-    # Start build in background
+    # Check dockerfile exists
+    if [[ ! -f "$dockerfile" ]]; then
+        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
+        error "Dockerfile not found: $dockerfile"
+        exit 1
+    fi
+
+    # Check context exists
+    if [[ ! -d "$context" && "$context" != "." ]]; then
+        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
+        error "Build context not found: $context"
+        exit 1
+    fi
+
+    # Start build in background (use set +e to prevent immediate exit on &)
+    set +e
     if [[ "$USE_BUILDKIT" == "true" ]]; then
         DOCKER_BUILDKIT=1 docker build --progress=plain ${no_cache} ${build_args} \
             -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
@@ -244,8 +282,30 @@ build_with_progress() {
         docker build ${no_cache} ${build_args} \
             -f "${dockerfile}" --network=host -t "${tag}" "${context}" > "${log_file}" 2>&1 &
     fi
-
     local build_pid=$!
+    set -e
+
+    # Check if build process started
+    if ! kill -0 $build_pid 2>/dev/null; then
+        # Process already finished (very fast failure)
+        sleep 0.5  # Give it a moment to write to log
+        set +e
+        wait $build_pid
+        local early_exit_code=$?
+        set -e
+
+        printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
+        echo ""
+        error "Build failed immediately for ${image_name}"
+        if [[ -f "$log_file" && -s "$log_file" ]]; then
+            echo -e "${DIM}--- Build output ---${NC}"
+            cat "$log_file" | tail -30 | sed 's/^/  /'
+            echo -e "${DIM}--------------------${NC}"
+        else
+            echo "  No output captured. Check Docker status: docker info"
+        fi
+        exit 1
+    fi
 
     # Initial status line
     echo -ne "   ${ARROW} ${image_name}... "
@@ -255,6 +315,7 @@ build_with_progress() {
     local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local spinner_idx=0
 
+    # Monitor build progress
     while kill -0 $build_pid 2>/dev/null; do
         if [[ -f "$log_file" ]]; then
             # Get last meaningful lines from log
@@ -304,24 +365,35 @@ build_with_progress() {
         sleep 0.2
     done
 
+    # Wait for build to complete and get exit code
+    set +e
     wait $build_pid
     local exit_code=$?
+    set -e
 
     # Clear line and show final status
     if [[ $exit_code -eq 0 ]]; then
         printf "\r   ${ARROW} ${image_name}... ${GREEN}${CHECK}${NC}%-60s\n" " "
         rm -f "$log_file"
+        return 0
     else
         printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
-        error "Build failed. Log: $log_file"
-        # Show last few lines of error
-        if [[ -f "$log_file" ]]; then
-            echo -e "   ${DIM}Last error:${NC}"
-            tail -n 5 "$log_file" | sed 's/^/      /'
+        echo ""
+        error "Build failed for ${image_name}"
+        echo ""
+        echo -e "${BOLD}Build Log:${NC} $log_file"
+        echo ""
+        # Show more context from the log
+        if [[ -f "$log_file" && -s "$log_file" ]]; then
+            echo -e "${DIM}--- Last 20 lines of build output ---${NC}"
+            tail -n 20 "$log_file" | sed 's/^/  /'
+            echo -e "${DIM}--------------------------------------${NC}"
+        else
+            echo -e "${YELLOW}No build output captured. Docker may have failed to start.${NC}"
+            echo "  Check if Docker is running: docker info"
+            echo "  Check disk space: df -h"
         fi
         echo ""
-        error "Build failed for ${image_name}. Fix the error above and retry."
-        echo "  Full log: $log_file"
         exit 1
     fi
 }
@@ -346,22 +418,40 @@ smart_build() {
     # Determine paths
     local service_dir="$context"
     local dockerfile_path="${context}/${dockerfile}"
-    [[ "$context" == "." ]] && dockerfile_path="./${dockerfile}"
+    if [[ "$context" == "." ]]; then
+        dockerfile_path="./${dockerfile}"
+    fi
+
+    # Verify dockerfile exists before checking if rebuild needed
+    if [[ ! -f "$dockerfile_path" ]]; then
+        echo -e "   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}"
+        error "Dockerfile not found: $dockerfile_path"
+        exit 1
+    fi
 
     # Rebuild mode: always build
     if [[ "$REBUILD_MODE" == "true" ]]; then
-        # build_with_progress will exit 1 on failure, so we don't need to check
         build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
-        update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
+        # If we get here, build succeeded (build_with_progress exits on failure)
+        set +e
+        update_service_checksum "$image_name" "$service_dir" "$dockerfile_path" 2>/dev/null
+        set -e
         REBUILT_SERVICES+=("$image_name")
         return 0
     fi
 
     # Smart mode: check if rebuild needed
-    if service_needs_rebuild "$image_name" "$service_dir" "$dockerfile_path"; then
-        # build_with_progress will exit 1 on failure, so we don't need to check
+    set +e
+    service_needs_rebuild "$image_name" "$service_dir" "$dockerfile_path"
+    local needs_rebuild=$?
+    set -e
+
+    if [[ $needs_rebuild -eq 0 ]]; then
         build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
-        update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
+        # If we get here, build succeeded (build_with_progress exits on failure)
+        set +e
+        update_service_checksum "$image_name" "$service_dir" "$dockerfile_path" 2>/dev/null
+        set -e
         REBUILT_SERVICES+=("$image_name")
         return 0
     else
