@@ -69,12 +69,36 @@ class WhisperSession(STTSession):
         self.last_final_text = ""
         self.last_final_time = 0
 
-        # Configuration from provider
+        # Configuration from provider (with stricter defaults for better VAD)
         self.vad_window_samples = 512    # 32ms @ 16kHz (required by Silero)
-        self.vad_threshold = config.get('vad_threshold', 0.5)
-        self.vad_min_silence_ms = config.get('vad_min_silence_ms', 500)
+        self.vad_threshold = config.get('vad_threshold', 0.6)  # CHANGED: 0.5 -> 0.6 (stricter VAD)
+        self.vad_min_silence_ms = config.get('vad_min_silence_ms', 800)  # CHANGED: 500 -> 800
         self.partial_interval_ms = config.get('partial_interval_ms', 1000)
-        self.min_speech_samples = config.get('min_speech_samples', 8000)  # 0.5s
+        self.min_speech_samples = config.get('min_speech_samples', 12800)  # CHANGED: 8000 -> 12800 (0.8s)
+
+        # Post-endpoint continuation window (allows brief pauses to extend utterance)
+        self.continuation_window_ms = config.get('continuation_window_ms', 400)
+        self.min_final_samples = config.get('min_final_samples', 8000)  # 0.5s at 16kHz (stricter)
+
+        # Continuation window state
+        self.pending_final_event = None
+        self.pending_final_time = 0
+        self.in_continuation_window = False
+
+        # Pre-buffering for initial speech (captures audio before VAD triggers)
+        self.pre_buffer = []  # Circular buffer of recent audio before speech_started
+        self.pre_buffer_samples = config.get('pre_buffer_samples', 8000)  # 0.5s of pre-speech audio
+
+        # Hallucination filtering
+        self.hallucination_phrases = {
+            "bye", "bye bye", "bye-bye", "goodbye", "good bye",
+            "thank you", "thanks", "thank you for watching",
+            "no", "no but", "no, but",
+            "you", "um", "uh", "hmm",
+            "...", ".", "",
+        }
+        self.last_finals: list = []  # Track recent finals for repetition detection
+        self.max_final_history = 5
 
         # Processing state
         self.processing_endpoint = False
@@ -107,6 +131,36 @@ class WhisperSession(STTSession):
 
         return audio_float
 
+    def _is_hallucination(self, text: str) -> bool:
+        """Check if transcribed text is likely a Whisper hallucination."""
+        if not text:
+            return True
+
+        text_lower = text.lower().strip().rstrip('.!?')
+
+        # Check against known hallucination phrases
+        if text_lower in self.hallucination_phrases:
+            print(f"[WhisperSession] Filtered hallucination: '{text}'")
+            return True
+
+        # Check for very short text (likely noise)
+        if len(text_lower) < 3:
+            print(f"[WhisperSession] Filtered short text: '{text}'")
+            return True
+
+        # Check for repetition (same text as recent finals)
+        if text_lower in [f.lower().strip() for f in self.last_finals]:
+            print(f"[WhisperSession] Filtered repetition: '{text}'")
+            return True
+
+        return False
+
+    def _record_final(self, text: str) -> None:
+        """Record a final transcript for repetition detection."""
+        self.last_finals.append(text)
+        if len(self.last_finals) > self.max_final_history:
+            self.last_finals.pop(0)
+
     def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
         """Process audio chunk through VAD and return transcript events.
 
@@ -117,6 +171,16 @@ class WhisperSession(STTSession):
         events = []
         current_time = time.time()
         self.chunk_count += 1
+
+        # Check for continuation window expiry (emit pending final if no speech resumed)
+        if self.pending_final_event and self.in_continuation_window:
+            elapsed_ms = (current_time - self.pending_final_time) * 1000
+            if elapsed_ms >= self.continuation_window_ms:
+                print(f"[WhisperSession] Continuation window expired ({elapsed_ms:.0f}ms), emitting final")
+                events.append(self.pending_final_event)
+                self.pending_final_event = None
+                self.in_continuation_window = False
+                self.reset()
 
         try:
             # Convert bytes to numpy array (16-bit PCM)
@@ -185,14 +249,25 @@ class WhisperSession(STTSession):
             speech_prob = self.vad_model(audio_tensor, 16000).item()
 
             if speech_prob > self.vad_threshold:
-                # Speech detected
-                if not self.speech_detected:
+                # Speech detected - check if we're in continuation window
+                if self.in_continuation_window and self.pending_final_event:
+                    # Cancel pending final - speech is continuing
+                    print(f"[WhisperSession] Speech continued, extending utterance")
+                    self.pending_final_event = None
+                    self.in_continuation_window = False
+                    self.speech_detected = True
+                    # Keep same transcript_id and speech_buffer - don't reset
+                elif not self.speech_detected:
+                    # Fresh speech start
                     self.speech_detected = True
                     print(f"[WhisperSession] Speech started (prob: {speech_prob:.2f})")
 
                     # Generate new transcript ID for new utterance
                     self.transcript_id = f"whisper_{uuid.uuid4().hex[:8]}"
-                    self.speech_buffer = []
+
+                    # Include pre-buffered audio to capture beginning of utterance
+                    self.speech_buffer = self.pre_buffer.copy()  # Start with pre-buffer
+                    self.pre_buffer = []  # Clear pre-buffer
                     self.accumulated_text = ""
 
                     # Emit speech_started event for barge-in detection
@@ -212,7 +287,11 @@ class WhisperSession(STTSession):
                 self.silence_start_time = None
 
             else:
-                # Silence detected
+                # Silence detected - add to pre-buffer (for next speech start)
+                self.pre_buffer.extend(audio_int16.tolist())
+                if len(self.pre_buffer) > self.pre_buffer_samples:
+                    self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
+
                 if self.speech_detected:
                     # Continue accumulating during short silence (might be mid-sentence)
                     self.speech_buffer.extend(audio_int16.tolist())
@@ -224,9 +303,17 @@ class WhisperSession(STTSession):
                     silence_duration_ms = (current_time - self.silence_start_time) * 1000
                     if silence_duration_ms >= self.vad_min_silence_ms:
                         print(f"[WhisperSession] Speech ended ({silence_duration_ms:.0f}ms silence)")
-                        final_event = self._handle_speech_end(current_time)
+
+                        # Generate final but don't emit yet - enter continuation window
+                        final_event = self._generate_final_event(current_time)
                         if final_event:
-                            events.append(final_event)
+                            self.pending_final_event = final_event
+                            self.pending_final_time = current_time
+                            self.in_continuation_window = True
+                            self.speech_detected = False
+                            # DON'T reset yet - wait for continuation window
+                        else:
+                            self.reset()
 
         except Exception as e:
             print(f"[WhisperSession] VAD error: {e}")
@@ -305,16 +392,21 @@ class WhisperSession(STTSession):
 
         return None
 
-    def _handle_speech_end(self, current_time: float) -> Optional[stt_pb2.TranscriptEvent]:
-        """Handle end of speech - return final transcript."""
+    def _generate_final_event(self, current_time: float) -> Optional[stt_pb2.TranscriptEvent]:
+        """Generate final transcript event with hallucination filtering.
+
+        This method does NOT reset state or emit the event - that's handled by caller
+        to support the continuation window feature.
+        """
         if self.processing_endpoint:
             return None
 
         self.processing_endpoint = True
-        self.speech_detected = False
 
         try:
-            if len(self.speech_buffer) < self.min_speech_samples // 2:
+            # More stringent minimum for finals (uses min_final_samples, not min_speech_samples)
+            if len(self.speech_buffer) < self.min_final_samples:
+                print(f"[WhisperSession] Audio too short: {len(self.speech_buffer)} < {self.min_final_samples}")
                 return None
 
             audio_samples = np.array(self.speech_buffer, dtype=np.int16)
@@ -329,7 +421,7 @@ class WhisperSession(STTSession):
             config_lang = self.config.get('language')
             language = self.detected_language or (config_lang if config_lang else None)
 
-            # Final transcription - use same stable settings as partials
+            # Final transcription with STRICTER thresholds to filter hallucinations
             segments, info = self.whisper_model.transcribe(
                 audio_float,
                 language=language,
@@ -340,8 +432,8 @@ class WhisperSession(STTSession):
                 initial_prompt=self.config.get('initial_prompt'),
                 temperature=0.0,  # Deterministic output
                 compression_ratio_threshold=2.4,  # Filter hallucinations
-                log_prob_threshold=-1.0,  # Filter low-confidence outputs
-                no_speech_threshold=0.6,  # Better silence detection
+                log_prob_threshold=-0.5,  # CHANGED: -1.0 -> -0.5 (stricter)
+                no_speech_threshold=0.4,  # CHANGED: 0.6 -> 0.4 (stricter - higher = more filtering)
             )
 
             # Cache detected language for future transcriptions in this session
@@ -361,6 +453,10 @@ class WhisperSession(STTSession):
             if not final_text or len(final_text) < 2:
                 return None
 
+            # Hallucination filtering - check against known phrases
+            if self._is_hallucination(final_text):
+                return None
+
             # Check for duplicate
             if (final_text == self.last_final_text and
                 current_time - self.last_final_time < 5.0):
@@ -369,10 +465,12 @@ class WhisperSession(STTSession):
 
             print(f"[WhisperSession] Final ({audio_duration_sec:.2f}s): '{final_text}'")
 
+            # Record this final for repetition detection
+            self._record_final(final_text)
             self.last_final_text = final_text
             self.last_final_time = current_time
 
-            event = stt_pb2.TranscriptEvent(
+            return stt_pb2.TranscriptEvent(
                 text=final_text,
                 is_final=True,
                 transcript_id=self.transcript_id,
@@ -380,11 +478,6 @@ class WhisperSession(STTSession):
                 confidence=0.95,
                 timestamp_ms=int(current_time * 1000)
             )
-
-            # Reset for next utterance
-            self.reset()
-
-            return event
 
         except Exception as e:
             print(f"[WhisperSession] Final transcription error: {e}")
@@ -400,6 +493,10 @@ class WhisperSession(STTSession):
         self.transcript_id = f"whisper_{uuid.uuid4().hex[:8]}"
         self.silence_start_time = None
         self.speech_detected = False
+        # Clear continuation window state
+        self.pending_final_event = None
+        self.in_continuation_window = False
+        self.pending_final_time = 0
 
 
 class WhisperProvider(STTProvider):
@@ -421,11 +518,16 @@ class WhisperProvider(STTProvider):
         self.language = os.getenv("WHISPER_LANGUAGE", None) or None  # None or empty = auto-detect
         self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
 
-        # VAD configuration
-        self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
-        self.vad_min_silence_ms = int(os.getenv("VAD_MIN_SILENCE_MS", "500"))
+        # VAD configuration (with stricter defaults to reduce hallucinations)
+        self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.6"))  # CHANGED: 0.5 -> 0.6
+        self.vad_min_silence_ms = int(os.getenv("VAD_MIN_SILENCE_MS", "800"))  # CHANGED: 500 -> 800
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
-        self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
+        self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "300"))  # CHANGED: 200 -> 300
+
+        # Advanced VAD configuration (continuation window, pre-buffering)
+        self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "400"))
+        self.min_final_ms = int(os.getenv("VAD_MIN_FINAL_MS", "500"))
+        self.pre_buffer_ms = int(os.getenv("VAD_PRE_BUFFER_MS", "500"))
 
         # Initial prompt for domain context (improves accuracy for specific vocabulary)
         self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
@@ -433,6 +535,8 @@ class WhisperProvider(STTProvider):
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}, "
               f"initial_prompt={'set' if self.initial_prompt else 'none'}")
+        print(f"[WhisperProvider] VAD: threshold={self.vad_threshold}, silence_ms={self.vad_min_silence_ms}, "
+              f"continuation_ms={self.continuation_window_ms}, pre_buffer_ms={self.pre_buffer_ms}")
 
     @property
     def name(self) -> str:
@@ -519,6 +623,10 @@ class WhisperProvider(STTProvider):
             'partial_interval_ms': self.partial_interval_ms,
             'min_speech_samples': int(self.min_speech_ms * 16),  # Convert ms to samples at 16kHz
             'initial_prompt': self.initial_prompt,
+            # Advanced VAD configuration
+            'continuation_window_ms': self.continuation_window_ms,
+            'min_final_samples': int(self.min_final_ms * 16),  # Convert ms to samples at 16kHz
+            'pre_buffer_samples': int(self.pre_buffer_ms * 16),  # Convert ms to samples at 16kHz
         }
 
         return WhisperSession(

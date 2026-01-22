@@ -37,6 +37,7 @@ Usage:
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import AsyncIterator, Awaitable, Callable, List, Optional
@@ -120,6 +121,12 @@ class AudioPipeline:
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._stt_stream_task: Optional[asyncio.Task] = None
         self._transcript_queue: asyncio.Queue[TranscriptEvent] = asyncio.Queue()
+
+        # Transcript debouncing (secondary defense against rapid successive finals)
+        self._debounce_window_ms = int(os.getenv("TRANSCRIPT_DEBOUNCE_MS", "300"))
+        self._pending_transcript: Optional[TranscriptEvent] = None
+        self._pending_transcript_time: float = 0
+        self._debounce_task: Optional[asyncio.Task] = None
 
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
@@ -346,10 +353,15 @@ class AudioPipeline:
             if event.speech_started:
                 await self._handle_speech_started()
 
-            # 3. Queue ONLY final transcripts for agent
+            # 3. Queue ONLY final transcripts for agent (with optional debouncing)
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
-                await self._transcript_queue.put(event)
+
+                # Apply debouncing to aggregate rapid successive finals
+                if self._debounce_window_ms > 0:
+                    await self._debounce_transcript(event)
+                else:
+                    await self._transcript_queue.put(event)
 
     async def _handle_speech_started(self) -> None:
         """Handle VAD speech_started signal (potential barge-in)."""
@@ -367,6 +379,57 @@ class AudioPipeline:
                 await callback()
             except Exception as e:
                 logger.error(f"Error in speech_started callback: {e}")
+
+    async def _debounce_transcript(self, event: TranscriptEvent) -> None:
+        """Debounce rapid successive final transcripts.
+
+        If another final comes within debounce_window_ms, aggregate them.
+        This is a secondary defense layer against STT fragmentation.
+        """
+        current_time = time.time()
+
+        if self._pending_transcript is None:
+            # First transcript - start debounce window
+            self._pending_transcript = event
+            self._pending_transcript_time = current_time
+
+            # Schedule delayed emission
+            if self._debounce_task:
+                self._debounce_task.cancel()
+            self._debounce_task = asyncio.create_task(
+                self._emit_debounced_transcript()
+            )
+        else:
+            # Aggregate with pending transcript
+            combined_text = f"{self._pending_transcript.text} {event.text}".strip()
+            self._pending_transcript = TranscriptEvent(
+                text=combined_text,
+                is_final=True,
+                transcript_id=self._pending_transcript.transcript_id,
+                participant_id=event.participant_id,
+                confidence=min(self._pending_transcript.confidence, event.confidence),
+                timestamp_ms=event.timestamp_ms,
+                speech_started=False,
+            )
+            logger.info(f"Debounced: aggregated to '{combined_text}'")
+
+            # Reset debounce timer
+            if self._debounce_task:
+                self._debounce_task.cancel()
+            self._debounce_task = asyncio.create_task(
+                self._emit_debounced_transcript()
+            )
+
+    async def _emit_debounced_transcript(self) -> None:
+        """Emit pending transcript after debounce window expires."""
+        try:
+            await asyncio.sleep(self._debounce_window_ms / 1000.0)
+            if self._pending_transcript:
+                logger.info(f"Emitting debounced transcript: '{self._pending_transcript.text}'")
+                await self._transcript_queue.put(self._pending_transcript)
+                self._pending_transcript = None
+        except asyncio.CancelledError:
+            pass  # Debounce was reset - new transcript came in
 
     def _handle_data_message(self, participant_id: str, data: bytes) -> None:
         """

@@ -146,10 +146,25 @@ ENV WHISPER_LANGUAGE=
 # Silero VAD configuration (for whisper provider)
 ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 
-# VAD configuration
-ENV VAD_THRESHOLD=0.5
-ENV VAD_MIN_SILENCE_MS=500
+# ============================================================================
+# Whisper VAD configuration (Silero VAD - neural network based)
+# ============================================================================
+ENV VAD_THRESHOLD=0.6
+ENV VAD_MIN_SILENCE_MS=800
+ENV VAD_MIN_SPEECH_MS=300
 ENV PARTIAL_INTERVAL_MS=1000
+ENV VAD_CONTINUATION_WINDOW_MS=400
+ENV VAD_MIN_FINAL_MS=500
+ENV VAD_PRE_BUFFER_MS=500
+
+# ============================================================================
+# Sherpa VAD configuration (RMS-based - energy detection)
+# ============================================================================
+ENV SHERPA_SILENCE_THRESHOLD=1.5
+ENV SHERPA_SPEECH_TIMEOUT=10.0
+ENV SHERPA_RMS_THRESHOLD=0.001
+ENV SHERPA_PRE_BUFFER_SAMPLES=8000
+ENV SHERPA_MIN_TRANSCRIPT_CHARS=3
 
 # Expose gRPC port
 EXPOSE 50051
