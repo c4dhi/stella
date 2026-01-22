@@ -140,11 +140,12 @@ service_needs_rebuild() {
     local dockerfile="$3"
 
     # Protect against set -e failures in checksum calculation
+    # NOTE: Do NOT re-enable set -e in this function, as returning 1
+    # (meaning "no rebuild needed") would be treated as an error
     set +e
     local current_checksum
     current_checksum=$(calculate_service_checksum "$service_name" "$service_dir" "$dockerfile" 2>/dev/null)
     local calc_exit=$?
-    set -e
 
     # If checksum calculation failed, force rebuild
     if [[ $calc_exit -ne 0 || -z "$current_checksum" ]]; then
@@ -171,6 +172,7 @@ service_needs_rebuild() {
         return 0
     fi
 
+    # Return 1 to indicate no rebuild needed (caller must use set +e)
     return 1
 }
 
