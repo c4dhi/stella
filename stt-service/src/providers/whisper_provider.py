@@ -1,10 +1,10 @@
-"""faster-whisper STT provider with Silero VAD - Simplified implementation.
+"""faster-whisper STT provider with Silero VAD - Industry-standard implementation.
 
-Follows industry best practices:
+Follows industry best practices (LiveKit, OpenAI Realtime, Deepgram, Pipecat):
 - Single VAD signal (Silero probability threshold)
-- Simple 2-state machine (IDLE/SPEAKING)
-- Single safety timeout
-- No spectral analysis overhead
+- 3-state machine (IDLE/SPEAKING/MAYBE_ENDING) with continuation window
+- Handles natural pauses (thinking, hesitation) without fragmenting utterances
+- Configurable endpointing delays for conversational speech
 """
 
 import os
@@ -35,14 +35,17 @@ except ImportError as e:
 
 
 class WhisperSession(STTSession):
-    """faster-whisper session with simplified VAD-based streaming.
+    """faster-whisper session with industry-standard VAD-based streaming.
 
     Architecture:
     1. Buffer incoming audio in 512-sample VAD windows (32ms @ 16kHz)
     2. Check speech probability per window using Silero VAD (single signal)
-    3. Simple 2-state machine: IDLE -> SPEAKING -> IDLE
+    3. 3-state machine with continuation window:
+       - IDLE: Waiting for speech
+       - SPEAKING: Accumulating speech audio
+       - MAYBE_ENDING: Silence detected, waiting for possible continuation
     4. Emit partials every N ms while speaking
-    5. Emit final when silence exceeds threshold
+    5. Emit final only after continuation window expires (handles natural pauses)
     """
 
     def __init__(
@@ -59,25 +62,32 @@ class WhisperSession(STTSession):
         self.vad_model = vad_model
         self.config = config
 
-        # Core state (2-state machine: IDLE or SPEAKING)
+        # Core state (3-state machine: IDLE, SPEAKING, or MAYBE_ENDING)
         self.state = "IDLE"
         self.speech_buffer = []
         self.audio_buffer = []
 
-        # VAD config (5 core parameters)
+        # VAD config (7 core parameters)
         self.vad_threshold = config.get('vad_threshold', 0.5)
         self.silence_duration_ms = config.get('silence_duration_ms', 500)
+        self.continuation_window_ms = config.get('continuation_window_ms', 600)
+        self.max_endpointing_delay_ms = config.get('max_endpointing_delay_ms', 2000)
         self.min_speech_samples = config.get('min_speech_samples', 8000)  # 0.5s @ 16kHz
         self.max_speech_duration_ms = config.get('max_speech_duration_ms', 30000)
         self.partial_interval_ms = config.get('partial_interval_ms', 1000)
+        self.audio_inactivity_timeout_ms = config.get('audio_inactivity_timeout_ms', 1500)
 
         # Tracking
         self.silence_start_time = None
         self.speech_start_time = None
         self.last_partial_time = 0
+        self.last_audio_time = 0  # Track when we last received meaningful audio
         self.transcript_id = None
         self.last_final_text = ""
         self.last_final_time = 0
+
+        # Continuation window state (for MAYBE_ENDING)
+        self.pending_final_time = None  # When we entered MAYBE_ENDING state
 
         # Pre-buffer for speech onset (captures audio before VAD triggers)
         self.pre_buffer_samples = config.get('pre_buffer_samples', 3200)  # 200ms
@@ -113,11 +123,35 @@ class WhisperSession(STTSession):
         current_time = time.time()
         self.chunk_count += 1
 
-        # Safety timeout (only timeout mechanism)
-        if self.state == "SPEAKING" and self.speech_start_time:
+        # Safety timeout (applies to both SPEAKING and MAYBE_ENDING states)
+        if self.state in ("SPEAKING", "MAYBE_ENDING") and self.speech_start_time:
             speech_duration_ms = (current_time - self.speech_start_time) * 1000
             if speech_duration_ms >= self.max_speech_duration_ms:
                 print(f"[WhisperSession] TIMEOUT: Speech exceeded {self.max_speech_duration_ms}ms")
+                final_event = self._generate_final(current_time)
+                if final_event:
+                    events.append(final_event)
+                self._reset()
+                return events
+
+        # Audio inactivity timeout (no new audio while speaking/maybe_ending = endpoint)
+        if self.state in ("SPEAKING", "MAYBE_ENDING") and self.last_audio_time > 0:
+            inactivity_ms = (current_time - self.last_audio_time) * 1000
+            if inactivity_ms >= self.audio_inactivity_timeout_ms:
+                print(f"[WhisperSession] INACTIVITY: No audio for {inactivity_ms:.0f}ms, forcing endpoint")
+                final_event = self._generate_final(current_time)
+                if final_event:
+                    events.append(final_event)
+                self._reset()
+                return events
+
+        # MAYBE_ENDING timeout check (handles case where audio stream ends during MAYBE_ENDING)
+        if self.state == "MAYBE_ENDING" and self.pending_final_time and self.silence_start_time:
+            time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
+            total_silence = (current_time - self.silence_start_time) * 1000
+            if (time_in_maybe_ending >= self.continuation_window_ms or
+                total_silence >= self.max_endpointing_delay_ms):
+                print(f"[WhisperSession] Continuation window expired ({time_in_maybe_ending:.0f}ms in MAYBE_ENDING, {total_silence:.0f}ms total silence)")
                 final_event = self._generate_final(current_time)
                 if final_event:
                     events.append(final_event)
@@ -129,6 +163,9 @@ class WhisperSession(STTSession):
             audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
             if len(audio_int16) == 0:
                 return events
+
+            # Track when we received meaningful audio
+            self.last_audio_time = current_time
 
             # Resample if needed (Whisper expects 16kHz)
             target_rate = 16000
@@ -154,8 +191,8 @@ class WhisperSession(STTSession):
                 vad_events = self._check_speech_activity(window_float, window_int16, current_time)
                 events.extend(vad_events)
 
-            # Emit partials periodically while speaking
-            if self.state == "SPEAKING" and len(self.speech_buffer) >= self.min_speech_samples:
+            # Emit partials periodically while speaking (or in MAYBE_ENDING)
+            if self.state in ("SPEAKING", "MAYBE_ENDING") and len(self.speech_buffer) >= self.min_speech_samples:
                 time_since_partial = (current_time - self.last_partial_time) * 1000
                 if time_since_partial >= self.partial_interval_ms:
                     partial = self._transcribe_partial(current_time)
@@ -176,7 +213,14 @@ class WhisperSession(STTSession):
         audio_int16: np.ndarray,
         current_time: float
     ) -> List[stt_pb2.TranscriptEvent]:
-        """Check for speech activity using Silero VAD (single signal)."""
+        """Check for speech activity using Silero VAD (3-state machine).
+
+        State transitions:
+        - IDLE -> SPEAKING: speech_prob > threshold
+        - SPEAKING -> MAYBE_ENDING: silence >= silence_duration_ms
+        - MAYBE_ENDING -> SPEAKING: speech resumes (cancel pending final)
+        - MAYBE_ENDING -> IDLE: continuation_window_ms elapsed OR max_endpointing_delay_ms reached
+        """
         events = []
 
         try:
@@ -208,6 +252,13 @@ class WhisperSession(STTSession):
                         speech_started=True
                     ))
 
+                elif self.state == "MAYBE_ENDING":
+                    # Transition: MAYBE_ENDING -> SPEAKING (speech resumed!)
+                    print(f"[WhisperSession] Speech resumed, canceling pending final (prob={speech_prob:.2f})")
+                    self.state = "SPEAKING"
+                    self.pending_final_time = None
+                    # Keep same transcript_id - this is a continuation
+
                 # Accumulate audio
                 self.speech_buffer.extend(audio_int16.tolist())
 
@@ -225,11 +276,27 @@ class WhisperSession(STTSession):
                     # Continue accumulating during silence (might resume)
                     self.speech_buffer.extend(audio_int16.tolist())
 
-                    # Check if silence threshold reached
+                    # Check if silence threshold reached -> transition to MAYBE_ENDING
                     silence_ms = (current_time - self.silence_start_time) * 1000
                     if silence_ms >= self.silence_duration_ms:
-                        # Transition: SPEAKING -> IDLE, emit final
-                        print(f"[WhisperSession] Speech ended ({silence_ms:.0f}ms silence)")
+                        # Transition: SPEAKING -> MAYBE_ENDING
+                        print(f"[WhisperSession] Entering MAYBE_ENDING ({silence_ms:.0f}ms silence)")
+                        self.state = "MAYBE_ENDING"
+                        self.pending_final_time = current_time
+                        # Don't emit final yet - wait for continuation window
+
+                elif self.state == "MAYBE_ENDING":
+                    # Continue accumulating audio during MAYBE_ENDING (in case speech resumes)
+                    self.speech_buffer.extend(audio_int16.tolist())
+
+                    # Check if continuation window expired
+                    time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
+                    total_silence = (current_time - self.silence_start_time) * 1000
+
+                    if (time_in_maybe_ending >= self.continuation_window_ms or
+                        total_silence >= self.max_endpointing_delay_ms):
+                        # Transition: MAYBE_ENDING -> IDLE, emit final
+                        print(f"[WhisperSession] Continuation window expired ({time_in_maybe_ending:.0f}ms in MAYBE_ENDING, {total_silence:.0f}ms total silence)")
                         final_event = self._generate_final(current_time)
                         if final_event:
                             events.append(final_event)
@@ -380,7 +447,13 @@ class WhisperSession(STTSession):
         self.speech_buffer = []
         self.silence_start_time = None
         self.speech_start_time = None
+        self.last_audio_time = 0
         self.transcript_id = None
+        self.pending_final_time = None  # Clear continuation window state
+
+        # Reset Silero VAD internal state (critical for accurate detection)
+        if hasattr(self.vad_model, 'reset_states'):
+            self.vad_model.reset_states()
 
     def reset(self) -> None:
         """Public reset method."""
@@ -409,18 +482,23 @@ class WhisperProvider(STTProvider):
         self.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
         self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
-        # VAD configuration (5 parameters)
+        # VAD configuration (7 parameters - 3-state machine with continuation window)
         self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
         self.silence_duration_ms = int(os.getenv("VAD_SILENCE_DURATION_MS", "500"))
+        self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "600"))
+        self.max_endpointing_delay_ms = int(os.getenv("VAD_MAX_ENDPOINTING_DELAY_MS", "2000"))
         self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "500"))
         self.max_speech_duration_ms = int(os.getenv("VAD_MAX_SPEECH_DURATION_MS", "30000"))
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
+        self.audio_inactivity_timeout_ms = int(os.getenv("VAD_AUDIO_INACTIVITY_TIMEOUT_MS", "1500"))
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}")
-        print(f"[WhisperProvider] VAD: threshold={self.vad_threshold}, "
-              f"silence_ms={self.silence_duration_ms}, min_speech_ms={self.min_speech_ms}, "
-              f"max_duration_ms={self.max_speech_duration_ms}")
+        print(f"[WhisperProvider] VAD (3-state): threshold={self.vad_threshold}, "
+              f"silence_ms={self.silence_duration_ms}, continuation_window_ms={self.continuation_window_ms}, "
+              f"max_endpointing_delay_ms={self.max_endpointing_delay_ms}")
+        print(f"[WhisperProvider] VAD limits: min_speech_ms={self.min_speech_ms}, "
+              f"max_duration_ms={self.max_speech_duration_ms}, inactivity_ms={self.audio_inactivity_timeout_ms}")
 
     @property
     def name(self) -> str:
@@ -498,9 +576,12 @@ class WhisperProvider(STTProvider):
             'initial_prompt': self.initial_prompt,
             'vad_threshold': self.vad_threshold,
             'silence_duration_ms': self.silence_duration_ms,
+            'continuation_window_ms': self.continuation_window_ms,
+            'max_endpointing_delay_ms': self.max_endpointing_delay_ms,
             'min_speech_samples': int(self.min_speech_ms * 16),  # ms to samples @ 16kHz
             'max_speech_duration_ms': self.max_speech_duration_ms,
             'partial_interval_ms': self.partial_interval_ms,
+            'audio_inactivity_timeout_ms': self.audio_inactivity_timeout_ms,
             'pre_buffer_samples': 3200,  # 200ms fixed
         }
 
