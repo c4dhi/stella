@@ -171,11 +171,10 @@ class WhisperSession(STTSession):
                 return events
 
         # MAYBE_ENDING timeout check (handles case where audio stream ends during MAYBE_ENDING)
-        if self.state == "MAYBE_ENDING" and self.pending_final_time and self.silence_start_time:
+        if self.state == "MAYBE_ENDING" and self.pending_final_time:
             time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
-            total_silence = (current_time - self.silence_start_time) * 1000
-            if (time_in_maybe_ending >= self.continuation_window_ms or
-                total_silence >= self.max_endpointing_delay_ms):
+            if time_in_maybe_ending >= self.continuation_window_ms:
+                total_silence = (current_time - self.silence_start_time) * 1000 if self.silence_start_time else time_in_maybe_ending
                 print(f"[WhisperSession] Continuation window expired ({time_in_maybe_ending:.0f}ms in MAYBE_ENDING, {total_silence:.0f}ms total silence)")
                 final_event = self._generate_final(current_time)
                 if final_event:
@@ -318,11 +317,12 @@ class WhisperSession(STTSession):
                     self._accumulate_speech(audio_int16)
 
                     # Check if continuation window expired
+                    # Only use time_in_maybe_ending - this ensures we always wait the full
+                    # continuation window, even if silence accumulated during transcription blocking
                     time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
                     total_silence = (current_time - self.silence_start_time) * 1000
 
-                    if (time_in_maybe_ending >= self.continuation_window_ms or
-                        total_silence >= self.max_endpointing_delay_ms):
+                    if time_in_maybe_ending >= self.continuation_window_ms:
                         # Transition: MAYBE_ENDING -> IDLE, emit final
                         print(f"[WhisperSession] Continuation window expired ({time_in_maybe_ending:.0f}ms in MAYBE_ENDING, {total_silence:.0f}ms total silence)")
                         final_event = self._generate_final(current_time)
