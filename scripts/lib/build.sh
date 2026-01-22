@@ -320,10 +320,18 @@ build_with_progress() {
     fi
 
     # Build the docker command
+    # Use --output type=docker to force overwrite existing images (fixes "already exists" error)
     local docker_cmd="docker build --progress=plain"
     [[ -n "$no_cache" ]] && docker_cmd="$docker_cmd $no_cache"
     [[ -n "$build_args" ]] && docker_cmd="$docker_cmd $build_args"
-    docker_cmd="$docker_cmd -f \"$dockerfile\" --network=host -t \"$tag\" \"$context\""
+    docker_cmd="$docker_cmd -f \"$dockerfile\" --network=host -t \"$tag\""
+
+    # For BuildKit, add output flag to force overwrite
+    if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then
+        docker_cmd="$docker_cmd --output type=docker"
+    fi
+
+    docker_cmd="$docker_cmd \"$context\""
 
     if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
         echo "[DEBUG] build_with_progress: docker_cmd=$docker_cmd"
@@ -621,10 +629,18 @@ start_parallel_build() {
     [[ "${REBUILD_MODE:-false}" == "true" ]] && no_cache="--no-cache"
 
     # Build the docker command
+    # Use --output type=docker to force overwrite existing images (fixes "already exists" error)
     local docker_cmd="docker build --progress=plain"
     [[ -n "$no_cache" ]] && docker_cmd="$docker_cmd $no_cache"
     [[ -n "$build_args" ]] && docker_cmd="$docker_cmd $build_args"
-    docker_cmd="$docker_cmd -f \"$dockerfile_path\" --network=host -t \"$tag\" \"$context\""
+    docker_cmd="$docker_cmd -f \"$dockerfile_path\" --network=host -t \"$tag\""
+
+    # For BuildKit, add output flag to force overwrite
+    if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then
+        docker_cmd="$docker_cmd --output type=docker"
+    fi
+
+    docker_cmd="$docker_cmd \"$context\""
 
     # Start build in background
     if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then

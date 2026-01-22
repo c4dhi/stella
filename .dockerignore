@@ -20,7 +20,7 @@ scripts
 .claude
 
 # Additional directories that have their own Dockerfiles
+# Note: agents is NOT excluded because agent Dockerfiles use root context and COPY from agents/
 docs-site
-agents
 stt-service
 tts-service
