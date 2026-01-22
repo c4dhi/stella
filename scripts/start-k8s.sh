@@ -54,6 +54,21 @@ source "$LIB_DIR/k3s.sh"
 source "$LIB_DIR/build.sh"
 source "$LIB_DIR/deploy.sh"
 
+# Override EXIT trap with better debugging (utils.sh sets a basic one)
+custom_exit_handler() {
+    local exit_code=$?
+    # Run normal cleanup
+    run_cleanup 2>/dev/null || true
+    # Show debug info if unexpected exit
+    if [[ $exit_code -ne 0 ]]; then
+        echo ""
+        echo -e "\033[33m⚠ Script exited with code $exit_code\033[0m"
+        echo "  This might indicate a command failed under 'set -e'"
+        echo "  Run with --verbose for more details"
+    fi
+}
+trap 'custom_exit_handler' EXIT
+
 # =============================================================================
 # Global Variables
 # =============================================================================

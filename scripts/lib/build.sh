@@ -305,23 +305,46 @@ build_with_progress() {
     [[ -n "$build_args" ]] && docker_cmd="$docker_cmd $build_args"
     docker_cmd="$docker_cmd -f \"$dockerfile\" --network=host -t \"$tag\" \"$context\""
 
-    # Start build in background
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo "[DEBUG] build_with_progress: docker_cmd=$docker_cmd"
+        echo "[DEBUG] build_with_progress: USE_BUILDKIT=${USE_BUILDKIT:-false}"
+    fi
+
+    # Start build in background - protect with set +e
+    set +e
     if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then
         DOCKER_BUILDKIT=1 eval "$docker_cmd" > "$log_file" 2>&1 &
     else
         eval "$docker_cmd" > "$log_file" 2>&1 &
     fi
     local build_pid=$!
+    local bg_exit=$?
+    set -e
+
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo "[DEBUG] build_with_progress: background job started, pid=$build_pid, bg_exit=$bg_exit"
+    fi
 
     # Verify build process started
     sleep 0.2
-    if ! kill -0 $build_pid 2>/dev/null; then
+
+    # Protect kill -0 check with set +e (already set above, but be explicit)
+    set +e
+    kill -0 $build_pid 2>/dev/null
+    local process_check=$?
+    set -e
+
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo "[DEBUG] build_with_progress: process_check=$process_check (0=running, 1=not running)"
+    fi
+
+    if [[ $process_check -ne 0 ]]; then
         echo ""
         error "Docker build process failed to start for $image_name"
         echo "  Command: $docker_cmd"
         if [[ -f "$log_file" ]]; then
             echo "  Log contents:"
-            cat "$log_file" | head -20
+            head -20 "$log_file" 2>/dev/null || echo "  (could not read log)"
         fi
         exit 1
     fi
@@ -329,13 +352,28 @@ build_with_progress() {
     # Initial status line
     echo -ne "   ${ARROW} ${image_name}... "
 
+    # DEBUG: Add explicit checkpoints to find where script exits
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo ""
+        echo "[DEBUG] build_with_progress: after initial echo, pid=$build_pid"
+    fi
+
+    # Use set +e for all remaining logic to prevent any command from causing exit
+    set +e
+
     local last_step=""
     local last_desc=""
-    local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    # Define spinner chars safely
+    local spinner_chars
+    spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local spinner_idx=0
 
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo "[DEBUG] build_with_progress: entering while loop"
+    fi
+
     # Monitor build progress
-    while kill -0 $build_pid 2>/dev/null; do
+    while kill -0 "$build_pid" 2>/dev/null; do
         if [[ -f "$log_file" ]]; then
             # Get last meaningful lines from log
             local recent_log
@@ -384,28 +422,38 @@ build_with_progress() {
         sleep 0.2
     done
 
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo ""
+        echo "[DEBUG] build_with_progress: exited while loop, waiting for pid=$build_pid"
+    fi
+
     # Wait for build to complete and get exit code
-    set +e
-    wait $build_pid
+    # Note: set +e is already active from above
+    wait $build_pid 2>/dev/null
     local exit_code=$?
-    set -e
+
+    if [[ "${VERBOSE_MODE:-false}" == "true" ]]; then
+        echo "[DEBUG] build_with_progress: wait completed, exit_code=$exit_code"
+    fi
 
     # Clear line and show final status
     if [[ $exit_code -eq 0 ]]; then
         printf "\r   ${ARROW} ${image_name}... ${GREEN}${CHECK}${NC}%-60s\n" " "
-        rm -f "$log_file"
+        rm -f "$log_file" 2>/dev/null || true
+        # Re-enable strict mode before returning
+        set -e
         return 0
     else
         printf "\r   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}%-60s\n" " "
         echo ""
-        error "Build failed for ${image_name}"
+        error "Build failed for ${image_name} (exit code: $exit_code)"
         echo ""
         echo -e "${BOLD}Build Log:${NC} $log_file"
         echo ""
         # Show more context from the log
         if [[ -f "$log_file" && -s "$log_file" ]]; then
-            echo -e "${DIM}--- Last 20 lines of build output ---${NC}"
-            tail -n 20 "$log_file" | sed 's/^/  /'
+            echo -e "${DIM}--- Last 50 lines of build output ---${NC}"
+            tail -n 50 "$log_file" | sed 's/^/  /'
             echo -e "${DIM}--------------------------------------${NC}"
         else
             echo -e "${YELLOW}No build output captured. Docker may have failed to start.${NC}"
@@ -413,6 +461,8 @@ build_with_progress() {
             echo "  Check disk space: df -h"
         fi
         echo ""
+        # Re-enable strict mode before exiting
+        set -e
         exit 1
     fi
 }
@@ -428,6 +478,8 @@ smart_build() {
     local build_args="${4:-}"
     local dockerfile="${5:-Dockerfile}"
 
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] smart_build: starting for $image_name"
+
     # Skip-build mode
     if [[ "$SKIP_BUILD_MODE" == "true" ]]; then
         echo -e "   ${ARROW} ${image_name}... ${YELLOW}skipped${NC}"
@@ -441,6 +493,8 @@ smart_build() {
         dockerfile_path="./${dockerfile}"
     fi
 
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] smart_build: dockerfile_path=$dockerfile_path"
+
     # Verify dockerfile exists before checking if rebuild needed
     if [[ ! -f "$dockerfile_path" ]]; then
         echo -e "   ${ARROW} ${image_name}... ${RED}${CROSS}${NC}"
@@ -450,8 +504,10 @@ smart_build() {
 
     # Rebuild mode: always build
     if [[ "$REBUILD_MODE" == "true" ]]; then
+        [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] smart_build: REBUILD_MODE=true, calling build_with_progress"
         build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
         # If we get here, build succeeded (build_with_progress exits on failure)
+        [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] smart_build: build_with_progress returned successfully"
         set +e
         update_service_checksum "$image_name" "$service_dir" "$dockerfile_path" 2>/dev/null
         set -e
@@ -486,12 +542,18 @@ smart_build() {
 build_images() {
     info "${EMOJI_BUILD} Building Docker images..."
 
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: starting"
+
     # Setup BuildKit
     setup_buildkit
 
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: buildkit setup complete"
+
     # Clean up if rebuild mode
     if [[ "$REBUILD_MODE" == "true" ]]; then
+        [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: running cleanup_for_rebuild"
         cleanup_for_rebuild
+        [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: cleanup_for_rebuild complete"
     fi
 
     # Reset rebuilt services list
@@ -500,12 +562,17 @@ build_images() {
     # NOTE: All smart_build calls will EXIT IMMEDIATELY on build failure.
     # This ensures fail-fast behavior - no need to check return codes.
 
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: about to build session-management-server"
+
     # Build session-management-server
     local prisma_checksum
     prisma_checksum=$(hash_file "./prisma/schema.prisma" 2>/dev/null || echo "none")
     local db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
     local session_args="--build-arg PRISMA_SCHEMA_CHECKSUM=${prisma_checksum} --build-arg DATABASE_URL=${db_url}"
+
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: calling smart_build for session-management-server"
     smart_build "session-management-server" "session-management-server:latest" "." "$session_args"
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: smart_build for session-management-server returned"
 
     # Build STT service
     local stt_args=""
@@ -663,6 +730,7 @@ cleanup_for_rebuild() {
     [[ "$DRY_RUN_MODE" == "true" ]] && return 0
 
     verbose "Cleaning up for rebuild..."
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: starting"
 
     # Delete application pods (keep postgres unless reset-db)
     if [[ "$RESET_DB_MODE" == "true" ]]; then
@@ -671,6 +739,7 @@ cleanup_for_rebuild() {
     else
         kubectl delete pods -n ai-agents -l app!=postgres --grace-period=5 2>/dev/null || true
     fi
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: pods deleted"
 
     # Clean up failed pods
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
@@ -680,21 +749,26 @@ cleanup_for_rebuild() {
     for img in "${images[@]}"; do
         docker rmi "${img}:latest" 2>/dev/null || true
     done
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: docker images removed"
 
     # Clean K3s containerd images (Linux)
     if [[ "$OS_TYPE" == "linux" ]]; then
         for img in "${images[@]}"; do
             sudo k3s ctr images rm "docker.io/library/${img}:latest" 2>/dev/null || true
         done
+        [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: k3s images removed"
     fi
 
     # Prune Docker build cache
     docker builder prune -f 2>/dev/null || true
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: build cache pruned"
 
     # Clear checksums
     clear_all_checksums
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: checksums cleared"
 
     verbose "Cleanup complete"
+    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: complete"
 }
 
 # =============================================================================
