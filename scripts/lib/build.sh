@@ -698,6 +698,9 @@ wait_for_parallel_builds() {
         return 0
     fi
 
+    # Disable errexit for the entire monitoring function
+    set +e
+
     local total=${#PARALLEL_BUILD_PIDS[@]}
     local completed=0
     local failed=0
@@ -729,10 +732,8 @@ wait_for_parallel_builds() {
     local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local spinner_idx=0
 
-    # Main monitoring loop
+    # Main monitoring loop - continue until ALL builds complete (even if some fail)
     while [[ $completed -lt $total ]]; do
-        local updates_needed=false
-
         for i in "${!all_pids[@]}"; do
             if [[ "${all_done[$i]}" == "true" ]]; then
                 continue
@@ -743,17 +744,14 @@ wait_for_parallel_builds() {
             local log="${all_logs[$i]}"
             local checksum_info="${all_checksums[$i]}"
 
-            set +e
+            # Check if process is still running
             kill -0 "$pid" 2>/dev/null
             local still_running=$?
-            set -e
 
             if [[ $still_running -ne 0 ]]; then
-                # Build finished
-                set +e
+                # Build finished - get exit code
                 wait "$pid" 2>/dev/null
                 local exit_code=$?
-                set -e
 
                 ((completed++))
                 all_done[$i]="true"
@@ -766,29 +764,23 @@ wait_for_parallel_builds() {
                     # Update checksum
                     local service_dir="${checksum_info%%:*}"
                     local dockerfile_path="${checksum_info#*:}"
-                    set +e
-                    update_service_checksum "$name" "$service_dir" "$dockerfile_path" 2>/dev/null
-                    set -e
+                    update_service_checksum "$name" "$service_dir" "$dockerfile_path" 2>/dev/null || true
                 else
                     all_status[$i]="${RED}${CROSS} FAILED${NC}"
                     ((failed++))
                     failed_services+=("$name:$log")
                 fi
-                updates_needed=true
             else
                 # Still running - get current status from log
                 local new_status
-                new_status=$(get_build_status_from_log "$log")
-                if [[ "$new_status" != "${all_status[$i]}" ]]; then
-                    all_status[$i]="$new_status"
-                    updates_needed=true
-                fi
+                new_status=$(get_build_status_from_log "$log" 2>/dev/null || echo "building...")
+                all_status[$i]="$new_status"
             fi
         done
 
         # Move cursor up and redraw all status lines
         # Move up N lines where N = total number of services
-        printf "\033[${total}A"
+        echo -ne "\033[${total}A"
 
         for i in "${!all_names[@]}"; do
             local name="${all_names[$i]}"
@@ -797,11 +789,12 @@ wait_for_parallel_builds() {
 
             # Add spinner for running builds
             if [[ "${all_done[$i]}" != "true" ]]; then
-                spinner=" ${CYAN}${spinner_chars[$spinner_idx]}${NC}"
+                spinner=" ${spinner_chars[$spinner_idx]}"
             fi
 
-            # Clear line and print status
-            printf "\r\033[K   ${ARROW} %-28s ${DIM}%s${NC}%s\n" "${name}..." "$status" "$spinner"
+            # Clear line and print status (use echo -e for proper escape code handling)
+            echo -ne "\r\033[K"
+            echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${DIM}${status}${NC}${spinner}"
         done
 
         spinner_idx=$(( (spinner_idx + 1) % ${#spinner_chars[@]} ))
@@ -816,25 +809,37 @@ wait_for_parallel_builds() {
     PARALLEL_BUILD_LOGS=()
     PARALLEL_BUILD_CHECKSUMS=()
 
-    # Report failures
+    # Report failures with full error details
     if [[ $failed -gt 0 ]]; then
         echo ""
-        error "$failed build(s) failed:"
+        error "$failed of $total build(s) failed:"
+
         for entry in "${failed_services[@]}"; do
             local name="${entry%%:*}"
             local log="${entry#*:}"
             echo ""
-            echo -e "${BOLD}=== $name ===${NC}"
-            echo -e "${DIM}Log: $log${NC}"
+            echo -e "${BOLD}════════════════════════════════════════════════════════════${NC}"
+            echo -e "${BOLD}  FAILED: $name${NC}"
+            echo -e "${BOLD}════════════════════════════════════════════════════════════${NC}"
+            echo -e "${DIM}Log file: $log${NC}"
+            echo ""
             if [[ -f "$log" && -s "$log" ]]; then
-                echo -e "${DIM}--- Last 30 lines ---${NC}"
-                tail -n 30 "$log" | sed 's/^/  /'
+                echo -e "${DIM}--- Build output (last 50 lines) ---${NC}"
+                tail -n 50 "$log" | sed 's/^/  /'
+                echo -e "${DIM}------------------------------------${NC}"
+            else
+                echo "  (no log output captured)"
             fi
         done
         echo ""
-        exit 1
+
+        # Re-enable errexit before returning
+        set -e
+        return 1
     fi
 
+    # Re-enable errexit before returning
+    set -e
     return 0
 }
 
@@ -888,7 +893,14 @@ build_images() {
     start_parallel_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile"
 
     # Wait for all parallel builds to complete
+    set +e
     wait_for_parallel_builds
+    local build_result=$?
+    set -e
+
+    if [[ $build_result -ne 0 ]]; then
+        exit 1
+    fi
 
     # Summary
     echo ""

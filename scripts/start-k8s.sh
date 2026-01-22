@@ -59,12 +59,14 @@ custom_exit_handler() {
     local exit_code=$?
     # Run normal cleanup
     run_cleanup 2>/dev/null || true
-    # Show debug info if unexpected exit
-    if [[ $exit_code -ne 0 ]]; then
+    # Show debug info if unexpected exit (but not for normal build failures which show their own errors)
+    if [[ $exit_code -ne 0 && $exit_code -ne 1 ]]; then
         echo ""
-        echo -e "\033[33m⚠ Script exited with code $exit_code\033[0m"
-        echo "  This might indicate a command failed under 'set -e'"
-        echo "  Run with --verbose for more details"
+        echo -e "\033[33m⚠ Script exited unexpectedly with code $exit_code\033[0m"
+        echo "  This might indicate an internal error"
+        if [[ "${VERBOSE_MODE:-false}" != "true" ]]; then
+            echo "  Run with --verbose for more details"
+        fi
     fi
 }
 trap 'custom_exit_handler' EXIT
