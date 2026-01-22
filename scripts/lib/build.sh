@@ -319,7 +319,10 @@ build_with_progress() {
             echo -e "   ${DIM}Last error:${NC}"
             tail -n 5 "$log_file" | sed 's/^/      /'
         fi
-        return 1
+        echo ""
+        error "Build failed for ${image_name}. Fix the error above and retry."
+        echo "  Full log: $log_file"
+        exit 1
     fi
 }
 
@@ -337,7 +340,7 @@ smart_build() {
     # Skip-build mode
     if [[ "$SKIP_BUILD_MODE" == "true" ]]; then
         echo -e "   ${ARROW} ${image_name}... ${YELLOW}skipped${NC}"
-        return 1
+        return 0  # Not an error, just skipped
     fi
 
     # Determine paths
@@ -347,6 +350,7 @@ smart_build() {
 
     # Rebuild mode: always build
     if [[ "$REBUILD_MODE" == "true" ]]; then
+        # build_with_progress will exit 1 on failure, so we don't need to check
         build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
         update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
         REBUILT_SERVICES+=("$image_name")
@@ -355,13 +359,14 @@ smart_build() {
 
     # Smart mode: check if rebuild needed
     if service_needs_rebuild "$image_name" "$service_dir" "$dockerfile_path"; then
+        # build_with_progress will exit 1 on failure, so we don't need to check
         build_with_progress "$image_name" "$tag" "$context" "$build_args" "$dockerfile_path"
         update_service_checksum "$image_name" "$service_dir" "$dockerfile_path"
         REBUILT_SERVICES+=("$image_name")
         return 0
     else
         echo -e "   ${ARROW} ${image_name}... ${DIM}unchanged${NC}"
-        return 1
+        return 0  # Not an error, just unchanged
     fi
 }
 
@@ -383,44 +388,46 @@ build_images() {
     # Reset rebuilt services list
     REBUILT_SERVICES=()
 
+    # NOTE: All smart_build calls will EXIT IMMEDIATELY on build failure.
+    # This ensures fail-fast behavior - no need to check return codes.
+
     # Build session-management-server
     local prisma_checksum
     prisma_checksum=$(hash_file "./prisma/schema.prisma" 2>/dev/null || echo "none")
     local db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
     local session_args="--build-arg PRISMA_SCHEMA_CHECKSUM=${prisma_checksum} --build-arg DATABASE_URL=${db_url}"
-    smart_build "session-management-server" "session-management-server:latest" "." "$session_args" || true
+    smart_build "session-management-server" "session-management-server:latest" "." "$session_args"
 
     # Build STT service
     local stt_args=""
     if [[ "$ENABLE_GPU" == "true" ]]; then
         stt_args="--build-arg ENABLE_GPU=true"
     fi
-    smart_build "stt-service" "stt-service:latest" "./stt-service" "$stt_args" || true
+    smart_build "stt-service" "stt-service:latest" "./stt-service" "$stt_args"
 
     # Build TTS service
     local tts_args=""
     if [[ "$ENABLE_GPU" == "true" ]]; then
         tts_args="--build-arg ENABLE_GPU=true"
     fi
-    smart_build "tts-service" "tts-service:latest" "./tts-service" "$tts_args" || true
+    smart_build "tts-service" "tts-service:latest" "./tts-service" "$tts_args"
 
     # Build frontend
-    smart_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" || true
+    smart_build "frontend-ui" "frontend-ui:latest" "./frontend-ui"
 
     # Build message recorder
-    smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python" || true
+    smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
 
     # Build stella-agent (pre-build to avoid on-demand building in production)
-    # The agent images are built from the agents/ directory
-    smart_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile" || true
+    smart_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile"
 
     # Build echo-agent
-    smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile" || true
+    smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile"
 
     # Build stella-light-agent
-    smart_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile" || true
+    smart_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile"
 
-    # Summary
+    # Summary (only reached if all builds succeeded)
     if [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         success "Built ${#REBUILT_SERVICES[@]} image(s): ${REBUILT_SERVICES[*]}"
     else
@@ -433,7 +440,6 @@ build_images() {
     fi
 
     # Always sync images to K3s on Linux (ensure all images are available)
-    # This catches cases where images exist in Docker but not in K3s containerd
     if [[ "$OS_TYPE" == "linux" ]]; then
         sync_images_to_k3s
     fi
