@@ -147,34 +147,18 @@ ENV WHISPER_LANGUAGE=
 ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 
 # ============================================================================
-# Whisper VAD configuration (Silero VAD - neural network based)
+# Whisper VAD configuration (Silero VAD - simplified)
 # ============================================================================
-ENV VAD_THRESHOLD=0.6
-ENV VAD_MIN_SILENCE_MS=800
-ENV VAD_MIN_SPEECH_MS=300
+# Single VAD signal (probability threshold) - industry best practice
+ENV VAD_THRESHOLD=0.5
+# Silence duration to end utterance
+ENV VAD_SILENCE_DURATION_MS=500
+# Minimum speech duration to accept
+ENV VAD_MIN_SPEECH_MS=500
+# Safety timeout (single timeout mechanism)
+ENV VAD_MAX_SPEECH_DURATION_MS=30000
+# Partial transcript interval
 ENV PARTIAL_INTERVAL_MS=1000
-ENV VAD_CONTINUATION_WINDOW_MS=400
-ENV VAD_MIN_FINAL_MS=500
-ENV VAD_PRE_BUFFER_MS=500
-
-# Timeout protection (prevents indefinite speech accumulation)
-ENV VAD_MAX_SPEECH_DURATION_MS=15000
-ENV VAD_STALE_PARTIAL_TIMEOUT_MS=3000
-
-# End-of-speech delta detection (multi-signal detection)
-ENV VAD_EOS_HISTORY_FRAMES=20
-ENV VAD_EOS_PROB_DROP=0.15
-ENV VAD_EOS_ENERGY_DROP=0.4
-ENV VAD_EOS_FLUX_STABLE=0.05
-ENV VAD_EOS_MIN_SIGNALS=2
-
-# Energy gating for speech start
-ENV VAD_START_THRESHOLD=0.7
-ENV VAD_ENERGY_SNR_MARGIN=2.5
-ENV VAD_MIN_START_FRAMES=4
-
-# Spectral gating (noise reduction)
-ENV VAD_ENABLE_SPECTRAL_GATE=true
 
 # ============================================================================
 # Sherpa VAD configuration (RMS-based - energy detection)
