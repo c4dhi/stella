@@ -57,15 +57,19 @@ source "$LIB_DIR/deploy.sh"
 # Override EXIT trap with better debugging (utils.sh sets a basic one)
 custom_exit_handler() {
     local exit_code=$?
+    local line_no="${BASH_LINENO[0]:-unknown}"
+
     # Run normal cleanup
     run_cleanup 2>/dev/null || true
-    # Show debug info if unexpected exit (but not for normal build failures which show their own errors)
-    if [[ $exit_code -ne 0 && $exit_code -ne 1 ]]; then
+
+    # Show debug info for ANY non-zero exit (helps debug silent failures)
+    if [[ $exit_code -ne 0 ]]; then
         echo ""
-        echo -e "\033[33m⚠ Script exited unexpectedly with code $exit_code\033[0m"
-        echo "  This might indicate an internal error"
+        echo -e "\033[33m⚠ Script exited with code $exit_code (near line $line_no)\033[0m"
         if [[ "${VERBOSE_MODE:-false}" != "true" ]]; then
             echo "  Run with --verbose for more details"
+        else
+            echo "  Check the command that failed above"
         fi
     fi
 }

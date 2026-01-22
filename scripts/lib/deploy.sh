@@ -688,27 +688,36 @@ run_database_migrations() {
     while [[ $retry_count -lt $max_retries ]]; do
         # Run migration
         set +e
+        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Running prisma migrate deploy..."
         migration_output=$(DATABASE_URL="$MIGRATION_DB_URL" npx prisma migrate deploy 2>&1)
         migration_exit_code=$?
+        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration exit code: $migration_exit_code"
         set -e
 
         # Success - we're done
         if [[ $migration_exit_code -eq 0 ]]; then
+            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration succeeded, cleaning up..."
             cd - > /dev/null 2>&1 || true
             cleanup_port_forward
+            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Cleanup done, printing success..."
             printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
 
-            # Show what was applied
+            # Show what was applied (protect grep from set -e)
+            set +e
             local applied_count
-            applied_count=$(echo "$migration_output" | grep -c "Applying migration" || echo "0")
+            applied_count=$(echo "$migration_output" | grep -c "Applying migration" 2>/dev/null || echo "0")
+            set -e
+
             if [[ "$applied_count" -gt 0 ]]; then
                 echo -e "   ${ARROW} ${GREEN}✓${NC}  Applied ${applied_count} migration(s)"
             fi
 
             if [[ "$VERBOSE_MODE" == "true" ]]; then
+                set +e
                 echo "$migration_output" | grep -E "applied|Already|Applying" | head -5 | while read -r line; do
                     verbose "  $line"
                 done
+                set -e
             fi
             return 0
         fi
@@ -873,13 +882,39 @@ deploy_services() {
         return 1
     fi
 
-    # Phase 3: Application Services (apply manifests quietly)
+    # Phase 3: Application Services (apply manifests quietly but show errors)
     # All manifests use temp dir versions which may have custom DNS config applied
-    kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null
-    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null
-    kubectl apply -f "$STT_MANIFEST" >/dev/null
-    kubectl apply -f "$TTS_MANIFEST" >/dev/null
-    kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null
+    echo -ne "   ${ARROW} Application services... "
+
+    local apply_errors=""
+    set +e  # Disable errexit to capture errors
+
+    if ! kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}session-management-server "
+    fi
+    if ! kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}frontend-ui "
+    fi
+    if ! kubectl apply -f "$STT_MANIFEST" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}stt-service "
+    fi
+    if ! kubectl apply -f "$TTS_MANIFEST" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}tts-service "
+    fi
+    if ! kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}message-recorder "
+    fi
+
+    set -e  # Re-enable errexit
+
+    if [[ -n "$apply_errors" ]]; then
+        printf "${RED}${CROSS}${NC}\n"
+        error "Failed to apply manifests: $apply_errors"
+        echo "  Check manifest files exist in ${TEMP_DIR}/"
+        ls -la "${TEMP_DIR}/"*.yaml 2>/dev/null || echo "  No yaml files found in temp dir"
+        return 1
+    fi
+    printf "${GREEN}${CHECK}${NC}\n"
 
     # NodePort services for local development
     if [[ "$NODE_ENV" != "production" ]]; then
