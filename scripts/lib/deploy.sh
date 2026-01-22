@@ -723,10 +723,21 @@ run_database_migrations() {
         fi
 
         # =======================================================================
-        # Extract failed migration name
+        # Migration failed - show output in verbose mode
         # =======================================================================
+        if [[ "$VERBOSE_MODE" == "true" ]]; then
+            echo ""
+            echo "[DEBUG] Migration failed. Output:"
+            echo "$migration_output" | tail -20
+            echo ""
+        fi
+
+        # =======================================================================
+        # Extract failed migration name (disable errexit for grep)
+        # =======================================================================
+        set +e
         local failed_migration
-        failed_migration=$(echo "$migration_output" | grep -oP "Migration name: \K[0-9_a-zA-Z]+" | head -1)
+        failed_migration=$(echo "$migration_output" | grep -oP "Migration name: \K[0-9_a-zA-Z]+" 2>/dev/null | head -1)
 
         # =======================================================================
         # Auto-recovery attempt
@@ -734,28 +745,31 @@ run_database_migrations() {
 
         if [[ -n "$failed_migration" ]]; then
             # Check if this is auto-recoverable
-            if echo "$migration_output" | grep -qE "already exists|duplicate|42P07|42710|42P16"; then
+            if echo "$migration_output" | grep -qE "already exists|duplicate|42P07|42710|42P16" 2>/dev/null; then
                 retry_count=$((retry_count + 1))
                 printf "\r   ${ARROW} Database migrations... ${YELLOW}recovering${NC} ($retry_count/$max_retries)\n"
 
                 if attempt_auto_fix "$MIGRATION_DB_URL" "$migration_output" "$failed_migration"; then
                     echo -ne "   ${ARROW} Database migrations... "
+                    set -e
                     continue  # Retry migration
                 fi
             fi
 
             # Check for "failed migration needs resolution" case (P3018)
-            if echo "$migration_output" | grep -q "P3018"; then
+            if echo "$migration_output" | grep -q "P3018" 2>/dev/null; then
                 retry_count=$((retry_count + 1))
                 printf "\r   ${ARROW} Database migrations... ${YELLOW}recovering${NC} ($retry_count/$max_retries)\n"
 
                 # Try marking as applied if schema exists
                 if attempt_auto_fix "$MIGRATION_DB_URL" "$migration_output" "$failed_migration"; then
                     echo -ne "   ${ARROW} Database migrations... "
+                    set -e
                     continue
                 fi
             fi
         fi
+        set -e
 
         # =======================================================================
         # Could not auto-recover - break and show diagnostics
