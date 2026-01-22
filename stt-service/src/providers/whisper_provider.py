@@ -89,6 +89,13 @@ class WhisperSession(STTSession):
         # Continuation window state (for MAYBE_ENDING)
         self.pending_final_time = None  # When we entered MAYBE_ENDING state
 
+        # Transcription state (prevent concurrent transcriptions)
+        self.is_transcribing = False
+        self.last_transcription_time = 0
+
+        # Buffer limits (prevent unbounded growth)
+        self.max_speech_buffer_samples = 16 * 16000  # 16 seconds @ 16kHz
+
         # Pre-buffer for speech onset (captures audio before VAD triggers)
         self.pre_buffer_samples = config.get('pre_buffer_samples', 3200)  # 200ms
         self.pre_buffer = []
@@ -116,6 +123,24 @@ class WhisperSession(STTSession):
             audio_float = audio_float / peak * 0.95
 
         return audio_float
+
+    def _clear_gpu_memory(self) -> None:
+        """Clear GPU memory cache to prevent accumulation."""
+        try:
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"[WhisperSession] GPU cache clear error: {e}")
+
+    def _accumulate_speech(self, audio_int16: np.ndarray) -> None:
+        """Accumulate audio to speech buffer with size limits."""
+        self.speech_buffer.extend(audio_int16.tolist())
+
+        # Cap buffer to prevent unbounded growth
+        if len(self.speech_buffer) > self.max_speech_buffer_samples:
+            # Keep most recent audio, discard oldest
+            overflow = len(self.speech_buffer) - self.max_speech_buffer_samples
+            self.speech_buffer = self.speech_buffer[overflow:]
 
     def process_audio(self, audio_data: bytes, sample_rate: int = 16000) -> List[stt_pb2.TranscriptEvent]:
         """Process audio chunk through VAD and return transcript events."""
@@ -192,7 +217,10 @@ class WhisperSession(STTSession):
                 events.extend(vad_events)
 
             # Emit partials periodically while speaking (or in MAYBE_ENDING)
-            if self.state in ("SPEAKING", "MAYBE_ENDING") and len(self.speech_buffer) >= self.min_speech_samples:
+            # Skip if already transcribing to prevent blocking/race conditions
+            if (self.state in ("SPEAKING", "MAYBE_ENDING") and
+                len(self.speech_buffer) >= self.min_speech_samples and
+                not self.is_transcribing):
                 time_since_partial = (current_time - self.last_partial_time) * 1000
                 if time_since_partial >= self.partial_interval_ms:
                     partial = self._transcribe_partial(current_time)
@@ -259,8 +287,8 @@ class WhisperSession(STTSession):
                     self.pending_final_time = None
                     # Keep same transcript_id - this is a continuation
 
-                # Accumulate audio
-                self.speech_buffer.extend(audio_int16.tolist())
+                # Accumulate audio (with buffer limits)
+                self._accumulate_speech(audio_int16)
 
             else:
                 # Silence detected
@@ -274,7 +302,7 @@ class WhisperSession(STTSession):
                         self.silence_start_time = current_time
 
                     # Continue accumulating during silence (might resume)
-                    self.speech_buffer.extend(audio_int16.tolist())
+                    self._accumulate_speech(audio_int16)
 
                     # Check if silence threshold reached -> transition to MAYBE_ENDING
                     silence_ms = (current_time - self.silence_start_time) * 1000
@@ -287,7 +315,7 @@ class WhisperSession(STTSession):
 
                 elif self.state == "MAYBE_ENDING":
                     # Continue accumulating audio during MAYBE_ENDING (in case speech resumes)
-                    self.speech_buffer.extend(audio_int16.tolist())
+                    self._accumulate_speech(audio_int16)
 
                     # Check if continuation window expired
                     time_in_maybe_ending = (current_time - self.pending_final_time) * 1000
@@ -311,6 +339,13 @@ class WhisperSession(STTSession):
         """Transcribe accumulated speech buffer for partial result."""
         if len(self.speech_buffer) < self.min_speech_samples:
             return None
+
+        # Prevent concurrent transcriptions
+        if self.is_transcribing:
+            return None
+
+        self.is_transcribing = True
+        start_time = time.time()
 
         try:
             # Use last 10 seconds for partials (context window)
@@ -354,8 +389,11 @@ class WhisperSession(STTSession):
                 transcribed_text += segment.text + " "
             transcribed_text = transcribed_text.strip()
 
+            transcription_time = (time.time() - start_time) * 1000
+            self.last_transcription_time = transcription_time
+
             if transcribed_text:
-                print(f"[WhisperSession] Partial ({audio_duration_sec:.2f}s): '{transcribed_text[:50]}...'")
+                print(f"[WhisperSession] Partial ({audio_duration_sec:.2f}s, {transcription_time:.0f}ms): '{transcribed_text[:50]}...'")
 
                 return stt_pb2.TranscriptEvent(
                     text=transcribed_text,
@@ -369,6 +407,10 @@ class WhisperSession(STTSession):
         except Exception as e:
             print(f"[WhisperSession] Partial transcription error: {e}")
 
+        finally:
+            self.is_transcribing = False
+            self._clear_gpu_memory()
+
         return None
 
     def _generate_final(self, current_time: float) -> Optional[stt_pb2.TranscriptEvent]:
@@ -377,7 +419,20 @@ class WhisperSession(STTSession):
             print(f"[WhisperSession] Audio too short: {len(self.speech_buffer)} < {self.min_speech_samples}")
             return None
 
+        # Wait for any ongoing partial transcription to complete (with timeout)
+        wait_start = time.time()
+        while self.is_transcribing and (time.time() - wait_start) < 2.0:
+            time.sleep(0.05)
+
+        self.is_transcribing = True
+        start_time = time.time()
+
         try:
+            # Cap buffer size to prevent memory issues
+            if len(self.speech_buffer) > self.max_speech_buffer_samples:
+                print(f"[WhisperSession] Capping speech buffer from {len(self.speech_buffer)} to {self.max_speech_buffer_samples}")
+                self.speech_buffer = self.speech_buffer[-self.max_speech_buffer_samples:]
+
             audio_samples = np.array(self.speech_buffer, dtype=np.int16)
             audio_float = audio_samples.astype(np.float32) / 32768.0
             audio_duration_sec = len(audio_samples) / 16000
@@ -423,7 +478,8 @@ class WhisperSession(STTSession):
                 print(f"[WhisperSession] Skipping duplicate")
                 return None
 
-            print(f"[WhisperSession] Final ({audio_duration_sec:.2f}s): '{final_text}'")
+            transcription_time = (time.time() - start_time) * 1000
+            print(f"[WhisperSession] Final ({audio_duration_sec:.2f}s, {transcription_time:.0f}ms): '{final_text}'")
 
             self.last_final_text = final_text
             self.last_final_time = current_time
@@ -439,21 +495,36 @@ class WhisperSession(STTSession):
 
         except Exception as e:
             print(f"[WhisperSession] Final transcription error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+
+        finally:
+            self.is_transcribing = False
+            self._clear_gpu_memory()
 
     def _reset(self) -> None:
         """Reset state for next utterance."""
         self.state = "IDLE"
         self.speech_buffer = []
+        self.audio_buffer = []  # Also clear audio buffer
+        self.pre_buffer = []  # Clear pre-buffer to prevent stale audio
         self.silence_start_time = None
         self.speech_start_time = None
         self.last_audio_time = 0
         self.transcript_id = None
         self.pending_final_time = None  # Clear continuation window state
+        self.is_transcribing = False  # Clear transcription lock
 
         # Reset Silero VAD internal state (critical for accurate detection)
-        if hasattr(self.vad_model, 'reset_states'):
-            self.vad_model.reset_states()
+        try:
+            if hasattr(self.vad_model, 'reset_states'):
+                self.vad_model.reset_states()
+        except Exception as e:
+            print(f"[WhisperSession] VAD reset error: {e}")
+
+        # Clear GPU memory after reset
+        self._clear_gpu_memory()
 
     def reset(self) -> None:
         """Public reset method."""
