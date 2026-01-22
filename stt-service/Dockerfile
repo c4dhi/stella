@@ -151,7 +151,8 @@ ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 # Industry-standard approach based on LiveKit, OpenAI Realtime, Deepgram
 # ============================================================================
 # Single VAD signal (probability threshold) - higher = stricter, less noise false positives
-ENV VAD_THRESHOLD=0.55
+# 0.6+ recommended to avoid picking up TTS echo from speakers
+ENV VAD_THRESHOLD=0.6
 # Silence duration to trigger MAYBE_ENDING state
 ENV VAD_SILENCE_DURATION_MS=500
 # Continuation window: additional wait in MAYBE_ENDING before final
