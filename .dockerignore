@@ -18,3 +18,9 @@ message-recorder-python
 k8s
 scripts
 .claude
+
+# Additional directories that have their own Dockerfiles
+docs-site
+agents
+stt-service
+tts-service
