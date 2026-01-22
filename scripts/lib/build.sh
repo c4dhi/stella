@@ -16,42 +16,62 @@ setup_buildkit() {
     if docker buildx version >/dev/null 2>&1; then
         USE_BUILDKIT=true
         verbose "BuildKit: available"
-        return 0
-    fi
+    else
+        verbose "BuildKit: not available"
 
-    verbose "BuildKit: not available"
+        # Auto-install on Linux
+        if [[ "$OS_TYPE" == "linux" ]]; then
+            verbose "Installing docker-buildx..."
 
-    # Auto-install on Linux
-    if [[ "$OS_TYPE" == "linux" ]]; then
-        verbose "Installing docker-buildx..."
+            # Try package installation first
+            if sudo apt-get install -y docker-buildx-plugin >/dev/null 2>&1; then
+                if docker buildx version >/dev/null 2>&1; then
+                    USE_BUILDKIT=true
+                    verbose "BuildKit: installed via apt"
+                fi
+            fi
 
-        # Try package installation first
-        if sudo apt-get install -y docker-buildx-plugin >/dev/null 2>&1; then
-            if docker buildx version >/dev/null 2>&1; then
-                USE_BUILDKIT=true
-                verbose "BuildKit: installed via apt"
-                return 0
+            # Manual installation fallback
+            if [[ "$USE_BUILDKIT" == "false" ]]; then
+                mkdir -p ~/.docker/cli-plugins
+                local buildx_version
+                buildx_version=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+
+                if curl -sL "https://github.com/docker/buildx/releases/download/v${buildx_version}/buildx-v${buildx_version}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx; then
+                    chmod +x ~/.docker/cli-plugins/docker-buildx
+                    if docker buildx version >/dev/null 2>&1; then
+                        USE_BUILDKIT=true
+                        verbose "BuildKit: installed manually (v${buildx_version})"
+                    fi
+                fi
+            fi
+
+            if [[ "$USE_BUILDKIT" == "false" ]]; then
+                verbose "BuildKit: installation failed, using legacy builder"
             fi
         fi
-
-        # Manual installation fallback
-        mkdir -p ~/.docker/cli-plugins
-        local buildx_version
-        buildx_version=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
-
-        if curl -sL "https://github.com/docker/buildx/releases/download/v${buildx_version}/buildx-v${buildx_version}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx; then
-            chmod +x ~/.docker/cli-plugins/docker-buildx
-            if docker buildx version >/dev/null 2>&1; then
-                USE_BUILDKIT=true
-                verbose "BuildKit: installed manually (v${buildx_version})"
-                return 0
-            fi
-        fi
-
-        verbose "BuildKit: installation failed, using legacy builder"
     fi
 
-    export USE_BUILDKIT
+    # Detect CPU cores for parallel builds
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+    else
+        CPU_CORES=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)
+    fi
+
+    # Set max concurrent builds (default: number of cores, max 8 to avoid resource exhaustion)
+    MAX_PARALLEL_BUILDS=${MAX_PARALLEL_BUILDS:-$((CPU_CORES > 8 ? 8 : CPU_CORES))}
+
+    # Configure BuildKit for maximum parallelism within each build
+    if [[ "$USE_BUILDKIT" == "true" ]]; then
+        # BUILDKIT_STEP_LOG_MAX_SIZE: Increase log buffer
+        # BUILDKIT_STEP_LOG_MAX_SPEED: Don't throttle logs
+        export DOCKER_BUILDKIT=1
+        export BUILDKIT_PROGRESS=plain
+    fi
+
+    verbose "CPU cores: $CPU_CORES, Max parallel builds: $MAX_PARALLEL_BUILDS"
+    export USE_BUILDKIT CPU_CORES MAX_PARALLEL_BUILDS
 }
 
 # =============================================================================
@@ -536,6 +556,289 @@ smart_build() {
 }
 
 # =============================================================================
+# Parallel Build Support
+# =============================================================================
+
+# Arrays to track parallel builds
+declare -a PARALLEL_BUILD_PIDS=()
+declare -a PARALLEL_BUILD_NAMES=()
+declare -a PARALLEL_BUILD_LOGS=()
+declare -a PARALLEL_BUILD_CHECKSUMS=()
+
+# Start a build in background for parallel execution
+# Usage: start_parallel_build "name" "tag" "context" "build_args" "dockerfile"
+start_parallel_build() {
+    local image_name="$1"
+    local tag="$2"
+    local context="$3"
+    local build_args="${4:-}"
+    local dockerfile="${5:-Dockerfile}"
+
+    # Skip-build mode
+    if [[ "$SKIP_BUILD_MODE" == "true" ]]; then
+        echo -e "   ${ARROW} ${image_name}... ${YELLOW}skipped${NC}"
+        return 0
+    fi
+
+    # Determine paths
+    local service_dir="$context"
+    local dockerfile_path="${context}/${dockerfile}"
+    if [[ "$context" == "." ]]; then
+        dockerfile_path="./${dockerfile}"
+    fi
+
+    # Verify dockerfile exists
+    if [[ ! -f "$dockerfile_path" ]]; then
+        echo -e "   ${ARROW} ${image_name}... ${RED}${CROSS}${NC} (Dockerfile not found)"
+        return 1
+    fi
+
+    # Check if rebuild needed (unless in rebuild mode)
+    if [[ "$REBUILD_MODE" != "true" ]]; then
+        set +e
+        service_needs_rebuild "$image_name" "$service_dir" "$dockerfile_path"
+        local needs_rebuild=$?
+        set -e
+
+        if [[ $needs_rebuild -ne 0 ]]; then
+            echo -e "   ${ARROW} ${image_name}... ${DIM}unchanged${NC}"
+            return 0
+        fi
+    fi
+
+    # Dry-run mode
+    if [[ "${DRY_RUN_MODE:-false}" == "true" ]]; then
+        echo -e "   ${ARROW} ${image_name}... ${YELLOW}[dry-run]${NC}"
+        return 0
+    fi
+
+    local log_file="${LOG_DIR:-/tmp}/docker-build-${image_name}.log"
+    mkdir -p "${LOG_DIR:-/tmp}" 2>/dev/null || true
+    : > "$log_file" 2>/dev/null || true
+
+    # Build flags
+    local no_cache=""
+    [[ "${REBUILD_MODE:-false}" == "true" ]] && no_cache="--no-cache"
+
+    # Build the docker command
+    local docker_cmd="docker build --progress=plain"
+    [[ -n "$no_cache" ]] && docker_cmd="$docker_cmd $no_cache"
+    [[ -n "$build_args" ]] && docker_cmd="$docker_cmd $build_args"
+    docker_cmd="$docker_cmd -f \"$dockerfile_path\" --network=host -t \"$tag\" \"$context\""
+
+    # Start build in background
+    if [[ "${USE_BUILDKIT:-false}" == "true" ]]; then
+        DOCKER_BUILDKIT=1 eval "$docker_cmd" > "$log_file" 2>&1 &
+    else
+        eval "$docker_cmd" > "$log_file" 2>&1 &
+    fi
+    local build_pid=$!
+
+    # Track this build
+    PARALLEL_BUILD_PIDS+=("$build_pid")
+    PARALLEL_BUILD_NAMES+=("$image_name")
+    PARALLEL_BUILD_LOGS+=("$log_file")
+    PARALLEL_BUILD_CHECKSUMS+=("${service_dir}:${dockerfile_path}")
+
+    verbose "Started build: $image_name (pid $build_pid)"
+}
+
+# Get current build status from log file
+get_build_status_from_log() {
+    local log_file="$1"
+    local status="starting..."
+
+    if [[ -f "$log_file" && -s "$log_file" ]]; then
+        local recent_log
+        recent_log=$(tail -n 30 "$log_file" 2>/dev/null || echo "")
+
+        if [[ -n "$recent_log" ]]; then
+            # Try to get a meaningful status from the log
+            local step_info
+            step_info=$(echo "$recent_log" | grep -oE '\[#?[0-9]+ [0-9]+/[0-9]+\]|Step [0-9]+/[0-9]+|\[[0-9]+/[0-9]+\]' | tail -1)
+
+            local action_line
+            action_line=$(echo "$recent_log" | grep -E '(RUN |COPY |FROM |ENV |WORKDIR |apt-get|pip install|npm |npx |exporting|writing)' | tail -1)
+
+            local desc
+            desc=$(get_build_step_description "$action_line" "")
+
+            if [[ -n "$step_info" && -n "$desc" ]]; then
+                status="${step_info} ${desc}"
+            elif [[ -n "$desc" ]]; then
+                status="$desc"
+            elif [[ -n "$step_info" ]]; then
+                status="$step_info"
+            else
+                # Fallback: check for common patterns
+                if echo "$recent_log" | grep -qi "downloading\|pulling"; then
+                    status="Downloading..."
+                elif echo "$recent_log" | grep -qi "extracting"; then
+                    status="Extracting..."
+                elif echo "$recent_log" | grep -qi "compiling\|building"; then
+                    status="Compiling..."
+                else
+                    status="building..."
+                fi
+            fi
+        fi
+    fi
+
+    # Truncate if too long
+    if [[ ${#status} -gt 45 ]]; then
+        status="${status:0:42}..."
+    fi
+
+    echo "$status"
+}
+
+# Wait for all parallel builds to complete with real-time status display
+wait_for_parallel_builds() {
+    if [[ ${#PARALLEL_BUILD_PIDS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    local total=${#PARALLEL_BUILD_PIDS[@]}
+    local completed=0
+    local failed=0
+    local failed_services=()
+
+    echo ""
+    info "Building $total images in parallel (using ${CPU_CORES:-4} CPU cores)..."
+    echo ""
+
+    # Store original arrays (we'll track status separately)
+    declare -a all_pids=("${PARALLEL_BUILD_PIDS[@]}")
+    declare -a all_names=("${PARALLEL_BUILD_NAMES[@]}")
+    declare -a all_logs=("${PARALLEL_BUILD_LOGS[@]}")
+    declare -a all_checksums=("${PARALLEL_BUILD_CHECKSUMS[@]}")
+    declare -a all_status=()
+    declare -a all_done=()
+
+    # Initialize status for each build
+    for i in "${!all_names[@]}"; do
+        all_status[$i]="starting..."
+        all_done[$i]="false"
+    done
+
+    # Print initial status lines for all services
+    for i in "${!all_names[@]}"; do
+        echo -e "   ${ARROW} ${all_names[$i]}... ${DIM}starting...${NC}"
+    done
+
+    local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local spinner_idx=0
+
+    # Main monitoring loop
+    while [[ $completed -lt $total ]]; do
+        local updates_needed=false
+
+        for i in "${!all_pids[@]}"; do
+            if [[ "${all_done[$i]}" == "true" ]]; then
+                continue
+            fi
+
+            local pid="${all_pids[$i]}"
+            local name="${all_names[$i]}"
+            local log="${all_logs[$i]}"
+            local checksum_info="${all_checksums[$i]}"
+
+            set +e
+            kill -0 "$pid" 2>/dev/null
+            local still_running=$?
+            set -e
+
+            if [[ $still_running -ne 0 ]]; then
+                # Build finished
+                set +e
+                wait "$pid" 2>/dev/null
+                local exit_code=$?
+                set -e
+
+                ((completed++))
+                all_done[$i]="true"
+
+                if [[ $exit_code -eq 0 ]]; then
+                    all_status[$i]="${GREEN}${CHECK} done${NC}"
+                    rm -f "$log" 2>/dev/null || true
+                    REBUILT_SERVICES+=("$name")
+
+                    # Update checksum
+                    local service_dir="${checksum_info%%:*}"
+                    local dockerfile_path="${checksum_info#*:}"
+                    set +e
+                    update_service_checksum "$name" "$service_dir" "$dockerfile_path" 2>/dev/null
+                    set -e
+                else
+                    all_status[$i]="${RED}${CROSS} FAILED${NC}"
+                    ((failed++))
+                    failed_services+=("$name:$log")
+                fi
+                updates_needed=true
+            else
+                # Still running - get current status from log
+                local new_status
+                new_status=$(get_build_status_from_log "$log")
+                if [[ "$new_status" != "${all_status[$i]}" ]]; then
+                    all_status[$i]="$new_status"
+                    updates_needed=true
+                fi
+            fi
+        done
+
+        # Move cursor up and redraw all status lines
+        # Move up N lines where N = total number of services
+        printf "\033[${total}A"
+
+        for i in "${!all_names[@]}"; do
+            local name="${all_names[$i]}"
+            local status="${all_status[$i]}"
+            local spinner=""
+
+            # Add spinner for running builds
+            if [[ "${all_done[$i]}" != "true" ]]; then
+                spinner=" ${CYAN}${spinner_chars[$spinner_idx]}${NC}"
+            fi
+
+            # Clear line and print status
+            printf "\r\033[K   ${ARROW} %-28s ${DIM}%s${NC}%s\n" "${name}..." "$status" "$spinner"
+        done
+
+        spinner_idx=$(( (spinner_idx + 1) % ${#spinner_chars[@]} ))
+        sleep 0.3
+    done
+
+    echo ""
+
+    # Clear tracking arrays
+    PARALLEL_BUILD_PIDS=()
+    PARALLEL_BUILD_NAMES=()
+    PARALLEL_BUILD_LOGS=()
+    PARALLEL_BUILD_CHECKSUMS=()
+
+    # Report failures
+    if [[ $failed -gt 0 ]]; then
+        echo ""
+        error "$failed build(s) failed:"
+        for entry in "${failed_services[@]}"; do
+            local name="${entry%%:*}"
+            local log="${entry#*:}"
+            echo ""
+            echo -e "${BOLD}=== $name ===${NC}"
+            echo -e "${DIM}Log: $log${NC}"
+            if [[ -f "$log" && -s "$log" ]]; then
+                echo -e "${DIM}--- Last 30 lines ---${NC}"
+                tail -n 30 "$log" | sed 's/^/  /'
+            fi
+        done
+        echo ""
+        exit 1
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # Build All Images
 # =============================================================================
 
@@ -559,51 +862,36 @@ build_images() {
     # Reset rebuilt services list
     REBUILT_SERVICES=()
 
-    # NOTE: All smart_build calls will EXIT IMMEDIATELY on build failure.
-    # This ensures fail-fast behavior - no need to check return codes.
-
-    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: about to build session-management-server"
-
-    # Build session-management-server
+    # Prepare build arguments
     local prisma_checksum
     prisma_checksum=$(hash_file "./prisma/schema.prisma" 2>/dev/null || echo "none")
     local db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
     local session_args="--build-arg PRISMA_SCHEMA_CHECKSUM=${prisma_checksum} --build-arg DATABASE_URL=${db_url}"
 
-    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: calling smart_build for session-management-server"
-    smart_build "session-management-server" "session-management-server:latest" "." "$session_args"
-    [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: smart_build for session-management-server returned"
-
-    # Build STT service
-    local stt_args=""
+    local gpu_args=""
     if [[ "$ENABLE_GPU" == "true" ]]; then
-        stt_args="--build-arg ENABLE_GPU=true"
+        gpu_args="--build-arg ENABLE_GPU=true"
     fi
-    smart_build "stt-service" "stt-service:latest" "./stt-service" "$stt_args"
 
-    # Build TTS service
-    local tts_args=""
-    if [[ "$ENABLE_GPU" == "true" ]]; then
-        tts_args="--build-arg ENABLE_GPU=true"
-    fi
-    smart_build "tts-service" "tts-service:latest" "./tts-service" "$tts_args"
+    # ==========================================================================
+    # PARALLEL BUILDS - All services are independent, no inter-dependencies
+    # ==========================================================================
 
-    # Build frontend
-    smart_build "frontend-ui" "frontend-ui:latest" "./frontend-ui"
+    # Start all builds in parallel (each docker build uses multiple cores internally)
+    start_parallel_build "session-management-server" "session-management-server:latest" "." "$session_args"
+    start_parallel_build "stt-service" "stt-service:latest" "./stt-service" "$gpu_args"
+    start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$gpu_args"
+    start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui"
+    start_parallel_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
+    start_parallel_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile"
+    start_parallel_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile"
+    start_parallel_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile"
 
-    # Build message recorder
-    smart_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
+    # Wait for all parallel builds to complete
+    wait_for_parallel_builds
 
-    # Build stella-agent (pre-build to avoid on-demand building in production)
-    smart_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile"
-
-    # Build echo-agent
-    smart_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile"
-
-    # Build stella-light-agent
-    smart_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile"
-
-    # Summary (only reached if all builds succeeded)
+    # Summary
+    echo ""
     if [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         success "Built ${#REBUILT_SERVICES[@]} image(s): ${REBUILT_SERVICES[*]}"
     else
