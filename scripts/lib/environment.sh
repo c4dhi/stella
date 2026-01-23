@@ -3,6 +3,9 @@
 # environment.sh - Environment detection and configuration loading
 # =============================================================================
 
+# Note: This file is sourced by start-k8s.sh after colors.sh and utils.sh
+# Some functions may not be available until after sourcing is complete
+
 # =============================================================================
 # OS and Platform Detection (single-pass)
 # =============================================================================
@@ -318,6 +321,85 @@ set_defaults() {
 
     # Auto-configure GPU settings (after defaults are set)
     configure_gpu_settings
+}
+
+# =============================================================================
+# Setup Status Detection
+# =============================================================================
+
+# Check if setup has been completed for current environment
+# Returns 0 if setup is complete, 1 if not
+check_setup_status() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    # 1. Check marker file exists
+    if [[ ! -f "$marker_file" ]]; then
+        verbose "Setup marker file not found"
+        return 1
+    fi
+
+    # 2. Verify marker matches current mode
+    local marker_mode
+    marker_mode=$(cat "$marker_file" 2>/dev/null || echo "")
+    local current_mode="${NODE_ENV:-local}"
+
+    if [[ "$marker_mode" != "$current_mode" ]]; then
+        verbose "Setup mode mismatch: marker=$marker_mode, current=$current_mode"
+        return 1
+    fi
+
+    # 3. Verify absolutely critical variables (system won't work without these)
+    local missing_vars=()
+
+    [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing_vars+=("POSTGRES_PASSWORD")
+    [[ -z "${JWT_SECRET:-}" ]] && missing_vars+=("JWT_SECRET")
+    [[ -z "${OPENAI_API_KEY:-}" ]] && missing_vars+=("OPENAI_API_KEY")
+
+    # 4. For production, also check additional requirements
+    if [[ "$current_mode" == "production" ]]; then
+        [[ -z "${ENV_VAR_ENCRYPTION_KEY:-}" ]] && missing_vars+=("ENV_VAR_ENCRYPTION_KEY")
+        [[ -z "${LIVEKIT_API_KEY:-}" ]] && missing_vars+=("LIVEKIT_API_KEY")
+        [[ -z "${LIVEKIT_API_SECRET:-}" ]] && missing_vars+=("LIVEKIT_API_SECRET")
+        [[ -z "${PRODUCTION_DOMAIN:-}" ]] && missing_vars+=("PRODUCTION_DOMAIN")
+    fi
+
+    # Report missing variables
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        for var in "${missing_vars[@]}"; do
+            verbose "Missing critical variable: $var"
+        done
+        return 1
+    fi
+
+    return 0
+}
+
+# Mark setup as complete for given environment
+mark_setup_complete() {
+    local env="${1:-${NODE_ENV:-local}}"
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    echo "$env" > "$marker_file"
+    verbose "Marked setup complete for: $env"
+}
+
+# Clear setup marker (force re-setup)
+clear_setup_marker() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    if [[ -f "$marker_file" ]]; then
+        rm -f "$marker_file"
+        verbose "Cleared setup marker"
+    fi
+}
+
+# Get the environment mode from setup marker
+get_setup_mode() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    if [[ -f "$marker_file" ]]; then
+        cat "$marker_file" 2>/dev/null || echo ""
+    fi
 }
 
 # =============================================================================
