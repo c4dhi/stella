@@ -358,17 +358,21 @@ wizard_password_input() {
     wizard_show_cursor
 
     while true; do
-        # Display masked input or placeholder
+        # Clear line first, then print (prevents wrapping issues with long input)
+        printf "\r\033[K" >&2
         if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
-            printf "\r  > ${DIM}(keep current)${NC} " >&2
+            printf "  > ${DIM}(keep current)${NC}" >&2
         else
-            local masked=""
-            for ((i=0; i<${#value}; i++)); do
-                masked="${masked}•"
-            done
-            printf "\r  > %s " "$masked" >&2
+            # Limit displayed dots to 20, show character count for longer values
+            local len=${#value}
+            if [[ $len -le 20 ]]; then
+                local masked=""
+                for ((i=0; i<len; i++)); do masked="${masked}•"; done
+                printf "  > %s" "$masked" >&2
+            else
+                printf "  > ••••••••••••••••••••${DIM} (%d chars)${NC}" "$len" >&2
+            fi
         fi
-        wizard_clear_line >&2
 
         local key
         key=$(wizard_read_key)
@@ -1024,14 +1028,21 @@ wizard_password_compact() {
     wizard_show_cursor
 
     while true; do
+        # Clear line first, then print (prevents wrapping issues with long input)
+        printf "\r\033[K" >&2
         if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
-            printf "\r  > ${DIM}(keep current)${NC} " >&2
+            printf "  > ${DIM}(keep current)${NC}" >&2
         else
-            local masked=""
-            for ((i=0; i<${#value}; i++)); do masked="${masked}•"; done
-            printf "\r  > %s " "$masked" >&2
+            # Limit displayed dots to 20, show character count for longer values
+            local len=${#value}
+            if [[ $len -le 20 ]]; then
+                local masked=""
+                for ((i=0; i<len; i++)); do masked="${masked}•"; done
+                printf "  > %s" "$masked" >&2
+            else
+                printf "  > ••••••••••••••••••••${DIM} (%d chars)${NC}" "$len" >&2
+            fi
         fi
-        wizard_clear_line >&2
 
         local key
         key=$(wizard_read_key)

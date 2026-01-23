@@ -94,15 +94,16 @@ load_environment() {
     # Change to project directory
     cd "$PROJECT_DIR" || { error "Cannot change to project directory: $PROJECT_DIR"; exit 1; }
 
-    # Load base .env (required)
-    if ! load_env_file ".env" "base"; then
-        error "Missing .env file"
-        echo "  Run: cp .env.example .env && nano .env"
-        exit 1
-    fi
-
-    # Set NODE_ENV from flag or default to local
+    # Set NODE_ENV from flag or default to local (needed for check_setup_status)
     export NODE_ENV="${ENV_FLAG:-local}"
+
+    # Load base .env if it exists (may not exist on fresh install)
+    # check_setup_status will handle missing config and offer the wizard
+    if [[ -f ".env" ]]; then
+        load_env_file ".env" "base" || true
+    else
+        verbose "No .env file found - setup wizard will be offered"
+    fi
 
     # Load environment-specific overrides
     if [[ "$NODE_ENV" == "production" ]]; then
