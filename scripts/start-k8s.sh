@@ -20,6 +20,25 @@
 set -euo pipefail
 
 # =============================================================================
+# Error Handling - Show where script failed
+# =============================================================================
+
+error_handler() {
+    local exit_code=$?
+    local line_no=$1
+    local command="$2"
+    echo ""
+    echo -e "\033[31m✗ Script failed at line $line_no\033[0m"
+    echo -e "  Command: $command"
+    echo -e "  Exit code: $exit_code"
+    echo ""
+    echo "  Debug: Run with --verbose or check the command manually"
+    exit $exit_code
+}
+
+trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
+
+# =============================================================================
 # Script Setup
 # =============================================================================
 
@@ -34,6 +53,27 @@ source "$LIB_DIR/validation.sh"
 source "$LIB_DIR/k3s.sh"
 source "$LIB_DIR/build.sh"
 source "$LIB_DIR/deploy.sh"
+
+# Override EXIT trap with better debugging (utils.sh sets a basic one)
+custom_exit_handler() {
+    local exit_code=$?
+    local line_no="${BASH_LINENO[0]:-unknown}"
+
+    # Run normal cleanup
+    run_cleanup 2>/dev/null || true
+
+    # Show debug info for ANY non-zero exit (helps debug silent failures)
+    if [[ $exit_code -ne 0 ]]; then
+        echo ""
+        echo -e "\033[33m⚠ Script exited with code $exit_code (near line $line_no)\033[0m"
+        if [[ "${VERBOSE_MODE:-false}" != "true" ]]; then
+            echo "  Run with --verbose for more details"
+        else
+            echo "  Check the command that failed above"
+        fi
+    fi
+}
+trap 'custom_exit_handler' EXIT
 
 # =============================================================================
 # Global Variables

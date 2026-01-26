@@ -26,6 +26,11 @@
     "node_modules",
     "dist",
     "frontend-ui",
-    "conversational-ai-server-python"
+    "conversational-ai-server-python",
+    "docs-site",
+    "agents",
+    "stt-service",
+    "tts-service",
+    "message-recorder-python"
   ]
 }

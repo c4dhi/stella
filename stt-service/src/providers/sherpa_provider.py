@@ -22,12 +22,13 @@ except ImportError as e:
 class SherpaSession(STTSession):
     """Sherpa-ONNX session state management."""
 
-    def __init__(self, session_id: str, participant_id: str, recognizer, create_stream_fn):
+    def __init__(self, session_id: str, participant_id: str, recognizer, create_stream_fn, config: dict = None):
         self.session_id = session_id
         self.participant_id = participant_id
         self.recognizer = recognizer
         self.create_stream_fn = create_stream_fn
         self.stream = create_stream_fn() if recognizer else None
+        self.config = config or {}
 
         # Transcript tracking
         self.accumulated_text = ''
@@ -42,9 +43,17 @@ class SherpaSession(STTSession):
         # Speech detection state
         self.speech_active = False  # Track if we're currently in a speech segment
 
-        # Thresholds
-        self.silence_threshold = 1.5  # seconds
-        self.speech_timeout = 10.0    # force endpoint after 10s
+        # Configurable thresholds (from config or defaults)
+        self.silence_threshold = self.config.get('silence_threshold', 1.5)  # seconds
+        self.speech_timeout = self.config.get('speech_timeout', 10.0)  # force endpoint after 10s
+        self.rms_threshold = self.config.get('rms_threshold', 0.001)  # Audio energy threshold
+
+        # Pre-buffer for initial speech (same as Whisper)
+        self.pre_buffer = []
+        self.pre_buffer_samples = self.config.get('pre_buffer_samples', 8000)  # 0.5s
+
+        # Minimum transcript length filter
+        self.min_transcript_chars = self.config.get('min_transcript_chars', 3)
 
         # Processing state
         self.processing_endpoint = False
@@ -88,9 +97,9 @@ class SherpaSession(STTSession):
             # Convert to float32 normalized
             audio_float = audio_int16.astype(np.float32) / 32768.0
 
-            # Calculate RMS for speech detection
+            # Calculate RMS for speech detection (using configurable threshold)
             audio_rms = np.sqrt(np.mean(audio_float**2))
-            is_speech = audio_rms > 0.001
+            is_speech = audio_rms > self.rms_threshold
 
             # Debug logging every 50 chunks
             if self.chunk_count % 50 == 1:
@@ -191,7 +200,10 @@ class SherpaSession(STTSession):
             current_time - self.last_final_time < 5.0):
             return None
 
-        if not final_text or len(final_text) < 2:
+        # Filter short transcripts (using configurable minimum)
+        if not final_text or len(final_text) < self.min_transcript_chars:
+            if final_text:
+                print(f"[SherpaSession] Filtered short transcript: '{final_text}'")
             return None
 
         self.processing_endpoint = True
@@ -265,6 +277,16 @@ class SherpaProvider(STTProvider):
         self.recognizer = None
         self.model_ready = False
         self.model_path = None
+
+        # Sherpa-specific VAD configuration (from environment)
+        self.silence_threshold = float(os.getenv("SHERPA_SILENCE_THRESHOLD", "1.5"))
+        self.speech_timeout = float(os.getenv("SHERPA_SPEECH_TIMEOUT", "10.0"))
+        self.rms_threshold = float(os.getenv("SHERPA_RMS_THRESHOLD", "0.001"))
+        self.pre_buffer_samples = int(os.getenv("SHERPA_PRE_BUFFER_SAMPLES", "8000"))
+        self.min_transcript_chars = int(os.getenv("SHERPA_MIN_TRANSCRIPT_CHARS", "3"))
+
+        print(f"[SherpaProvider] VAD config: silence_threshold={self.silence_threshold}s, "
+              f"speech_timeout={self.speech_timeout}s, rms_threshold={self.rms_threshold}")
 
     @property
     def name(self) -> str:
@@ -368,11 +390,21 @@ class SherpaProvider(STTProvider):
         if not self.model_ready or not self.recognizer:
             return None
 
+        # Pass VAD configuration to session
+        config = {
+            'silence_threshold': self.silence_threshold,
+            'speech_timeout': self.speech_timeout,
+            'rms_threshold': self.rms_threshold,
+            'pre_buffer_samples': self.pre_buffer_samples,
+            'min_transcript_chars': self.min_transcript_chars,
+        }
+
         return SherpaSession(
             session_id=session_id,
             participant_id=participant_id,
             recognizer=self.recognizer,
-            create_stream_fn=lambda: self.recognizer.create_stream()
+            create_stream_fn=lambda: self.recognizer.create_stream(),
+            config=config
         )
 
     async def cleanup(self) -> None:

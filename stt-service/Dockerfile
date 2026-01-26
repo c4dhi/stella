@@ -146,10 +146,42 @@ ENV WHISPER_LANGUAGE=
 # Silero VAD configuration (for whisper provider)
 ENV SILERO_VAD_CACHE_DIR=/root/.cache/silero-vad
 
-# VAD configuration
-ENV VAD_THRESHOLD=0.5
-ENV VAD_MIN_SILENCE_MS=500
+# ============================================================================
+# Whisper VAD configuration (Silero VAD - 3-state machine)
+# Industry-standard approach based on LiveKit, OpenAI Realtime, Deepgram
+# ============================================================================
+# Single VAD signal (probability threshold) - higher = stricter, less noise false positives
+# 0.6+ recommended to avoid picking up TTS echo from speakers
+ENV VAD_THRESHOLD=0.6
+# RMS energy gate - filters quiet background noise before VAD processing
+# 0.015 = ~-36dB, rejects ambient noise while accepting normal speech
+# Increase to 0.02-0.03 for noisier environments
+ENV VAD_RMS_THRESHOLD=0.015
+# Silence duration to trigger MAYBE_ENDING state
+ENV VAD_SILENCE_DURATION_MS=500
+# Continuation window: additional wait in MAYBE_ENDING before final
+# Handles natural pauses (thinking, hesitation) without fragmenting utterances
+ENV VAD_CONTINUATION_WINDOW_MS=600
+# Maximum total silence before forced endpoint (prevents infinite waiting)
+ENV VAD_MAX_ENDPOINTING_DELAY_MS=2000
+# Minimum speech duration to accept (filters short noise bursts)
+ENV VAD_MIN_SPEECH_MS=400
+# Safety timeout
+ENV VAD_MAX_SPEECH_DURATION_MS=30000
+# Partial transcript interval
 ENV PARTIAL_INTERVAL_MS=1000
+# Audio inactivity timeout (forces endpoint when no audio received)
+ENV VAD_AUDIO_INACTIVITY_TIMEOUT_MS=1500
+# Effective pause tolerance: silence_duration + continuation_window = 1100ms
+
+# ============================================================================
+# Sherpa VAD configuration (RMS-based - energy detection)
+# ============================================================================
+ENV SHERPA_SILENCE_THRESHOLD=1.5
+ENV SHERPA_SPEECH_TIMEOUT=10.0
+ENV SHERPA_RMS_THRESHOLD=0.001
+ENV SHERPA_PRE_BUFFER_SAMPLES=8000
+ENV SHERPA_MIN_TRANSCRIPT_CHARS=3
 
 # Expose gRPC port
 EXPOSE 50051

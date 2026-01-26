@@ -1,7 +1,8 @@
 # Multi-stage build for React frontend
 
 # Stage 1: Build the React app
-FROM node:18-alpine AS builder
+# Note: Vite 7.x requires Node.js 20.19+ or 22.12+
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
