@@ -449,10 +449,8 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language
-            if not self.detected_language and hasattr(info, 'language') and info.language:
-                self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language}")
+            # Don't cache language from partials - they're too short for reliable detection
+            # Language will be cached from final transcription instead
 
             # Process segments
             transcribed_text = ""
@@ -525,10 +523,14 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language
-            if not self.detected_language and hasattr(info, 'language') and info.language:
+            # Cache detected language only if we have enough audio for reliable detection
+            # Require at least 2 seconds of audio to avoid locking in wrong language from short utterances
+            min_duration_for_lang_cache = 2.0  # seconds
+            if (not self.detected_language and
+                hasattr(info, 'language') and info.language and
+                audio_duration_sec >= min_duration_for_lang_cache):
                 self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language}")
+                print(f"[WhisperSession] Detected language: {self.detected_language} (from {audio_duration_sec:.1f}s audio)")
 
             final_text = ""
             for segment in segments:
@@ -757,9 +759,11 @@ class WhisperProvider(STTProvider):
             dummy_audio = np.random.randn(num_samples).astype(np.float32) * 0.001
 
             # Run transcription on dummy audio
+            # Use configured language or auto-detect - warmup doesn't affect session language
+            # since each session has its own detected_language state
             segments, info = self.whisper_model.transcribe(
                 dummy_audio,
-                language=self.language,
+                language=self.language,  # Use configured language (or None for auto)
                 beam_size=self.beam_size,
                 vad_filter=False,
                 word_timestamps=False,
