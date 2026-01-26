@@ -41,6 +41,7 @@ message AudioChunk {
   string session_id = 2;       // Session identifier for logging
   string participant_id = 3;   // Who is speaking (for transcript attribution)
   int64 timestamp_ms = 4;      // Client timestamp for latency tracking
+  int32 sample_rate = 5;       // Sample rate of audio (default: 16000)
 }
 
 // Transcript events sent from STT service to client
