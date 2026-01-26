@@ -330,33 +330,22 @@ set_defaults() {
 
 # Check if setup has been completed for current environment
 # Returns 0 if setup is complete, 1 if not
+#
+# Priority: If all required variables are present in .env, skip the wizard
+# even if the marker file is missing. The marker file is secondary.
 check_setup_status() {
     local marker_file="$PROJECT_DIR/.stella-setup-complete"
-
-    # 1. Check marker file exists
-    if [[ ! -f "$marker_file" ]]; then
-        verbose "Setup marker file not found"
-        return 1
-    fi
-
-    # 2. Verify marker matches current mode
-    local marker_mode
-    marker_mode=$(cat "$marker_file" 2>/dev/null || echo "")
     local current_mode="${NODE_ENV:-local}"
 
-    if [[ "$marker_mode" != "$current_mode" ]]; then
-        verbose "Setup mode mismatch: marker=$marker_mode, current=$current_mode"
-        return 1
-    fi
-
-    # 3. Verify absolutely critical variables (system won't work without these)
+    # 1. First check if all critical variables are present
+    #    If they are, setup is considered complete regardless of marker file
     local missing_vars=()
 
     [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing_vars+=("POSTGRES_PASSWORD")
     [[ -z "${JWT_SECRET:-}" ]] && missing_vars+=("JWT_SECRET")
     [[ -z "${OPENAI_API_KEY:-}" ]] && missing_vars+=("OPENAI_API_KEY")
 
-    # 4. For production, also check additional requirements
+    # For production, also check additional requirements
     if [[ "$current_mode" == "production" ]]; then
         [[ -z "${ENV_VAR_ENCRYPTION_KEY:-}" ]] && missing_vars+=("ENV_VAR_ENCRYPTION_KEY")
         [[ -z "${LIVEKIT_API_KEY:-}" ]] && missing_vars+=("LIVEKIT_API_KEY")
@@ -364,15 +353,21 @@ check_setup_status() {
         [[ -z "${PRODUCTION_DOMAIN:-}" ]] && missing_vars+=("PRODUCTION_DOMAIN")
     fi
 
-    # Report missing variables
-    if [[ ${#missing_vars[@]} -gt 0 ]]; then
-        for var in "${missing_vars[@]}"; do
-            verbose "Missing critical variable: $var"
-        done
-        return 1
+    # 2. If all variables are present, setup is complete
+    if [[ ${#missing_vars[@]} -eq 0 ]]; then
+        # Auto-create marker file if it doesn't exist or doesn't match
+        if [[ ! -f "$marker_file" ]] || [[ "$(cat "$marker_file" 2>/dev/null)" != "$current_mode" ]]; then
+            verbose "All variables present, auto-creating setup marker for: $current_mode"
+            echo "$current_mode" > "$marker_file"
+        fi
+        return 0
     fi
 
-    return 0
+    # 3. Variables are missing - report them
+    for var in "${missing_vars[@]}"; do
+        verbose "Missing critical variable: $var"
+    done
+    return 1
 }
 
 # Mark setup as complete for given environment
