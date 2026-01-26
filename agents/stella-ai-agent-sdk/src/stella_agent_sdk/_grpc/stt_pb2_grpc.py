@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from stella_agent_sdk._grpc import stt_pb2 as stt__pb2
+import stt_pb2 as stt__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -46,6 +46,11 @@ class SpeechToTextStub(object):
                 request_serializer=stt__pb2.Empty.SerializeToString,
                 response_deserializer=stt__pb2.HealthResponse.FromString,
                 _registered_method=True)
+        self.Warmup = channel.unary_unary(
+                '/stt.SpeechToText/Warmup',
+                request_serializer=stt__pb2.WarmupRequest.SerializeToString,
+                response_deserializer=stt__pb2.WarmupResponse.FromString,
+                _registered_method=True)
 
 
 class SpeechToTextServicer(object):
@@ -67,6 +72,13 @@ class SpeechToTextServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Warmup(self, request, context):
+        """Warmup the STT model to eliminate cold-start latency
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_SpeechToTextServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -79,6 +91,11 @@ def add_SpeechToTextServicer_to_server(servicer, server):
                     servicer.HealthCheck,
                     request_deserializer=stt__pb2.Empty.FromString,
                     response_serializer=stt__pb2.HealthResponse.SerializeToString,
+            ),
+            'Warmup': grpc.unary_unary_rpc_method_handler(
+                    servicer.Warmup,
+                    request_deserializer=stt__pb2.WarmupRequest.FromString,
+                    response_serializer=stt__pb2.WarmupResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -137,6 +154,33 @@ class SpeechToText(object):
             '/stt.SpeechToText/HealthCheck',
             stt__pb2.Empty.SerializeToString,
             stt__pb2.HealthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Warmup(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stt.SpeechToText/Warmup',
+            stt__pb2.WarmupRequest.SerializeToString,
+            stt__pb2.WarmupResponse.FromString,
             options,
             channel_credentials,
             insecure,

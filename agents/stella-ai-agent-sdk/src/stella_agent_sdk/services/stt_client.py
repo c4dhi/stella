@@ -235,3 +235,68 @@ class STTClient:
         except Exception as e:
             logger.error(f"STT health check failed: {e}")
             return False
+
+    async def warmup(
+        self,
+        session_id: str = "",
+        duration_ms: int = 1000,
+        timeout: float = 30.0,
+    ) -> dict:
+        """
+        Warm up the STT model to eliminate cold-start latency.
+
+        This should be called when an agent connects, before any user speech.
+        The STT service maintains warmup state with a TTL, so repeated calls
+        within the TTL window are fast no-ops.
+
+        Args:
+            session_id: Optional session ID for logging
+            duration_ms: Duration of dummy audio to process (default 1000ms)
+            timeout: Maximum time to wait for warmup (default 30s)
+
+        Returns:
+            Dict with warmup result:
+            - success: bool - whether warmup succeeded
+            - warmup_time_ms: int - time taken in milliseconds
+            - provider: str - which provider was warmed up
+            - message: str - status or error message
+        """
+        if not self._connected:
+            return {
+                "success": False,
+                "warmup_time_ms": 0,
+                "provider": "unknown",
+                "message": "Not connected to STT service",
+            }
+
+        try:
+            request = self._pb2.WarmupRequest(
+                session_id=session_id,
+                duration_ms=duration_ms,
+            )
+            response = await asyncio.wait_for(
+                self._stub.Warmup(request),
+                timeout=timeout,
+            )
+            return {
+                "success": response.success,
+                "warmup_time_ms": response.warmup_time_ms,
+                "provider": response.provider,
+                "message": response.message,
+            }
+        except asyncio.TimeoutError:
+            logger.warning(f"STT warmup timed out after {timeout}s")
+            return {
+                "success": False,
+                "warmup_time_ms": int(timeout * 1000),
+                "provider": "unknown",
+                "message": f"Warmup timed out after {timeout}s",
+            }
+        except Exception as e:
+            logger.error(f"STT warmup failed: {e}")
+            return {
+                "success": False,
+                "warmup_time_ms": 0,
+                "provider": "unknown",
+                "message": f"Warmup error: {e}",
+            }

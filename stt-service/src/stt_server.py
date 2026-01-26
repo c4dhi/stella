@@ -98,6 +98,45 @@ class STTEngine:
             "capabilities": self.provider.get_capabilities() if self.provider else {},
         }
 
+    async def warmup(self, duration_ms: int = 1000) -> dict:
+        """Warm up the STT provider to eliminate cold-start latency.
+
+        Args:
+            duration_ms: Duration of dummy audio to process
+
+        Returns:
+            Dict with warmup result: success, warmup_time_ms, provider, message
+        """
+        import time
+        start_time = time.time()
+
+        if not self.provider:
+            return {
+                "success": False,
+                "warmup_time_ms": 0,
+                "provider": "none",
+                "message": "No STT provider available",
+            }
+
+        try:
+            success = await self.provider.warmup(duration_ms)
+            warmup_time_ms = int((time.time() - start_time) * 1000)
+
+            return {
+                "success": success,
+                "warmup_time_ms": warmup_time_ms,
+                "provider": self.provider_name,
+                "message": "Warmup completed" if success else "Warmup failed",
+            }
+        except Exception as e:
+            warmup_time_ms = int((time.time() - start_time) * 1000)
+            return {
+                "success": False,
+                "warmup_time_ms": warmup_time_ms,
+                "provider": self.provider_name,
+                "message": f"Warmup error: {e}",
+            }
+
 
 class SpeechToTextServicer(stt_pb2_grpc.SpeechToTextServicer):
     """gRPC service implementation for Speech-to-Text."""
@@ -154,6 +193,25 @@ class SpeechToTextServicer(stt_pb2_grpc.SpeechToTextServicer):
             healthy=self.engine.initialized,
             model_status=f"provider={status['primary_provider']}, fallback={status['fallback_provider']}",
             version="2.0.0"
+        )
+
+    async def Warmup(self, request, context):
+        """Warmup endpoint to eliminate cold-start latency."""
+        duration_ms = request.duration_ms if request.duration_ms > 0 else 1000
+        session_id = request.session_id or "unknown"
+
+        print(f"[STT Service] Warmup request from session {session_id} (duration={duration_ms}ms)")
+
+        result = await self.engine.warmup(duration_ms)
+
+        print(f"[STT Service] Warmup result: success={result['success']}, "
+              f"time={result['warmup_time_ms']}ms, provider={result['provider']}")
+
+        return stt_pb2.WarmupResponse(
+            success=result["success"],
+            warmup_time_ms=result["warmup_time_ms"],
+            provider=result["provider"],
+            message=result["message"],
         )
 
 

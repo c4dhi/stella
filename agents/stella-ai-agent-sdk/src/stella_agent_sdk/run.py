@@ -173,6 +173,14 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         await stt_client.connect()
         logger.info(f"Connected to STT service at {stt_address}")
 
+        # 2b. Warm up STT model before user speaks (eliminates cold-start latency)
+        if os.environ.get("STT_WARMUP_ENABLED", "true").lower() != "false":
+            warmup_result = await stt_client.warmup(session_id=session_id)
+            if warmup_result["success"]:
+                logger.info(f"STT warmup completed in {warmup_result['warmup_time_ms']}ms ({warmup_result['provider']})")
+            else:
+                logger.warning(f"STT warmup failed: {warmup_result['message']}")
+
         # 3. Connect to external TTS service (gRPC)
         tts_client = TTSClient(tts_address)
         await tts_client.connect()
@@ -295,6 +303,16 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         def on_participant_joined(participant_identity: str):
             # Use the agent's stored progress payload (updated by audio loop)
             logger.info(f"[PARTICIPANT JOINED] {participant_identity} - _last_progress_payload exists: {agent._last_progress_payload is not None}")
+
+            # Warm up STT model when participant joins (in case agent was idle)
+            # The warmup has a TTL, so this is a no-op if model is already warm
+            if os.environ.get("STT_WARMUP_ENABLED", "true").lower() != "false":
+                async def do_warmup():
+                    result = await stt_client.warmup(session_id=session_id)
+                    if result["success"]:
+                        logger.info(f"STT warmup on participant join completed in {result['warmup_time_ms']}ms")
+                asyncio.create_task(do_warmup())
+
             if agent._last_progress_payload:
                 logger.info(f"[PARTICIPANT JOINED] {participant_identity} - re-sending progress state")
                 # Schedule the async publish_data call
