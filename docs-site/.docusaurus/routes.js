@@ -3,41 +3,6 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 
 export default [
   {
-    path: '/STELLA_Documentation/__docusaurus/debug',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug', '06e'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/config',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/config', 'a4b'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/content',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/content', 'ccd'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/globalData',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/globalData', 'b71'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/metadata',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/metadata', 'b77'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/registry',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/registry', '307'),
-    exact: true
-  },
-  {
-    path: '/STELLA_Documentation/__docusaurus/debug/routes',
-    component: ComponentCreator('/STELLA_Documentation/__docusaurus/debug/routes', '155'),
-    exact: true
-  },
-  {
     path: '/STELLA_Documentation/docs',
     component: ComponentCreator('/STELLA_Documentation/docs', '467'),
     routes: [

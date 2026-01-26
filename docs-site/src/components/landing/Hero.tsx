@@ -1,7 +1,8 @@
-import { ArrowRight, Github, Star } from 'lucide-react';
+import { ArrowRight, Github, Star, Mic } from 'lucide-react';
 import Link from '@docusaurus/Link';
 import { Button } from '../ui/button';
 import { AnimatedSection } from './AnimatedSection';
+import HeroSphereDemo from './HeroSphereDemo';
 
 const Hero = () => {
   return (
@@ -70,26 +71,33 @@ const Hero = () => {
                   <div className="hero-browser-dot hero-browser-dot--green" />
                 </div>
                 <div className="hero-browser-url">
-                  <span>stella.ai/demo</span>
+                  <span>STELLA Demo</span>
                 </div>
               </div>
               {/* Content Area */}
               <div className="hero-browser-content">
-                <div className="hero-waveform-container">
-                  {/* Voice Waveform Animation */}
-                  <div className="hero-waveform">
-                    {[...Array(20)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="hero-waveform-bar"
-                        style={{
-                          height: `${20 + Math.sin(i * 0.5) * 15 + Math.random() * 20}px`,
-                          animationDelay: `${i * 0.1}s`,
-                        }}
-                      />
-                    ))}
+                <div className="hero-sphere-container">
+                  <HeroSphereDemo />
+                  <p className="hero-sphere-label">Voice AI Demo</p>
+                </div>
+              </div>
+              {/* Hover Overlay */}
+              <div className="hero-browser-overlay">
+                <div className="hero-browser-overlay-border" />
+                <div className="hero-browser-overlay-content">
+                  <div className="hero-browser-overlay-icon">
+                    <Mic />
                   </div>
-                  <p className="hero-waveform-label">Voice AI Demo</p>
+                  <h3 className="hero-browser-overlay-title">Try the Demo</h3>
+                  <p className="hero-browser-overlay-text">
+                    Experience STELLA's voice AI capabilities firsthand.
+                  </p>
+                  <button className="hero-browser-overlay-btn" disabled>
+                    Currently Unavailable
+                  </button>
+                  <p className="hero-browser-overlay-disclaimer">
+                    Clicking will redirect you to an external demo session.
+                  </p>
                 </div>
               </div>
             </div>
