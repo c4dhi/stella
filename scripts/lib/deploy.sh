@@ -291,8 +291,338 @@ create_secrets() {
 # =============================================================================
 # Database Migrations
 # =============================================================================
-# Runs Prisma migrations against the PostgreSQL database.
-# This ensures the database schema is up-to-date before starting application services.
+# Runs Prisma migrations against the PostgreSQL database with intelligent
+# error handling, auto-recovery, and detailed diagnostics.
+#
+# Features:
+# - Checks migration status before applying
+# - Auto-recovery from common issues (type/table already exists, failed migrations)
+# - Detailed error diagnosis with specific remediation steps
+# - Fails fast on unrecoverable errors
+# =============================================================================
+
+# Global for cleanup
+PG_FORWARD_PID=""
+PG_LOCAL_PORT=5433
+MIGRATION_DB_URL=""
+
+cleanup_port_forward() {
+    if [[ -n "$PG_FORWARD_PID" ]]; then
+        kill $PG_FORWARD_PID 2>/dev/null || true
+        wait $PG_FORWARD_PID 2>/dev/null || true
+        PG_FORWARD_PID=""
+    fi
+}
+
+setup_port_forward() {
+    local pf_error_file="/tmp/stella-pf-error-$$.log"
+
+    # Check if port is already in use
+    if nc -z localhost ${PG_LOCAL_PORT} 2>/dev/null; then
+        verbose "Port ${PG_LOCAL_PORT} already in use, attempting cleanup..."
+        pkill -f "kubectl port-forward.*${PG_LOCAL_PORT}" 2>/dev/null || true
+        sleep 1
+
+        if nc -z localhost ${PG_LOCAL_PORT} 2>/dev/null; then
+            error "Port ${PG_LOCAL_PORT} is already in use"
+            echo "  Check what's using it: sudo lsof -i :${PG_LOCAL_PORT}"
+            return 1
+        fi
+    fi
+
+    # Start port-forward to PostgreSQL in background
+    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n ai-agents 2>"$pf_error_file" &
+    PG_FORWARD_PID=$!
+
+    # Wait for port-forward to be ready
+    local max_wait=30
+    local waited=0
+    while ! nc -z localhost ${PG_LOCAL_PORT} 2>/dev/null; do
+        sleep 1
+        waited=$((waited + 1))
+
+        if ! kill -0 $PG_FORWARD_PID 2>/dev/null; then
+            error "PostgreSQL port-forward failed to start"
+            [[ -f "$pf_error_file" ]] && echo "  Error: $(cat "$pf_error_file")"
+            rm -f "$pf_error_file"
+            return 1
+        fi
+
+        if [[ $waited -ge $max_wait ]]; then
+            cleanup_port_forward
+            error "Timeout waiting for PostgreSQL port-forward (${max_wait}s)"
+            echo "  Check PostgreSQL pod: kubectl get pods -n ai-agents -l app=postgres"
+            rm -f "$pf_error_file"
+            return 1
+        fi
+    done
+    rm -f "$pf_error_file"
+    return 0
+}
+
+# =============================================================================
+# Migration Diagnostics - Analyze errors and provide specific guidance
+# =============================================================================
+
+diagnose_migration_error() {
+    local output="$1"
+    local failed_migration="$2"
+
+    echo ""
+    echo -e "${BOLD}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}│  📋 MIGRATION DIAGNOSTIC REPORT                                 │${NC}"
+    echo -e "${BOLD}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # Detect specific error types and provide targeted guidance
+    local error_type="unknown"
+    local auto_fixable=false
+
+    # P3018: A migration failed to apply
+    if echo "$output" | grep -q "P3018"; then
+        echo -e "  ${BOLD}Error Type:${NC} P3018 - Migration failed to apply"
+        echo ""
+
+        # Sub-categorize the P3018 error
+        if echo "$output" | grep -qE "42710|type.*already exists"; then
+            error_type="type_exists"
+            auto_fixable=true
+            echo -e "  ${BOLD}Cause:${NC} A database TYPE (enum) already exists"
+            echo -e "  ${BOLD}Why:${NC} The migration tried to create a type that's already in the database."
+            echo "        This usually happens when:"
+            echo "        - A previous migration partially succeeded"
+            echo "        - The schema was modified manually"
+            echo "        - The migration was interrupted"
+
+        elif echo "$output" | grep -qE "42P07|relation.*already exists|table.*already exists"; then
+            error_type="relation_exists"
+            auto_fixable=true
+            echo -e "  ${BOLD}Cause:${NC} A database TABLE or INDEX already exists"
+            echo -e "  ${BOLD}Why:${NC} The table/index was created but the migration wasn't recorded."
+
+        elif echo "$output" | grep -qE "42703|column.*does not exist"; then
+            error_type="column_missing"
+            echo -e "  ${BOLD}Cause:${NC} A required COLUMN doesn't exist"
+            echo -e "  ${BOLD}Why:${NC} The migration expects a column that was never created or was dropped."
+
+        elif echo "$output" | grep -qE "23505|duplicate key|unique.*violation"; then
+            error_type="duplicate_key"
+            echo -e "  ${BOLD}Cause:${NC} Duplicate key violation"
+            echo -e "  ${BOLD}Why:${NC} The migration tried to insert data that violates a unique constraint."
+
+        elif echo "$output" | grep -qE "42P01|relation.*does not exist|table.*does not exist"; then
+            error_type="relation_missing"
+            echo -e "  ${BOLD}Cause:${NC} A required TABLE doesn't exist"
+            echo -e "  ${BOLD}Why:${NC} The migration references a table that was never created or was dropped."
+
+        elif echo "$output" | grep -qE "foreign key|23503"; then
+            error_type="fk_violation"
+            echo -e "  ${BOLD}Cause:${NC} Foreign key constraint violation"
+            echo -e "  ${BOLD}Why:${NC} The migration violates referential integrity."
+        fi
+    fi
+
+    # P3009: Found failed migrations
+    if echo "$output" | grep -q "P3009"; then
+        error_type="failed_migrations"
+        echo -e "  ${BOLD}Error Type:${NC} P3009 - Failed migrations found"
+        echo -e "  ${BOLD}Cause:${NC} Previous migration(s) failed and were not resolved"
+        echo -e "  ${BOLD}Why:${NC} Prisma won't apply new migrations until failed ones are resolved."
+    fi
+
+    # P3006: Migration history not in sync
+    if echo "$output" | grep -q "P3006"; then
+        error_type="history_mismatch"
+        echo -e "  ${BOLD}Error Type:${NC} P3006 - Migration history mismatch"
+        echo -e "  ${BOLD}Cause:${NC} Database schema doesn't match migration history"
+        echo -e "  ${BOLD}Why:${NC} Schema was modified outside of Prisma migrations."
+    fi
+
+    echo ""
+    echo -e "${BOLD}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}│  🔧 RECOMMENDED SOLUTIONS                                       │${NC}"
+    echo -e "${BOLD}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # Provide specific solutions based on error type
+    case "$error_type" in
+        "type_exists"|"relation_exists")
+            echo -e "  ${GREEN}Option 1 (Recommended):${NC} Mark migration as already applied"
+            echo "  The schema already exists, so we just need to record it in the migration history."
+            echo ""
+            echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "    cd $PROJECT_DIR"
+            echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" \\"
+            echo "      npx prisma migrate resolve --applied ${failed_migration}"
+            echo "    pkill -f 'port-forward.*5433'"
+            echo ""
+            echo -e "  ${YELLOW}Option 2:${NC} Drop the existing object and re-run migration"
+            echo "  Use this if the existing schema is incorrect/outdated."
+            echo ""
+            if [[ "$error_type" == "type_exists" ]]; then
+                local type_name
+                type_name=$(echo "$output" | grep -oP 'type "\K[^"]+' | head -1)
+                echo "    # Connect to database and drop the type"
+                echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
+                echo "      -c 'DROP TYPE IF EXISTS \"${type_name:-TypeName}\" CASCADE;'"
+            else
+                echo "    # Connect to database and drop the table/index"
+                echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
+                echo "    # Then: DROP TABLE IF EXISTS \"table_name\" CASCADE;"
+            fi
+            ;;
+
+        "failed_migrations")
+            echo -e "  ${GREEN}Option 1:${NC} Resolve the failed migration as applied (if schema exists)"
+            echo ""
+            echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "    cd $PROJECT_DIR"
+            echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" \\"
+            echo "      npx prisma migrate resolve --applied ${failed_migration}"
+            echo ""
+            echo -e "  ${YELLOW}Option 2:${NC} Mark the failed migration as rolled back"
+            echo ""
+            echo "    DATABASE_URL=\"...\" npx prisma migrate resolve --rolled-back ${failed_migration}"
+            ;;
+
+        "column_missing"|"relation_missing")
+            echo -e "  ${YELLOW}This requires manual database repair:${NC}"
+            echo ""
+            echo "  1. Check what's missing in the database:"
+            echo "     kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
+            echo "     \\dt   -- list tables"
+            echo "     \\d table_name  -- describe table"
+            echo ""
+            echo "  2. Either manually create the missing object, or reset migrations:"
+            echo "     DATABASE_URL=\"...\" npx prisma migrate reset --force  # WARNING: Loses data!"
+            ;;
+
+        "history_mismatch")
+            echo -e "  ${GREEN}Option 1:${NC} Baseline the current schema"
+            echo ""
+            echo "    cd $PROJECT_DIR"
+            echo "    DATABASE_URL=\"...\" npx prisma db pull  # Introspect current schema"
+            echo "    # Review changes in schema.prisma, then:"
+            echo "    DATABASE_URL=\"...\" npx prisma migrate dev --name baseline"
+            echo ""
+            echo -e "  ${RED}Option 2:${NC} Reset and start fresh (loses all data)"
+            echo ""
+            echo "    DATABASE_URL=\"...\" npx prisma migrate reset --force"
+            ;;
+
+        *)
+            echo -e "  ${YELLOW}General troubleshooting steps:${NC}"
+            echo ""
+            echo "  1. Check migration status:"
+            echo "     kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "     cd $PROJECT_DIR"
+            echo "     DATABASE_URL=\"...\" npx prisma migrate status"
+            echo ""
+            echo "  2. View migration history in database:"
+            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
+            echo "       -c 'SELECT * FROM _prisma_migrations ORDER BY started_at DESC LIMIT 10;'"
+            echo ""
+            echo "  3. If stuck, you can mark migrations as resolved:"
+            echo "     DATABASE_URL=\"...\" npx prisma migrate resolve --applied ${failed_migration:-MIGRATION_NAME}"
+            ;;
+    esac
+
+    echo ""
+    echo -e "${BOLD}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}│  ⚠️  NUCLEAR OPTIONS (Use with caution)                         │${NC}"
+    echo -e "${BOLD}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  ${RED}Reset database entirely (DESTROYS ALL DATA):${NC}"
+    echo "    DATABASE_URL=\"...\" npx prisma migrate reset --force"
+    echo ""
+    echo -e "  ${RED}Delete migration history (keeps data, re-applies all migrations):${NC}"
+    echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql ... -c 'DROP TABLE IF EXISTS _prisma_migrations;'"
+    echo "    DATABASE_URL=\"...\" npx prisma migrate deploy"
+    echo ""
+
+    return 0
+}
+
+# =============================================================================
+# Check Migration Status - Detect issues before running migrations
+# =============================================================================
+
+check_migration_status() {
+    local db_url="$1"
+
+    verbose "Checking migration status..."
+
+    set +e
+    local status_output
+    status_output=$(DATABASE_URL="$db_url" npx prisma migrate status 2>&1)
+    local status_code=$?
+    set -e
+
+    # Check for failed migrations
+    if echo "$status_output" | grep -qE "failed|Following migration.*failed"; then
+        local failed_migration
+        failed_migration=$(echo "$status_output" | grep -oP "^\d+_[a-zA-Z_]+" | head -1)
+
+        echo -e "   ${ARROW} ${YELLOW}⚠${NC}  Found failed migration: ${failed_migration:-unknown}"
+
+        # Check if this is an "already exists" type failure that we can auto-resolve
+        if echo "$status_output" | grep -qE "already exists|42710|42P07"; then
+            echo -e "   ${ARROW} ${CYAN}→${NC}  Attempting auto-resolution..."
+            return 1  # Signal that we should try auto-recovery
+        fi
+
+        return 2  # Signal that manual intervention is needed
+    fi
+
+    # Check for pending migrations
+    if echo "$status_output" | grep -q "Following migration.*have not yet been applied"; then
+        local pending_count
+        pending_count=$(echo "$status_output" | grep -c "^\d" || echo "some")
+        verbose "Found $pending_count pending migration(s)"
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# Attempt Auto-Fix for Known Issues
+# =============================================================================
+
+attempt_auto_fix() {
+    local db_url="$1"
+    local output="$2"
+    local failed_migration="$3"
+
+    # Can we auto-fix "already exists" errors?
+    if echo "$output" | grep -qE "already exists|42710|42P07"; then
+        echo -e "   ${ARROW} ${CYAN}→${NC}  Schema exists in DB but migration not recorded"
+        echo -e "   ${ARROW} ${CYAN}→${NC}  Marking migration as applied: ${failed_migration}"
+
+        set +e
+        local resolve_output
+        resolve_output=$(DATABASE_URL="$db_url" npx prisma migrate resolve --applied "$failed_migration" 2>&1)
+        local resolve_code=$?
+        set -e
+
+        if [[ $resolve_code -eq 0 ]]; then
+            echo -e "   ${ARROW} ${GREEN}✓${NC}  Successfully resolved: ${failed_migration}"
+            return 0
+        else
+            echo -e "   ${ARROW} ${RED}✗${NC}  Auto-resolution failed"
+            verbose "$resolve_output"
+            return 1
+        fi
+    fi
+
+    return 1
+}
+
+# =============================================================================
+# Main Migration Function
+# =============================================================================
 
 run_database_migrations() {
     if [[ "$DRY_RUN_MODE" == "true" ]]; then
@@ -303,153 +633,168 @@ run_database_migrations() {
     echo -ne "   ${ARROW} Database migrations... "
 
     # ==========================================================================
-    # Prerequisite checks - fail with clear error messages
+    # Prerequisite checks - fail immediately with clear error messages
     # ==========================================================================
 
-    # Check for required commands
     if ! command -v nc &>/dev/null; then
         printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
         error "Missing required command: nc (netcat)"
         echo "  Install with: sudo apt install netcat-openbsd"
-        return 1
+        exit 1
     fi
 
     if ! command -v npx &>/dev/null; then
         printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
         error "Missing required command: npx (Node.js)"
-        echo "  Install Node.js with:"
-        echo "    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-        echo "    sudo apt-get install -y nodejs"
-        echo "  Then run: npm install"
-        return 1
+        echo "  Install Node.js and run: npm install"
+        exit 1
     fi
 
-    # Check that Prisma is available
-    if [[ ! -d "$PROJECT_DIR/node_modules/.prisma" && ! -d "$PROJECT_DIR/node_modules/prisma" ]]; then
+    if [[ ! -d "$PROJECT_DIR/node_modules/prisma" ]]; then
         printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-        error "Prisma not installed in project"
-        echo "  Run: cd $PROJECT_DIR && npm install"
-        return 1
+        error "Prisma not installed. Run: cd $PROJECT_DIR && npm install"
+        exit 1
     fi
 
     # ==========================================================================
     # Setup port-forward to PostgreSQL
     # ==========================================================================
 
-    # Use a different local port to avoid conflicts with any existing port-forwards
-    local pg_local_port=5433
-    local pg_forward_pid=""
-
-    # Check if port is already in use
-    if nc -z localhost ${pg_local_port} 2>/dev/null; then
-        # Port already open - check if it's a stale port-forward
-        verbose "Port ${pg_local_port} already in use, attempting cleanup..."
-        pkill -f "kubectl port-forward.*${pg_local_port}" 2>/dev/null || true
-        sleep 1
-
-        if nc -z localhost ${pg_local_port} 2>/dev/null; then
-            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-            error "Port ${pg_local_port} is already in use"
-            echo "  Check what's using it: sudo lsof -i :${pg_local_port}"
-            echo "  Or try: pkill -f 'port-forward.*${pg_local_port}'"
-            return 1
-        fi
+    if ! setup_port_forward; then
+        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+        exit 1
     fi
 
-    # Start port-forward to PostgreSQL in background
-    local pf_error_file="/tmp/stella-pf-error-$$.log"
-    kubectl port-forward svc/postgres ${pg_local_port}:5432 -n ai-agents 2>"$pf_error_file" &
-    pg_forward_pid=$!
-
-    # Wait for port-forward to be ready
-    local max_wait=30
-    local waited=0
-    while ! nc -z localhost ${pg_local_port} 2>/dev/null; do
-        sleep 1
-        waited=$((waited + 1))
-
-        # Check if port-forward process died
-        if ! kill -0 $pg_forward_pid 2>/dev/null; then
-            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-            error "PostgreSQL port-forward failed to start"
-            if [[ -f "$pf_error_file" ]]; then
-                echo "  Error: $(cat "$pf_error_file")"
-                rm -f "$pf_error_file"
-            fi
-            return 1
-        fi
-
-        if [[ $waited -ge $max_wait ]]; then
-            kill $pg_forward_pid 2>/dev/null || true
-            printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-            error "Timeout waiting for PostgreSQL port-forward (${max_wait}s)"
-            echo "  Check PostgreSQL pod: kubectl get pods -n ai-agents -l app=postgres"
-            echo "  Check logs: kubectl logs -n ai-agents -l app=postgres --tail=20"
-            rm -f "$pf_error_file"
-            return 1
-        fi
-    done
-    rm -f "$pf_error_file"
-
     # ==========================================================================
-    # Run Prisma migrations
+    # Run Prisma migrations with auto-recovery
     # ==========================================================================
 
-    # Build the DATABASE_URL for migrations
-    local migration_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${pg_local_port}/${POSTGRES_DB}?schema=public"
-
-    # Run Prisma migrations
+    MIGRATION_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${PG_LOCAL_PORT}/${POSTGRES_DB}?schema=public"
     local migration_output=""
     local migration_exit_code=0
+    local max_retries=5
+    local retry_count=0
 
-    # Change to project directory and run migration
-    # Use set +e to prevent script from exiting on migration failure
-    set +e
     if ! cd "$PROJECT_DIR" 2>/dev/null; then
-        set -e
-        kill $pg_forward_pid 2>/dev/null || true
         printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
         error "Cannot access project directory: $PROJECT_DIR"
-        return 1
+        cleanup_port_forward
+        exit 1
     fi
 
-    migration_output=$(DATABASE_URL="$migration_db_url" npx prisma migrate deploy 2>&1)
-    migration_exit_code=$?
-    cd - > /dev/null 2>&1 || true
-    set -e
+    # Initial status check
+    printf "\r   ${ARROW} Database migrations... ${CYAN}checking${NC}    "
 
-    # Clean up port-forward
-    kill $pg_forward_pid 2>/dev/null || true
-    wait $pg_forward_pid 2>/dev/null || true
+    while [[ $retry_count -lt $max_retries ]]; do
+        # Run migration
+        set +e
+        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Running prisma migrate deploy..."
+        migration_output=$(DATABASE_URL="$MIGRATION_DB_URL" npx prisma migrate deploy 2>&1)
+        migration_exit_code=$?
+        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration exit code: $migration_exit_code"
+        set -e
 
-    # ==========================================================================
-    # Report results
-    # ==========================================================================
+        # Success - we're done
+        if [[ $migration_exit_code -eq 0 ]]; then
+            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration succeeded, cleaning up..."
+            cd - > /dev/null 2>&1 || true
+            cleanup_port_forward
+            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Cleanup done, printing success..."
+            printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
 
-    if [[ $migration_exit_code -eq 0 ]]; then
-        printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
+            # Show what was applied (protect grep from set -e)
+            set +e
+            local applied_count
+            applied_count=$(echo "$migration_output" | grep -c "Applying migration" 2>/dev/null || echo "0")
+            set -e
 
-        # Show migration details in verbose mode
-        if [[ "$VERBOSE_MODE" == "true" ]]; then
-            echo "$migration_output" | grep -E "applied|Already|migration" | head -5 | while read -r line; do
-                verbose "  $line"
-            done
+            if [[ "$applied_count" -gt 0 ]]; then
+                echo -e "   ${ARROW} ${GREEN}✓${NC}  Applied ${applied_count} migration(s)"
+            fi
+
+            if [[ "$VERBOSE_MODE" == "true" ]]; then
+                set +e
+                echo "$migration_output" | grep -E "applied|Already|Applying" | head -5 | while read -r line; do
+                    verbose "  $line"
+                done
+                set -e
+            fi
+            return 0
         fi
-        return 0
-    else
-        printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
-        echo ""
-        error "Prisma migration failed (exit code: $migration_exit_code)"
-        echo ""
-        echo "--- Migration Output ---"
-        echo "$migration_output" | tail -30
-        echo "------------------------"
-        echo ""
-        echo "  To debug manually:"
-        echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
-        echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" npx prisma migrate deploy"
-        return 1
-    fi
+
+        # =======================================================================
+        # Migration failed - show output in verbose mode
+        # =======================================================================
+        if [[ "$VERBOSE_MODE" == "true" ]]; then
+            echo ""
+            echo "[DEBUG] Migration failed. Output:"
+            echo "$migration_output" | tail -20
+            echo ""
+        fi
+
+        # =======================================================================
+        # Extract failed migration name (disable errexit for grep)
+        # =======================================================================
+        set +e
+        local failed_migration
+        failed_migration=$(echo "$migration_output" | grep -oP "Migration name: \K[0-9_a-zA-Z]+" 2>/dev/null | head -1)
+
+        # =======================================================================
+        # Auto-recovery attempt
+        # =======================================================================
+
+        if [[ -n "$failed_migration" ]]; then
+            # Check if this is auto-recoverable
+            if echo "$migration_output" | grep -qE "already exists|duplicate|42P07|42710|42P16" 2>/dev/null; then
+                retry_count=$((retry_count + 1))
+                printf "\r   ${ARROW} Database migrations... ${YELLOW}recovering${NC} ($retry_count/$max_retries)\n"
+
+                if attempt_auto_fix "$MIGRATION_DB_URL" "$migration_output" "$failed_migration"; then
+                    echo -ne "   ${ARROW} Database migrations... "
+                    set -e
+                    continue  # Retry migration
+                fi
+            fi
+
+            # Check for "failed migration needs resolution" case (P3018)
+            if echo "$migration_output" | grep -q "P3018" 2>/dev/null; then
+                retry_count=$((retry_count + 1))
+                printf "\r   ${ARROW} Database migrations... ${YELLOW}recovering${NC} ($retry_count/$max_retries)\n"
+
+                # Try marking as applied if schema exists
+                if attempt_auto_fix "$MIGRATION_DB_URL" "$migration_output" "$failed_migration"; then
+                    echo -ne "   ${ARROW} Database migrations... "
+                    set -e
+                    continue
+                fi
+            fi
+        fi
+        set -e
+
+        # =======================================================================
+        # Could not auto-recover - break and show diagnostics
+        # =======================================================================
+        break
+    done
+
+    # ==========================================================================
+    # Migration failed - show detailed diagnostics
+    # ==========================================================================
+
+    cd - > /dev/null 2>&1 || true
+    printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
+
+    # Show the raw output first
+    echo ""
+    echo -e "${DIM}--- Raw Migration Output ---${NC}"
+    echo "$migration_output" | tail -30
+    echo -e "${DIM}----------------------------${NC}"
+
+    # Run detailed diagnostics
+    diagnose_migration_error "$migration_output" "$failed_migration"
+
+    cleanup_port_forward
+    exit 1
 }
 
 # =============================================================================
@@ -551,13 +896,39 @@ deploy_services() {
         return 1
     fi
 
-    # Phase 3: Application Services (apply manifests quietly)
+    # Phase 3: Application Services (apply manifests quietly but show errors)
     # All manifests use temp dir versions which may have custom DNS config applied
-    kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null
-    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null
-    kubectl apply -f "$STT_MANIFEST" >/dev/null
-    kubectl apply -f "$TTS_MANIFEST" >/dev/null
-    kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null
+    echo -ne "   ${ARROW} Application services... "
+
+    local apply_errors=""
+    set +e  # Disable errexit to capture errors
+
+    if ! kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}session-management-server "
+    fi
+    if ! kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}frontend-ui "
+    fi
+    if ! kubectl apply -f "$STT_MANIFEST" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}stt-service "
+    fi
+    if ! kubectl apply -f "$TTS_MANIFEST" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}tts-service "
+    fi
+    if ! kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" 2>&1 | grep -v "^Warning:"; then
+        apply_errors="${apply_errors}message-recorder "
+    fi
+
+    set -e  # Re-enable errexit
+
+    if [[ -n "$apply_errors" ]]; then
+        printf "${RED}${CROSS}${NC}\n"
+        error "Failed to apply manifests: $apply_errors"
+        echo "  Check manifest files exist in ${TEMP_DIR}/"
+        ls -la "${TEMP_DIR}/"*.yaml 2>/dev/null || echo "  No yaml files found in temp dir"
+        return 1
+    fi
+    printf "${GREEN}${CHECK}${NC}\n"
 
     # NodePort services for local development
     if [[ "$NODE_ENV" != "production" ]]; then

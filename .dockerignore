@@ -18,3 +18,9 @@ message-recorder-python
 k8s
 scripts
 .claude
+
+# Additional directories that have their own Dockerfiles
+# Note: agents is NOT excluded because agent Dockerfiles use root context and COPY from agents/
+docs-site
+stt-service
+tts-service
