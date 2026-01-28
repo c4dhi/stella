@@ -129,7 +129,7 @@ load_environment() {
     # Set hardcoded defaults
     set_defaults
 
-    echo -e "   ${ARROW} OS: ${BOLD}${OS_TYPE}${NC} | Mode: ${BOLD}${NODE_ENV}${NC}"
+    # Display configuration table (set_defaults calls configure_gpu_settings which displays the table)
 }
 
 # =============================================================================
@@ -229,19 +229,51 @@ configure_gpu_settings() {
             fi
         fi
     fi
+}
 
-    # Show GPU status in output
-    if [[ "$GPU_AVAILABLE" == "true" ]]; then
-        if [[ "$ENABLE_GPU" == "true" ]]; then
-            echo -e "   ${ARROW} GPU: ${GREEN}${CHECK}${NC} ${GPU_NAME} ${DIM}(CUDA enabled)${NC}"
+# =============================================================================
+# Configuration Display
+# =============================================================================
+
+# Display configuration summary
+display_config_table() {
+    # Format OS name nicely
+    local os_display="Linux"
+    [[ "$OS_TYPE" == "macos" ]] && os_display="macOS"
+
+    # Format GPU status
+    local gpu_display="disabled"
+    if [[ "$ENABLE_GPU" == "true" ]]; then
+        gpu_display="${GREEN}enabled${NC} (CUDA)"
+    elif [[ "${GPU_AVAILABLE:-false}" == "true" ]]; then
+        gpu_display="${YELLOW}available${NC} (not enabled)"
+    fi
+
+    # Format TTS provider with type indicator
+    local tts_display="${TTS_PROVIDER:-edge_tts}"
+    case "${TTS_PROVIDER:-edge_tts}" in
+        edge_tts)   tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+        kokoro)     tts_display="${tts_display} ${DIM}(local)${NC}" ;;
+        elevenlabs) tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+    esac
+
+    # Format STT provider with device indicator
+    local stt_display="${STT_PROVIDER:-sherpa}"
+    if [[ "$STT_PROVIDER" == "sherpa" ]]; then
+        stt_display="${stt_display} ${DIM}(CPU)${NC}"
+    elif [[ "$STT_PROVIDER" == "whisper" ]]; then
+        if [[ "$WHISPER_DEVICE" == "cuda" ]]; then
+            stt_display="${stt_display} ${DIM}(CUDA)${NC}"
         else
-            echo -e "   ${ARROW} GPU: ${YELLOW}${GPU_NAME}${NC} ${DIM}(available but not enabled)${NC}"
-        fi
-    else
-        if [[ "$NODE_ENV" == "production" ]]; then
-            echo -e "   ${ARROW} GPU: ${DIM}Not detected (using CPU)${NC}"
+            stt_display="${stt_display} ${DIM}(CPU)${NC}"
         fi
     fi
+
+    config_row "OS" "$os_display"
+    config_row "Mode" "$NODE_ENV"
+    config_row "GPU" "$gpu_display"
+    config_row "TTS" "$tts_display"
+    config_row "STT" "$stt_display"
 }
 
 # =============================================================================
@@ -322,6 +354,9 @@ set_defaults() {
 
     # Auto-configure GPU settings (after defaults are set)
     configure_gpu_settings
+
+    # Display configuration table
+    display_config_table
 }
 
 # =============================================================================

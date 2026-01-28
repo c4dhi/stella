@@ -164,3 +164,18 @@ dry_run_summary() {
     echo ""
     separator
 }
+
+# =============================================================================
+# Formatted Row Output (for clean aligned output)
+# =============================================================================
+
+# Print a formatted config row (2 columns, indented)
+# Supports ANSI color codes in value
+# Usage: config_row "Key" "Value"
+config_row() {
+    local key="$1"
+    local value="$2"
+    # Use printf for the key (fixed width) then echo -e for value (may contain colors)
+    printf "   %-16s " "$key"
+    echo -e "$value"
+}
