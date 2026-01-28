@@ -738,13 +738,13 @@ wait_for_parallel_builds() {
 
     # Initialize status for each build
     for i in "${!all_names[@]}"; do
-        all_status[$i]="starting..."
+        all_status[$i]="building..."
         all_done[$i]="false"
     done
 
     # Print initial status lines for all services
     for i in "${!all_names[@]}"; do
-        echo -e "   ${ARROW} ${all_names[$i]}... ${DIM}starting...${NC}"
+        echo -e "   ${ARROW} ${all_names[$i]}...$(printf '%*s' $((30 - ${#all_names[$i]})) '')${DIM}building...${NC} ${CYAN}⠋${NC}"
     done
 
     local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -797,26 +797,26 @@ wait_for_parallel_builds() {
         done
 
         # Move cursor up and redraw all status lines
-        # Move up N lines where N = total number of services
         echo -ne "\033[${total}A"
 
         for i in "${!all_names[@]}"; do
             local name="${all_names[$i]}"
             local status="${all_status[$i]}"
-            local spinner=""
 
-            # Add spinner for running builds
-            if [[ "${all_done[$i]}" != "true" ]]; then
-                spinner=" ${spinner_chars[$spinner_idx]}"
-            fi
-
-            # Clear line and print status (use echo -e for proper escape code handling)
+            # Clear line and print status
             echo -ne "\r\033[K"
-            echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${DIM}${status}${NC}${spinner}"
+            if [[ "${all_done[$i]}" == "true" ]]; then
+                # Completed - status already has colors
+                echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${status}"
+            else
+                # Still running - show dim status with spinner
+                local spinner="${spinner_chars[$spinner_idx]}"
+                echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${DIM}${status}${NC} ${CYAN}${spinner}${NC}"
+            fi
         done
 
         spinner_idx=$(( (spinner_idx + 1) % ${#spinner_chars[@]} ))
-        sleep 0.3
+        sleep 0.2
     done
 
     echo ""
@@ -836,9 +836,7 @@ wait_for_parallel_builds() {
             local name="${entry%%:*}"
             local log="${entry#*:}"
             echo ""
-            echo -e "${BOLD}════════════════════════════════════════════════════════════${NC}"
-            echo -e "${BOLD}  FAILED: $name${NC}"
-            echo -e "${BOLD}════════════════════════════════════════════════════════════${NC}"
+            echo -e "${BOLD}═══ FAILED: $name ═══${NC}"
             echo -e "${DIM}Log file: $log${NC}"
             echo ""
             if [[ -f "$log" && -s "$log" ]]; then

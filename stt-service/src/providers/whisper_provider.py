@@ -449,10 +449,8 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language
-            if not self.detected_language and hasattr(info, 'language') and info.language:
-                self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language}")
+            # Don't cache language from partials - they're too short for reliable detection
+            # Language will be cached from final transcription instead
 
             # Process segments
             transcribed_text = ""
@@ -525,10 +523,14 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language
-            if not self.detected_language and hasattr(info, 'language') and info.language:
+            # Cache detected language only if we have enough audio for reliable detection
+            # Require at least 2 seconds of audio to avoid locking in wrong language from short utterances
+            min_duration_for_lang_cache = 2.0  # seconds
+            if (not self.detected_language and
+                hasattr(info, 'language') and info.language and
+                audio_duration_sec >= min_duration_for_lang_cache):
                 self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language}")
+                print(f"[WhisperSession] Detected language: {self.detected_language} (from {audio_duration_sec:.1f}s audio)")
 
             final_text = ""
             for segment in segments:
@@ -613,6 +615,11 @@ class WhisperProvider(STTProvider):
         self.whisper_model = None
         self.vad_model = None
         self.model_ready = False
+
+        # Warmup state (shared across all sessions/agents)
+        self._warmed_up = False
+        self._last_warmup_time = 0
+        self._warmup_ttl_seconds = int(os.getenv("WHISPER_WARMUP_TTL", "300"))  # 5 min default
 
         # Whisper model configuration (4 parameters)
         self.model_size = os.getenv("WHISPER_MODEL", "large-v3")
@@ -707,6 +714,81 @@ class WhisperProvider(STTProvider):
 
         except Exception as e:
             print(f"[WhisperProvider] Initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def warmup(self, duration_ms: int = 1000) -> bool:
+        """Warm up the Whisper model by running inference on dummy audio.
+
+        This eliminates cold-start latency caused by:
+        - CUDA kernel JIT compilation
+        - cuDNN autotuning
+        - Lazy GPU memory allocation
+
+        The warmup has a TTL (default 5 min), so repeated calls are no-ops
+        if the model is still warm from recent use.
+
+        Args:
+            duration_ms: Duration of dummy audio to process (default 1000ms)
+
+        Returns:
+            True if warmup ran successfully, False otherwise.
+        """
+        if not self.model_ready or not self.whisper_model:
+            print("[WhisperProvider] Cannot warmup: model not ready")
+            return False
+
+        current_time = time.time()
+
+        # Check TTL - skip if already warm
+        if self._warmed_up and (current_time - self._last_warmup_time) < self._warmup_ttl_seconds:
+            time_since_warmup = current_time - self._last_warmup_time
+            print(f"[WhisperProvider] Model still warm ({time_since_warmup:.0f}s since last warmup, TTL={self._warmup_ttl_seconds}s)")
+            return True
+
+        print(f"[WhisperProvider] Warming up model (duration={duration_ms}ms)...")
+        start_time = time.time()
+
+        try:
+            # Generate dummy audio: low-level noise (not silence, to ensure full inference path)
+            # -60dB noise ensures we don't trigger no-speech shortcuts
+            sample_rate = 16000
+            num_samples = int(duration_ms * sample_rate / 1000)
+            # Generate white noise at -60dB (amplitude ~0.001)
+            dummy_audio = np.random.randn(num_samples).astype(np.float32) * 0.001
+
+            # Run transcription on dummy audio
+            # Use configured language or auto-detect - warmup doesn't affect session language
+            # since each session has its own detected_language state
+            segments, info = self.whisper_model.transcribe(
+                dummy_audio,
+                language=self.language,  # Use configured language (or None for auto)
+                beam_size=self.beam_size,
+                vad_filter=False,
+                word_timestamps=False,
+                condition_on_previous_text=False,
+                temperature=0.0,
+            )
+
+            # Consume the generator to ensure inference actually runs
+            for _ in segments:
+                pass
+
+            # Clear GPU cache after warmup to free any temporary allocations
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Update warmup state
+            self._warmed_up = True
+            self._last_warmup_time = time.time()
+
+            warmup_time_ms = (time.time() - start_time) * 1000
+            print(f"[WhisperProvider] Warmup completed in {warmup_time_ms:.0f}ms")
+            return True
+
+        except Exception as e:
+            print(f"[WhisperProvider] Warmup failed: {e}")
             import traceback
             traceback.print_exc()
             return False

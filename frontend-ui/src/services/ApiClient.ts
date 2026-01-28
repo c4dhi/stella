@@ -778,6 +778,69 @@ class SessionManagementClient {
     )
   }
 
+  /**
+   * Download transcript for a session as a JSON file.
+   * Triggers a browser download of the complete conversation transcript.
+   */
+  async downloadTranscript(
+    sessionId: string,
+    options?: { includeDebug?: boolean; includeMetadata?: boolean }
+  ): Promise<void> {
+    const params = new URLSearchParams()
+    if (options?.includeDebug) params.append('includeDebug', 'true')
+    if (options?.includeMetadata) params.append('includeMetadata', 'true')
+
+    const queryString = params.toString()
+    const path = `/sessions/${sessionId}/transcript${queryString ? `?${queryString}` : ''}`
+
+    // Get JWT token from localStorage
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${this.getBaseUrl()}${path}`, {
+      method: 'GET',
+      headers,
+    })
+
+    if (!response.ok) {
+      let errorData: any
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    // Get filename from Content-Disposition header or generate a default
+    const contentDisposition = response.headers.get('Content-Disposition')
+    let filename = `transcript-${sessionId}.json`
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="(.+)"/)
+      if (match) {
+        filename = match[1]
+      }
+    }
+
+    // Trigger browser download
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // ============================================================================
   // Listener Monitoring API
   // ============================================================================

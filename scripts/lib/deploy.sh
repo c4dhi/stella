@@ -330,8 +330,8 @@ setup_port_forward() {
         fi
     fi
 
-    # Start port-forward to PostgreSQL in background
-    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n ai-agents 2>"$pf_error_file" &
+    # Start port-forward to PostgreSQL in background (suppress all output)
+    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n ai-agents >/dev/null 2>"$pf_error_file" &
     PG_FORWARD_PID=$!
 
     # Wait for port-forward to be ready
@@ -580,7 +580,8 @@ check_migration_status() {
     # Check for pending migrations
     if echo "$status_output" | grep -q "Following migration.*have not yet been applied"; then
         local pending_count
-        pending_count=$(echo "$status_output" | grep -c "^\d" || echo "some")
+        pending_count=$(echo "$status_output" | grep -c "^\d" 2>/dev/null)
+        pending_count="${pending_count:-some}"
         verbose "Found $pending_count pending migration(s)"
     fi
 
@@ -682,43 +683,44 @@ run_database_migrations() {
         exit 1
     fi
 
-    # Initial status check
-    printf "\r   ${ARROW} Database migrations... ${CYAN}checking${NC}    "
+    local migration_log="/tmp/stella-migration-$$.log"
+    local spinner_idx=0
 
     while [[ $retry_count -lt $max_retries ]]; do
-        # Run migration
-        set +e
-        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Running prisma migrate deploy..."
-        migration_output=$(DATABASE_URL="$MIGRATION_DB_URL" npx prisma migrate deploy 2>&1)
+        # Run migration in background with spinner
+        (DATABASE_URL="$MIGRATION_DB_URL" npx prisma migrate deploy 2>&1) > "$migration_log" &
+        local migration_pid=$!
+
+        # Show spinner while migration runs
+        while kill -0 $migration_pid 2>/dev/null; do
+            local spinner="${SPINNER_CHARS[$spinner_idx]}"
+            printf "\r   ${ARROW} Database migrations... ${CYAN}${spinner}${NC} "
+            spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
+            sleep 0.1
+        done
+
+        wait $migration_pid
         migration_exit_code=$?
-        [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration exit code: $migration_exit_code"
-        set -e
+        migration_output=$(cat "$migration_log" 2>/dev/null)
 
         # Success - we're done
         if [[ $migration_exit_code -eq 0 ]]; then
-            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Migration succeeded, cleaning up..."
+            rm -f "$migration_log"
             cd - > /dev/null 2>&1 || true
             cleanup_port_forward
-            [[ "$VERBOSE_MODE" == "true" ]] && echo "[DEBUG] Cleanup done, printing success..."
             printf "\r   ${ARROW} Database migrations... ${GREEN}${CHECK}${NC}    \n"
 
             # Show what was applied (protect grep from set -e)
             set +e
             local applied_count
-            applied_count=$(echo "$migration_output" | grep -c "Applying migration" 2>/dev/null || echo "0")
+            applied_count=$(echo "$migration_output" | grep -c "Applying migration" 2>/dev/null)
+            applied_count="${applied_count:-0}"
             set -e
 
-            if [[ "$applied_count" -gt 0 ]]; then
-                echo -e "   ${ARROW} ${GREEN}✓${NC}  Applied ${applied_count} migration(s)"
+            if [[ "$VERBOSE_MODE" == "true" && "$applied_count" -gt 0 ]]; then
+                verbose "Applied ${applied_count} migration(s)"
             fi
 
-            if [[ "$VERBOSE_MODE" == "true" ]]; then
-                set +e
-                echo "$migration_output" | grep -E "applied|Already|Applying" | head -5 | while read -r line; do
-                    verbose "  $line"
-                done
-                set -e
-            fi
             return 0
         fi
 
@@ -781,6 +783,7 @@ run_database_migrations() {
     # Migration failed - show detailed diagnostics
     # ==========================================================================
 
+    rm -f "$migration_log" 2>/dev/null
     cd - > /dev/null 2>&1 || true
     printf "\r   ${ARROW} Database migrations... ${RED}${CROSS}${NC}    \n"
 
@@ -896,39 +899,38 @@ deploy_services() {
         return 1
     fi
 
-    # Phase 3: Application Services (apply manifests quietly but show errors)
+    # Phase 3: Application Services (apply manifests quietly)
     # All manifests use temp dir versions which may have custom DNS config applied
     echo -ne "   ${ARROW} Application services... "
 
     local apply_errors=""
     set +e  # Disable errexit to capture errors
 
-    if ! kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" 2>&1 | grep -v "^Warning:"; then
-        apply_errors="${apply_errors}session-management-server "
-    fi
-    if ! kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" 2>&1 | grep -v "^Warning:"; then
-        apply_errors="${apply_errors}frontend-ui "
-    fi
-    if ! kubectl apply -f "$STT_MANIFEST" 2>&1 | grep -v "^Warning:"; then
-        apply_errors="${apply_errors}stt-service "
-    fi
-    if ! kubectl apply -f "$TTS_MANIFEST" 2>&1 | grep -v "^Warning:"; then
-        apply_errors="${apply_errors}tts-service "
-    fi
-    if ! kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" 2>&1 | grep -v "^Warning:"; then
-        apply_errors="${apply_errors}message-recorder "
-    fi
+    kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null 2>&1
+    [[ $? -ne 0 ]] && apply_errors="${apply_errors}session-management-server "
+
+    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null 2>&1
+    [[ $? -ne 0 ]] && apply_errors="${apply_errors}frontend-ui "
+
+    kubectl apply -f "$STT_MANIFEST" >/dev/null 2>&1
+    [[ $? -ne 0 ]] && apply_errors="${apply_errors}stt-service "
+
+    kubectl apply -f "$TTS_MANIFEST" >/dev/null 2>&1
+    [[ $? -ne 0 ]] && apply_errors="${apply_errors}tts-service "
+
+    kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null 2>&1
+    [[ $? -ne 0 ]] && apply_errors="${apply_errors}message-recorder "
 
     set -e  # Re-enable errexit
 
     if [[ -n "$apply_errors" ]]; then
-        printf "${RED}${CROSS}${NC}\n"
+        printf "\r   ${ARROW} Application services... ${RED}${CROSS}${NC}    \n"
         error "Failed to apply manifests: $apply_errors"
         echo "  Check manifest files exist in ${TEMP_DIR}/"
         ls -la "${TEMP_DIR}/"*.yaml 2>/dev/null || echo "  No yaml files found in temp dir"
         return 1
     fi
-    printf "${GREEN}${CHECK}${NC}\n"
+    printf "\r   ${ARROW} Application services... ${GREEN}${CHECK}${NC}    \n"
 
     # NodePort services for local development
     if [[ "$NODE_ENV" != "production" ]]; then
@@ -1203,24 +1205,11 @@ check_service_runtime_status() {
 
 # Display GPU status for both services
 show_gpu_status() {
-    echo ""
-    info "🎮 GPU/CPU Runtime Status"
-    echo ""
-
     # STT Service
     local stt_result
     stt_result=$(check_service_runtime_status "stt-service")
     local stt_status stt_provider stt_details
     IFS='|' read -r stt_status stt_provider stt_details <<< "$stt_result"
-
-    echo -n "   ${ARROW} STT Service: "
-    if [[ "$stt_status" == "CUDA" ]]; then
-        echo -e "${GREEN}${CHECK} CUDA${NC} (${stt_provider}) - ${stt_details}"
-    elif [[ "$stt_status" == "CPU" ]]; then
-        echo -e "${YELLOW}${CROSS} CPU${NC} (${stt_provider}) - ${stt_details}"
-    else
-        echo -e "${DIM}${stt_status}${NC}"
-    fi
 
     # TTS Service
     local tts_result
@@ -1228,13 +1217,27 @@ show_gpu_status() {
     local tts_status tts_provider tts_details
     IFS='|' read -r tts_status tts_provider tts_details <<< "$tts_result"
 
-    echo -n "   ${ARROW} TTS Service: "
+    echo ""
+    info "🎮 Runtime Status"
+
+    # STT display
+    echo -n "   STT Service:   "
+    if [[ "$stt_status" == "CUDA" ]]; then
+        echo -e "${GREEN}${CHECK} CUDA${NC} (${stt_provider}) ${DIM}- ${stt_details}${NC}"
+    elif [[ "$stt_status" == "CPU" ]]; then
+        echo -e "${YELLOW}${CROSS} CPU${NC} (${stt_provider}) ${DIM}- ${stt_details}${NC}"
+    else
+        echo -e "${DIM}${stt_status}${NC}"
+    fi
+
+    # TTS display
+    echo -n "   TTS Service:   "
     if [[ "$tts_status" == "CUDA" ]]; then
-        echo -e "${GREEN}${CHECK} CUDA${NC} (${tts_provider}) - ${tts_details}"
+        echo -e "${GREEN}${CHECK} CUDA${NC} (${tts_provider}) ${DIM}- ${tts_details}${NC}"
     elif [[ "$tts_status" == "CPU" ]]; then
-        echo -e "${YELLOW}${CROSS} CPU${NC} (${tts_provider}) - ${tts_details}"
+        echo -e "${YELLOW}${CROSS} CPU${NC} (${tts_provider}) ${DIM}- ${tts_details}${NC}"
     elif [[ "$tts_status" == "Cloud" ]]; then
-        echo -e "${CYAN}☁ Cloud${NC} (${tts_provider}) - ${tts_details}"
+        echo -e "${CYAN}☁ Cloud${NC} (${tts_provider}) ${DIM}- ${tts_details}${NC}"
     else
         echo -e "${DIM}${tts_status}${NC}"
     fi
@@ -1243,9 +1246,8 @@ show_gpu_status() {
     if [[ "$ENABLE_GPU" == "true" ]]; then
         if [[ "$stt_status" == "CPU" || "$tts_status" == "CPU" ]]; then
             echo ""
-            warning "GPU was enabled but some services fell back to CPU. Check logs for details:"
-            echo -e "   ${DIM}kubectl logs -n ai-agents -l app=stt-service --tail=50${NC}"
-            echo -e "   ${DIM}kubectl logs -n ai-agents -l app=tts-service --tail=50${NC}"
+            warning "GPU enabled but some services fell back to CPU"
+            echo -e "   ${DIM}Check: kubectl logs -n ai-agents -l app=stt-service --tail=50${NC}"
         fi
     fi
 }

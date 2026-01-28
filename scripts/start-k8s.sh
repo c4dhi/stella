@@ -4,7 +4,13 @@
 # =============================================================================
 # Unified deployment for local development (macOS/OrbStack) and production (Ubuntu/K3s)
 #
-# Usage:
+# Configuration Wizards:
+#   ./scripts/start-k8s.sh --setup            # Onboarding wizard (required vars first)
+#   ./scripts/start-k8s.sh --setup --local    # Setup for local development
+#   ./scripts/start-k8s.sh --setup --production  # Setup for production
+#   ./scripts/start-k8s.sh --config           # Full configuration (all variables)
+#
+# Deployment:
 #   ./scripts/start-k8s.sh                    # Local development (auto-detect changes)
 #   ./scripts/start-k8s.sh --production       # Production deployment
 #   ./scripts/start-k8s.sh --rebuild          # Force rebuild all images
@@ -14,6 +20,9 @@
 #   ./scripts/start-k8s.sh --daemon           # Run in background
 #   ./scripts/start-k8s.sh --stop             # Stop all services
 #   ./scripts/start-k8s.sh --restart          # Stop then start (apply code changes)
+#
+# Auto-setup: If no .stella-setup-complete marker exists, the setup wizard
+#             will be triggered automatically on first run.
 #
 # =============================================================================
 
@@ -88,6 +97,8 @@ SKIP_BUILD_MODE=false
 DRY_RUN_MODE=false
 VERBOSE_MODE=false
 ENV_FLAG=""
+SETUP_MODE=false
+CONFIG_MODE=false
 
 # =============================================================================
 # Argument Parsing (single-pass)
@@ -127,6 +138,12 @@ parse_args() {
             --production)
                 ENV_FLAG="production"
                 ;;
+            --setup)
+                SETUP_MODE=true
+                ;;
+            --config)
+                CONFIG_MODE=true
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -144,14 +161,21 @@ parse_args() {
     # Export for use in modules
     export DAEMON_MODE STOP_MODE RESTART_MODE REBUILD_MODE RESET_DB_MODE
     export SKIP_BUILD_MODE DRY_RUN_MODE VERBOSE_MODE ENV_FLAG
+    export SETUP_MODE CONFIG_MODE
 }
 
 show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Options:"
+    echo "Configuration Wizards:"
+    echo "  --setup         Run onboarding wizard (required variables first)"
+    echo "  --config        Run full configuration wizard (all variables)"
+    echo ""
+    echo "Environment Options:"
     echo "  --local         Run in local development mode (default)"
     echo "  --production    Run in production mode"
+    echo ""
+    echo "Deployment Options:"
     echo "  --rebuild       Force rebuild all Docker images"
     echo "  --reset-db      Reset database and rebuild (WARNING: data loss)"
     echo "  --skip-build    Skip builds, restart pods only"
@@ -162,7 +186,13 @@ show_help() {
     echo "  --stop          Stop all services"
     echo "  --help, -h      Show this help message"
     echo ""
-    echo "Examples:"
+    echo "Setup Examples:"
+    echo "  $0 --setup                # Run setup wizard (auto-detect mode)"
+    echo "  $0 --setup --local        # Setup for local development"
+    echo "  $0 --setup --production   # Setup for production"
+    echo "  $0 --config               # Full configuration (all variables)"
+    echo ""
+    echo "Deployment Examples:"
     echo "  $0                        # Local dev, auto-detect changes"
     echo "  $0 --production           # Production deployment"
     echo "  $0 --rebuild              # Force rebuild everything"
@@ -178,15 +208,32 @@ main() {
     # Parse command line arguments
     parse_args "$@"
 
+    # Phase 1: Environment Detection (fast, no I/O)
+    detect_environment
+
+    # Phase 1b: Handle wizard modes (before normal startup)
+    if [[ "$SETUP_MODE" == "true" ]] || [[ "$CONFIG_MODE" == "true" ]]; then
+        # Source wizard modules
+        source "$LIB_DIR/variables.sh"
+        source "$LIB_DIR/wizard.sh"
+
+        if [[ "$SETUP_MODE" == "true" ]]; then
+            source "$LIB_DIR/setup_wizard.sh"
+            run_setup_wizard "$ENV_FLAG"
+            exit $?
+        elif [[ "$CONFIG_MODE" == "true" ]]; then
+            source "$LIB_DIR/config_wizard.sh"
+            run_config_wizard "$ENV_FLAG"
+            exit $?
+        fi
+    fi
+
     # Display header
     local mode_suffix=""
     [[ "$DRY_RUN_MODE" == "true" ]] && mode_suffix=" ${YELLOW}(DRY RUN)${NC}"
     echo ""
     echo -e "${EMOJI_ROCKET} ${BOLD}STELLA - Kubernetes Deployment${NC}${mode_suffix}"
     echo ""
-
-    # Phase 1: Environment Detection (fast, no I/O)
-    detect_environment
 
     # Phase 2: Handle stop mode early
     if [[ "$STOP_MODE" == "true" ]]; then
@@ -203,6 +250,39 @@ main() {
 
     # Phase 3: Load Configuration
     load_environment
+
+    # Phase 3b: Check if setup is complete, offer wizard if not
+    if ! check_setup_status; then
+        echo ""
+        warning "Setup not complete or missing required configuration"
+        echo ""
+        echo -e "  ${DIM}Missing required variables or setup marker not found.${NC}"
+        echo ""
+        echo -e "  Options:"
+        echo -e "    ${CYAN}$0 --setup${NC}        Run the setup wizard"
+        echo -e "    ${CYAN}$0 --config${NC}       Run full configuration wizard"
+        echo ""
+
+        # Ask if user wants to run setup
+        read -r -p "  Run setup wizard now? [Y/n] " response
+        response="${response:-y}"
+
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            # Source and run wizard
+            source "$LIB_DIR/variables.sh"
+            source "$LIB_DIR/wizard.sh"
+            source "$LIB_DIR/setup_wizard.sh"
+            run_setup_wizard "$ENV_FLAG"
+
+            # Reload environment after setup
+            load_environment
+        else
+            error "Cannot start without configuration"
+            echo ""
+            echo -e "  Run: ${CYAN}$0 --setup${NC}"
+            exit 1
+        fi
+    fi
 
     # Phase 4: Validate Configuration (fail-fast)
     validate_configuration

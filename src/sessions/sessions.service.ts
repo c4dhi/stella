@@ -1373,6 +1373,123 @@ export class SessionsService {
     }
   }
 
+  // ============================================================================
+  // Transcript Export
+  // ============================================================================
+
+  /**
+   * Export a complete transcript of a session.
+   * Returns all messages, participants, and agents for the session.
+   *
+   * @param sessionId Session ID to export
+   * @param options Export options
+   * @returns Complete transcript data
+   */
+  async exportTranscript(
+    sessionId: string,
+    options: {
+      includeDebug?: boolean;
+      includeMetadata?: boolean;
+    } = {},
+  ) {
+    // Fetch session with project info
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        room: true,
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+
+    // Define message types to include
+    const chatMessageTypes = [
+      'user_text', 'transcript', 'transcript_chunk', 'agent_text',
+      'participant_joined', 'participant_left', 'participant_event'
+    ];
+    const debugMessageTypes = [
+      'debug', 'decision_stream', 'expert_status', 'prompt_execution',
+      'safety_check', 'plan_progress_update', 'plan_deliverable_update',
+      'state_change_notification', 'complete_todo_list', 'llm_config',
+      'task_progress_update', 'progress_update'
+    ];
+
+    const messageTypes = options.includeDebug
+      ? [...chatMessageTypes, ...debugMessageTypes]
+      : chatMessageTypes;
+
+    // Fetch all messages (no pagination limit for export)
+    const [messages, participants, agents] = await Promise.all([
+      this.prisma.message.findMany({
+        where: {
+          sessionId,
+          messageType: { in: messageTypes },
+        },
+        orderBy: { timestamp: 'asc' },
+      }),
+      this.prisma.participant.findMany({
+        where: { sessionId },
+        orderBy: { joinedAt: 'asc' },
+      }),
+      this.prisma.agentInstance.findMany({
+        where: { sessionId },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    // Format into structured JSON
+    const transcript = {
+      meta: {
+        sessionId: session.id,
+        sessionName: session.name,
+        projectId: session.projectId,
+        projectName: session.project.name,
+        exportedAt: new Date().toISOString(),
+        status: session.status,
+        createdAt: session.createdAt.toISOString(),
+        closedAt: session.closedAt?.toISOString() || null,
+        messageCount: messages.length,
+        participantCount: participants.length,
+      },
+      participants: participants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        identity: p.identity,
+        joinedAt: p.joinedAt.toISOString(),
+        leftAt: p.leftAt?.toISOString() || null,
+      })),
+      agents: agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        agentType: a.agentTypeId || null,
+        status: a.status,
+      })),
+      messages: messages.map((m) => {
+        const metadata = m.metadata as any;
+        return {
+          id: m.id,
+          timestamp: m.timestamp.toISOString(),
+          role: m.role || 'system',
+          messageType: m.messageType,
+          content: m.content,
+          speakerName: metadata?.speaker_name || metadata?.participant_name || null,
+          speakerId: metadata?.speaker_id || metadata?.participant_identity || null,
+          ...(options.includeMetadata && metadata ? { metadata } : {}),
+        };
+      }),
+    };
+
+    return transcript;
+  }
+
   /**
    * Get chat history for a session.
    *

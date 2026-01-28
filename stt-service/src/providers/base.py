@@ -79,6 +79,20 @@ class STTProvider(ABC):
         """Clean up any resources held by the provider."""
         pass
 
+    async def warmup(self, duration_ms: int = 1000) -> bool:
+        """Warm up provider to eliminate cold-start latency.
+
+        Default implementation is a no-op. Subclasses (like WhisperProvider)
+        should override this to run dummy inference and prime GPU caches.
+
+        Args:
+            duration_ms: Duration of dummy audio to process (default 1000ms)
+
+        Returns:
+            True if warmup was successful, False otherwise.
+        """
+        return True
+
     def get_capabilities(self) -> dict:
         """Return provider capabilities.
 

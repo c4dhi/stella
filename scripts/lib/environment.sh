@@ -3,6 +3,9 @@
 # environment.sh - Environment detection and configuration loading
 # =============================================================================
 
+# Note: This file is sourced by start-k8s.sh after colors.sh and utils.sh
+# Some functions may not be available until after sourcing is complete
+
 # =============================================================================
 # OS and Platform Detection (single-pass)
 # =============================================================================
@@ -91,15 +94,16 @@ load_environment() {
     # Change to project directory
     cd "$PROJECT_DIR" || { error "Cannot change to project directory: $PROJECT_DIR"; exit 1; }
 
-    # Load base .env (required)
-    if ! load_env_file ".env" "base"; then
-        error "Missing .env file"
-        echo "  Run: cp .env.example .env && nano .env"
-        exit 1
-    fi
-
-    # Set NODE_ENV from flag or default to local
+    # Set NODE_ENV from flag or default to local (needed for check_setup_status)
     export NODE_ENV="${ENV_FLAG:-local}"
+
+    # Load base .env if it exists (may not exist on fresh install)
+    # check_setup_status will handle missing config and offer the wizard
+    if [[ -f ".env" ]]; then
+        load_env_file ".env" "base" || true
+    else
+        verbose "No .env file found - setup wizard will be offered"
+    fi
 
     # Load environment-specific overrides
     if [[ "$NODE_ENV" == "production" ]]; then
@@ -125,7 +129,7 @@ load_environment() {
     # Set hardcoded defaults
     set_defaults
 
-    echo -e "   ${ARROW} OS: ${BOLD}${OS_TYPE}${NC} | Mode: ${BOLD}${NODE_ENV}${NC}"
+    # Display configuration table (set_defaults calls configure_gpu_settings which displays the table)
 }
 
 # =============================================================================
@@ -225,19 +229,51 @@ configure_gpu_settings() {
             fi
         fi
     fi
+}
 
-    # Show GPU status in output
-    if [[ "$GPU_AVAILABLE" == "true" ]]; then
-        if [[ "$ENABLE_GPU" == "true" ]]; then
-            echo -e "   ${ARROW} GPU: ${GREEN}${CHECK}${NC} ${GPU_NAME} ${DIM}(CUDA enabled)${NC}"
+# =============================================================================
+# Configuration Display
+# =============================================================================
+
+# Display configuration summary
+display_config_table() {
+    # Format OS name nicely
+    local os_display="Linux"
+    [[ "$OS_TYPE" == "macos" ]] && os_display="macOS"
+
+    # Format GPU status
+    local gpu_display="disabled"
+    if [[ "$ENABLE_GPU" == "true" ]]; then
+        gpu_display="${GREEN}enabled${NC} (CUDA)"
+    elif [[ "${GPU_AVAILABLE:-false}" == "true" ]]; then
+        gpu_display="${YELLOW}available${NC} (not enabled)"
+    fi
+
+    # Format TTS provider with type indicator
+    local tts_display="${TTS_PROVIDER:-edge_tts}"
+    case "${TTS_PROVIDER:-edge_tts}" in
+        edge_tts)   tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+        kokoro)     tts_display="${tts_display} ${DIM}(local)${NC}" ;;
+        elevenlabs) tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+    esac
+
+    # Format STT provider with device indicator
+    local stt_display="${STT_PROVIDER:-sherpa}"
+    if [[ "$STT_PROVIDER" == "sherpa" ]]; then
+        stt_display="${stt_display} ${DIM}(CPU)${NC}"
+    elif [[ "$STT_PROVIDER" == "whisper" ]]; then
+        if [[ "$WHISPER_DEVICE" == "cuda" ]]; then
+            stt_display="${stt_display} ${DIM}(CUDA)${NC}"
         else
-            echo -e "   ${ARROW} GPU: ${YELLOW}${GPU_NAME}${NC} ${DIM}(available but not enabled)${NC}"
-        fi
-    else
-        if [[ "$NODE_ENV" == "production" ]]; then
-            echo -e "   ${ARROW} GPU: ${DIM}Not detected (using CPU)${NC}"
+            stt_display="${stt_display} ${DIM}(CPU)${NC}"
         fi
     fi
+
+    config_row "OS" "$os_display"
+    config_row "Mode" "$NODE_ENV"
+    config_row "GPU" "$gpu_display"
+    config_row "TTS" "$tts_display"
+    config_row "STT" "$stt_display"
 }
 
 # =============================================================================
@@ -318,6 +354,83 @@ set_defaults() {
 
     # Auto-configure GPU settings (after defaults are set)
     configure_gpu_settings
+
+    # Display configuration table
+    display_config_table
+}
+
+# =============================================================================
+# Setup Status Detection
+# =============================================================================
+
+# Check if setup has been completed for current environment
+# Returns 0 if setup is complete, 1 if not
+#
+# Priority: If all required variables are present in .env, skip the wizard
+# even if the marker file is missing. The marker file is secondary.
+check_setup_status() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+    local current_mode="${NODE_ENV:-local}"
+
+    # 1. First check if all critical variables are present
+    #    If they are, setup is considered complete regardless of marker file
+    local missing_vars=()
+
+    [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing_vars+=("POSTGRES_PASSWORD")
+    [[ -z "${JWT_SECRET:-}" ]] && missing_vars+=("JWT_SECRET")
+    [[ -z "${OPENAI_API_KEY:-}" ]] && missing_vars+=("OPENAI_API_KEY")
+
+    # For production, also check additional requirements
+    if [[ "$current_mode" == "production" ]]; then
+        [[ -z "${ENV_VAR_ENCRYPTION_KEY:-}" ]] && missing_vars+=("ENV_VAR_ENCRYPTION_KEY")
+        [[ -z "${LIVEKIT_API_KEY:-}" ]] && missing_vars+=("LIVEKIT_API_KEY")
+        [[ -z "${LIVEKIT_API_SECRET:-}" ]] && missing_vars+=("LIVEKIT_API_SECRET")
+        [[ -z "${PRODUCTION_DOMAIN:-}" ]] && missing_vars+=("PRODUCTION_DOMAIN")
+    fi
+
+    # 2. If all variables are present, setup is complete
+    if [[ ${#missing_vars[@]} -eq 0 ]]; then
+        # Auto-create marker file if it doesn't exist or doesn't match
+        if [[ ! -f "$marker_file" ]] || [[ "$(cat "$marker_file" 2>/dev/null)" != "$current_mode" ]]; then
+            verbose "All variables present, auto-creating setup marker for: $current_mode"
+            echo "$current_mode" > "$marker_file"
+        fi
+        return 0
+    fi
+
+    # 3. Variables are missing - report them
+    for var in "${missing_vars[@]}"; do
+        verbose "Missing critical variable: $var"
+    done
+    return 1
+}
+
+# Mark setup as complete for given environment
+mark_setup_complete() {
+    local env="${1:-${NODE_ENV:-local}}"
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    echo "$env" > "$marker_file"
+    verbose "Marked setup complete for: $env"
+}
+
+# Clear setup marker (force re-setup)
+clear_setup_marker() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    if [[ -f "$marker_file" ]]; then
+        rm -f "$marker_file"
+        verbose "Cleared setup marker"
+    fi
+}
+
+# Get the environment mode from setup marker
+get_setup_mode() {
+    local marker_file="$PROJECT_DIR/.stella-setup-complete"
+
+    if [[ -f "$marker_file" ]]; then
+        cat "$marker_file" 2>/dev/null || echo ""
+    fi
 }
 
 # =============================================================================

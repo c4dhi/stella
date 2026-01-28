@@ -192,8 +192,16 @@ export default function CreateProjectModal({
       case 'plan':
         return selectedPlan !== null
       case 'envvars':
-        // Check all required env vars have values
-        return agentRequirements.requiredEnvVars.every(key => envVars[key]?.trim())
+        // If a template is selected, we can proceed (template has the values stored securely on server)
+        if (selectedEnvVarTemplate !== null) {
+          return true
+        }
+        // If no template selected and there are required env vars, check they all have values
+        if (agentRequirements.requiredEnvVars.length > 0) {
+          return agentRequirements.requiredEnvVars.every(key => envVars[key]?.trim())
+        }
+        // No template and no required env vars - can proceed
+        return true
       case 'visualizer':
         return true
       case 'expiration':
@@ -201,7 +209,7 @@ export default function CreateProjectModal({
       default:
         return false
     }
-  }, [step, name, selectedAgentType, agentName, selectedPlan, agentRequirements.requiredEnvVars, envVars])
+  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars])
 
   const handleSubmit = async () => {
     if (!name.trim()) {

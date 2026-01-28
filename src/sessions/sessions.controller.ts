@@ -9,6 +9,7 @@ import {
   Query,
   Headers,
   Sse,
+  Res,
   ValidationPipe,
   UsePipes,
   Logger,
@@ -17,6 +18,7 @@ import {
   UnauthorizedException,
   Request,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Observable } from 'rxjs';
 import { SessionsService } from './sessions.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -215,6 +217,39 @@ export class SessionsController {
       return { messages: [] };
     }
     return this.sessionsService.getMessagesSince(sessionId, since);
+  }
+
+  @Get('sessions/:sessionId/transcript')
+  async exportTranscript(
+    @Param('sessionId') sessionId: string,
+    @Res() res: Response,
+    @Query('includeDebug') includeDebug?: string,
+    @Query('includeMetadata') includeMetadata?: string,
+  ) {
+    try {
+      const transcript = await this.sessionsService.exportTranscript(sessionId, {
+        includeDebug: includeDebug === 'true',
+        includeMetadata: includeMetadata === 'true',
+      });
+
+      // Generate filename with session name or ID
+      const sessionName = transcript.meta.sessionName || sessionId;
+      const safeName = sessionName.replace(/[^a-zA-Z0-9-_]/g, '_').substring(0, 50);
+      const filename = `transcript-${safeName}-${new Date().toISOString().split('T')[0]}.json`;
+
+      // Set response headers for file download
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      // Send the JSON data
+      res.send(JSON.stringify(transcript, null, 2));
+    } catch (error) {
+      this.logger.error(
+        `Failed to export transcript for session ${sessionId}:`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
   // Listener monitoring endpoint

@@ -3,6 +3,10 @@
 # colors.sh - Console output helpers with professional formatting
 # =============================================================================
 
+# Guard against multiple sourcing
+[[ -n "${_COLORS_SH_LOADED:-}" ]] && return 0
+_COLORS_SH_LOADED=1
+
 # Colors
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -14,21 +18,21 @@ export BOLD='\033[1m'
 export NC='\033[0m'
 
 # Status indicators
-readonly CHECK="✓"
-readonly CROSS="✗"
-readonly ARROW="→"
-readonly BULLET="•"
+CHECK="✓"
+CROSS="✗"
+ARROW="→"
+BULLET="•"
 
 # Section emojis
-readonly EMOJI_ROCKET="🚀"
-readonly EMOJI_GEAR="⚙️"
-readonly EMOJI_BUILD="🔨"
-readonly EMOJI_DEPLOY="☸️"
-readonly EMOJI_SUCCESS="✅"
-readonly EMOJI_WARNING="⚠️"
-readonly EMOJI_NETWORK="🌐"
-readonly EMOJI_DATABASE="🗄️"
-readonly EMOJI_STOP="🛑"
+EMOJI_ROCKET="🚀"
+EMOJI_GEAR="⚙️"
+EMOJI_BUILD="🔨"
+EMOJI_DEPLOY="☸️"
+EMOJI_SUCCESS="✅"
+EMOJI_WARNING="⚠️"
+EMOJI_NETWORK="🌐"
+EMOJI_DATABASE="🗄️"
+EMOJI_STOP="🛑"
 
 # =============================================================================
 # Output Functions
@@ -159,4 +163,19 @@ dry_run_summary() {
     echo -e "${EMOJI_WARNING} ${BOLD}Dry run complete${NC} - no changes made"
     echo ""
     separator
+}
+
+# =============================================================================
+# Formatted Row Output (for clean aligned output)
+# =============================================================================
+
+# Print a formatted config row (2 columns, indented)
+# Supports ANSI color codes in value
+# Usage: config_row "Key" "Value"
+config_row() {
+    local key="$1"
+    local value="$2"
+    # Use printf for the key (fixed width) then echo -e for value (may contain colors)
+    printf "   %-16s " "$key"
+    echo -e "$value"
 }

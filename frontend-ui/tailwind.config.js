@@ -122,6 +122,9 @@ export default {
         'fade-in-up': 'fadeInUp 0.5s ease-out',
         'scale-in': 'scaleIn 0.3s ease-out',
         'pulse-subtle': 'pulseSubtle 2s ease-in-out infinite',
+        'shimmer': 'shimmer 2s infinite',
+        'gradient-shift': 'gradientShift 8s ease infinite',
+        'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -139,6 +142,18 @@ export default {
         pulseSubtle: {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.7' },
+        },
+        shimmer: {
+          '0%': { transform: 'translateX(-150%)' },
+          '100%': { transform: 'translateX(150%)' },
+        },
+        gradientShift: {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        },
+        pulseGlow: {
+          '0%, 100%': { opacity: '0.4' },
+          '50%': { opacity: '0.8' },
         },
       },
 

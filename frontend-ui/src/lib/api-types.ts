@@ -989,3 +989,52 @@ export interface UserNotificationEvent {
   unreadCount?: number
   timestamp: string
 }
+
+// ============================================================================
+// Transcript Export Types
+// ============================================================================
+
+export interface TranscriptExportMeta {
+  sessionId: string
+  sessionName: string | null
+  projectId: string
+  projectName: string
+  exportedAt: string
+  status: 'ACTIVE' | 'CLOSED'
+  createdAt: string
+  closedAt: string | null
+  messageCount: number
+  participantCount: number
+}
+
+export interface TranscriptExportParticipant {
+  id: string
+  name: string
+  identity: string
+  joinedAt: string
+  leftAt: string | null
+}
+
+export interface TranscriptExportAgent {
+  id: string
+  name: string
+  agentType: string | null
+  status: string
+}
+
+export interface TranscriptExportMessage {
+  id: string
+  timestamp: string
+  role: string
+  messageType: string
+  content: string
+  speakerName: string | null
+  speakerId: string | null
+}
+
+export interface TranscriptExport {
+  meta: TranscriptExportMeta
+  participants: TranscriptExportParticipant[]
+  agents: TranscriptExportAgent[]
+  messages: TranscriptExportMessage[]
+}

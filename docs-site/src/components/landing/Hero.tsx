@@ -1,7 +1,8 @@
-import { ArrowRight, Github, Star } from 'lucide-react';
+import { ArrowRight, Github, Mic } from 'lucide-react';
 import Link from '@docusaurus/Link';
 import { Button } from '../ui/button';
 import { AnimatedSection } from './AnimatedSection';
+import HeroSphereDemo from './HeroSphereDemo';
 
 const Hero = () => {
   return (
@@ -11,27 +12,24 @@ const Hero = () => {
 
       <div className="hero-content">
         <div className="hero-inner">
-          {/* Open Source Badge */}
+          {/* Tagline */}
           <AnimatedSection animation="fade-up">
-            <div className="hero-badge">
-              <Star className="hero-badge-icon" />
-              <span>Open Source</span>
-            </div>
+            <p className="hero-tagline">Open Source Conversational AI Infrastructure</p>
           </AnimatedSection>
 
           {/* Headline */}
           <AnimatedSection animation="fade-up" delay={100}>
             <h1 className="hero-title">
-              Focus on your agent.{' '}
+              Focus on your agent.
+              <br />
               <span className="hero-title-gradient">We handle the rest.</span>
             </h1>
           </AnimatedSection>
 
           {/* Subtitle */}
-          <AnimatedSection animation="fade-up" delay={200}>
+          <AnimatedSection animation="fade-up" delay={150}>
             <p className="hero-subtitle">
-              STELLA manages the audio pipeline, voice streaming, and session orchestration.
-              Build your agent logic, deploy instantly, and share a link—users start talking immediately.
+              STELLA handles audio, voice and video streaming, as well as orchestration so you can build and deploy voice agents instantly.
             </p>
           </AnimatedSection>
 
@@ -60,40 +58,46 @@ const Hero = () => {
 
           {/* Browser Mockup */}
           <AnimatedSection animation="fade-up" delay={400}>
-          <div className="hero-browser">
-            <div className="hero-browser-window">
-              {/* Browser Header */}
-              <div className="hero-browser-header">
-                <div className="hero-browser-dots">
-                  <div className="hero-browser-dot hero-browser-dot--red" />
-                  <div className="hero-browser-dot hero-browser-dot--yellow" />
-                  <div className="hero-browser-dot hero-browser-dot--green" />
-                </div>
-                <div className="hero-browser-url">
-                  <span>stella.ai/demo</span>
-                </div>
-              </div>
-              {/* Content Area */}
-              <div className="hero-browser-content">
-                <div className="hero-waveform-container">
-                  {/* Voice Waveform Animation */}
-                  <div className="hero-waveform">
-                    {[...Array(20)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="hero-waveform-bar"
-                        style={{
-                          height: `${20 + Math.sin(i * 0.5) * 15 + Math.random() * 20}px`,
-                          animationDelay: `${i * 0.1}s`,
-                        }}
-                      />
-                    ))}
+            <div className="hero-browser">
+              <div className="hero-browser-window">
+                {/* Browser Header */}
+                <div className="hero-browser-header">
+                  <div className="hero-browser-dots">
+                    <div className="hero-browser-dot hero-browser-dot--red" />
+                    <div className="hero-browser-dot hero-browser-dot--yellow" />
+                    <div className="hero-browser-dot hero-browser-dot--green" />
                   </div>
-                  <p className="hero-waveform-label">Voice AI Demo</p>
+                  <div className="hero-browser-url">
+                    <span>STELLA Demo</span>
+                  </div>
+                </div>
+                {/* Content Area */}
+                <div className="hero-browser-content">
+                  <div className="hero-sphere-container">
+                    <HeroSphereDemo />
+                  </div>
+                </div>
+                {/* Hover Overlay */}
+                <div className="hero-browser-overlay">
+                  <div className="hero-browser-overlay-border" />
+                  <div className="hero-browser-overlay-content">
+                    <div className="hero-browser-overlay-icon">
+                      <Mic />
+                    </div>
+                    <h3 className="hero-browser-overlay-title">Try the Demo</h3>
+                    <p className="hero-browser-overlay-text">
+                      Experience STELLA's voice AI capabilities firsthand.
+                    </p>
+                    <button className="hero-browser-overlay-btn" disabled>
+                      Currently Unavailable
+                    </button>
+                    <p className="hero-browser-overlay-disclaimer">
+                      Clicking will redirect you to an external demo session.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </AnimatedSection>
         </div>
       </div>
