@@ -279,6 +279,30 @@
            bg-clip-text text-transparent;
   }
 
+  /* Glassmorphism card - light mode */
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-xl border border-border rounded-2xl;
+  }
+
+  /* Glassmorphism card - dark mode */
+  body.dark .glass-card {
+    @apply bg-white/5 border-white/10;
+  }
+
+  /* Glassmorphism card with glow effect */
+  .glass-card-glow {
+    @apply relative;
+  }
+
+  .glass-card-glow::before {
+    content: '';
+    @apply absolute -inset-1 bg-gradient-to-r from-primary-500/10 via-cyan-500/10 to-blue-500/10 rounded-[24px] blur-xl opacity-50 -z-10;
+  }
+
+  body.dark .glass-card-glow::before {
+    @apply from-primary-600/20 via-cyan-500/20 to-blue-500/20;
+  }
+
   /* Subtle background pattern */
   .bg-grid-pattern {
     background-image:

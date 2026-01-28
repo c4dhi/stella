@@ -9,8 +9,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
+# - build-essential: for compiling Python packages
+# - libglib2.0-0: provides libgobject-2.0.so required by livekit-rtc
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy SDK first (dependency)

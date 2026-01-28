@@ -51,15 +51,23 @@ const HeroSphereDemo = ({
       return;
     }
 
-    // Create natural-looking fluctuation using sine waves
+    // Create expressive speech-like fluctuation
     const time = Date.now() / 1000;
-    const baseIntensity = 0.6;
-    const variation =
-      Math.sin(time * 3) * 0.2 +
-      Math.sin(time * 7) * 0.1 +
-      Math.sin(time * 11) * 0.1;
 
-    setIntensity(Math.max(0, Math.min(1, baseIntensity + variation)));
+    // Slow wave for overall energy envelope
+    const slowWave = Math.sin(time * 1.5) * 0.15;
+
+    // Medium waves for syllable-like rhythm
+    const mediumWave = Math.sin(time * 5) * 0.25 + Math.sin(time * 8) * 0.15;
+
+    // Fast waves for vocal texture
+    const fastWave = Math.sin(time * 15) * 0.2 + Math.sin(time * 23) * 0.1;
+
+    // Combine with base intensity
+    const baseIntensity = 0.5;
+    const combined = baseIntensity + slowWave + mediumWave + fastWave;
+
+    setIntensity(Math.max(0.1, Math.min(1, combined)));
     animationRef.current = requestAnimationFrame(animateIntensity);
   }, [isSpeaking]);
 
@@ -108,9 +116,9 @@ const HeroSphereDemo = ({
   }, [isSpeaking, animateIntensity]);
 
   // Calculate visual effects based on intensity
-  const scale = 1 + intensity * 0.08; // 1.0 -> 1.08
-  const brightness = 1 + intensity * 0.3; // 1.0 -> 1.3
-  const glowOpacity = intensity * 0.5; // 0 -> 0.5
+  const scale = 1 + intensity * 0.15; // 1.0 -> 1.15
+  const brightness = 1 + intensity * 0.5; // 1.0 -> 1.5
+  const glowOpacity = intensity * 0.8; // 0 -> 0.8
 
   return (
     <div
@@ -129,12 +137,12 @@ const HeroSphereDemo = ({
       <div
         style={{
           position: 'absolute',
-          width: sphereSize * 1.5,
-          height: sphereSize * 1.5,
+          width: sphereSize * 2,
+          height: sphereSize * 2,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(168, 85, 247, 0.4) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(168, 85, 247, 0.6) 0%, rgba(147, 51, 234, 0.3) 40%, transparent 70%)',
           opacity: glowOpacity,
-          transition: 'opacity 0.15s ease-out, width 0.2s ease-out, height 0.2s ease-out',
+          transition: 'opacity 0.1s ease-out',
           pointerEvents: 'none',
         }}
       />
