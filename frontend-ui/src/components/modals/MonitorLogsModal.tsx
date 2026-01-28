@@ -13,6 +13,7 @@ interface MonitorLogsModalProps {
 export default function MonitorLogsModal({ isOpen, onClose, sessionId }: MonitorLogsModalProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { resolvedTheme } = useThemeStore()
@@ -28,6 +29,20 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
       console.error('Failed to fetch monitoring logs:', err)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Download transcript
+  const handleDownloadTranscript = async () => {
+    if (!sessionId || isDownloading) return
+
+    try {
+      setIsDownloading(true)
+      await apiClient.downloadTranscript(sessionId)
+    } catch (err) {
+      console.error('Failed to download transcript:', err)
+    } finally {
+      setIsDownloading(false)
     }
   }
 
@@ -141,6 +156,30 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                       strokeWidth="2"
                     >
                       <path d="M21 12a9 9 0 11-6.219-8.56" />
+                    </svg>
+                  </button>
+
+                  {/* Download Transcript button */}
+                  <button
+                    onClick={handleDownloadTranscript}
+                    disabled={!sessionId || isDownloading}
+                    className={`p-2 rounded-lg transition-colors ${
+                      !sessionId || isDownloading
+                        ? 'opacity-40 cursor-not-allowed'
+                        : isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                    }`}
+                    title={sessionId ? 'Download transcript' : 'Select a session to download transcript'}
+                  >
+                    <svg
+                      className={`w-4 h-4 ${isDownloading ? 'animate-pulse' : ''} ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
                     </svg>
                   </button>
 
