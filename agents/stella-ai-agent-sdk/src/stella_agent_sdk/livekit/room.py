@@ -97,7 +97,15 @@ class RoomManager:
         self._on_data_received: Optional[Callable[[str, bytes], None]] = None
 
         # Acoustic Echo Cancellation (AEC)
-        self._aec_enabled = AEC_AVAILABLE
+        # Can be disabled via environment variable for debugging
+        import os
+        aec_disabled_by_env = os.getenv("DISABLE_AEC", "false").lower() in ("true", "1", "yes")
+        if aec_disabled_by_env:
+            logger.info("[AEC] Disabled via DISABLE_AEC environment variable")
+            print("[AEC] Disabled via DISABLE_AEC environment variable")
+            self._aec_enabled = False
+        else:
+            self._aec_enabled = AEC_AVAILABLE
         self._apm: Optional["AudioProcessingModule"] = None
         if self._aec_enabled and AudioProcessingModule:
             try:
