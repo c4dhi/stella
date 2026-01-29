@@ -18,7 +18,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] - 2025-01-29
+
 ### Added
+
+**Participant Experience**
+- Text-only interface for participant screen (#24)
+- Marketing landing page (#12)
+- Mobile-ready participant screen with responsive design (#25)
+- Session transcript export functionality (#50)
+- Public web interface for interviewees (#3)
+
+**Agent & System Capabilities**
+- Agent Toolkit/Toolbox implementation for extensible agent capabilities (#20)
+- Enhanced Conversational Agent with improved dialogue handling (#88)
+- Whisper integration for Text-to-Speech (#7)
+- Public Projects feature for shared access (#4)
+- Environment variable override support in DeployAgentModal
+
+**Project & User Management**
+- Per-user project basis with sharing capabilities (#34)
+- Environment Variable Templates for Agent Types (#28)
+- System-wide state persistence (#31)
+
+**Documentation & Onboarding**
+- Adaptive documentation system (#29)
+- Dynamic onboarding through start-script (#56)
 - Custom Tools guide for extending agent capabilities
 - Database Schema documentation with complete Prisma model reference
 - Custom Agent Visualizers guide for creating face visualizers
@@ -27,9 +54,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Authentication guide with JWT implementation details
 
 ### Changed
+- Refactored Conversational AI Agent to SDK architecture (#10)
+- Migrated system from Minikube to K3S with enforced microservice architecture for STT and TTS (#14)
+- Improved start script and repository structure (#16)
 - Improved code block styling with automatic word wrapping
 - Updated architecture overview with database references
 - Enhanced cross-linking between documentation pages
+
+### Fixed
+- Fixed Whisper warmup functions not existing (#70)
+- Fixed Whisper not reliably transcribing speech (#49) [P0]
+- Fixed double texting issue (#9)
+- Fixed new user error when no projects exist (#36)
+- Fixed initial message bug (#6)
+- Fixed unselecting Debug in Session Overview not working (#11)
+- Fixed environment variables not reaching agent pods when modified in deploy modal
+- Fixed LiveKit Production page title formatting
 
 ---
 
