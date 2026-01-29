@@ -713,11 +713,11 @@ export default function SessionView() {
   }
 
   // Deploy agent
-  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string) => {
+  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>) => {
     if (!sessionId) return
 
     try {
-      await apiClient.createAgent(sessionId, { name, icon, config, agentType, envVarTemplateId })
+      await apiClient.createAgent(sessionId, { name, icon, config, agentType, envVarTemplateId, envVars })
       addToast({ message: 'Agent deployed successfully', type: 'success' })
 
       // Refresh session to get updated agents list

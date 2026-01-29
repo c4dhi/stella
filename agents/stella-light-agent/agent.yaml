@@ -46,6 +46,10 @@ configSchema:
           default: 0.7
   x-stella-env-vars:
     - OPENAI_API_KEY
+  x-stella-optional-env-vars:
+    - name: DISABLE_AEC
+      description: "Disable Acoustic Echo Cancellation (AEC) for debugging audio issues"
+      default: "false"
 
 defaultConfig: {}
 
