@@ -234,19 +234,31 @@ setup_gpu_support() {
         return 0
     fi
 
-    # Get GPU information
+    # Test if nvidia-smi actually works (can fail with various exit codes if GPU is busy/unavailable)
+    local smi_exit=0
+    nvidia-smi &>/dev/null || smi_exit=$?
+    if [[ $smi_exit -ne 0 ]]; then
+        echo -e "   ${ARROW} GPU: ${YELLOW}driver issue${NC} (nvidia-smi exit code $smi_exit)"
+        echo -e "   ${DIM}GPU driver may need restart: sudo systemctl restart nvidia-persistenced${NC}"
+        export ENABLE_GPU="false"
+        return 0
+    fi
+
+    # Get GPU information (disable pipefail temporarily for robustness)
     local gpu_name
     local gpu_memory
     local driver_version
-    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs)
-    gpu_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | xargs)
-    driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    set +o pipefail
+    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs 2>/dev/null) || gpu_name="Unknown GPU"
+    gpu_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | xargs 2>/dev/null) || gpu_memory="Unknown"
+    driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs 2>/dev/null) || driver_version="Unknown"
+    set -o pipefail
 
     # Check for nvidia-container-runtime (either in Docker or K3s containerd)
     local nvidia_runtime_found=false
 
-    # Check Docker for nvidia runtime
-    if docker info 2>/dev/null | grep -qi "nvidia"; then
+    # Check Docker for nvidia runtime (use subshell to prevent pipefail from propagating)
+    if (docker info 2>/dev/null | grep -qi "nvidia") 2>/dev/null; then
         nvidia_runtime_found=true
     fi
 
