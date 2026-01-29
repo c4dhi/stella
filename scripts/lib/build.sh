@@ -894,6 +894,11 @@ build_images() {
         gpu_args="--build-arg ENABLE_GPU=true"
     fi
 
+    # Get app version from package.json for frontend-ui
+    local app_version
+    app_version=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+    local frontend_args="--build-arg APP_VERSION=${app_version}"
+
     # ==========================================================================
     # PARALLEL BUILDS - All services are independent, no inter-dependencies
     # ==========================================================================
@@ -902,7 +907,7 @@ build_images() {
     start_parallel_build "session-management-server" "session-management-server:latest" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:latest" "./stt-service" "$gpu_args"
     start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$gpu_args"
-    start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui"
+    start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
     start_parallel_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile"
     start_parallel_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile"

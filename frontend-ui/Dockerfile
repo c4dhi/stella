@@ -4,6 +4,9 @@
 # Note: Vite 7.x requires Node.js 20.19+ or 22.12+
 FROM node:20-alpine AS builder
 
+# Build argument for app version (passed from parent package.json)
+ARG APP_VERSION=0.0.0
+
 WORKDIR /app
 
 # Copy package files
@@ -15,8 +18,8 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the app
-RUN npm run build
+# Build the app with version injected via environment variable
+RUN VITE_APP_VERSION=${APP_VERSION} npm run build
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine

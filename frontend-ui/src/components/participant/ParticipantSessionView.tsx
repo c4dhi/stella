@@ -743,9 +743,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           audio: {
             channelCount: 1,           // Mono
             sampleRate: 48000,         // High quality input
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: false,    // Match session screen setting
+            echoCancellation: false,   // Disable browser AEC - agent handles this or user disables via DISABLE_AEC
+            noiseSuppression: false,   // Disable browser NS - was too aggressive
+            autoGainControl: true,     // Enable AGC to boost quiet audio
           }
         })
         localStreamRef.current = stream

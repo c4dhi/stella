@@ -237,7 +237,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
         <div className={`text-caption ${
           isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
         }`}>
-          STELLA v1.0
+          STELLA v{__APP_VERSION__}
         </div>
       </motion.div>
     </motion.aside>
