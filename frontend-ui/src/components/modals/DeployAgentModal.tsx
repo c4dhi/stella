@@ -18,7 +18,7 @@ import { parseAgentRequirements } from '../../lib/api-types'
 interface DeployAgentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string) => Promise<void>
+  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>) => Promise<void>
 }
 
 type Step = 'gallery' | 'upload' | 'configure' | 'plan' | 'envvars'
@@ -285,12 +285,23 @@ export default function DeployAgentModal({
     setError(null)
 
     try {
+      // Filter out placeholder values (masked template values) and empty strings
+      // Only send env vars that the user has actually modified or added
+      const filteredEnvVars: Record<string, string> = {}
+      for (const [key, value] of Object.entries(envVars)) {
+        // Skip masked placeholder values from template prefill
+        if (value && value !== '••••••••' && value.trim() !== '') {
+          filteredEnvVars[key] = value
+        }
+      }
+
       await onSubmit(
         name.trim(),
         icon,
         Object.keys(config).length > 0 ? config : undefined,
         selectedType.slug,
-        selectedEnvVarTemplate?.id
+        selectedEnvVarTemplate?.id,
+        Object.keys(filteredEnvVars).length > 0 ? filteredEnvVars : undefined
       )
       onClose()
     } catch (err) {

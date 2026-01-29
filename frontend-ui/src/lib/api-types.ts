@@ -224,6 +224,7 @@ export interface CreateAgentDto {
   agentType?: string // agent type id (e.g., 'stella-agent', 'echo-agent')
   config?: Record<string, unknown> // agent-specific config (e.g., { plan: {...} })
   envVarTemplateId?: string // environment variable template to use
+  envVars?: Record<string, string> // additional env vars to merge with template (overrides template values)
 }
 
 export interface AgentType {

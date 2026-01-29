@@ -10,6 +10,9 @@ service SpeechToText {
 
   // Health check endpoint
   rpc HealthCheck(Empty) returns (HealthResponse);
+
+  // Warmup the STT model to eliminate cold-start latency
+  rpc Warmup(WarmupRequest) returns (WarmupResponse);
 }
 
 message Empty {}
@@ -20,13 +23,25 @@ message HealthResponse {
   string version = 3;
 }
 
+message WarmupRequest {
+  string session_id = 1;     // Optional, for logging
+  int32 duration_ms = 2;     // Dummy audio duration (default: 1000ms)
+}
+
+message WarmupResponse {
+  bool success = 1;
+  int32 warmup_time_ms = 2;  // Time taken for warmup
+  string provider = 3;       // "whisper" or "sherpa"
+  string message = 4;        // Status or error message
+}
+
 // Audio data sent from client to STT service
 message AudioChunk {
-  bytes audio_data = 1;        // Raw PCM audio (16-bit, mono)
+  bytes audio_data = 1;        // Raw PCM audio (16-bit, 16kHz, mono)
   string session_id = 2;       // Session identifier for logging
   string participant_id = 3;   // Who is speaking (for transcript attribution)
   int64 timestamp_ms = 4;      // Client timestamp for latency tracking
-  int32 sample_rate = 5;       // Sample rate of audio_data (e.g., 48000, 16000)
+  int32 sample_rate = 5;       // Sample rate of audio (default: 16000)
 }
 
 // Transcript events sent from STT service to client

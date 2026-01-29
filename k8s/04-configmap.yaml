@@ -80,6 +80,14 @@ data:
   ONNX_PROVIDER: "${ONNX_PROVIDER}"
 
   # ============================================================================
+  # Audio Processing Configuration
+  # ============================================================================
+  # Acoustic Echo Cancellation (AEC) - Disable for debugging audio issues
+  # When enabled (default), AEC removes TTS echo from microphone input
+  # Set to "true" to disable AEC if audio is being incorrectly canceled
+  DISABLE_AEC: "${DISABLE_AEC:-false}"
+
+  # ============================================================================
   # Public URLs for external access (injected by deployment scripts)
   # ============================================================================
   # Local (NODE_ENV=local):

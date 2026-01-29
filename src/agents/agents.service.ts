@@ -399,6 +399,7 @@ export class AgentsService {
         agentConfig: sanitizedConfig,
         forceRebuild: createAgentDto.forceRebuild,
         envVarTemplateId: createAgentDto.envVarTemplateId,
+        envVars: createAgentDto.envVars,  // Pass additional env vars to merge with template
       });
 
       // Update agent with pod info

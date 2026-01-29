@@ -24,6 +24,10 @@ export class CreateAgentDto {
   @IsOptional()
   envVarTemplateId?: string;  // Environment variable template to use for agent pod
 
+  @IsObject()
+  @IsOptional()
+  envVars?: Record<string, string>;  // Additional env vars to merge with template (overrides template values)
+
   @IsBoolean()
   @IsOptional()
   forceRebuild?: boolean;  // Force rebuild the agent image (useful after SDK updates)

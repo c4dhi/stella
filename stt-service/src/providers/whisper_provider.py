@@ -286,6 +286,11 @@ class WhisperSession(STTSession):
             # RMS energy gate - filter out quiet background noise before VAD
             # This prevents hallucinations from low-level ambient sounds
             rms = np.sqrt(np.mean(audio_float ** 2))
+
+            # Debug logging every 100 windows to diagnose VAD issues
+            if self.chunk_count % 100 == 0:
+                print(f"[WhisperSession] DEBUG: chunk={self.chunk_count}, rms={rms:.6f}, threshold={self.rms_threshold}, state={self.state}")
+
             if rms < self.rms_threshold:
                 # Audio too quiet to be speech - treat as silence
                 # Still update pre-buffer but don't check VAD
@@ -315,6 +320,10 @@ class WhisperSession(STTSession):
             # Get VAD probability (single signal)
             audio_tensor = torch.from_numpy(audio_float)
             speech_prob = self.vad_model(audio_tensor, 16000).item()
+
+            # Debug logging for VAD probability
+            if self.chunk_count % 100 == 0:
+                print(f"[WhisperSession] DEBUG: VAD prob={speech_prob:.3f}, threshold={self.vad_threshold}, state={self.state}")
 
             if speech_prob > self.vad_threshold:
                 # Speech detected

@@ -21,6 +21,7 @@ export interface AgentPodConfig {
   agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
   envVarTemplateId?: string; // Optional env var template for custom environment variables
+  envVars?: Record<string, string>;  // Additional env vars to merge with/override template values
 }
 
 @Injectable()
@@ -267,11 +268,18 @@ export class KubernetesService {
           config.envVarTemplateId,
           config.userId,
         );
-        this.logger.log(`Loaded ${Object.keys(customEnvVars).length} custom environment variables`);
+        this.logger.log(`Loaded ${Object.keys(customEnvVars).length} custom environment variables from template`);
       } catch (error) {
         this.logger.error(`Failed to load env var template: ${error.message}`);
         throw error;
       }
+    }
+
+    // Merge/override with additional env vars from the request
+    // This allows users to add new vars or override template values
+    if (config.envVars && Object.keys(config.envVars).length > 0) {
+      this.logger.log(`Merging ${Object.keys(config.envVars).length} additional env vars (will override template values)`);
+      customEnvVars = { ...customEnvVars, ...config.envVars };
     }
 
     const secret: k8s.V1Secret = {
