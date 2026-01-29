@@ -4,14 +4,14 @@ import { PCMAudioProcessor } from './pcm-processor'
 import type { PeerTransport } from '../PeerTransport'
 
 export async function startMicWithVu(audioContext: AudioContext, transport?: PeerTransport) {
-  const stream = await navigator.mediaDevices.getUserMedia({ 
-    audio: { 
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
       channelCount: 1,
       sampleRate: 48000, // Use high quality input, we'll downsample
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: false
-    } 
+      echoCancellation: false,  // Disable browser AEC - agent handles this or user disables via DISABLE_AEC
+      noiseSuppression: false,  // Disable browser NS - was too aggressive
+      autoGainControl: true     // Enable AGC to boost quiet audio
+    }
   })
   
   const src = audioContext.createMediaStreamSource(stream)
