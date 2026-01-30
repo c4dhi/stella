@@ -19,6 +19,7 @@ model User {
   password                   String              // bcrypt hashed
   name                       String?
   verified                   Boolean             @default(false)
+  isSystemAdmin              Boolean             @default(false) // System-level admin access
   createdAt                  DateTime            @default(now())
   updatedAt                  DateTime            @updatedAt
   projectMemberships         ProjectMembership[]
@@ -478,4 +479,67 @@ model ProjectInvitation {
   @@unique([projectId, inviteeId]) // One invitation per user per project
   @@index([inviteeId, status])
   @@index([projectId])
+}
+
+// ============================================================================
+// Admin Dashboard - Usage & Metrics Logging
+// ============================================================================
+
+// Hourly aggregated metrics for historical charts
+model UsageMetricsSnapshot {
+  id                String   @id @default(uuid())
+  timestamp         DateTime @default(now())
+  totalSessions     Int
+  activeSessions    Int
+  totalAgents       Int
+  runningAgents     Int
+  failedAgents      Int
+  totalParticipants Int
+  activeParticipants Int
+  peakParticipants  Int      // Peak concurrent during this hour
+  totalMessages     Int
+  messagesThisHour  Int
+
+  @@index([timestamp])
+}
+
+// Session lifecycle events for activity grid
+model SessionActivityLog {
+  id            String    @id @default(uuid())
+  sessionId     String
+  projectId     String
+  status        String    // 'active', 'closed', 'error'
+  hasAgentError Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  closedAt      DateTime?
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+// Server performance metrics (collected every ~5s)
+model ServerMetricsSnapshot {
+  id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+
+  // Node.js server metrics
+  cpuUsage      Float    // Percentage 0-100
+  cpuCores      Int?
+  memoryTotal   BigInt
+  memoryUsed    BigInt
+  memoryFree    BigInt
+
+  // GPU metrics (auto-detected via nvidia-smi)
+  gpuUsage      Float?
+  gpuMemoryUsed BigInt?
+  gpuMemoryTotal BigInt?
+  gpuAvailable  Boolean  @default(false)
+
+  // Kubernetes cluster metrics (if available)
+  k8sNodeCount  Int?
+  k8sPodCount   Int?
+  k8sCpuRequests Float?  // Total CPU requests across pods
+  k8sMemoryUsed BigInt?  // Total memory used across pods
+
+  @@index([timestamp])
 }

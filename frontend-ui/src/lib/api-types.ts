@@ -1039,3 +1039,76 @@ export interface TranscriptExport {
   agents: TranscriptExportAgent[]
   messages: TranscriptExportMessage[]
 }
+
+// ============================================================================
+// Admin Dashboard Types
+// ============================================================================
+
+export interface AdminDashboardMetrics {
+  timestamp: string
+  activeParticipants: number
+  totalParticipants: number
+  activeSessions: number
+  totalSessions: number
+  runningAgents: number
+  startingAgents: number
+  failedAgents: number
+  totalAgents: number
+  totalMessages: number
+  messagesToday: number
+}
+
+export interface SessionActivityDay {
+  date: string // YYYY-MM-DD
+  activeCount: number
+  closedCount: number
+  errorCount: number
+}
+
+export interface HistoricalUsageData {
+  date: string
+  sessionsCreated: number
+  peakParticipants: number
+}
+
+export interface ServerMetrics {
+  timestamp: string
+  cpuUsage: number
+  cpuCores: number
+  memoryTotal: string // BigInt as string
+  memoryUsed: string
+  memoryFree: string
+  gpuUsage: number | null
+  gpuMemoryUsed: string | null
+  gpuMemoryTotal: string | null
+  gpuAvailable: boolean
+  k8sNodeCount: number | null
+  k8sPodCount: number | null
+  k8sCpuRequests: number | null
+  k8sMemoryUsed: string | null
+}
+
+export interface AdminUserListItem {
+  id: string
+  email: string
+  name: string | null
+  verified: boolean
+  isSystemAdmin: boolean
+  createdAt: string
+  projectCount: number
+}
+
+export interface AdminUsersResponse {
+  users: AdminUserListItem[]
+  total: number
+  page: number
+  totalPages: number
+}
+
+export interface SessionStatusItem {
+  id: string
+  status: string // 'ACTIVE', 'CLOSED', 'ERROR'
+  hasError: boolean
+  projectId: string
+  createdAt: string
+}

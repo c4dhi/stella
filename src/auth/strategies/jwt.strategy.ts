@@ -67,6 +67,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         email: true,
         name: true,
         verified: true,
+        isSystemAdmin: true,
         projectMemberships: {
           select: {
             projectId: true,
@@ -89,6 +90,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: user.id,
       email: user.email,
       name: user.name,
+      isSystemAdmin: user.isSystemAdmin,
       projectIds: user.projectMemberships.map((m) => m.projectId),
       projectRoles: user.projectMemberships.reduce(
         (acc, m) => ({ ...acc, [m.projectId]: m.role }),

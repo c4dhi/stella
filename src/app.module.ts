@@ -27,6 +27,7 @@ import { UserMessagesModule } from './user-messages/user-messages.module';
 import { ProjectInvitationsModule } from './project-invitations/project-invitations.module';
 import { AgentRegistryModule } from './agent-registry/agent-registry.module';
 import { StateMachineModule } from './state-machine/state-machine.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { StateMachineModule } from './state-machine/state-machine.module';
     ProjectInvitationsModule,
     AgentRegistryModule,
     StateMachineModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [

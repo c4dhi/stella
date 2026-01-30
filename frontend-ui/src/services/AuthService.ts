@@ -8,6 +8,7 @@ export interface User {
   email: string
   name: string
   verified?: boolean
+  isSystemAdmin?: boolean
   createdAt: string
 }
 

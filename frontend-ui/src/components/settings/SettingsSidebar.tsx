@@ -1,15 +1,25 @@
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useNotificationStore } from '../../store/notificationStore'
+import { useAuthStore } from '../../store/authStore'
 
-export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'agent-library' | 'inbox'
+export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'agent-library' | 'inbox' | 'admin'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
   onSectionChange: (section: SettingsSection) => void
 }
 
-const sections: { id: SettingsSection; label: string; icon: React.ReactNode; description: string; hasBadge?: boolean }[] = [
+interface SectionItem {
+  id: SettingsSection
+  label: string
+  icon: React.ReactNode
+  description: string
+  hasBadge?: boolean
+  adminOnly?: boolean
+}
+
+const sections: SectionItem[] = [
   {
     id: 'profile',
     label: 'Profile',
@@ -80,12 +90,31 @@ const sections: { id: SettingsSection; label: string; icon: React.ReactNode; des
       </svg>
     ),
   },
+  {
+    id: 'admin',
+    label: 'Admin Dashboard',
+    description: 'System monitoring',
+    adminOnly: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="3" y="3" width="7" height="9" rx="1" />
+        <rect x="14" y="3" width="7" height="5" rx="1" />
+        <rect x="14" y="12" width="7" height="9" rx="1" />
+        <rect x="3" y="16" width="7" height="5" rx="1" />
+      </svg>
+    ),
+  },
 ]
 
 export default function SettingsSidebar({ activeSection, onSectionChange }: SettingsSidebarProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const { unreadCount } = useNotificationStore()
+  const { user } = useAuthStore()
+  const isSystemAdmin = user?.isSystemAdmin ?? false
+
+  // Filter sections based on admin status
+  const visibleSections = sections.filter(section => !section.adminOnly || isSystemAdmin)
 
   return (
     <motion.aside
@@ -122,7 +151,7 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1">
-        {sections.map((section, index) => {
+        {visibleSections.map((section, index) => {
           const isActive = activeSection === section.id
           return (
             <motion.button
