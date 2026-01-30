@@ -307,6 +307,17 @@ export class SessionsController {
   }
 
   /**
+   * Get rooms that the message recorder should join (smart sync mode).
+   * Returns only sessions where recorderShouldJoin = true.
+   * Used by Python message recorder for efficient room management.
+   */
+  @Public()
+  @Get('internal/rooms-to-join')
+  async getRoomsToJoin() {
+    return this.sessionsService.findRoomsToJoin();
+  }
+
+  /**
    * Store a recorded message from the Python message recorder.
    * This replaces the WebRTC-based recording from the Node.js monitor.
    */

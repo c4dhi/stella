@@ -172,13 +172,14 @@ export class LiveKitWebhookController {
       `Participant joined: ${participant.identity} in room ${room.name}`,
     );
 
-    // Skip agent participants (they manage themselves)
-    if (participant.identity.startsWith('agent-')) {
-      this.logger.debug(`Agent ${participant.identity} joined - skipping`);
+    // Skip message-recorder (it's infrastructure, not a real participant)
+    if (participant.identity === 'message-recorder') {
+      this.logger.debug(`Message recorder joined - skipping event emission`);
       return;
     }
 
-    // Emit event for other services to handle
+    // Emit event for WebhooksService to handle (for ALL participants including agents)
+    // This is needed for recorder join state tracking (agents are meaningful participants)
     this.eventEmitter.emit('livekit.participant.joined', {
       roomName: room.name,
       participantIdentity: participant.identity,
@@ -188,15 +189,17 @@ export class LiveKitWebhookController {
       joinedAt: participant.joinedAt,
     });
 
-    // Also emit SSE event for frontend
-    this.eventEmitter.emit('sse.event', {
-      sessionId: room.name, // Room name is typically the session ID
-      event: 'participant.joined',
-      data: {
-        identity: participant.identity,
-        name: participant.name,
-      },
-    });
+    // Emit SSE event for frontend (skip agents - they're tracked differently)
+    if (!participant.identity.startsWith('agent-')) {
+      this.eventEmitter.emit('sse.event', {
+        sessionId: room.name, // Room name is typically the session ID
+        event: 'participant.joined',
+        data: {
+          identity: participant.identity,
+          name: participant.name,
+        },
+      });
+    }
   }
 
   private async handleParticipantLeft(
@@ -209,32 +212,35 @@ export class LiveKitWebhookController {
       `Participant left: ${participant.identity} from room ${room.name}`,
     );
 
-    // Skip agent participants
-    if (participant.identity.startsWith('agent-')) {
-      this.logger.debug(`Agent ${participant.identity} left - skipping`);
+    // Skip message-recorder (it's infrastructure, not a real participant)
+    if (participant.identity === 'message-recorder') {
+      this.logger.debug(`Message recorder left - skipping event emission`);
       return;
     }
 
-    // Emit event for other services
+    // Emit event for WebhooksService to handle (for ALL participants including agents)
+    // This is needed for recorder leave state tracking
     this.eventEmitter.emit('livekit.participant.left', {
       roomName: room.name,
       participantIdentity: participant.identity,
       participantSid: participant.sid,
     });
 
-    // Emit SSE event for frontend
-    this.eventEmitter.emit('sse.event', {
-      sessionId: room.name,
-      event: 'participant.left',
-      data: {
-        identity: participant.identity,
-      },
-    });
+    // Emit SSE event for frontend (skip agents - they're tracked differently)
+    if (!participant.identity.startsWith('agent-')) {
+      this.eventEmitter.emit('sse.event', {
+        sessionId: room.name,
+        event: 'participant.left',
+        data: {
+          identity: participant.identity,
+        },
+      });
+    }
 
     // Check if room is now empty (no users, only agents or empty)
+    // Note: numParticipants includes the message-recorder, so we check <= 1
     if (room.numParticipants <= 1) {
-      // Only agent(s) left or empty
-      this.logger.log(`Room ${room.name} has no users left`);
+      this.logger.log(`Room ${room.name} has no meaningful participants left`);
       this.eventEmitter.emit('livekit.room.empty', {
         roomName: room.name,
       });

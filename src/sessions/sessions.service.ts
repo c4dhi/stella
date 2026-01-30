@@ -78,6 +78,11 @@ export class SessionsService {
       data: {
         projectId,
         name: createSessionDto.name,
+        // Message-recorder optimization: recorder should join immediately when session is created
+        // This ensures messages are captured before any participants join
+        recorderShouldJoin: true,
+        // Agent spawn mode: 'immediate' (default) or 'on_demand' (for public projects)
+        agentSpawnMode: createSessionDto.agentSpawnMode || 'immediate',
         room: {
           create: {
             livekitRoomName: roomName,
@@ -927,6 +932,72 @@ export class SessionsService {
     });
 
     return sessions;
+  }
+
+  /**
+   * Find rooms that the message recorder should join.
+   * Used by smart sync mode - only joins rooms with actual participants.
+   * Returns sessions where recorderShouldJoin = true.
+   */
+  async findRoomsToJoin(): Promise<{
+    sessionId: string;
+    roomName: string;
+    hasHumanParticipant: boolean;
+    priority: 'high' | 'normal';
+  }[]> {
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        status: 'ACTIVE',
+        recorderShouldJoin: true,
+      },
+      include: {
+        room: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return sessions
+      .filter(s => s.room) // Only sessions with rooms
+      .map(session => ({
+        sessionId: session.id,
+        roomName: session.room!.livekitRoomName,
+        hasHumanParticipant: session.hasHumanParticipant,
+        // High priority if human is present (for immediate message capture)
+        priority: session.hasHumanParticipant ? 'high' as const : 'normal' as const,
+      }));
+  }
+
+  /**
+   * Update session's recorder join state.
+   * Called by webhooks when participants join/leave.
+   */
+  async updateRecorderJoinState(
+    sessionId: string,
+    shouldJoin: boolean,
+    humanPresent?: boolean,
+  ): Promise<void> {
+    const updateData: any = {
+      recorderShouldJoin: shouldJoin,
+    };
+
+    if (humanPresent !== undefined) {
+      updateData.hasHumanParticipant = humanPresent;
+      if (humanPresent) {
+        updateData.humanJoinedAt = new Date();
+        updateData.humanLeftAt = null;
+      } else {
+        updateData.humanLeftAt = new Date();
+      }
+    }
+
+    await this.prisma.session.update({
+      where: { id: sessionId },
+      data: updateData,
+    });
+
+    this.logger.log(`Updated session ${sessionId}: recorderShouldJoin=${shouldJoin}, humanPresent=${humanPresent}`);
   }
 
   /**

@@ -104,9 +104,20 @@ model Session {
   events       RoomEvent[]
   state        SessionState?   // State machine execution state
 
+  // Message-recorder optimization: webhook-driven room management
+  hasHumanParticipant    Boolean   @default(false)  // True when human is in room
+  humanJoinedAt          DateTime?                   // When first human joined
+  humanLeftAt            DateTime?                   // When last human left
+  recorderShouldJoin     Boolean   @default(false)  // True when recorder should be in room
+
+  // Agent pausing: on-demand spawning for resource optimization
+  agentSpawnMode         String    @default("immediate")  // 'immediate' | 'on_demand'
+  lastAgentConfig        Json?                            // Stored config for respawning paused agents
+
   @@index([projectId])
   @@index([status])
   @@index([createdAt])
+  @@index([recorderShouldJoin])
 }
 
 // State machine execution state for conversation progress tracking
@@ -255,6 +266,11 @@ model AgentInstance {
   lastError         String?                        // Last error message from agent
   messagesProcessed Int       @default(0)          // Number of messages processed by agent
   grpcAddress       String?                        // gRPC address for agent connection (e.g., "agent-pod:50051")
+
+  // Agent pausing: on-demand lifecycle management
+  pausedAt          DateTime?                      // When agent was paused due to inactivity
+  pauseReason       String?                        // 'inactivity' | 'manual'
+  resumeCount       Int       @default(0)          // Number of times agent has been resumed
 
   @@index([sessionId])
   @@index([status])

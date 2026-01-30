@@ -208,6 +208,46 @@ class MessageClient:
             print(f"❌ Unexpected error storing participant event: {e}")
             return False
 
+    async def get_rooms_to_join(self) -> List[Dict]:
+        """
+        Get rooms that the recorder should join (smart sync mode).
+        Returns only sessions where recorderShouldJoin = true.
+
+        Response format:
+        [
+            {
+                "sessionId": "uuid",
+                "roomName": "session-xxx",
+                "hasHumanParticipant": true/false,
+                "priority": "high" | "normal"
+            }
+        ]
+        """
+        url = f"{self.base_url}/internal/rooms-to-join"
+
+        try:
+            # Create session if not exists
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data if isinstance(data, list) else []
+                else:
+                    print(f"⚠️  Failed to get rooms to join: HTTP {response.status}")
+                    return []
+
+        except aiohttp.ClientError as e:
+            print(f"❌ Network error getting rooms to join: {e}")
+            return []
+        except asyncio.TimeoutError:
+            print(f"⏱️  Timeout getting rooms to join")
+            return []
+        except Exception as e:
+            print(f"❌ Unexpected error getting rooms to join: {e}")
+            return []
+
     async def close(self):
         """Close the HTTP session"""
         if self.session:
