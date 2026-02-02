@@ -22,9 +22,6 @@ interface ParticipantLeftEvent {
 // Grace period before recorder leaves an empty room (5 minutes)
 const RECORDER_LEAVE_GRACE_PERIOD_MS = 5 * 60 * 1000;
 
-// Grace period before pausing agents when no humans present (5 minutes)
-const AGENT_PAUSE_GRACE_PERIOD_MS = 5 * 60 * 1000;
-
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
@@ -134,13 +131,12 @@ export class WebhooksService {
         this.logger.log(`Human joined session ${sessionId}: ${participantIdentity}`);
       }
 
-      // For on_demand sessions, spawn agent when human joins
-      if (session.agentSpawnMode === 'on_demand') {
-        const hasRunningAgent = session.agents.length > 0;
-        if (!hasRunningAgent && session.lastAgentConfig) {
-          this.logger.log(`On-demand spawn triggered for session ${sessionId}`);
-          await this.spawnOrResumeAgent(session);
-        }
+      // Auto-resume agent for any session with saved config (not just on_demand)
+      // This handles both on_demand spawn and auto-restart after inactivity pause
+      const hasRunningAgent = session.agents.length > 0;
+      if (!hasRunningAgent && session.lastAgentConfig) {
+        this.logger.log(`Auto-resume triggered for session ${sessionId} (human joined)`);
+        await this.spawnOrResumeAgent(session);
       }
     }
   }
@@ -194,9 +190,9 @@ export class WebhooksService {
 
         this.logger.log(`All humans left session ${sessionId}`);
 
-        // For on_demand sessions, start agent pause timer
-        if (session.agentSpawnMode === 'on_demand') {
-          this.startAgentPauseTimer(sessionId);
+        // Start agent pause timer if session has inactivity timeout configured
+        if (session.agentInactivityTimeoutMinutes !== null) {
+          this.startAgentPauseTimer(sessionId, session.agentInactivityTimeoutMinutes);
         }
       }
     }
@@ -296,14 +292,18 @@ export class WebhooksService {
   }
 
   /**
-   * Start a timer to pause agents after grace period.
+   * Start a timer to pause agents after the configured timeout.
+   * @param sessionId - The session ID
+   * @param timeoutMinutes - Timeout in minutes before pausing agents
    */
-  private startAgentPauseTimer(sessionId: string): void {
+  private startAgentPauseTimer(sessionId: string, timeoutMinutes: number): void {
     // Cancel any existing timer
     this.cancelAgentPauseTimer(sessionId);
 
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+
     this.logger.log(
-      `Starting agent pause timer for session ${sessionId} (${AGENT_PAUSE_GRACE_PERIOD_MS / 1000}s)`,
+      `Starting agent pause timer for session ${sessionId} (${timeoutMinutes} minutes)`,
     );
 
     const timer = setTimeout(async () => {
@@ -322,10 +322,11 @@ export class WebhooksService {
         return;
       }
 
-      if (session.agentSpawnMode === 'on_demand' && session.agents.length > 0) {
+      // Pause agents if there are any running (for any session type with timeout configured)
+      if (session.agents.length > 0) {
         await this.pauseAgents(sessionId);
       }
-    }, AGENT_PAUSE_GRACE_PERIOD_MS);
+    }, timeoutMs);
 
     this.agentPauseTimers.set(sessionId, timer);
   }

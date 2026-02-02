@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Users } from 'lucide-react'
@@ -13,6 +13,8 @@ import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ProfileButton from '../components/layout/ProfileButton'
 import { ProjectOverviewBanner } from '../components/dashboard/ProjectOverviewBanner'
 import { useToastStore } from '../store/toastStore'
+import { usePageVisibility } from '../hooks/usePageVisibility'
+import { getSharedSSEManager } from '../services/SharedSSEManager'
 import type { SessionListItem, SessionStatus, ProjectWithSessions, ListenerStatus, ProjectSessionEvent } from '../lib/api-types'
 
 export default function SessionsDashboard() {
@@ -21,6 +23,8 @@ export default function SessionsDashboard() {
   const { addToast } = useToastStore()
   const { resolvedTheme, initializeTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const isVisible = usePageVisibility()
+  const sseCallbackRef = useRef<((data: any) => void) | null>(null)
 
   const [project, setProject] = useState<ProjectWithSessions | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
@@ -73,8 +77,15 @@ export default function SessionsDashboard() {
     loadData()
   }, [projectId, filterStatus, searchQuery])
 
-  // Poll listener status for all ACTIVE sessions every 2 seconds
+  // Poll listener status for all ACTIVE sessions every 2 seconds using batch endpoint
+  // Pauses when tab is hidden to reduce connection usage
   useEffect(() => {
+    // Skip polling when tab is hidden
+    if (!isVisible) {
+      console.debug('[SessionsDashboard] Tab hidden, pausing listener status polling')
+      return
+    }
+
     const pollListenerStatus = async () => {
       if (!sessions || sessions.length === 0) return
 
@@ -83,14 +94,9 @@ export default function SessionsDashboard() {
       if (activeSessions.length === 0) return
 
       try {
-        const statuses = await Promise.all(
-          activeSessions.map(session =>
-            apiClient.getListenerStatus(session.id).catch(err => {
-              console.error(`Failed to get listener status for ${session.id}:`, err)
-              return null
-            })
-          )
-        )
+        // Use batch endpoint: 1 request instead of N requests
+        const sessionIds = activeSessions.map(s => s.id)
+        const statuses = await apiClient.getBatchListenerStatus(sessionIds)
 
         const statusMap = new Map<string, ListenerStatus>()
         statuses.forEach(status => {
@@ -112,41 +118,55 @@ export default function SessionsDashboard() {
     const interval = setInterval(pollListenerStatus, 2000)
 
     return () => clearInterval(interval)
-  }, [sessions])
+  }, [sessions, isVisible])
 
-  // Subscribe to real-time project events via SSE
+  // Subscribe to real-time project events via shared SSE manager
+  // Uses BroadcastChannel to share connection across tabs viewing the same project
+  // Pauses when tab is hidden to reduce connection usage
   useEffect(() => {
     if (!projectId) return
 
-    const unsubscribe = apiClient.subscribeToProjectEvents(
-      projectId,
-      (event: ProjectSessionEvent) => {
-        console.log('[SessionsDashboard] Received project event:', event)
+    // Skip SSE when tab is hidden
+    if (!isVisible) {
+      console.debug('[SessionsDashboard] Tab hidden, pausing SSE subscription')
+      return
+    }
 
-        switch (event.type) {
-          case 'session.created':
-            // Reload sessions to get full session data with counts
-            // No toast - silent update to avoid spam when many participants join
-            loadData()
-            break
+    const manager = getSharedSSEManager('project-events', projectId)
 
-          case 'session.closed':
-            // Update session status in local state
-            setSessions(prev =>
-              prev.map(s =>
-                s.id === event.sessionId
-                  ? { ...s, status: 'CLOSED' as SessionStatus }
-                  : s
-              )
+    const callback = (data: any) => {
+      const event = data as ProjectSessionEvent
+      console.log('[SessionsDashboard] Received project event:', event)
+
+      switch (event.type) {
+        case 'session.created':
+          // Reload sessions to get full session data with counts
+          // No toast - silent update to avoid spam when many participants join
+          loadData()
+          break
+
+        case 'session.closed':
+          // Update session status in local state
+          setSessions(prev =>
+            prev.map(s =>
+              s.id === event.sessionId
+                ? { ...s, status: 'CLOSED' as SessionStatus }
+                : s
             )
-            break
+          )
+          break
 
-          case 'session.deleted':
-            // Remove session from local state
-            setSessions(prev => prev.filter(s => s.id !== event.sessionId))
-            break
-        }
-      },
+        case 'session.deleted':
+          // Remove session from local state
+          setSessions(prev => prev.filter(s => s.id !== event.sessionId))
+          break
+      }
+    }
+
+    sseCallbackRef.current = callback
+
+    manager.subscribe(
+      callback,
       (error) => {
         console.error('[SessionsDashboard] SSE connection error:', error)
         // EventSource auto-reconnects, just log the error
@@ -155,9 +175,12 @@ export default function SessionsDashboard() {
 
     return () => {
       console.log('[SessionsDashboard] Cleaning up SSE subscription')
-      unsubscribe()
+      if (sseCallbackRef.current) {
+        manager.unsubscribe(sseCallbackRef.current)
+        sseCallbackRef.current = null
+      }
     }
-  }, [projectId])
+  }, [projectId, isVisible])
 
   // Handle session creation
   const handleCreateSession = async (name?: string) => {

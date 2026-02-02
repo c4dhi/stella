@@ -25,6 +25,7 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { CreateTokenDto } from './dto/create-token.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
+import { BatchListenerStatusDto } from './dto/batch-listener-status.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import type { LogEntry } from '../message-recorder/room-monitor.service';
@@ -256,6 +257,12 @@ export class SessionsController {
   @Get('sessions/:sessionId/listener-status')
   getListenerStatus(@Param('sessionId') sessionId: string) {
     return this.sessionsService.getListenerStatus(sessionId);
+  }
+
+  // Batch listener status endpoint - reduces N requests to 1
+  @Post('sessions/listener-status/batch')
+  getBatchListenerStatus(@Body() dto: BatchListenerStatusDto) {
+    return this.sessionsService.getBatchListenerStatus(dto.sessionIds);
   }
 
   // SSE endpoint for real-time session events (agent ready, agent failed, etc.)

@@ -10,7 +10,7 @@ interface StatsCardProps {
     value: number
     label: string
   }
-  color?: 'blue' | 'green' | 'purple' | 'orange'
+  color?: 'blue' | 'green' | 'purple' | 'orange' | 'yellow' | 'gray' | 'cyan'
 }
 
 const colorClasses = {
@@ -33,6 +33,21 @@ const colorClasses = {
     light: 'from-orange-500/20 to-orange-500/5 text-orange-600',
     dark: 'from-orange-500/30 to-orange-500/10 text-orange-400',
     icon: 'text-orange-500',
+  },
+  yellow: {
+    light: 'from-yellow-500/20 to-yellow-500/5 text-yellow-600',
+    dark: 'from-yellow-500/30 to-yellow-500/10 text-yellow-400',
+    icon: 'text-yellow-400',
+  },
+  gray: {
+    light: 'from-neutral-400/20 to-neutral-400/5 text-neutral-600',
+    dark: 'from-neutral-400/30 to-neutral-400/10 text-neutral-300',
+    icon: 'text-neutral-400',
+  },
+  cyan: {
+    light: 'from-cyan-500/20 to-cyan-500/5 text-cyan-600',
+    dark: 'from-cyan-500/30 to-cyan-500/10 text-cyan-400',
+    icon: 'text-cyan-400',
   },
 }
 

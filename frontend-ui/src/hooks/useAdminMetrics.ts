@@ -1,16 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
 import { apiClient } from '../services/ApiClient'
+import { usePageVisibility } from './usePageVisibility'
 import type { AdminDashboardMetrics, SessionActivityDay, HistoricalUsageData, SessionStatusItem } from '../lib/api-types'
 
 /**
  * Hook for subscribing to real-time admin dashboard metrics via SSE
+ * Pauses SSE connection when tab is hidden to reduce connection usage
  */
 export function useAdminDashboardStream() {
   const [metrics, setMetrics] = useState<AdminDashboardMetrics | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isVisible = usePageVisibility()
 
   useEffect(() => {
+    // Skip SSE when tab is hidden
+    if (!isVisible) {
+      console.debug('[useAdminDashboardStream] Tab hidden, pausing SSE subscription')
+      setIsConnected(false)
+      return
+    }
+
     const cleanup = apiClient.subscribeToAdminDashboard(
       (data) => {
         setMetrics(data)
@@ -28,7 +38,7 @@ export function useAdminDashboardStream() {
     )
 
     return cleanup
-  }, [])
+  }, [isVisible])
 
   return { metrics, isConnected, error }
 }

@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Globe, Users } from 'lucide-react'
+import { Globe, Users, Settings } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import CreateProjectModal from '../components/modals/CreateProjectModal'
-import EditProjectModal from '../components/modals/EditProjectModal'
+import ProjectSettingsPanel from '../components/modals/ProjectSettingsPanel'
 import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import AppHeader from '../components/layout/AppHeader'
-import type { ProjectWithCounts } from '../lib/api-types'
+import type { ProjectWithCounts, Project } from '../lib/api-types'
 
 export default function ProjectsDashboard() {
   const navigate = useNavigate()
@@ -55,17 +55,11 @@ export default function ProjectsDashboard() {
     return newProject.id
   }
 
-  const handleUpdateProject = async (name: string) => {
-    if (!editingProject) return
-    try {
-      const updatedProject = await apiClient.updateProject(editingProject.id, { name })
-      setProjects(prev =>
-        prev.map(p => (p.id === editingProject.id ? { ...p, name: updatedProject.name } : p))
-      )
-      addToast({ message: `Project renamed to "${name}"`, type: 'success' })
-    } catch (err) {
-      throw err
-    }
+  const handleProjectUpdated = (updatedProject: Project) => {
+    setProjects(prev =>
+      prev.map(p => (p.id === updatedProject.id ? { ...p, ...updatedProject } : p))
+    )
+    addToast({ message: 'Project settings updated', type: 'success' })
   }
 
   const handleDeleteProject = (projectId: string, projectName: string) => {
@@ -275,12 +269,9 @@ export default function ProjectsDashboard() {
                         ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
                         : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
                     }`}
-                    title="Edit"
+                    title="Settings"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
+                    <Settings className="w-4 h-4" />
                   </button>
                   <button
                     onClick={(e) => {
@@ -313,12 +304,11 @@ export default function ProjectsDashboard() {
       />
 
       {editingProject && (
-        <EditProjectModal
+        <ProjectSettingsPanel
           isOpen={!!editingProject}
           onClose={() => setEditingProject(null)}
-          onSubmit={handleUpdateProject}
-          currentName={editingProject.name}
-          projectId={editingProject.id}
+          project={editingProject}
+          onProjectUpdated={handleProjectUpdated}
         />
       )}
 

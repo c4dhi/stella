@@ -201,7 +201,7 @@ class SessionManagementClient {
     return this.get<ProjectStats>(`/projects/${projectId}/stats`)
   }
 
-  async updateProject(projectId: string, data: { name: string }): Promise<Project> {
+  async updateProject(projectId: string, data: { name?: string; agentInactivityTimeoutMinutes?: number | null }): Promise<Project> {
     return this.request<Project>(`/projects/${projectId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -854,6 +854,34 @@ class SessionManagementClient {
 
   async getListenerStatus(sessionId: string): Promise<ListenerStatus> {
     return this.get<ListenerStatus>(`/sessions/${sessionId}/listener-status`)
+  }
+
+  /**
+   * Get listener status for multiple sessions in a single request.
+   * Reduces N requests to 1, dramatically improving performance with many active sessions.
+   * Includes request deduplication to prevent pileup when responses are slow.
+   */
+  async getBatchListenerStatus(sessionIds: string[]): Promise<ListenerStatus[]> {
+    if (sessionIds.length === 0) return []
+
+    // Create unique key for request deduplication based on sorted session IDs
+    const requestKey = `batch-listener-${sessionIds.sort().join(',')}`
+
+    // Return existing pending request if one exists (prevents pileup)
+    if (this.pendingRequests.has(requestKey)) {
+      console.debug('[ApiClient] Returning cached batch listener request')
+      return this.pendingRequests.get(requestKey)!
+    }
+
+    const promise = this.post<ListenerStatus[]>(
+      '/sessions/listener-status/batch',
+      { sessionIds }
+    ).finally(() => {
+      this.pendingRequests.delete(requestKey)
+    })
+
+    this.pendingRequests.set(requestKey, promise)
+    return promise
   }
 
   async getMonitoringLogs(sessionId?: string): Promise<MonitoringLogsResponse> {

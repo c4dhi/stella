@@ -50,6 +50,20 @@ const BotIcon = () => (
   </svg>
 )
 
+const PauseIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="6" y="4" width="4" height="16" rx="1" />
+    <rect x="14" y="4" width="4" height="16" rx="1" />
+  </svg>
+)
+
+const ClockIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </svg>
+)
+
 const LayersIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -136,7 +150,7 @@ export default function AdminDashboardSection() {
         )}
       </motion.div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards - Row 1: Core Metrics */}
       <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard
           title="Active Participants"
@@ -151,7 +165,7 @@ export default function AdminDashboardSection() {
           subtitle={
             metrics?.startingAgents
               ? `${metrics.runningAgents} running, ${metrics.startingAgents} starting`
-              : undefined
+              : `${metrics?.runningAgents ?? 0} running`
           }
           icon={<BotIcon />}
           color="green"
@@ -169,6 +183,31 @@ export default function AdminDashboardSection() {
           subtitle={`${(metrics?.totalMessages ?? 0).toLocaleString()} total`}
           icon={<MessagesIcon />}
           color="orange"
+        />
+      </motion.div>
+
+      {/* Stats Cards - Row 2: Agent Auto-Stop Metrics */}
+      <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StatsCard
+          title="Paused Agents"
+          value={metrics?.pausedAgents ?? 0}
+          subtitle="Stopped due to inactivity"
+          icon={<PauseIcon />}
+          color="yellow"
+        />
+        <StatsCard
+          title="Stopped Agents"
+          value={metrics?.stoppedAgents ?? 0}
+          subtitle={`${metrics?.failedAgents ?? 0} failed`}
+          icon={<BotIcon />}
+          color="gray"
+        />
+        <StatsCard
+          title="Auto-Stop Enabled"
+          value={metrics?.sessionsWithTimeout ?? 0}
+          subtitle="Active sessions with timeout"
+          icon={<ClockIcon />}
+          color="cyan"
         />
       </motion.div>
 
@@ -194,6 +233,34 @@ export default function AdminDashboardSection() {
           onRangeChange={handleRangeChange}
         />
       </motion.div>
+
+      {/* Paused Agents Info */}
+      {metrics && metrics.pausedAgents > 0 && (
+        <motion.div
+          variants={itemVariants}
+          className={`p-4 rounded-xl border ${
+            isDark
+              ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+              : 'bg-yellow-50 border-yellow-200 text-yellow-700'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <PauseIcon />
+            <div>
+              <p className="font-medium">
+                {metrics.pausedAgents} agent{metrics.pausedAgents > 1 ? 's' : ''} paused
+              </p>
+              <p
+                className={`text-caption ${
+                  isDark ? 'text-yellow-400/70' : 'text-yellow-600'
+                }`}
+              >
+                Agents stopped due to user inactivity. They will auto-restart when users rejoin.
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Failed Agents Warning */}
       {metrics && metrics.failedAgents > 0 && (

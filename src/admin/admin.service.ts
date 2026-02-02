@@ -20,9 +20,13 @@ export interface DashboardMetrics {
   runningAgents: number;
   startingAgents: number;
   failedAgents: number;
+  pausedAgents: number;  // Agents paused due to inactivity
+  stoppedAgents: number; // Agents that are stopped (not paused)
   totalAgents: number;
   totalMessages: number;
   messagesToday: number;
+  // Auto-stop feature metrics
+  sessionsWithTimeout: number;  // Sessions with inactivity timeout configured
 }
 
 export interface SessionActivityDay {
@@ -90,6 +94,7 @@ export class AdminService {
     const [
       activeSessions,
       totalSessions,
+      sessionsWithTimeout,
       agents,
       activeParticipants,
       totalParticipants,
@@ -98,7 +103,13 @@ export class AdminService {
     ] = await Promise.all([
       this.prisma.session.count({ where: { status: 'ACTIVE' } }),
       this.prisma.session.count(),
-      this.prisma.agentInstance.findMany({ select: { status: true } }),
+      this.prisma.session.count({
+        where: {
+          status: 'ACTIVE',
+          agentInactivityTimeoutMinutes: { not: null }
+        }
+      }),
+      this.prisma.agentInstance.findMany({ select: { status: true, pausedAt: true } }),
       this.prisma.participant.count({
         where: {
           session: { status: 'ACTIVE' },
@@ -116,6 +127,10 @@ export class AdminService {
     const runningAgents = agents.filter((a) => a.status === 'RUNNING').length;
     const startingAgents = agents.filter((a) => a.status === 'STARTING').length;
     const failedAgents = agents.filter((a) => a.status === 'FAILED').length;
+    // Paused agents: STOPPED status with pausedAt set (stopped due to inactivity)
+    const pausedAgents = agents.filter((a) => a.status === 'STOPPED' && a.pausedAt !== null).length;
+    // Stopped agents: STOPPED status without pausedAt (manually stopped or completed)
+    const stoppedAgents = agents.filter((a) => a.status === 'STOPPED' && a.pausedAt === null).length;
 
     return {
       timestamp: now.toISOString(),
@@ -126,9 +141,12 @@ export class AdminService {
       runningAgents,
       startingAgents,
       failedAgents,
+      pausedAgents,
+      stoppedAgents,
       totalAgents: agents.length,
       totalMessages,
       messagesToday,
+      sessionsWithTimeout,
     };
   }
 

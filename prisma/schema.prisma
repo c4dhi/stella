@@ -59,6 +59,9 @@ model Project {
   sessions    Session[]
   memberships ProjectMembership[]
 
+  // Agent inactivity auto-stop configuration
+  agentInactivityTimeoutMinutes Int?  // null = disabled (default)
+
   // Public Project Configuration
   isPublic               Boolean    @default(false)
   publicToken            String?    @unique @default(uuid())
@@ -112,8 +115,9 @@ model Session {
   recorderShouldJoin     Boolean   @default(false)  // True when recorder should be in room
 
   // Agent pausing: on-demand spawning for resource optimization
-  agentSpawnMode         String    @default("immediate")  // 'immediate' | 'on_demand'
-  lastAgentConfig        Json?                            // Stored config for respawning paused agents
+  agentSpawnMode                String    @default("immediate")  // 'immediate' | 'on_demand'
+  lastAgentConfig               Json?                            // Stored config for respawning paused agents
+  agentInactivityTimeoutMinutes Int?                             // Inherited from project at creation
 
   @@index([projectId])
   @@index([status])

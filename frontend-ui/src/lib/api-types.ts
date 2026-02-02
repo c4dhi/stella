@@ -37,6 +37,7 @@ export interface Project {
   name: string
   createdAt: string
   updatedAt: string
+  agentInactivityTimeoutMinutes?: number | null
 }
 
 export interface ProjectWithCounts extends Project {
@@ -1053,9 +1054,13 @@ export interface AdminDashboardMetrics {
   runningAgents: number
   startingAgents: number
   failedAgents: number
+  pausedAgents: number  // Agents paused due to inactivity
+  stoppedAgents: number // Agents that are stopped (not paused)
   totalAgents: number
   totalMessages: number
   messagesToday: number
+  // Auto-stop feature metrics
+  sessionsWithTimeout: number  // Sessions with inactivity timeout configured
 }
 
 export interface SessionActivityDay {

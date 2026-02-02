@@ -74,6 +74,12 @@ export class SessionsService {
     // Generate unique room name
     const roomName = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+    // Fetch project to inherit agentInactivityTimeoutMinutes
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { agentInactivityTimeoutMinutes: true },
+    });
+
     const session = await this.prisma.session.create({
       data: {
         projectId,
@@ -83,6 +89,8 @@ export class SessionsService {
         recorderShouldJoin: true,
         // Agent spawn mode: 'immediate' (default) or 'on_demand' (for public projects)
         agentSpawnMode: createSessionDto.agentSpawnMode || 'immediate',
+        // Inherit agent inactivity timeout from project
+        agentInactivityTimeoutMinutes: project?.agentInactivityTimeoutMinutes ?? null,
         room: {
           create: {
             livekitRoomName: roomName,
@@ -766,6 +774,39 @@ export class SessionsService {
         note: isStale ? 'Status may be stale - recorder may be restarting' : undefined,
       },
     };
+  }
+
+  // Get batch listener status for multiple sessions
+  async getBatchListenerStatus(sessionIds: string[]) {
+    if (sessionIds.length === 0) {
+      return [];
+    }
+
+    // Fetch all sessions in a single query
+    const sessions = await this.prisma.session.findMany({
+      where: { id: { in: sessionIds } },
+      select: { id: true, status: true },
+    });
+
+    const timeSinceUpdate = Date.now() - this.lastStatusUpdate.getTime();
+    const isStale = timeSinceUpdate > 30000; // Consider stale if no update in 30s
+
+    // Map sessions to listener status format
+    return sessions.map((session) => {
+      const isConnected = this.connectedSessions.has(session.id);
+      return {
+        sessionId: session.id,
+        sessionStatus: session.status,
+        listener: {
+          isMonitoring: session.status === 'ACTIVE',
+          isConnected: isConnected && !isStale,
+          roomState: isConnected && !isStale ? 'connected' : 'not_connected',
+          service: 'python-message-recorder',
+          lastUpdate: this.lastStatusUpdate.toISOString(),
+          note: isStale ? 'Status may be stale - recorder may be restarting' : undefined,
+        },
+      };
+    });
   }
 
   // Get monitoring logs

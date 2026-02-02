@@ -1,4 +1,5 @@
 // Notification store for real-time user notifications using Zustand
+// Uses BroadcastChannel to share SSE connection across tabs (reduces HTTP connections)
 import { create } from 'zustand'
 import { apiClient } from '../services/ApiClient'
 import type { UserMessage, UserNotificationEvent } from '../lib/api-types'
@@ -35,6 +36,55 @@ interface NotificationActions {
 // Store the cleanup function outside the store to prevent re-renders
 let sseCleanup: (() => void) | null = null
 
+// BroadcastChannel for cross-tab communication (share SSE connection)
+const CHANNEL_NAME = 'stella-notifications'
+let broadcastChannel: BroadcastChannel | null = null
+let isLeaderTab = false
+let leaderCheckTimeout: ReturnType<typeof setTimeout> | null = null
+
+// Generate unique tab ID
+const tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+// Helper function to become the SSE leader (creates actual SSE connection)
+function becomeLeader(get: () => NotificationState & NotificationActions) {
+  // Already a leader or already have SSE
+  if (isLeaderTab || sseCleanup) {
+    return
+  }
+
+  isLeaderTab = true
+  console.log('[NotificationStore] Becoming SSE leader for notifications')
+
+  // Set up SSE connection
+  sseCleanup = apiClient.subscribeToUserNotifications(
+    // On event - forward to other tabs
+    (event) => {
+      get().handleEvent(event)
+      // Broadcast to other tabs
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({ type: 'SSE_EVENT', data: event, senderId: tabId })
+      }
+    },
+    // On error
+    (error) => {
+      console.error('[NotificationStore] SSE connection error:', error)
+      // Attempt to reconnect after a delay
+      setTimeout(() => {
+        if (sseCleanup) {
+          sseCleanup()
+          sseCleanup = null
+        }
+        isLeaderTab = false
+        becomeLeader(get)
+      }, 5000)
+    },
+    // On open
+    () => {
+      console.log('[NotificationStore] SSE connection established (leader)')
+    }
+  )
+}
+
 export const useNotificationStore = create<NotificationState & NotificationActions>((set, get) => ({
   // Initial state
   unreadCount: 0,
@@ -45,45 +95,84 @@ export const useNotificationStore = create<NotificationState & NotificationActio
 
   // Actions
   initialize: () => {
-    // Prevent multiple connections
-    if (sseCleanup) {
+    // Prevent multiple initializations
+    if (broadcastChannel) {
       return
     }
 
-    // Fetch initial data
+    // Fetch initial data regardless of leader status
     get().fetchUnreadCount()
 
-    // Set up SSE connection
-    sseCleanup = apiClient.subscribeToUserNotifications(
-      // On event
-      (event) => {
-        get().handleEvent(event)
-      },
-      // On error
-      (error) => {
-        console.error('SSE connection error:', error)
-        set({ isConnected: false, error: 'Connection lost. Reconnecting...' })
-        // Attempt to reconnect after a delay
-        setTimeout(() => {
-          if (sseCleanup) {
-            sseCleanup()
-            sseCleanup = null
+    // Set up BroadcastChannel for cross-tab communication
+    try {
+      broadcastChannel = new BroadcastChannel(CHANNEL_NAME)
+
+      broadcastChannel.onmessage = (event) => {
+        const { type, data, senderId } = event.data
+
+        if (type === 'LEADER_PING') {
+          // Another tab is checking for leader - respond if we're the leader
+          if (isLeaderTab && sseCleanup) {
+            broadcastChannel?.postMessage({ type: 'LEADER_PONG', senderId: tabId })
           }
-          get().initialize()
-        }, 5000)
-      },
-      // On open
-      () => {
-        set({ isConnected: true, error: null })
+        } else if (type === 'LEADER_PONG') {
+          // A leader exists, we don't need to become one
+          if (leaderCheckTimeout) {
+            clearTimeout(leaderCheckTimeout)
+            leaderCheckTimeout = null
+          }
+          isLeaderTab = false
+          set({ isConnected: true }) // We're connected via the leader
+        } else if (type === 'SSE_EVENT') {
+          // Leader is forwarding an SSE event
+          if (!isLeaderTab) {
+            get().handleEvent(data)
+          }
+        } else if (type === 'LEADER_DISCONNECTED') {
+          // Leader is closing, try to become the new leader
+          if (!isLeaderTab) {
+            becomeLeader(get)
+          }
+        }
       }
-    )
+
+      // Check if a leader exists
+      broadcastChannel.postMessage({ type: 'LEADER_PING', senderId: tabId })
+
+      // Wait for response, become leader if no response
+      leaderCheckTimeout = setTimeout(() => {
+        becomeLeader(get)
+      }, 200) // Wait 200ms for a leader response
+
+    } catch (e) {
+      // BroadcastChannel not supported, fall back to direct SSE
+      console.warn('[NotificationStore] BroadcastChannel not supported, using direct SSE')
+      becomeLeader(get)
+    }
   },
 
   disconnect: () => {
+    // If we're the leader, notify other tabs
+    if (isLeaderTab && broadcastChannel) {
+      broadcastChannel.postMessage({ type: 'LEADER_DISCONNECTED', senderId: tabId })
+    }
+
     if (sseCleanup) {
       sseCleanup()
       sseCleanup = null
     }
+
+    if (broadcastChannel) {
+      broadcastChannel.close()
+      broadcastChannel = null
+    }
+
+    if (leaderCheckTimeout) {
+      clearTimeout(leaderCheckTimeout)
+      leaderCheckTimeout = null
+    }
+
+    isLeaderTab = false
     set({ isConnected: false })
   },
 
