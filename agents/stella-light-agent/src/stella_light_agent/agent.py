@@ -105,6 +105,9 @@ class StellaLightAgent(BaseAgent):
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
+        self._local_history: List[Dict[str, str]] = []
+        self._plan_title: str = ""
+        self._plan_states_info: List[Dict[str, str]] = []
 
         mode_str = "tool-based" if use_tools else "legacy"
         print(f"[StellaLightAgent] Initialized ({mode_str} mode)")
@@ -134,9 +137,32 @@ class StellaLightAgent(BaseAgent):
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
         self._plan_system_prompt = None
+        self._local_history = []
+
+        # Extract plan overview for prompt context
+        plan_data = config.get("plan", config)
+        self._plan_title = plan_data.get("title", "")
+        states_info = []
+        for s in plan_data.get("states", []):
+            info = {
+                "id": s.get("id", ""),
+                "title": s.get("title", s.get("id", "")),
+            }
+            tasks = s.get("tasks", [])
+            if tasks:
+                first_task = tasks[0]
+                info["first_task_description"] = first_task.get("description", "")
+                info["first_task_instruction"] = first_task.get("instruction", "")
+                deliverables = first_task.get("deliverables", [])
+                if deliverables:
+                    info["first_deliverable_key"] = deliverables[0].get("key", "")
+                    info["first_deliverable_description"] = deliverables[0].get("description", "")
+            states_info.append(info)
+        self._plan_states_info = states_info
 
         print(f"[StellaLightAgent] Session started: {session_id}")
         print(f"[StellaLightAgent] Config keys: {list(config.keys())}")
+        print(f"[StellaLightAgent] Plan: '{self._plan_title}', states: {[s['title'] for s in self._plan_states_info]}")
 
         # Load plan configuration
         plan_config = self._load_plan_config(config)
@@ -340,6 +366,9 @@ class StellaLightAgent(BaseAgent):
 
     async def _process_with_tools(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using tool-based state management."""
+        # Cache user input locally (write-ahead, before DB stores it)
+        self._local_history.append({"role": "user", "content": input.text})
+
         # Fetch conversation history
         conversation_history = await self._fetch_conversation_history(limit=20)
 
@@ -400,6 +429,20 @@ class StellaLightAgent(BaseAgent):
                     sm_context["next_task"] = preview_tasks[0]
                     print(f"[StellaLightAgent] Next task (preview): {preview_tasks[0].get('description')}")
 
+                # Plan-level context for prompt
+                sm_context["plan_title"] = self._plan_title
+
+                # Conditional "next topic" hint — only when near state completion
+                next_topic = self._get_next_topic_if_near_completion(
+                    state_id=state.get("state_id") if state else None,
+                    state_type=state.get("state_type") if state else None,
+                    pending_deliverables=sm_context.get("deliverables", []),
+                    preview_tasks=preview_tasks,
+                )
+                if next_topic:
+                    sm_context["next_topic"] = next_topic
+                    print(f"[StellaLightAgent] Next topic hint: {next_topic}")
+
                 print(f"[StellaLightAgent] sm_context keys: {list(sm_context.keys())}")
 
             except Exception as e:
@@ -440,6 +483,10 @@ class StellaLightAgent(BaseAgent):
                 result = output
             else:
                 yield output
+
+        # Cache agent response locally (write-ahead, before DB stores it)
+        if result and result.message:
+            self._local_history.append({"role": "assistant", "content": result.message})
 
         # Handle results
         if result:
@@ -489,6 +536,9 @@ class StellaLightAgent(BaseAgent):
 
     async def _process_legacy(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using legacy text-parsing state management."""
+        # Cache user input locally (write-ahead, before DB stores it)
+        self._local_history.append({"role": "user", "content": input.text})
+
         # Fetch conversation history
         conversation_history = await self._fetch_conversation_history(limit=20)
 
@@ -496,6 +546,9 @@ class StellaLightAgent(BaseAgent):
         sm_context = {}
         if self.state_machine.is_initialized:
             sm_context = self.state_machine.get_context_for_prompt()
+
+        # Plan-level context for prompt
+        sm_context["plan_title"] = self._plan_title
 
         # Add custom system prompt from plan if available
         if self._plan_system_prompt:
@@ -520,6 +573,10 @@ class StellaLightAgent(BaseAgent):
                 result = output
             else:
                 yield output
+
+        # Cache agent response locally (write-ahead, before DB stores it)
+        if result and result.message:
+            self._local_history.append({"role": "assistant", "content": result.message})
 
         # Handle deliverables
         if result and result.deliverables:
@@ -742,19 +799,68 @@ class StellaLightAgent(BaseAgent):
         # Reset for next session
         self.llm_service.reset_stats()
         self._session_started_at = None
+        self._local_history = []
 
         return summary
 
     async def _fetch_conversation_history(self, limit: int = 20) -> List[Dict[str, str]]:
-        """Fetch conversation history from the SDK."""
+        """Fetch conversation history, supplemented by local cache for consistency.
+
+        The message recorder stores messages to DB asynchronously. With text input
+        and no TTS barrier, the agent can process the next turn before its own
+        previous response is in the DB. The local cache acts as a write-ahead log
+        to bridge this race condition.
+        """
+        db_history = []
         try:
-            history = await self.get_chat_history()
-            if history:
-                return [
+            messages = await self.get_chat_history(limit=limit)
+            if messages:
+                db_history = [
                     {"role": msg.role, "content": msg.content}
-                    for msg in history[-limit:]
+                    for msg in messages
                 ]
         except Exception as e:
-            print(f"[StellaLightAgent] Failed to fetch history: {e}")
+            print(f"[StellaLightAgent] Failed to fetch DB history: {e}")
 
-        return []
+        # Merge: use DB as base, append any local messages not yet in DB
+        db_contents = {m["content"] for m in db_history}
+        merged = list(db_history)
+        for msg in self._local_history:
+            if msg["content"] not in db_contents:
+                merged.append(msg)
+
+        return merged[-limit:]
+
+    def _get_next_topic_if_near_completion(
+        self,
+        state_id: Optional[str],
+        state_type: Optional[str],
+        pending_deliverables: list,
+        preview_tasks: list,
+    ) -> Optional[Dict[str, str]]:
+        """Return info about the next state if the agent is near completing the current state.
+
+        Returns a dict with title, first task description/instruction, and first deliverable
+        info so the prompt can guide Phase 1 to ask a properly aligned question (or perform
+        the right action for non-data tasks like farewell).
+
+        Strict mode: near completion when on the last task (no preview task).
+        Loose mode: near completion when 1 or fewer pending deliverables remain.
+        """
+        if not state_id or not self._plan_states_info:
+            return None
+
+        near_completion = False
+        if state_type == "strict":
+            near_completion = len(preview_tasks) == 0
+        else:
+            near_completion = len(pending_deliverables) <= 1
+
+        if not near_completion:
+            return None
+
+        for i, s in enumerate(self._plan_states_info):
+            if s["id"] == state_id and i + 1 < len(self._plan_states_info):
+                return self._plan_states_info[i + 1]
+
+        return None

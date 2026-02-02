@@ -44,15 +44,60 @@ class LightPromptBuilder:
         available_tasks = context.get("available_tasks", [])
         collected_deliverables = context.get("collected_deliverables", {})
         plan_system_prompt = context.get("plan_system_prompt")
+        plan_title = context.get("plan_title", "")
+        next_topic = context.get("next_topic")
 
         parts = [
             self._build_identity(plan_system_prompt),
-            self._build_conversational_style(),
-            self._build_guardrails(),
         ]
+
+        # Plan-level framing (always shown if available)
+        if plan_title:
+            parts.append(f"## Conversation Plan\n**Topic:** {plan_title}")
+
+        parts.append(self._build_conversational_style())
+        parts.append(self._build_guardrails())
 
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
+
+        # Conditional "next topic" hint (only when near state completion)
+        if next_topic:
+            if isinstance(next_topic, dict):
+                title = next_topic.get("title", "")
+                first_deliv_desc = next_topic.get("first_deliverable_description")
+                first_deliv_key = next_topic.get("first_deliverable_key")
+                first_task_instruction = next_topic.get("first_task_instruction", "")
+                first_task_desc = next_topic.get("first_task_description", "")
+            else:
+                title = next_topic
+                first_deliv_desc = None
+                first_deliv_key = None
+                first_task_instruction = ""
+                first_task_desc = ""
+
+            hint = f"## Coming Up Next\nThe next topic is: **{title}**.\n"
+
+            if first_deliv_desc:
+                # Next state collects data → tell Phase 1 exactly what to ask
+                hint += (
+                    f"As soon as the user provides the last piece of information for the current topic, "
+                    f"acknowledge it briefly and in the SAME response ask about: "
+                    f"**{first_deliv_desc}** (deliverable: {first_deliv_key})."
+                )
+            elif first_task_desc:
+                # Next state performs a task (no data collection) → tell Phase 1 what to do
+                action = first_task_instruction or first_task_desc
+                hint += (
+                    f"As soon as the user provides the last piece of information for the current topic, "
+                    f"acknowledge it briefly and in the SAME response: {action}"
+                )
+            else:
+                hint += (
+                    f"As soon as the user provides the last piece of information for the current topic, "
+                    f"acknowledge it briefly and transition to this next topic in the SAME response."
+                )
+            parts.append(hint)
 
         # Use different format based on mode
         if self._use_tools:
@@ -169,18 +214,19 @@ Remember: You are a supportive companion, not a replacement for professional adv
 
         parts = ["""## Response Guidelines
 - Respond naturally and conversationally (30-50 words)
-- Ask only ONE question at a time
+- Ask only ONE clear question at a time — NEVER combine two questions with "or" (e.g., "X or Y?")
+- Frame each question to match the deliverable you're collecting, so the answer maps clearly
 - Always include a complete, conversational response
 - Your response will be spoken aloud - make it sound natural
 
 ## Tool Usage
 You have tools to track conversation progress. Use them appropriately:
 
-**set_deliverable** - Call when the user CLEARLY and EXPLICITLY provides information you need to collect
-- Only call when you are certain the user provided the information
+**set_deliverable** - Call when the user provides information matching a pending deliverable
+- Extract the value when the user's answer clearly addresses the question, even if their wording differs from the examples
+- Example: if asked about missed doses and user says "I take them every day" → set missed_doses to "no"
 - NEVER call for greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values
-- If unsure, ask a clarifying question instead
+- If the answer is genuinely ambiguous (could mean multiple things), ask a clarifying question instead
 
 **complete_task** - Call when you complete a task that doesn't require collecting data
 - Examples: telling a joke, saying goodbye, providing an explanation
@@ -278,10 +324,10 @@ No deliverables to collect currently. Focus on natural conversation."""
         rules.append("""
 ### Extraction Rules
 - Format: {"key": {"value": "extracted_value", "reasoning": "brief explanation"}}
-- Only extract when user CLEARLY and EXPLICITLY provides the information
+- Extract when the user's answer clearly addresses the question, even if their wording differs from the examples
+- Example: if asked about missed doses and user says "I take them every day" → extract missed_doses as "no"
 - NEVER extract from greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values - only extract what is directly stated
-- If unsure, use [NONE] and ask a clarifying question instead""")
+- If the answer is genuinely ambiguous (could mean multiple things), use [NONE] and ask a clarifying question instead""")
 
         return "\n".join(rules)
 
@@ -358,7 +404,7 @@ You must complete tasks in ORDER. Focus on the current task until it's complete.
 **Rules:**
 - Complete the current task before moving to the next
 - If user mentions info for the next task, acknowledge but stay focused on current
-- Transition naturally when the current task completes""")
+- When the user provides the information you asked for, acknowledge it briefly and move on to the next topic in the SAME response. Do NOT ask filler questions between topics.""")
 
             return "\n".join(parts)
         else:
@@ -370,7 +416,8 @@ You can collect information in any natural order based on conversation flow.
 - Ask about ONE thing at a time, but choose based on natural conversation flow
 - If user provides multiple pieces of info in one response, collect them all
 - Prioritize REQUIRED items first, then optional ones if naturally offered
-- You CAN update already-collected information if user provides corrections"""
+- You CAN update already-collected information if user provides corrections
+- When the user answers your question, move directly to the next question. Do NOT add filler or small talk between questions."""
 
     def _build_collected_section(self, collected: Dict[str, Any]) -> str:
         """
