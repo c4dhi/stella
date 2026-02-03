@@ -239,6 +239,25 @@ export default function PlanTaskEditor({
                         </p>
                       </div>
 
+                      <div className="flex items-center gap-2 mt-3">
+                        <input
+                          type="checkbox"
+                          id={`deliverable-required-${deliverable.key}`}
+                          checked={deliverable.required !== false}
+                          onChange={(e) => handleUpdateDeliverable(index, {
+                            ...deliverable,
+                            required: e.target.checked,
+                          })}
+                          className={`w-4 h-4 rounded ${isDark ? 'border-border-dark text-primary focus:ring-primary' : 'border-neutral-300 text-neutral-900 focus:ring-neutral-400'}`}
+                        />
+                        <label
+                          htmlFor={`deliverable-required-${deliverable.key}`}
+                          className={`text-caption ${isDark ? 'text-content-inverse' : 'text-content'}`}
+                        >
+                          Required deliverable
+                        </label>
+                      </div>
+
                       <div className="flex items-center justify-end">
                         <div className="flex gap-1">
                           <button
@@ -312,6 +331,9 @@ export default function PlanTaskEditor({
                           {deliverable.examples?.length
                             ? ` · e.g., ${deliverable.examples.slice(0, 2).join(', ')}${deliverable.examples.length > 2 ? '...' : ''}`
                             : ''}
+                          {deliverable.required === false && (
+                            <span className="text-amber-500 dark:text-amber-400 ml-1">(optional)</span>
+                          )}
                         </div>
                       </div>
 

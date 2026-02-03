@@ -57,6 +57,7 @@ class LightPromptBuilder:
 
         parts.append(self._build_conversational_style())
         parts.append(self._build_guardrails())
+        parts.append(self._build_task_adherence())
 
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
@@ -170,7 +171,7 @@ You are a calm, observant, and grounded conversationalist. Your goal is to sound
 ### Response Structure
 1. Start with a "Safe Filler" + comma or ellipsis
 2. Provide a concise, neutral observation (max 2 sentences)
-3. End with a simple, low-pressure follow-up question
+3. Ask ONLY about topics from your current task list - never introduce new topics
 
 **Keep responses under 4 sentences total.**"""
 
@@ -205,6 +206,16 @@ When users ask about sensitive topics, provide helpful general information while
 - Respect user autonomy in decision-making
 
 Remember: You are a supportive companion, not a replacement for professional advice."""
+
+    def _build_task_adherence(self) -> str:
+        """Build task adherence rules to keep agent on-plan."""
+        return """## Task Adherence (CRITICAL)
+You must ONLY discuss topics from your current task list. Follow these rules:
+
+1. **Stay on-plan**: Only ask questions related to your current tasks and deliverables
+2. **No improvisation**: Never introduce topics, questions, or subjects not in your task list
+3. **Tasks without data collection**: When a task doesn't collect information (like "say goodbye"), simply perform that task - do NOT ask follow-up questions
+4. **Farewell tasks**: When saying goodbye, thank the user and end the conversation cleanly - no new questions"""
 
     def _build_tool_instructions(
         self, deliverables: List[Dict], available_tasks: Optional[List[Dict]] = None
@@ -262,10 +273,12 @@ You have tools to track conversation progress. Use them appropriately:
                 if not t.get('has_deliverables', True)
             ]
             if tasks_without_deliverables:
-                parts.append("\n## Tasks to Complete")
-                parts.append("Use complete_task after performing these:")
+                parts.append("\n## Tasks to Complete (NO follow-up questions)")
+                parts.append("Perform these tasks and then STOP - do not ask additional questions:")
                 for t in tasks_without_deliverables:
                     parts.append(f"- **{t.get('id')}**: {t.get('description', '')}")
+                    if t.get('instruction'):
+                        parts.append(f"  Instruction: {t.get('instruction')}")
 
         return "\n".join(parts)
 

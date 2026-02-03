@@ -264,13 +264,13 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
           {
             "id": "task_goals",
             "description": "Ask about fitness goals",
-            "required": false,
+            "required": true,
             "deliverables": [
               {
                 "key": "fitness_goal",
                 "description": "Their main fitness objective",
                 "type": "string",
-                "required": false,
+                "required": true,
                 "examples": ["Lose 10kg by summer", "Run a marathon", "Build muscle", "Improve flexibility"]
               }
             ]
@@ -313,6 +313,7 @@ Guidelines:
     - Clear role (e.g., "You are a friendly fitness coach...")
     - Communication style (casual, professional, enthusiastic, etc.)
     - 2-3 sentences max
+11. Default both tasks and deliverables to required: true unless truly optional (user can skip without affecting conversation flow)
 
 Respond ONLY with valid JSON matching the schema above.`;
   }
