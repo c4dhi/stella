@@ -11,9 +11,10 @@ This is a lightweight version of stella-agent that:
 import asyncio
 import json
 import os
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Dict, Any, List, Optional
+from typing import AsyncIterator, Dict, Any, Deque, List, Optional
 
 from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
@@ -105,7 +106,7 @@ class StellaLightAgent(BaseAgent):
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
-        self._local_history: List[Dict[str, str]] = []
+        self._local_history: Deque[Dict[str, str]] = deque(maxlen=40)  # Bounded to 2x fetch limit
         self._plan_title: str = ""
         self._plan_states_info: List[Dict[str, str]] = []
 
@@ -137,7 +138,7 @@ class StellaLightAgent(BaseAgent):
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
         self._plan_system_prompt = None
-        self._local_history = []
+        self._local_history = deque(maxlen=40)
 
         # Extract plan overview for prompt context
         plan_data = config.get("plan", config)
@@ -366,11 +367,11 @@ class StellaLightAgent(BaseAgent):
 
     async def _process_with_tools(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using tool-based state management."""
-        # Cache user input locally (write-ahead, before DB stores it)
-        self._local_history.append({"role": "user", "content": input.text})
-
-        # Fetch conversation history
+        # Fetch conversation history for previous turns (DB may be slightly behind)
         conversation_history = await self._fetch_conversation_history(limit=20)
+
+        # Cache user input locally after fetching history to avoid duplicate turns
+        self._local_history.append({"role": "user", "content": input.text})
 
         # Get state machine context from external service
         sm_context = {}
@@ -536,11 +537,11 @@ class StellaLightAgent(BaseAgent):
 
     async def _process_legacy(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using legacy text-parsing state management."""
-        # Cache user input locally (write-ahead, before DB stores it)
-        self._local_history.append({"role": "user", "content": input.text})
-
-        # Fetch conversation history
+        # Fetch conversation history for previous turns (DB may be slightly behind)
         conversation_history = await self._fetch_conversation_history(limit=20)
+
+        # Cache user input locally after fetching history to avoid duplicate turns
+        self._local_history.append({"role": "user", "content": input.text})
 
         # Get state machine context
         sm_context = {}
@@ -799,7 +800,7 @@ class StellaLightAgent(BaseAgent):
         # Reset for next session
         self.llm_service.reset_stats()
         self._session_started_at = None
-        self._local_history = []
+        self._local_history = deque(maxlen=40)
 
         return summary
 
@@ -823,10 +824,13 @@ class StellaLightAgent(BaseAgent):
             print(f"[StellaLightAgent] Failed to fetch DB history: {e}")
 
         # Merge: use DB as base, append any local messages not yet in DB
-        db_contents = {m["content"] for m in db_history}
+        # De-duplicate on (role, content) rather than content alone to avoid
+        # dropping distinct messages that share the same text (e.g., user and assistant both say "OK")
+        db_message_keys = {(m["role"], m["content"]) for m in db_history}
         merged = list(db_history)
         for msg in self._local_history:
-            if msg["content"] not in db_contents:
+            key = (msg.get("role"), msg.get("content"))
+            if key not in db_message_keys:
                 merged.append(msg)
 
         return merged[-limit:]
