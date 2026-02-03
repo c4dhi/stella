@@ -17,6 +17,26 @@ export default function PlanTaskEditor({
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const [editingDeliverableIndex, setEditingDeliverableIndex] = useState<number | null>(null)
+  const [localInputs, setLocalInputs] = useState<{ [key: string]: string }>({})
+
+  // Helper functions for managing local input state (allows typing commas)
+  const getInputKey = (index: number, field: 'examples' | 'enum_values') => `${index}-${field}`
+
+  const getLocalValue = (index: number, field: 'examples' | 'enum_values', arrayValue: string[] | undefined) => {
+    const key = getInputKey(index, field)
+    return localInputs[key] ?? arrayValue?.join(', ') ?? ''
+  }
+
+  const setLocalValue = (index: number, field: 'examples' | 'enum_values', value: string) => {
+    setLocalInputs(prev => ({ ...prev, [getInputKey(index, field)]: value }))
+  }
+
+  const clearLocalValue = (index: number, field: 'examples' | 'enum_values') => {
+    setLocalInputs(prev => {
+      const { [getInputKey(index, field)]: _, ...rest } = prev
+      return rest
+    })
+  }
 
   const handleAddDeliverable = () => {
     const newDeliverable = createEmptyDeliverable()
@@ -207,11 +227,13 @@ export default function PlanTaskEditor({
                           </label>
                           <input
                             type="text"
-                            value={deliverable.enum_values?.join(', ') || ''}
-                            onChange={(e) => handleUpdateDeliverable(index, {
-                              ...deliverable,
-                              enum_values: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
-                            })}
+                            value={getLocalValue(index, 'enum_values', deliverable.enum_values)}
+                            onChange={(e) => setLocalValue(index, 'enum_values', e.target.value)}
+                            onBlur={(e) => {
+                              const parsed = e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                              handleUpdateDeliverable(index, { ...deliverable, enum_values: parsed })
+                              clearLocalValue(index, 'enum_values')
+                            }}
                             placeholder="e.g., Option 1, Option 2, Option 3"
                             className="input-field w-full text-body-sm"
                           />
@@ -226,11 +248,13 @@ export default function PlanTaskEditor({
                         </label>
                         <input
                           type="text"
-                          value={deliverable.examples?.join(', ') || ''}
-                          onChange={(e) => handleUpdateDeliverable(index, {
-                            ...deliverable,
-                            examples: e.target.value ? e.target.value.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-                          })}
+                          value={getLocalValue(index, 'examples', deliverable.examples)}
+                          onChange={(e) => setLocalValue(index, 'examples', e.target.value)}
+                          onBlur={(e) => {
+                            const parsed = e.target.value ? e.target.value.split(',').map(s => s.trim()).filter(Boolean) : undefined
+                            handleUpdateDeliverable(index, { ...deliverable, examples: parsed })
+                            clearLocalValue(index, 'examples')
+                          }}
                           placeholder="e.g., Sarah, John, Alex"
                           className="input-field w-full text-body-sm"
                         />
