@@ -709,27 +709,37 @@ export class AgentsService {
   async stopAllSessionAgents(sessionId: string): Promise<void> {
     this.logger.debug(`stopAllSessionAgents: querying agents for session ${sessionId}`);
 
+    // Query ALL agents — not just running ones — so K8s resources are cleaned up
+    // regardless of agent status. Agents in STOPPED/FAILED state may still have
+    // orphaned K8s pods/secrets if their previous cleanup was incomplete.
     const agents = await this.prisma.agentInstance.findMany({
-      where: {
-        sessionId,
-        status: { in: [AgentStatus.RUNNING, AgentStatus.STARTING] },
-      },
+      where: { sessionId },
     });
 
     this.logger.debug(`stopAllSessionAgents: found ${agents.length} agents`);
 
     if (agents.length === 0) {
-      this.logger.debug(`No running agents to stop for session ${sessionId}`);
+      this.logger.debug(`No agents to clean up for session ${sessionId}`);
       return;
     }
 
-    this.logger.log(`Stopping ${agents.length} agents for session ${sessionId}`);
+    const activeAgents = agents.filter(a =>
+      a.status === AgentStatus.RUNNING || a.status === AgentStatus.STARTING
+    );
+    const inactiveAgents = agents.filter(a =>
+      a.status !== AgentStatus.RUNNING && a.status !== AgentStatus.STARTING
+    );
 
-    // Stop all agents in parallel with a timeout to prevent hanging
+    this.logger.log(
+      `Cleaning up ${agents.length} agents for session ${sessionId} ` +
+      `(${activeAgents.length} active, ${inactiveAgents.length} inactive)`
+    );
+
+    // Stop active agents gracefully (with timeout)
     const STOP_TIMEOUT_MS = 30000; // 30 second timeout per agent
 
-    const results = await Promise.allSettled(
-      agents.map(async (agent) => {
+    const activeResults = await Promise.allSettled(
+      activeAgents.map(async (agent) => {
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Timeout stopping agent ${agent.id}`)), STOP_TIMEOUT_MS)
         );
@@ -741,7 +751,8 @@ export class AgentsService {
           ]);
         } catch (error) {
           this.logger.error(`Error stopping agent ${agent.id}: ${error.message}`);
-          // Force update DB status to STOPPED even if stop failed
+          // Force cleanup K8s resources even if stop failed
+          await this.cleanupK8sResources(agent).catch(() => {});
           await this.prisma.agentInstance.update({
             where: { id: agent.id },
             data: { status: AgentStatus.STOPPED, stoppedAt: new Date() },
@@ -751,14 +762,31 @@ export class AgentsService {
       })
     );
 
+    // Clean up K8s resources for inactive agents (STOPPED/FAILED/STOPPING)
+    // These may still have orphaned pods/secrets from incomplete cleanup
+    const inactiveResults = await Promise.allSettled(
+      inactiveAgents
+        .filter(a => a.podName || a.secretName || a.configMapName)
+        .map(async (agent) => {
+          this.logger.log(`Cleaning up orphaned K8s resources for inactive agent ${agent.id} (status: ${agent.status})`);
+          await this.cleanupK8sResources(agent);
+        })
+    );
+
     // Log any failures
-    results.forEach((result, index) => {
+    activeResults.forEach((result, index) => {
       if (result.status === 'rejected') {
-        this.logger.error(`Failed to stop agent ${agents[index].id}: ${result.reason}`);
+        this.logger.error(`Failed to stop agent ${activeAgents[index].id}: ${result.reason}`);
+      }
+    });
+    inactiveResults.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const agent = inactiveAgents.filter(a => a.podName || a.secretName || a.configMapName)[index];
+        this.logger.error(`Failed to clean up inactive agent ${agent?.id}: ${result.reason}`);
       }
     });
 
-    this.logger.log(`Finished stopping agents for session ${sessionId}`);
+    this.logger.log(`Finished cleaning up agents for session ${sessionId}`);
   }
 
   /**

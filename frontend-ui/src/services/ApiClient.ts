@@ -913,7 +913,7 @@ class SessionManagementClient {
     const url = `${this.getBaseUrl()}/sessions/${sessionId}/events`
 
     // Get auth token
-    const token = localStorage.getItem('grace_auth_token')
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
 
     // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
     const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
