@@ -168,6 +168,8 @@ export default function SessionView() {
               message: `${event.agentName || 'Agent'} is starting...`,
               type: 'info'
             })
+            // Refresh session so AgentSidebar gets STARTING status via initialAgents prop
+            apiClient.getSession(sessionId).then(setSession).catch(console.error)
             break
           case 'agent.stopped':
             addToast({

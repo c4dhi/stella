@@ -4,7 +4,7 @@ import { apiClient } from '../../services/ApiClient'
 import ConfirmDialog from '../modals/ConfirmDialog'
 import { useToastStore } from '../../store/toastStore'
 import { useThemeStore } from '../../store/themeStore'
-import type { AgentInstance, AgentWithPodStatus } from '../../lib/api-types'
+import type { AgentInstance, AgentWithPodStatus, SessionEvent } from '../../lib/api-types'
 import { AgentStatus, POLL_INTERVALS } from '../../lib/api-types'
 import { getRuntimeConfig } from '../../config/runtime'
 
@@ -88,43 +88,47 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
     })
   }, [agents])
 
-  // Poll for agents status with smart merge
+  // Subscribe to SSE events for immediate agent status updates
+  useEffect(() => {
+    const unsubscribe = apiClient.subscribeToSessionEvents(
+      sessionId,
+      (event: SessionEvent) => {
+        if (!event.agentId) return
+
+        switch (event.type) {
+          case 'agent.starting':
+            setAgents(prev => prev.map(a =>
+              a.id === event.agentId ? { ...a, status: AgentStatus.STARTING } : a
+            ))
+            break
+          case 'agent.ready':
+            setAgents(prev => prev.map(a =>
+              a.id === event.agentId ? { ...a, status: AgentStatus.RUNNING } : a
+            ))
+            break
+          case 'agent.stopped':
+            setAgents(prev => prev.map(a =>
+              a.id === event.agentId ? { ...a, status: AgentStatus.STOPPED } : a
+            ))
+            break
+          case 'agent.failed':
+            setAgents(prev => prev.map(a =>
+              a.id === event.agentId ? { ...a, status: AgentStatus.FAILED } : a
+            ))
+            break
+        }
+      }
+    )
+
+    return () => unsubscribe()
+  }, [sessionId])
+
+  // Poll for agents as fallback (server is source of truth)
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const session = await apiClient.getSession(sessionId)
-
-        // Smart merge: validate state transitions before accepting server updates
-        setAgents(prev =>
-          session.agents.map(serverAgent => {
-            const localAgent = prev.find(a => a.id === serverAgent.id)
-
-            if (!localAgent) {
-              // New agent from server - accept as-is
-              return serverAgent
-            }
-
-            // Define valid state transitions
-            const isValidTransition = (from: AgentStatus, to: AgentStatus): boolean => {
-              const validTransitions: Record<AgentStatus, AgentStatus[]> = {
-                [AgentStatus.STARTING]: [AgentStatus.RUNNING, AgentStatus.FAILED, AgentStatus.STOPPED],
-                [AgentStatus.RUNNING]: [AgentStatus.STOPPING, AgentStatus.STOPPED, AgentStatus.FAILED],
-                [AgentStatus.STOPPING]: [AgentStatus.STOPPED, AgentStatus.FAILED],
-                [AgentStatus.STOPPED]: [], // Terminal state
-                [AgentStatus.FAILED]: []   // Terminal state
-              }
-              return validTransitions[from]?.includes(to) ?? false
-            }
-
-            // Keep local state if server transition is invalid (likely stale data)
-            if (!isValidTransition(localAgent.status, serverAgent.status)) {
-              return { ...serverAgent, status: localAgent.status }
-            }
-
-            // Accept valid server transition
-            return serverAgent
-          })
-        )
+        setAgents(session.agents)
       } catch (err) {
         console.error('Failed to refresh agents:', err)
       }

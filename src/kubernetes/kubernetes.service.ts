@@ -29,6 +29,7 @@ export class KubernetesService {
   private readonly logger = new Logger(KubernetesService.name);
   private readonly kc: k8s.KubeConfig;
   private readonly k8sApi: k8s.CoreV1Api;
+  private readonly customObjectsApi: k8s.CustomObjectsApi;
   private readonly namespace: string;
   private readonly defaultAgentType: string;
   private readonly imagePullPolicy: string;
@@ -59,6 +60,7 @@ export class KubernetesService {
     }
 
     this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
+    this.customObjectsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
   }
 
   /**
@@ -392,6 +394,73 @@ export class KubernetesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Batch-query K8s Metrics API for all agent pods.
+   * Returns a map of agentId → { cpuMillicores, memoryBytes }.
+   * Gracefully returns empty map if metrics-server is unavailable.
+   */
+  async getAgentPodMetrics(): Promise<Map<string, { cpuMillicores: number; memoryBytes: number }>> {
+    const result = new Map<string, { cpuMillicores: number; memoryBytes: number }>();
+
+    try {
+      const response = await this.customObjectsApi.listNamespacedCustomObject({
+        group: 'metrics.k8s.io',
+        version: 'v1beta1',
+        namespace: this.namespace,
+        plural: 'pods',
+        labelSelector: 'app=stella-ai-agent',
+      });
+
+      const body = response as any;
+      const items = body?.items || [];
+
+      for (const item of items) {
+        const agentId = item.metadata?.labels?.agentId;
+        if (!agentId) continue;
+
+        const containers = item.containers || [];
+        let totalCpuNano = 0;
+        let totalMemoryBytes = 0;
+
+        for (const container of containers) {
+          const cpuUsage = container.usage?.cpu || '0';
+          const memUsage = container.usage?.memory || '0';
+
+          // Parse CPU: nanocores (e.g., "250000000n") → millicores
+          if (cpuUsage.endsWith('n')) {
+            totalCpuNano += parseInt(cpuUsage.slice(0, -1), 10);
+          } else if (cpuUsage.endsWith('m')) {
+            totalCpuNano += parseInt(cpuUsage.slice(0, -1), 10) * 1_000_000;
+          } else {
+            // Plain number = cores
+            totalCpuNano += parseFloat(cpuUsage) * 1_000_000_000;
+          }
+
+          // Parse memory: Ki, Mi, Gi → bytes
+          if (memUsage.endsWith('Ki')) {
+            totalMemoryBytes += parseInt(memUsage.slice(0, -2), 10) * 1024;
+          } else if (memUsage.endsWith('Mi')) {
+            totalMemoryBytes += parseInt(memUsage.slice(0, -2), 10) * 1024 * 1024;
+          } else if (memUsage.endsWith('Gi')) {
+            totalMemoryBytes += parseFloat(memUsage.slice(0, -2)) * 1024 * 1024 * 1024;
+          } else {
+            totalMemoryBytes += parseInt(memUsage, 10) || 0;
+          }
+        }
+
+        result.set(agentId, {
+          cpuMillicores: Math.round(totalCpuNano / 1_000_000),
+          memoryBytes: totalMemoryBytes,
+        });
+      }
+    } catch (error) {
+      // Graceful fallback: metrics-server may not be available
+      this.logger.warn(`Failed to fetch agent pod metrics (metrics-server may be unavailable): ${error.message}`);
+    }
+
+    return result;
   }
 
   async streamPodLogs(podName: string, callback: (chunk: string) => void, onError?: (error: Error) => void): Promise<() => void> {

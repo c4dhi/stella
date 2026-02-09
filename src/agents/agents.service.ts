@@ -195,30 +195,11 @@ export class AgentsService {
       return null;
     }
 
-    // Agent still STARTING with no podName yet - pod creation is async, give it time
-    if (agent.status === AgentStatus.STARTING && !agent.podName) {
-      // Check how long it's been starting
-      const createdAt = agent.createdAt;
-      const ageMs = Date.now() - createdAt.getTime();
-      const maxWaitMs = 5 * 60 * 1000; // 5 minutes for image build
-
-      if (ageMs < maxWaitMs) {
-        // Still within acceptable startup window
-        this.logger.debug(`Agent ${agentId} still starting, waiting for pod (${Math.round(ageMs / 1000)}s)`);
-        return agent.status;
-      }
-
-      // Too long without podName - mark as failed
-      this.logger.warn(`Agent ${agentId} has been STARTING for ${Math.round(ageMs / 1000)}s without podName, marking as FAILED`);
-      await this.prisma.agentInstance.update({
-        where: { id: agentId },
-        data: {
-          status: AgentStatus.FAILED,
-          stoppedAt: new Date(),
-          lastError: 'Pod creation timeout',
-        },
-      });
-      return AgentStatus.FAILED;
+    // Don't override STARTING state - this is set by create()/restartAgent()
+    // and will transition to RUNNING when agent connects via gRPC,
+    // or to FAILED if pod creation fails in the catch block
+    if (agent.status === AgentStatus.STARTING) {
+      return agent.status;
     }
 
     // Agent without podName that's not starting = orphaned, mark as STOPPED
@@ -813,12 +794,17 @@ export class AgentsService {
       this.logger.error(`K8s cleanup failed for agent ${id}: ${error.message}`);
     }
 
-    // Update agent status to STARTING
+    // Update agent status to STARTING and clear old pod references
+    // Clearing podName is critical: syncAgentStatus() would otherwise query K8s
+    // for the deleted pod, get null back, and overwrite STARTING → STOPPED
     await this.prisma.agentInstance.update({
       where: { id },
       data: {
         status: AgentStatus.STARTING,
         stoppedAt: null,
+        podName: null,
+        secretName: null,
+        configMapName: null,
       },
     });
 
@@ -889,7 +875,6 @@ export class AgentsService {
         data: {
           podName,
           secretName,
-          status: AgentStatus.RUNNING,
         },
       });
 

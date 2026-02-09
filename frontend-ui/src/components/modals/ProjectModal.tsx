@@ -69,7 +69,7 @@ export default function ProjectModal({
   const [projectType, setProjectType] = useState<ProjectType>('private')
 
   // Auto-stop timeout
-  const [agentInactivityTimeout, setAgentInactivityTimeout] = useState<number | null>(null)
+  const [agentInactivityTimeout, setAgentInactivityTimeout] = useState<number | null>(5)
   const [customTimeout, setCustomTimeout] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
 
@@ -163,7 +163,7 @@ export default function ProjectModal({
         // Create mode - reset to defaults
         setName('')
         setProjectType('private')
-        setAgentInactivityTimeout(null)
+        setAgentInactivityTimeout(5)
         setCustomTimeout('')
         setShowCustomInput(false)
         setSelectedAgentType(null)

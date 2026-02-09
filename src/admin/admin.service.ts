@@ -3,6 +3,7 @@ import { Observable, interval, ReplaySubject, merge } from 'rxjs';
 import { map, switchMap, startWith, finalize } from 'rxjs/operators';
 import { PrismaService } from '../prisma/prisma.service';
 import { ServerMetricsService, ServerMetrics } from './services/server-metrics.service';
+import { KubernetesService } from '../kubernetes/kubernetes.service';
 
 interface MessageEvent {
   data: string;
@@ -52,10 +53,28 @@ export interface UserListItem {
   projectCount: number;
 }
 
+export interface SessionResourceUsage {
+  cpuMillicores: number;
+  memoryBytes: number;
+  cpuPercent: number;
+  memoryPercent: number;
+}
+
+export interface SessionAgentError {
+  agentName: string;
+  status: string;
+  lastError: string | null;
+  healthState: string | null;
+}
+
 export interface SessionStatusItem {
   id: string;
-  status: string; // 'ACTIVE', 'CLOSED', 'ERROR'
+  status: string; // 'ACTIVE', 'CLOSED'
   hasError: boolean;
+  isIdle: boolean;
+  resourceUsage: SessionResourceUsage | null;
+  hasResourceWarning: boolean;
+  errors: SessionAgentError[];
   projectId: string;
   createdAt: Date;
 }
@@ -79,9 +98,18 @@ export class AdminService {
   private dashboardRefreshTrigger = new ReplaySubject<void>(1);
   private serverMetricsSubscriberCount = 0;
 
+  // In-memory cache for K8s pod metrics (30s TTL)
+  private metricsCache: { data: Map<string, { cpuMillicores: number; memoryBytes: number }>; fetchedAt: number } | null = null;
+  private readonly METRICS_CACHE_TTL = 30_000; // 30 seconds
+
+  // Known resource limits per agent pod (from pod spec)
+  private readonly AGENT_CPU_LIMIT_MILLICORES = 1000; // 1000m
+  private readonly AGENT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024; // 2Gi
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly serverMetricsService: ServerMetricsService,
+    private readonly kubernetesService: KubernetesService,
   ) {}
 
   /**
@@ -195,31 +223,109 @@ export class AdminService {
   }
 
   /**
+   * Get cached agent pod metrics (30s TTL)
+   */
+  private async getCachedAgentPodMetrics(): Promise<Map<string, { cpuMillicores: number; memoryBytes: number }>> {
+    const now = Date.now();
+    if (this.metricsCache && (now - this.metricsCache.fetchedAt) < this.METRICS_CACHE_TTL) {
+      return this.metricsCache.data;
+    }
+
+    const data = await this.kubernetesService.getAgentPodMetrics();
+    this.metricsCache = { data, fetchedAt: now };
+    return data;
+  }
+
+  /**
    * Get all sessions with their current status for the sessions grid
    */
   async getAllSessions(): Promise<SessionStatusItem[]> {
-    const sessions = await this.prisma.session.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 200, // Limit to most recent 200 sessions
-      select: {
-        id: true,
-        status: true,
-        projectId: true,
-        createdAt: true,
-        agents: {
-          select: {
-            status: true,
+    const [sessions, metricsMap] = await Promise.all([
+      this.prisma.session.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 200, // Limit to most recent 200 sessions
+        select: {
+          id: true,
+          status: true,
+          projectId: true,
+          createdAt: true,
+          agents: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              podName: true,
+              lastError: true,
+              healthState: true,
+            },
+          },
+          participants: {
+            where: { leftAt: null },
+            select: { id: true },
           },
         },
-      },
-    });
+      }),
+      this.getCachedAgentPodMetrics(),
+    ]);
 
     return sessions.map((session) => {
-      const hasError = session.agents.some((agent) => agent.status === 'FAILED');
+      // Collect agents with errors: FAILED status or healthState 'error'
+      const errorAgents: SessionAgentError[] = session.agents
+        .filter((agent) => agent.status === 'FAILED' || agent.healthState === 'error')
+        .map((agent) => ({
+          agentName: agent.name,
+          status: agent.status,
+          lastError: agent.lastError,
+          healthState: agent.healthState,
+        }));
+      const hasError = errorAgents.length > 0;
+      const hasRunningOrStartingAgent = session.agents.some(
+        (agent) => agent.status === 'RUNNING' || agent.status === 'STARTING',
+      );
+      const hasOnlineParticipants = session.participants.length > 0;
+      const isIdle = session.status === 'ACTIVE' && !hasRunningOrStartingAgent && !hasOnlineParticipants;
+
+      // Aggregate resource usage for this session's running agents
+      let resourceUsage: SessionResourceUsage | null = null;
+      const runningAgents = session.agents.filter((a) => a.status === 'RUNNING' || a.status === 'STARTING');
+
+      if (runningAgents.length > 0 && metricsMap.size > 0) {
+        let totalCpu = 0;
+        let totalMem = 0;
+        let agentsWithMetrics = 0;
+
+        for (const agent of runningAgents) {
+          const metrics = metricsMap.get(agent.id);
+          if (metrics) {
+            totalCpu += metrics.cpuMillicores;
+            totalMem += metrics.memoryBytes;
+            agentsWithMetrics++;
+          }
+        }
+
+        if (agentsWithMetrics > 0) {
+          const totalCpuLimit = runningAgents.length * this.AGENT_CPU_LIMIT_MILLICORES;
+          const totalMemLimit = runningAgents.length * this.AGENT_MEMORY_LIMIT_BYTES;
+          resourceUsage = {
+            cpuMillicores: totalCpu,
+            memoryBytes: totalMem,
+            cpuPercent: Math.round((totalCpu / totalCpuLimit) * 100),
+            memoryPercent: Math.round((totalMem / totalMemLimit) * 100),
+          };
+        }
+      }
+
+      const hasResourceWarning = resourceUsage !== null &&
+        (resourceUsage.cpuPercent > 80 || resourceUsage.memoryPercent > 80);
+
       return {
         id: session.id,
         status: session.status,
         hasError,
+        isIdle,
+        resourceUsage,
+        hasResourceWarning,
+        errors: errorAgents,
         projectId: session.projectId,
         createdAt: session.createdAt,
       };

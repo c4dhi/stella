@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
+import { useToastStore } from '../../store/toastStore'
 import { useAdminDashboardStream, useUsageHistory, useAllSessions } from '../../hooks/useAdminMetrics'
 import { useServerMetricsStream } from '../../hooks/useServerMetrics'
+import { apiClient } from '../../services/ApiClient'
 import StatsCard from './admin/StatsCard'
 import SessionsGrid from './admin/SessionsGrid'
 import ServerPerformanceMonitor from './admin/ServerPerformanceMonitor'
@@ -93,7 +95,21 @@ export default function AdminDashboardSection() {
   } = useServerMetricsStream()
 
   // All sessions data
-  const { sessions, isLoading: sessionsLoading } = useAllSessions()
+  const { sessions, isLoading: sessionsLoading, refetch: refetchSessions } = useAllSessions()
+  const { addToast } = useToastStore()
+
+  const handleCloseSession = useCallback(async (sessionId: string) => {
+    try {
+      await apiClient.closeSession(sessionId)
+      addToast({ message: 'Session closed successfully', type: 'success' })
+      refetchSessions()
+    } catch (err) {
+      addToast({
+        message: err instanceof Error ? err.message : 'Failed to close session',
+        type: 'error',
+      })
+    }
+  }, [addToast, refetchSessions])
 
   // Historical usage data
   const [historyDays, setHistoryDays] = useState(30)
@@ -222,7 +238,7 @@ export default function AdminDashboardSection() {
 
       {/* Sessions Grid */}
       <motion.div variants={itemVariants}>
-        <SessionsGrid sessions={sessions} isLoading={sessionsLoading} />
+        <SessionsGrid sessions={sessions} isLoading={sessionsLoading} onCloseSession={handleCloseSession} />
       </motion.div>
 
       {/* Historical Usage Charts */}
@@ -233,34 +249,6 @@ export default function AdminDashboardSection() {
           onRangeChange={handleRangeChange}
         />
       </motion.div>
-
-      {/* Paused Agents Info */}
-      {metrics && metrics.pausedAgents > 0 && (
-        <motion.div
-          variants={itemVariants}
-          className={`p-4 rounded-xl border ${
-            isDark
-              ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-              : 'bg-yellow-50 border-yellow-200 text-yellow-700'
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            <PauseIcon />
-            <div>
-              <p className="font-medium">
-                {metrics.pausedAgents} agent{metrics.pausedAgents > 1 ? 's' : ''} paused
-              </p>
-              <p
-                className={`text-caption ${
-                  isDark ? 'text-yellow-400/70' : 'text-yellow-600'
-                }`}
-              >
-                Agents stopped due to user inactivity. They will auto-restart when users rejoin.
-              </p>
-            </div>
-          </div>
-        </motion.div>
-      )}
 
       {/* Failed Agents Warning */}
       {metrics && metrics.failedAgents > 0 && (

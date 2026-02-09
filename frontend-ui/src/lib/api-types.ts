@@ -1111,10 +1111,28 @@ export interface AdminUsersResponse {
   totalPages: number
 }
 
+export interface SessionResourceUsage {
+  cpuMillicores: number
+  memoryBytes: number
+  cpuPercent: number
+  memoryPercent: number
+}
+
+export interface SessionAgentError {
+  agentName: string
+  status: string
+  lastError: string | null
+  healthState: string | null
+}
+
 export interface SessionStatusItem {
   id: string
-  status: string // 'ACTIVE', 'CLOSED', 'ERROR'
+  status: string // 'ACTIVE', 'CLOSED'
   hasError: boolean
+  isIdle: boolean
+  resourceUsage: SessionResourceUsage | null
+  hasResourceWarning: boolean
+  errors: SessionAgentError[]
   projectId: string
   createdAt: string
 }
