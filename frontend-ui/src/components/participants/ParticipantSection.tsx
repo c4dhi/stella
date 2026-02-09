@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Globe, Ban, Check } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
-import type { Participant, Invitation, InvitationStatus, SessionEvent } from '../../lib/api-types'
+import type { Participant, Invitation, InvitationStatus } from '../../lib/api-types'
 import PresenceIndicator from './PresenceIndicator'
 import InviteParticipantModal from '../modals/InviteParticipantModal'
 
@@ -28,6 +28,7 @@ interface ParticipantSectionProps {
   onRemoveParticipant: (participantId: string, participantName: string) => void
   onRefresh?: () => void
   refreshTrigger?: number  // Increment to force refresh of invitations
+  lastPresenceEvent?: { type: string; identity: string } | null  // Forwarded from parent SSE
 }
 
 // Track online status by identity
@@ -42,6 +43,7 @@ export default function ParticipantSection({
   onRemoveParticipant,
   onRefresh,
   refreshTrigger,
+  lastPresenceEvent,
 }: ParticipantSectionProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
@@ -99,32 +101,24 @@ export default function ParticipantSection({
     }
   }, [refreshTrigger, fetchInvitations])
 
-  // Subscribe to SSE events for presence updates
+  // React to presence events forwarded from SessionView's SSE connection
   useEffect(() => {
-    const cleanup = apiClient.subscribeToSessionEvents(
-      sessionId,
-      (event: SessionEvent) => {
-        if (event.type === 'participant.joined' && event.participantIdentity) {
-          setPresenceState(prev => ({
-            ...prev,
-            [event.participantIdentity!]: true,
-          }))
-          // Refresh invitations to get updated participant data
-          fetchInvitations()
-        } else if (event.type === 'participant.left' && event.participantIdentity) {
-          setPresenceState(prev => ({
-            ...prev,
-            [event.participantIdentity!]: false,
-          }))
-        }
-      },
-      (error) => {
-        console.error('SSE error:', error)
-      }
-    )
-
-    return cleanup
-  }, [sessionId, fetchInvitations])
+    if (!lastPresenceEvent) return
+    const { type, identity } = lastPresenceEvent
+    if (type === 'participant.joined') {
+      setPresenceState(prev => ({
+        ...prev,
+        [identity]: true,
+      }))
+      // Refresh invitations to get updated participant data
+      fetchInvitations()
+    } else if (type === 'participant.left') {
+      setPresenceState(prev => ({
+        ...prev,
+        [identity]: false,
+      }))
+    }
+  }, [lastPresenceEvent, fetchInvitations])
 
   // Poll for presence updates (checks lastSeenAt staleness)
   useEffect(() => {

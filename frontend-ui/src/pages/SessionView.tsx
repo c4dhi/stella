@@ -58,6 +58,9 @@ export default function SessionView() {
     onConfirm: () => { },
   })
 
+  // Presence event forwarding to ParticipantSection (avoids duplicate SSE connection)
+  const [lastPresenceEvent, setLastPresenceEvent] = useState<{ type: string; identity: string } | null>(null)
+
   // Agent modal states
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false)
 
@@ -180,6 +183,13 @@ export default function SessionView() {
             setAgentReady(false)
             // Refresh session to get updated agent status
             apiClient.getSession(sessionId).then(setSession).catch(console.error)
+            break
+          case 'participant.joined':
+          case 'participant.left':
+            if (event.participantIdentity) {
+              // Forward to ParticipantSection via prop (new object ref triggers useEffect)
+              setLastPresenceEvent({ type: event.type, identity: event.participantIdentity })
+            }
             break
         }
       },
@@ -855,6 +865,7 @@ export default function SessionView() {
             onRemoveParticipant={handleRemoveParticipant}
             onRefresh={() => apiClient.getSession(sessionId).then(setSession).catch(console.error)}
             refreshTrigger={participantRefreshTrigger}
+            lastPresenceEvent={lastPresenceEvent}
           />
           <AgentSidebar
             sessionId={sessionId}
