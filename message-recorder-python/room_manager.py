@@ -1,11 +1,15 @@
 """
 Multi-room connection manager for LiveKit message recording.
 Manages connections to multiple LiveKit rooms simultaneously.
+
+Supports two sync modes:
+- sync_rooms(): Legacy polling mode - joins all active sessions
+- sync_rooms_smart(): Smart mode - only joins rooms where recorderShouldJoin=true
 """
 import asyncio
 import json
 import os
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 from livekit import rtc
 from livekit.api import AccessToken, VideoGrants
 from datetime import datetime
@@ -26,7 +30,7 @@ class RoomManager:
 
     async def sync_rooms(self, active_sessions: list):
         """
-        Synchronize room connections with active sessions.
+        Synchronize room connections with active sessions (legacy polling mode).
         Joins new rooms, leaves inactive ones.
         """
         active_session_ids = {s['id'] for s in active_sessions}
@@ -51,6 +55,66 @@ class RoomManager:
 
         # Log current state
         print(f"📊 Managing {len(self.rooms)} rooms: {list(self.rooms.keys())}")
+
+    async def sync_rooms_smart(self, rooms_to_join: list):
+        """
+        Smart sync: Only join rooms where recorderShouldJoin = true.
+        Uses staggered joining to avoid CPU spikes on LiveKit server.
+
+        Args:
+            rooms_to_join: List of {sessionId, roomName, hasHumanParticipant, priority}
+        """
+        # Build set of session IDs that should have recorder
+        target_session_ids = {r['sessionId'] for r in rooms_to_join}
+        current_session_ids = set(self.rooms.keys())
+
+        # Determine rooms to join and leave
+        to_join_ids = target_session_ids - current_session_ids
+        to_leave_ids = current_session_ids - target_session_ids
+
+        # Leave rooms that no longer need recorder
+        for session_id in to_leave_ids:
+            try:
+                await self.leave_room(session_id)
+            except Exception as e:
+                print(f"❌ Error leaving room for session {session_id}: {e}")
+
+        # Get rooms to join with their data
+        rooms_to_join_list = [r for r in rooms_to_join if r['sessionId'] in to_join_ids]
+
+        # Sort by priority (high priority first)
+        rooms_to_join_list.sort(key=lambda r: 0 if r.get('priority') == 'high' else 1)
+
+        # Staggered joining
+        if rooms_to_join_list:
+            await self._staggered_join(rooms_to_join_list)
+
+        # Log current state
+        print(f"📊 Smart sync: {len(self.rooms)} rooms active, {len(to_join_ids)} joined, {len(to_leave_ids)} left")
+
+    async def _staggered_join(self, rooms_to_join: list, max_per_second: int = 5):
+        """
+        Join rooms with rate limiting to avoid CPU spikes.
+        Joins max_per_second rooms per second.
+        """
+        for i, room_info in enumerate(rooms_to_join):
+            # Rate limit: pause every max_per_second rooms
+            if i > 0 and i % max_per_second == 0:
+                print(f"⏳ Staggered join: pausing after {i} rooms...")
+                await asyncio.sleep(1)
+
+            # Convert smart sync format to session format for join_room
+            session_data = {
+                'id': room_info['sessionId'],
+                'room': {
+                    'livekitRoomName': room_info['roomName']
+                }
+            }
+
+            try:
+                await self.join_room(session_data)
+            except Exception as e:
+                print(f"❌ Error joining room {room_info['roomName']}: {e}")
 
     async def join_room(self, session: dict):
         """Connect to a LiveKit room for the given session"""

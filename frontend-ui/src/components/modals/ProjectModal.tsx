@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Globe, Lock, Check, Copy, ExternalLink } from 'lucide-react'
+import { Globe, Lock, Check, Copy, ExternalLink, Clock, Power } from 'lucide-react'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import EmojiPicker from '../EmojiPicker'
 import type { VisualizerType } from '../face/types'
-import type { AgentType, PlanTemplate, EnvVarTemplate, UpdatePublicConfigDto, PublicAgentConfig } from '../../lib/api-types'
+import type { AgentType, PlanTemplate, EnvVarTemplate, UpdatePublicConfigDto, PublicAgentConfig, ProjectWithCounts, Project } from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
 import {
   AgentGalleryStep,
@@ -16,15 +16,26 @@ import {
   DEFAULT_EXPIRATION_OPTIONS,
 } from '../shared'
 
-interface CreateProjectModalProps {
+interface ProjectModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string) => Promise<string> // Returns projectId
+  project?: ProjectWithCounts  // If provided = edit mode, else = create mode
+  onProjectCreated?: (projectId: string) => void
+  onProjectUpdated?: (project: Project) => void
 }
 
 type Step = 'basic' | 'agent' | 'configure' | 'plan' | 'envvars' | 'visualizer' | 'expiration' | 'complete'
 type ProjectType = 'private' | 'public'
 type EnvVarsView = 'select' | 'edit'
+
+// Predefined timeout options for auto-stop
+const TIMEOUT_OPTIONS = [
+  { value: null, label: 'Disabled', description: 'Agents run until manually stopped' },
+  { value: 5, label: '5 minutes', description: 'Quick sessions' },
+  { value: 15, label: '15 minutes', description: 'Short breaks' },
+  { value: 30, label: '30 minutes', description: 'Standard timeout' },
+  { value: 60, label: '1 hour', description: 'Extended sessions' },
+] as const
 
 // Step configuration for easy extension (excluding basic which has no number)
 const STEPS_CONFIG: { id: Step; number: number; label: string }[] = [
@@ -36,14 +47,19 @@ const STEPS_CONFIG: { id: Step; number: number; label: string }[] = [
   { id: 'expiration', number: 6, label: 'Expiration' },
 ]
 
-export default function CreateProjectModal({
+export default function ProjectModal({
   isOpen,
   onClose,
-  onSubmit,
-}: CreateProjectModalProps) {
+  project,
+  onProjectCreated,
+  onProjectUpdated,
+}: ProjectModalProps) {
   // Theme
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+
+  // Mode detection
+  const isEditMode = !!project
 
   // Step navigation
   const [step, setStep] = useState<Step>('basic')
@@ -51,6 +67,11 @@ export default function CreateProjectModal({
   // Basic info
   const [name, setName] = useState('')
   const [projectType, setProjectType] = useState<ProjectType>('private')
+
+  // Auto-stop timeout
+  const [agentInactivityTimeout, setAgentInactivityTimeout] = useState<number | null>(5)
+  const [customTimeout, setCustomTimeout] = useState('')
+  const [showCustomInput, setShowCustomInput] = useState(false)
 
   // Agent selection (AgentGalleryStep manages its own loading/fetching)
   const [selectedAgentType, setSelectedAgentType] = useState<AgentType | null>(null)
@@ -114,29 +135,50 @@ export default function CreateProjectModal({
 
   const getTotalSteps = () => visibleStepConfigs.length
 
-  const isPublicWizard = projectType === 'public' && step !== 'basic'
+  const isPublicWizard = !isEditMode && projectType === 'public' && step !== 'basic'
 
   // Reset state when modal opens
   useEffect(() => {
     if (isOpen) {
       setStep('basic')
-      setName('')
-      setProjectType('private')
-      setSelectedAgentType(null)
-      setAgentName('')
-      setAgentIcon('🤖')
-      setSelectedPlan(null)
-      setSelectedEnvVarTemplate(null)
-      setEnvVars({})
-      setEnvVarsView('select')
-      setVisualizerType(undefined)
-      setVisualizerLocked(false)
-      setExpiresInHours(undefined)
       setError(null)
       setPublicLink(null)
       setCopied(false)
+
+      if (project) {
+        // Edit mode - load project values
+        setName(project.name)
+        const timeout = project.agentInactivityTimeoutMinutes ?? null
+        setAgentInactivityTimeout(timeout)
+
+        // Check if current timeout is a custom value
+        const isPreset = TIMEOUT_OPTIONS.some(opt => opt.value === timeout)
+        setShowCustomInput(!isPreset && timeout !== null)
+        if (!isPreset && timeout !== null) {
+          setCustomTimeout(timeout.toString())
+        } else {
+          setCustomTimeout('')
+        }
+      } else {
+        // Create mode - reset to defaults
+        setName('')
+        setProjectType('private')
+        setAgentInactivityTimeout(5)
+        setCustomTimeout('')
+        setShowCustomInput(false)
+        setSelectedAgentType(null)
+        setAgentName('')
+        setAgentIcon('🤖')
+        setSelectedPlan(null)
+        setSelectedEnvVarTemplate(null)
+        setEnvVars({})
+        setEnvVarsView('select')
+        setVisualizerType(undefined)
+        setVisualizerLocked(false)
+        setExpiresInHours(undefined)
+      }
     }
-  }, [isOpen])
+  }, [isOpen, project])
 
   // Update agent name/icon when agent type is selected
   useEffect(() => {
@@ -163,9 +205,23 @@ export default function CreateProjectModal({
     }
   }
 
+  const handleTimeoutChange = (value: number | null) => {
+    setAgentInactivityTimeout(value)
+    setShowCustomInput(false)
+    setCustomTimeout('')
+  }
+
+  const handleCustomTimeoutChange = (value: string) => {
+    setCustomTimeout(value)
+    const num = parseInt(value, 10)
+    if (!isNaN(num) && num >= 1 && num <= 1440) {
+      setAgentInactivityTimeout(num)
+    }
+  }
+
   const handleContinue = () => {
     if (step === 'basic') {
-      if (projectType === 'private') {
+      if (isEditMode || projectType === 'private') {
         handleSubmit()
       } else {
         setStep('agent')
@@ -184,6 +240,13 @@ export default function CreateProjectModal({
   const canProceed = useMemo(() => {
     switch (step) {
       case 'basic':
+        if (isEditMode) {
+          // In edit mode, check if there are changes
+          const hasChanges =
+            name !== project?.name ||
+            agentInactivityTimeout !== (project?.agentInactivityTimeoutMinutes ?? null)
+          return name.trim().length > 0 && name.length <= 255 && hasChanges
+        }
         return name.trim().length > 0 && name.length <= 255
       case 'agent':
         return selectedAgentType !== null
@@ -209,7 +272,7 @@ export default function CreateProjectModal({
       default:
         return false
     }
-  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars])
+  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars, isEditMode, project, agentInactivityTimeout])
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -217,52 +280,76 @@ export default function CreateProjectModal({
       return
     }
 
+    // Validate custom timeout if shown
+    if (showCustomInput) {
+      const num = parseInt(customTimeout, 10)
+      if (isNaN(num) || num < 1 || num > 1440) {
+        setError('Custom timeout must be between 1 and 1440 minutes')
+        return
+      }
+    }
+
     setIsSubmitting(true)
     setError(null)
 
     try {
-      // Create the project
-      const projectId = await onSubmit(name)
-
-      // If public, update the public config
-      if (projectType === 'public' && selectedAgentType) {
-        const agentConfig: PublicAgentConfig = {
-          name: agentName,
-          icon: agentIcon,
-        }
-
-        if (selectedPlan) {
-          agentConfig.plan = selectedPlan.content as unknown as Record<string, unknown>
-        }
-
-        if (selectedEnvVarTemplate) {
-          agentConfig.envVarTemplateId = selectedEnvVarTemplate.id
-        }
-
-        const publicConfig: UpdatePublicConfigDto = {
-          isPublic: true,
-          agentTypeId: selectedAgentType.id,
-          agentConfig,
-          visualizerType: visualizerType || undefined,
-          visualizerLocked,
-          expiresAt: expiresInHours
-            ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
-            : undefined,
-          enabled: true,
-        }
-
-        await apiClient.updateProjectPublicConfig(projectId, publicConfig)
-
-        // Get the public link
-        const linkResponse = await apiClient.getProjectPublicLink(projectId)
-        setPublicLink(linkResponse.publicLink)
-        setStep('complete')
-      } else {
-        // Private project - just close
+      if (isEditMode && project) {
+        // Edit mode - update existing project
+        const updatedProject = await apiClient.updateProject(project.id, {
+          name: name !== project.name ? name : undefined,
+          agentInactivityTimeoutMinutes: agentInactivityTimeout,
+        })
+        onProjectUpdated?.(updatedProject)
         onClose()
+      } else {
+        // Create mode - create new project
+        const newProject = await apiClient.createProject({
+          name,
+          agentInactivityTimeoutMinutes: agentInactivityTimeout,
+        })
+
+        // If public, update the public config
+        if (projectType === 'public' && selectedAgentType) {
+          const agentConfig: PublicAgentConfig = {
+            name: agentName,
+            icon: agentIcon,
+          }
+
+          if (selectedPlan) {
+            agentConfig.plan = selectedPlan.content as unknown as Record<string, unknown>
+          }
+
+          if (selectedEnvVarTemplate) {
+            agentConfig.envVarTemplateId = selectedEnvVarTemplate.id
+          }
+
+          const publicConfig: UpdatePublicConfigDto = {
+            isPublic: true,
+            agentTypeId: selectedAgentType.id,
+            agentConfig,
+            visualizerType: visualizerType || undefined,
+            visualizerLocked,
+            expiresAt: expiresInHours
+              ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
+              : undefined,
+            enabled: true,
+          }
+
+          await apiClient.updateProjectPublicConfig(newProject.id, publicConfig)
+
+          // Get the public link
+          const linkResponse = await apiClient.getProjectPublicLink(newProject.id)
+          setPublicLink(linkResponse.publicLink)
+          setStep('complete')
+          onProjectCreated?.(newProject.id)
+        } else {
+          // Private project - just close
+          onProjectCreated?.(newProject.id)
+          onClose()
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project')
+      setError(err instanceof Error ? err.message : isEditMode ? 'Failed to update project' : 'Failed to create project')
     } finally {
       setIsSubmitting(false)
     }
@@ -281,6 +368,7 @@ export default function CreateProjectModal({
   }
 
   const getStepTitle = (): string => {
+    if (isEditMode) return 'Project Settings'
     switch (step) {
       case 'basic': return 'Create Project'
       case 'agent': return 'Select Agent'
@@ -295,6 +383,7 @@ export default function CreateProjectModal({
   }
 
   const getStepDescription = (): string => {
+    if (isEditMode) return 'Configure project behavior'
     switch (step) {
       case 'basic': return 'Start a new project to organize your sessions'
       case 'agent': return 'Choose the agent that will be deployed for each participant'
@@ -309,9 +398,9 @@ export default function CreateProjectModal({
   }
 
   // Determine modal size
-  const modalSizeClass = isPublicWizard || step === 'complete'
+  const modalSizeClass = (isPublicWizard || step === 'complete')
     ? 'max-w-2xl'
-    : 'max-w-md'
+    : 'max-w-lg'
 
   return (
     <AnimatePresence>
@@ -422,9 +511,11 @@ export default function CreateProjectModal({
                       autoFocus
                       required
                       maxLength={255}
+                      disabled={isSubmitting}
                       className={`
                         w-full px-4 py-3 rounded-xl text-sm font-light
                         focus:outline-none transition-all duration-200
+                        disabled:opacity-60 disabled:cursor-not-allowed
                         ${isDark
                           ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
                           : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
@@ -437,56 +528,169 @@ export default function CreateProjectModal({
                     </div>
                   </div>
 
-                  {/* Project Type Selection - Card Style */}
-                  <div>
-                    <label className={`block text-xs font-medium uppercase tracking-wider mb-3 ${
-                      isDark ? 'text-zinc-400' : 'text-neutral-500'
-                    }`}>
-                      Project Type
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {/* Private Option */}
-                      <button
-                        onClick={() => setProjectType('private')}
-                        className={`
-                          relative p-4 rounded-xl text-left transition-all duration-200
-                          ${projectType === 'private'
-                            ? isDark
-                              ? 'bg-violet-500/20 border-2 border-violet-500'
-                              : 'bg-neutral-100 border-2 border-neutral-900'
-                            : isDark
-                              ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
-                              : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
-                          }
-                        `}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`
-                            w-10 h-10 rounded-xl flex items-center justify-center
+                  {/* Project Type Selection - Only in create mode */}
+                  {!isEditMode && (
+                    <div>
+                      <label className={`block text-xs font-medium uppercase tracking-wider mb-3 ${
+                        isDark ? 'text-zinc-400' : 'text-neutral-500'
+                      }`}>
+                        Project Type
+                      </label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Private Option */}
+                        <button
+                          onClick={() => setProjectType('private')}
+                          disabled={isSubmitting}
+                          className={`
+                            relative p-4 rounded-xl text-left transition-all duration-200
+                            disabled:opacity-60 disabled:cursor-not-allowed
                             ${projectType === 'private'
-                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
-                              : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
+                              ? isDark
+                                ? 'bg-violet-500/20 border-2 border-violet-500'
+                                : 'bg-neutral-100 border-2 border-neutral-900'
+                              : isDark
+                                ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
+                                : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
                             }
-                          `}>
-                            <Lock className="w-5 h-5" />
+                          `}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`
+                              w-10 h-10 rounded-xl flex items-center justify-center
+                              ${projectType === 'private'
+                                ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
+                                : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
+                              }
+                            `}>
+                              <Lock className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                                Private
+                              </h3>
+                              <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                Manual session setup
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                              Private
-                            </h3>
-                            <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                              Manual session setup
-                            </p>
-                          </div>
-                        </div>
-                      </button>
+                        </button>
 
-                      {/* Public Option */}
+                        {/* Public Option */}
+                        <button
+                          onClick={() => setProjectType('public')}
+                          disabled={isSubmitting}
+                          className={`
+                            relative p-4 rounded-xl text-left transition-all duration-200
+                            disabled:opacity-60 disabled:cursor-not-allowed
+                            ${projectType === 'public'
+                              ? isDark
+                                ? 'bg-violet-500/20 border-2 border-violet-500'
+                                : 'bg-neutral-100 border-2 border-neutral-900'
+                              : isDark
+                                ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
+                                : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
+                            }
+                          `}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`
+                              w-10 h-10 rounded-xl flex items-center justify-center
+                              ${projectType === 'public'
+                                ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
+                                : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
+                              }
+                            `}>
+                              <Globe className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                                Public
+                              </h3>
+                              <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                Shareable link access
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+
+                      {/* Description based on selection */}
+                      <p className={`mt-3 text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                        {projectType === 'private'
+                          ? 'You manually create sessions and invite participants one by one.'
+                          : 'Anyone with the link can start their own session with a pre-configured agent.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Agent Auto-Stop */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Clock className={`w-4 h-4 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`} />
+                      <label className={`text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-zinc-400' : 'text-neutral-500'
+                      }`}>
+                        Agent Auto-Stop
+                      </label>
+                    </div>
+
+                    <p className={`text-sm mb-4 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                      Automatically stop agents when no users are present
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {TIMEOUT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value ?? 'disabled'}
+                          onClick={() => handleTimeoutChange(option.value)}
+                          disabled={isSubmitting}
+                          className={`
+                            p-3 rounded-xl text-left transition-all duration-200
+                            disabled:opacity-60 disabled:cursor-not-allowed
+                            ${agentInactivityTimeout === option.value && !showCustomInput
+                              ? isDark
+                                ? 'bg-violet-500/20 border-2 border-violet-500'
+                                : 'bg-neutral-100 border-2 border-neutral-900'
+                              : isDark
+                                ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500'
+                                : 'bg-neutral-50 border border-neutral-200 hover:border-neutral-300'
+                            }
+                          `}
+                        >
+                          <div className="flex items-center gap-2">
+                            {option.value === null ? (
+                              <Power className={`w-4 h-4 ${
+                                agentInactivityTimeout === null && !showCustomInput
+                                  ? isDark ? 'text-violet-400' : 'text-neutral-900'
+                                  : isDark ? 'text-zinc-400' : 'text-neutral-500'
+                              }`} />
+                            ) : (
+                              <Clock className={`w-4 h-4 ${
+                                agentInactivityTimeout === option.value && !showCustomInput
+                                  ? isDark ? 'text-violet-400' : 'text-neutral-900'
+                                  : isDark ? 'text-zinc-400' : 'text-neutral-500'
+                              }`} />
+                            )}
+                            <span className={`text-sm font-medium ${
+                              isDark ? 'text-zinc-100' : 'text-neutral-900'
+                            }`}>
+                              {option.label}
+                            </span>
+                          </div>
+                          <p className={`text-xs mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                            {option.description}
+                          </p>
+                        </button>
+                      ))}
+
+                      {/* Custom option */}
                       <button
-                        onClick={() => setProjectType('public')}
+                        onClick={() => setShowCustomInput(true)}
+                        disabled={isSubmitting}
                         className={`
-                          relative p-4 rounded-xl text-left transition-all duration-200
-                          ${projectType === 'public'
+                          p-3 rounded-xl text-left transition-all duration-200 col-span-2
+                          disabled:opacity-60 disabled:cursor-not-allowed
+                          ${showCustomInput
                             ? isDark
                               ? 'bg-violet-500/20 border-2 border-violet-500'
                               : 'bg-neutral-100 border-2 border-neutral-900'
@@ -496,34 +700,62 @@ export default function CreateProjectModal({
                           }
                         `}
                       >
-                        <div className="flex items-start gap-3">
-                          <div className={`
-                            w-10 h-10 rounded-xl flex items-center justify-center
-                            ${projectType === 'public'
-                              ? isDark ? 'bg-violet-500 text-white' : 'bg-neutral-900 text-white'
-                              : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-100 text-neutral-500'
-                            }
-                          `}>
-                            <Globe className="w-5 h-5" />
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Clock className={`w-4 h-4 ${
+                              showCustomInput
+                                ? isDark ? 'text-violet-400' : 'text-neutral-900'
+                                : isDark ? 'text-zinc-400' : 'text-neutral-500'
+                            }`} />
+                            <span className={`text-sm font-medium ${
+                              isDark ? 'text-zinc-100' : 'text-neutral-900'
+                            }`}>
+                              Custom
+                            </span>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className={`text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                              Public
-                            </h3>
-                            <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                              Shareable link access
-                            </p>
-                          </div>
+                          {showCustomInput && (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={customTimeout}
+                                onChange={(e) => handleCustomTimeoutChange(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                min={1}
+                                max={1440}
+                                disabled={isSubmitting}
+                                className={`
+                                  w-20 px-2 py-1 rounded-lg text-sm text-center
+                                  focus:outline-none
+                                  ${isDark
+                                    ? 'bg-zinc-600 border border-zinc-500 text-zinc-100'
+                                    : 'bg-white border border-neutral-300 text-neutral-900'
+                                  }
+                                `}
+                                placeholder="min"
+                              />
+                              <span className={`text-sm ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                                minutes
+                              </span>
+                            </div>
+                          )}
                         </div>
+                        {!showCustomInput && (
+                          <p className={`text-xs mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                            Set a custom timeout (1-1440 min)
+                          </p>
+                        )}
                       </button>
                     </div>
 
-                    {/* Description based on selection */}
-                    <p className={`mt-3 text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                      {projectType === 'private'
-                        ? 'You manually create sessions and invite participants one by one.'
-                        : 'Anyone with the link can start their own session with a pre-configured agent.'}
-                    </p>
+                    {/* Info note */}
+                    <div className={`mt-4 p-3 rounded-xl ${
+                      isDark ? 'bg-zinc-700/30' : 'bg-neutral-50'
+                    }`}>
+                      <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                        When enabled, agents will automatically stop after the timeout period when all users leave the session.
+                        Agents will automatically restart when a user rejoins.
+                      </p>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -814,7 +1046,7 @@ export default function CreateProjectModal({
             </AnimatePresence>
 
             {/* Error message */}
-            {error && (
+            {error && step !== 'configure' && (
               <div className={`mx-6 mb-4 p-3 rounded-xl text-sm ${
                 isDark
                   ? 'bg-red-500/10 border border-red-500/20 text-red-400'
@@ -826,7 +1058,7 @@ export default function CreateProjectModal({
 
             {/* Footer Actions */}
             {step !== 'complete' && (
-              <div className={`px-6 py-4 flex gap-3 ${isPublicWizard ? `border-t ${isDark ? 'border-zinc-700' : 'border-neutral-200'}` : ''}`}>
+              <div className={`px-6 py-4 flex gap-3 ${isPublicWizard || isEditMode ? `border-t ${isDark ? 'border-zinc-700' : 'border-neutral-200'}` : ''}`}>
                 {isPublicWizard && (
                   <button
                     onClick={handleBack}
@@ -843,6 +1075,23 @@ export default function CreateProjectModal({
                     Back
                   </button>
                 )}
+                {isEditMode && (
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    disabled={isSubmitting}
+                    className={`
+                      px-4 py-2.5 rounded-xl text-sm font-medium transition-all
+                      disabled:opacity-60 disabled:cursor-not-allowed
+                      ${isDark
+                        ? 'text-zinc-300 hover:bg-zinc-700'
+                        : 'text-neutral-600 hover:bg-neutral-100'
+                      }
+                    `}
+                  >
+                    Cancel
+                  </button>
+                )}
                 <div className="flex-1" />
                 <button
                   onClick={handleContinue}
@@ -857,14 +1106,16 @@ export default function CreateProjectModal({
                   `}
                 >
                   {isSubmitting
-                    ? 'Creating...'
-                    : step === 'basic' && projectType === 'private'
-                      ? 'Create Project'
-                      : step === 'basic'
-                        ? 'Continue'
-                        : publicSteps.indexOf(step as any) === publicSteps.length - 1
-                          ? 'Create Project'
-                          : 'Continue'}
+                    ? isEditMode ? 'Saving...' : 'Creating...'
+                    : isEditMode
+                      ? 'Save Changes'
+                      : step === 'basic' && projectType === 'private'
+                        ? 'Create Project'
+                        : step === 'basic'
+                          ? 'Continue'
+                          : publicSteps.indexOf(step as any) === publicSteps.length - 1
+                            ? 'Create Project'
+                            : 'Continue'}
                 </button>
               </div>
             )}

@@ -74,10 +74,23 @@ export class SessionsService {
     // Generate unique room name
     const roomName = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+    // Fetch project to inherit agentInactivityTimeoutMinutes
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { agentInactivityTimeoutMinutes: true },
+    });
+
     const session = await this.prisma.session.create({
       data: {
         projectId,
         name: createSessionDto.name,
+        // Message-recorder optimization: recorder should join immediately when session is created
+        // This ensures messages are captured before any participants join
+        recorderShouldJoin: true,
+        // Agent spawn mode: 'immediate' (default) or 'on_demand' (for public projects)
+        agentSpawnMode: createSessionDto.agentSpawnMode || 'immediate',
+        // Inherit agent inactivity timeout from project
+        agentInactivityTimeoutMinutes: project?.agentInactivityTimeoutMinutes ?? null,
         room: {
           create: {
             livekitRoomName: roomName,
@@ -763,6 +776,39 @@ export class SessionsService {
     };
   }
 
+  // Get batch listener status for multiple sessions
+  async getBatchListenerStatus(sessionIds: string[]) {
+    if (sessionIds.length === 0) {
+      return [];
+    }
+
+    // Fetch all sessions in a single query
+    const sessions = await this.prisma.session.findMany({
+      where: { id: { in: sessionIds } },
+      select: { id: true, status: true },
+    });
+
+    const timeSinceUpdate = Date.now() - this.lastStatusUpdate.getTime();
+    const isStale = timeSinceUpdate > 30000; // Consider stale if no update in 30s
+
+    // Map sessions to listener status format
+    return sessions.map((session) => {
+      const isConnected = this.connectedSessions.has(session.id);
+      return {
+        sessionId: session.id,
+        sessionStatus: session.status,
+        listener: {
+          isMonitoring: session.status === 'ACTIVE',
+          isConnected: isConnected && !isStale,
+          roomState: isConnected && !isStale ? 'connected' : 'not_connected',
+          service: 'python-message-recorder',
+          lastUpdate: this.lastStatusUpdate.toISOString(),
+          note: isStale ? 'Status may be stale - recorder may be restarting' : undefined,
+        },
+      };
+    });
+  }
+
   // Get monitoring logs
   async getMonitoringLogs(sessionId?: string): Promise<{
     logs: LogEntry[];
@@ -927,6 +973,72 @@ export class SessionsService {
     });
 
     return sessions;
+  }
+
+  /**
+   * Find rooms that the message recorder should join.
+   * Used by smart sync mode - only joins rooms with actual participants.
+   * Returns sessions where recorderShouldJoin = true.
+   */
+  async findRoomsToJoin(): Promise<{
+    sessionId: string;
+    roomName: string;
+    hasHumanParticipant: boolean;
+    priority: 'high' | 'normal';
+  }[]> {
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        status: 'ACTIVE',
+        recorderShouldJoin: true,
+      },
+      include: {
+        room: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return sessions
+      .filter(s => s.room) // Only sessions with rooms
+      .map(session => ({
+        sessionId: session.id,
+        roomName: session.room!.livekitRoomName,
+        hasHumanParticipant: session.hasHumanParticipant,
+        // High priority if human is present (for immediate message capture)
+        priority: session.hasHumanParticipant ? 'high' as const : 'normal' as const,
+      }));
+  }
+
+  /**
+   * Update session's recorder join state.
+   * Called by webhooks when participants join/leave.
+   */
+  async updateRecorderJoinState(
+    sessionId: string,
+    shouldJoin: boolean,
+    humanPresent?: boolean,
+  ): Promise<void> {
+    const updateData: any = {
+      recorderShouldJoin: shouldJoin,
+    };
+
+    if (humanPresent !== undefined) {
+      updateData.hasHumanParticipant = humanPresent;
+      if (humanPresent) {
+        updateData.humanJoinedAt = new Date();
+        updateData.humanLeftAt = null;
+      } else {
+        updateData.humanLeftAt = new Date();
+      }
+    }
+
+    await this.prisma.session.update({
+      where: { id: sessionId },
+      data: updateData,
+    });
+
+    this.logger.log(`Updated session ${sessionId}: recorderShouldJoin=${shouldJoin}, humanPresent=${humanPresent}`);
   }
 
   /**

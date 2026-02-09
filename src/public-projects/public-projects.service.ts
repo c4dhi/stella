@@ -213,6 +213,8 @@ export class PublicProjectsService {
   /**
    * Start joining a public project (non-blocking)
    * Returns sessionId immediately. Frontend polls getJoinProgress for updates.
+   *
+   * Uses on_demand mode: agent is spawned via webhook when human joins LiveKit room.
    */
   async startJoinPublicProject(publicToken: string): Promise<StartJoinPublicProjectResponseDto> {
     const project = await this.validatePublicProject(publicToken);
@@ -222,9 +224,38 @@ export class PublicProjectsService {
       throw new BadRequestException('Project has no owner');
     }
 
-    // Create session
+    // Get agent config for storing
+    const agentConfig = project.publicAgentConfig as {
+      name?: string;
+      icon?: string;
+      plan?: Record<string, unknown>;
+      envVarTemplateId?: string;
+    } | null;
+
+    // Prepare lastAgentConfig for on_demand spawning
+    // Cast to Prisma InputJsonValue for JSON field storage
+    const lastAgentConfig = {
+      name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
+      icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
+      agentType: project.publicAgentType?.slug || 'stella-agent',
+      agentConfig: agentConfig?.plan ? JSON.parse(JSON.stringify({ plan: agentConfig.plan })) : {},
+      envVarTemplateId: agentConfig?.envVarTemplateId || null,
+    };
+
+    // Create session with on_demand mode - agent will be spawned when human joins
     const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
-    const session = await this.sessionsService.create(project.id, { name: sessionName });
+    const session = await this.sessionsService.create(project.id, {
+      name: sessionName,
+      agentSpawnMode: 'on_demand',  // Agent spawned via webhook when human joins
+    });
+
+    // Store agent config for later spawning (cast to satisfy Prisma's JsonValue type)
+    await this.prisma.session.update({
+      where: { id: session.id },
+      data: { lastAgentConfig: lastAgentConfig as any },
+    });
+
+    this.logger.log(`Created on_demand session ${session.id} for public project ${project.id}`);
 
     // Initialize progress
     this.updateProgress(session.id, 1, 'in_progress', 'Session created');
@@ -258,50 +289,91 @@ export class PublicProjectsService {
 
   /**
    * Run the join process (async)
+   *
+   * For on_demand sessions: Skip agent deployment, just create invitation.
+   * Agent will be spawned via webhook when human joins the LiveKit room.
    */
   private async runJoinProcess(project: any, sessionId: string, ownerId: string): Promise<void> {
     try {
-      const agentConfig = project.publicAgentConfig as {
-        name?: string;
-        icon?: string;
-        plan?: Record<string, unknown>;
-        envVarTemplateId?: string;
-      } | null;
+      // Check session spawn mode
+      const session = await this.prisma.session.findUnique({
+        where: { id: sessionId },
+        select: { agentSpawnMode: true },
+      });
 
-      // Step 2: Deploy agent
-      this.updateProgress(sessionId, 2, 'in_progress', 'Deploying agent...');
-      const agent = await this.agentsService.create(
-        sessionId,
-        {
-          name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
-          icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
-          agentType: project.publicAgentType?.slug || 'stella-agent',
-          config: agentConfig?.plan ? { plan: agentConfig.plan } : {},
-          envVarTemplateId: agentConfig?.envVarTemplateId,
-        },
-        ownerId,
-      );
+      const isOnDemand = session?.agentSpawnMode === 'on_demand';
 
-      // Step 3: Wait for agent
-      this.updateProgress(sessionId, 3, 'in_progress', 'Starting agent...', { agentId: agent.id });
-      const ready = await this.pollAgentReady(agent.id);
-      if (!ready.success) {
-        this.updateProgress(sessionId, 3, 'failed', 'Agent failed to start', { error: ready.error });
-        return;
+      if (isOnDemand) {
+        // On-demand mode: Skip agent deployment, just create invitation
+        // Agent will be spawned via webhook when human joins LiveKit room
+        this.updateProgress(sessionId, 2, 'in_progress', 'Preparing session...');
+
+        // Brief delay to simulate progress
+        await new Promise(r => setTimeout(r, 500));
+
+        this.updateProgress(sessionId, 3, 'in_progress', 'Setting up room...');
+
+        // Brief delay
+        await new Promise(r => setTimeout(r, 500));
+
+        // Step 4: Create invitation
+        this.updateProgress(sessionId, 4, 'in_progress', 'Creating session...');
+        const { invitation } = await this.invitationsService.create(sessionId, {
+          visualizerType: project.publicVisualizerType || undefined,
+          visualizerLocked: project.publicVisualizerLocked,
+        });
+
+        // Step 5: Done - agent will spawn when user joins
+        this.updateProgress(sessionId, 5, 'complete', 'Ready!', {
+          invitationToken: invitation.token,
+        });
+
+        this.logger.log(`On-demand session ${sessionId} ready - agent will spawn when user joins`);
+
+      } else {
+        // Immediate mode: Deploy agent now (legacy behavior)
+        const agentConfig = project.publicAgentConfig as {
+          name?: string;
+          icon?: string;
+          plan?: Record<string, unknown>;
+          envVarTemplateId?: string;
+        } | null;
+
+        // Step 2: Deploy agent
+        this.updateProgress(sessionId, 2, 'in_progress', 'Deploying agent...');
+        const agent = await this.agentsService.create(
+          sessionId,
+          {
+            name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
+            icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
+            agentType: project.publicAgentType?.slug || 'stella-agent',
+            config: agentConfig?.plan ? { plan: agentConfig.plan } : {},
+            envVarTemplateId: agentConfig?.envVarTemplateId,
+          },
+          ownerId,
+        );
+
+        // Step 3: Wait for agent
+        this.updateProgress(sessionId, 3, 'in_progress', 'Starting agent...', { agentId: agent.id });
+        const ready = await this.pollAgentReady(agent.id);
+        if (!ready.success) {
+          this.updateProgress(sessionId, 3, 'failed', 'Agent failed to start', { error: ready.error });
+          return;
+        }
+
+        // Step 4: Create invitation
+        this.updateProgress(sessionId, 4, 'in_progress', 'Creating session...', { agentId: agent.id });
+        const { invitation } = await this.invitationsService.create(sessionId, {
+          visualizerType: project.publicVisualizerType || undefined,
+          visualizerLocked: project.publicVisualizerLocked,
+        });
+
+        // Step 5: Done
+        this.updateProgress(sessionId, 5, 'complete', 'Ready!', {
+          agentId: agent.id,
+          invitationToken: invitation.token,
+        });
       }
-
-      // Step 4: Create invitation
-      this.updateProgress(sessionId, 4, 'in_progress', 'Creating session...', { agentId: agent.id });
-      const { invitation } = await this.invitationsService.create(sessionId, {
-        visualizerType: project.publicVisualizerType || undefined,
-        visualizerLocked: project.publicVisualizerLocked,
-      });
-
-      // Step 5: Done
-      this.updateProgress(sessionId, 5, 'complete', 'Ready!', {
-        agentId: agent.id,
-        invitationToken: invitation.token,
-      });
 
     } catch (error) {
       this.updateProgress(sessionId, 0, 'failed', 'Failed', { error: error.message });

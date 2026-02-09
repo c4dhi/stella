@@ -10,8 +10,10 @@ import PlanBuilderSection from '../components/settings/PlanBuilderSection'
 import EnvVarBuilderSection from '../components/settings/EnvVarBuilderSection'
 import AgentLibrarySection from '../components/settings/AgentLibrarySection'
 import InboxSection from '../components/settings/InboxSection'
+import AdminDashboardSection from '../components/settings/AdminDashboardSection'
+import { useAuthStore } from '../store/authStore'
 
-const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars', 'agent-library', 'inbox']
+const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'env-vars', 'agent-library', 'inbox', 'admin']
 
 // Animation variants for page transitions
 const pageVariants = {
@@ -43,12 +45,21 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const { section } = useParams<{ section?: string }>()
   const { resolvedTheme, initializeTheme } = useThemeStore()
+  const { user } = useAuthStore()
   const isDark = resolvedTheme === 'dark'
+  const isSystemAdmin = user?.isSystemAdmin ?? false
 
   // Validate and normalize section param
-  const activeSection: SettingsSection = validSections.includes(section as SettingsSection)
-    ? (section as SettingsSection)
-    : 'profile'
+  // Admin section requires system admin privileges
+  const activeSection: SettingsSection = (() => {
+    if (!validSections.includes(section as SettingsSection)) {
+      return 'profile'
+    }
+    if (section === 'admin' && !isSystemAdmin) {
+      return 'profile'
+    }
+    return section as SettingsSection
+  })()
 
   useEffect(() => {
     initializeTheme()
@@ -72,6 +83,8 @@ export default function SettingsPage() {
         return <AgentLibrarySection />
       case 'inbox':
         return <InboxSection />
+      case 'admin':
+        return isSystemAdmin ? <AdminDashboardSection /> : <ProfileSection />
       default:
         return <ProfileSection />
     }

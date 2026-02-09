@@ -25,6 +25,7 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { CreateTokenDto } from './dto/create-token.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
+import { BatchListenerStatusDto } from './dto/batch-listener-status.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../common/decorators/public.decorator';
 import type { LogEntry } from '../message-recorder/room-monitor.service';
@@ -258,6 +259,12 @@ export class SessionsController {
     return this.sessionsService.getListenerStatus(sessionId);
   }
 
+  // Batch listener status endpoint - reduces N requests to 1
+  @Post('sessions/listener-status/batch')
+  getBatchListenerStatus(@Body() dto: BatchListenerStatusDto) {
+    return this.sessionsService.getBatchListenerStatus(dto.sessionIds);
+  }
+
   // SSE endpoint for real-time session events (agent ready, agent failed, etc.)
   @Sse('sessions/:sessionId/events')
   streamSessionEvents(@Param('sessionId') sessionId: string): Observable<MessageEvent> {
@@ -304,6 +311,17 @@ export class SessionsController {
   @Get('internal/active-sessions')
   async getActiveSessions() {
     return this.sessionsService.findActiveSessions();
+  }
+
+  /**
+   * Get rooms that the message recorder should join (smart sync mode).
+   * Returns only sessions where recorderShouldJoin = true.
+   * Used by Python message recorder for efficient room management.
+   */
+  @Public()
+  @Get('internal/rooms-to-join')
+  async getRoomsToJoin() {
+    return this.sessionsService.findRoomsToJoin();
   }
 
   /**

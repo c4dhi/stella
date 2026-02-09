@@ -9,6 +9,10 @@ Features:
 - Connects to multiple LiveKit rooms simultaneously
 - Records all data messages (transcripts, events, etc.)
 - Automatically joins new rooms and leaves inactive ones
+
+Modes:
+- polling (default): Polls /internal/active-sessions every 2s, joins ALL active sessions
+- smart: Polls /internal/rooms-to-join every 10s, only joins rooms where recorderShouldJoin=true
 """
 import asyncio
 import os
@@ -23,7 +27,13 @@ from message_client import MessageClient
 # Configuration from environment variables
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', 'ws://livekit:7880')
 SESSION_SERVER_URL = os.getenv('SESSION_SERVER_URL', 'http://session-management-server:3000')
-POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '2'))  # seconds
+
+# Recorder mode: 'polling' (legacy) or 'smart' (webhook-driven)
+RECORDER_MODE = os.getenv('RECORDER_MODE', 'polling')
+
+# Poll intervals differ by mode
+POLL_INTERVAL_POLLING = int(os.getenv('POLL_INTERVAL', '2'))  # Legacy mode: 2 seconds
+POLL_INTERVAL_SMART = int(os.getenv('POLL_INTERVAL_SMART', '10'))  # Smart mode: 10 seconds
 
 
 class MessageRecorderService:
@@ -36,23 +46,27 @@ class MessageRecorderService:
             message_client=self.message_client
         )
         self.running = True
+        self.mode = RECORDER_MODE
 
     async def start(self):
         """Start the message recorder service"""
+        poll_interval = POLL_INTERVAL_SMART if self.mode == 'smart' else POLL_INTERVAL_POLLING
+
         print("="*60)
         print("🎙️  Message Recorder Service Starting")
         print("="*60)
         print(f"📡 LiveKit URL: {LIVEKIT_URL}")
         print(f"🌐 Session Server: {SESSION_SERVER_URL}")
-        print(f"⏱️  Poll Interval: {POLL_INTERVAL}s")
+        print(f"🔧 Mode: {self.mode}")
+        print(f"⏱️  Poll Interval: {poll_interval}s")
         print(f"🕐 Started at: {datetime.now().isoformat()}")
         print("="*60)
 
         # Post startup log to dashboard
         await self.message_client.post_log(
             'log',
-            f'Message Recorder Service started - polling every {POLL_INTERVAL}s',
-            data={'livekit_url': LIVEKIT_URL, 'poll_interval': POLL_INTERVAL}
+            f'Message Recorder Service started - mode: {self.mode}, poll: {poll_interval}s',
+            data={'livekit_url': LIVEKIT_URL, 'poll_interval': poll_interval, 'mode': self.mode}
         )
 
         # Set up graceful shutdown
@@ -65,14 +79,18 @@ class MessageRecorderService:
         while self.running:
             try:
                 poll_count += 1
-                print(f"\n📊 Poll #{poll_count} at {datetime.now().strftime('%H:%M:%S')}")
+                print(f"\n📊 Poll #{poll_count} at {datetime.now().strftime('%H:%M:%S')} (mode: {self.mode})")
 
-                # Get active sessions from API
-                active_sessions = await self.message_client.get_active_sessions()
-                print(f"📋 Found {len(active_sessions)} active sessions")
-
-                # Synchronize room connections
-                await self.room_manager.sync_rooms(active_sessions)
+                if self.mode == 'smart':
+                    # Smart mode: Only join rooms where recorderShouldJoin=true
+                    rooms_to_join = await self.message_client.get_rooms_to_join()
+                    print(f"📋 Found {len(rooms_to_join)} rooms to join")
+                    await self.room_manager.sync_rooms_smart(rooms_to_join)
+                else:
+                    # Polling mode (legacy): Join ALL active sessions
+                    active_sessions = await self.message_client.get_active_sessions()
+                    print(f"📋 Found {len(active_sessions)} active sessions")
+                    await self.room_manager.sync_rooms(active_sessions)
 
                 # Update monitoring status with connected sessions
                 connected_session_ids = list(self.room_manager.rooms.keys())
@@ -82,7 +100,7 @@ class MessageRecorderService:
                 error_count = 0
 
                 # Wait before next poll
-                await asyncio.sleep(POLL_INTERVAL)
+                await asyncio.sleep(poll_interval)
 
             except KeyboardInterrupt:
                 print("\n⚠️  Keyboard interrupt received")

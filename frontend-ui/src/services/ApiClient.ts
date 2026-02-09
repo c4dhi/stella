@@ -63,6 +63,13 @@ import type {
   ProjectCollaboratorsResponse,
   ProjectInvitationResponse,
   UserNotificationEvent,
+  AdminDashboardMetrics,
+  SessionActivityDay,
+  HistoricalUsageData,
+  ServerMetrics,
+  AdminUsersResponse,
+  AdminUserListItem,
+  SessionStatusItem,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -194,7 +201,7 @@ class SessionManagementClient {
     return this.get<ProjectStats>(`/projects/${projectId}/stats`)
   }
 
-  async updateProject(projectId: string, data: { name: string }): Promise<Project> {
+  async updateProject(projectId: string, data: { name?: string; agentInactivityTimeoutMinutes?: number | null }): Promise<Project> {
     return this.request<Project>(`/projects/${projectId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -849,6 +856,34 @@ class SessionManagementClient {
     return this.get<ListenerStatus>(`/sessions/${sessionId}/listener-status`)
   }
 
+  /**
+   * Get listener status for multiple sessions in a single request.
+   * Reduces N requests to 1, dramatically improving performance with many active sessions.
+   * Includes request deduplication to prevent pileup when responses are slow.
+   */
+  async getBatchListenerStatus(sessionIds: string[]): Promise<ListenerStatus[]> {
+    if (sessionIds.length === 0) return []
+
+    // Create unique key for request deduplication based on sorted session IDs
+    const requestKey = `batch-listener-${sessionIds.sort().join(',')}`
+
+    // Return existing pending request if one exists (prevents pileup)
+    if (this.pendingRequests.has(requestKey)) {
+      console.debug('[ApiClient] Returning cached batch listener request')
+      return this.pendingRequests.get(requestKey)!
+    }
+
+    const promise = this.post<ListenerStatus[]>(
+      '/sessions/listener-status/batch',
+      { sessionIds }
+    ).finally(() => {
+      this.pendingRequests.delete(requestKey)
+    })
+
+    this.pendingRequests.set(requestKey, promise)
+    return promise
+  }
+
   async getMonitoringLogs(sessionId?: string): Promise<MonitoringLogsResponse> {
     const params = sessionId ? `?sessionId=${sessionId}` : ''
     return this.get<MonitoringLogsResponse>(`/monitoring/logs${params}`)
@@ -878,7 +913,7 @@ class SessionManagementClient {
     const url = `${this.getBaseUrl()}/sessions/${sessionId}/events`
 
     // Get auth token
-    const token = localStorage.getItem('grace_auth_token')
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
 
     // For SSE, we need to pass auth token via query param since EventSource doesn't support headers
     const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
@@ -1356,6 +1391,157 @@ class SessionManagementClient {
    */
   async declineProjectInvitation(invitationId: string): Promise<void> {
     await this.post<void>(`/project-invitations/${invitationId}/decline`)
+  }
+
+  // ============================================================================
+  // Admin Dashboard API (System Admin only)
+  // ============================================================================
+
+  /**
+   * Get current dashboard metrics snapshot.
+   * Requires system admin privileges.
+   */
+  async getAdminDashboardMetrics(): Promise<AdminDashboardMetrics> {
+    return this.get<AdminDashboardMetrics>('/admin/dashboard')
+  }
+
+  /**
+   * Subscribe to real-time admin dashboard metrics via SSE.
+   * Updates every 3 seconds.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToAdminDashboard(
+    onData: (metrics: AdminDashboardMetrics) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/admin/dashboard/stream`
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log('[ApiClient] Admin dashboard SSE connection opened')
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const metrics: AdminDashboardMetrics = JSON.parse(e.data)
+        onData(metrics)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse admin dashboard event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Admin dashboard SSE connection error:', e)
+      onError?.(e)
+    }
+
+    return () => {
+      console.log('[ApiClient] Closing admin dashboard SSE connection')
+      eventSource.close()
+    }
+  }
+
+  /**
+   * Get session activity data for the last 90 days.
+   * Used for the GitHub-style activity grid.
+   */
+  async getSessionActivity(): Promise<SessionActivityDay[]> {
+    return this.get<SessionActivityDay[]>('/admin/sessions/activity')
+  }
+
+  /**
+   * Get all sessions with their current status.
+   * Used for the sessions grid visualization.
+   */
+  async getAllSessions(): Promise<SessionStatusItem[]> {
+    return this.get<SessionStatusItem[]>('/admin/sessions')
+  }
+
+  /**
+   * Get current server performance metrics.
+   */
+  async getServerMetrics(): Promise<ServerMetrics> {
+    return this.get<ServerMetrics>('/admin/server-metrics')
+  }
+
+  /**
+   * Subscribe to real-time server metrics via SSE.
+   * Updates every 2 seconds.
+   * Returns cleanup function to close the EventSource connection.
+   */
+  subscribeToServerMetrics(
+    onData: (metrics: ServerMetrics) => void,
+    onError?: (error: Event) => void,
+    onOpen?: () => void
+  ): () => void {
+    const url = `${this.getBaseUrl()}/admin/server-metrics/stream`
+    const token = localStorage.getItem('stella_auth_token') || localStorage.getItem('grace_auth_token')
+    const urlWithAuth = token ? `${url}?token=${encodeURIComponent(token)}` : url
+
+    const eventSource = new EventSource(urlWithAuth)
+
+    eventSource.onopen = () => {
+      console.log('[ApiClient] Server metrics SSE connection opened')
+      onOpen?.()
+    }
+
+    eventSource.onmessage = (e) => {
+      try {
+        const metrics: ServerMetrics = JSON.parse(e.data)
+        onData(metrics)
+      } catch (err) {
+        console.error('[ApiClient] Failed to parse server metrics event:', err)
+      }
+    }
+
+    eventSource.onerror = (e) => {
+      console.error('[ApiClient] Server metrics SSE connection error:', e)
+      onError?.(e)
+    }
+
+    return () => {
+      console.log('[ApiClient] Closing server metrics SSE connection')
+      eventSource.close()
+    }
+  }
+
+  /**
+   * Get historical usage data for charts.
+   * @param days - Number of days to fetch (7, 30, or 90)
+   */
+  async getUsageHistory(days: number = 30): Promise<HistoricalUsageData[]> {
+    return this.get<HistoricalUsageData[]>(`/admin/usage/history?days=${days}`)
+  }
+
+  /**
+   * List all users with pagination.
+   */
+  async listAllUsers(page: number = 1, limit: number = 50): Promise<AdminUsersResponse> {
+    return this.get<AdminUsersResponse>(`/admin/users?page=${page}&limit=${limit}`)
+  }
+
+  /**
+   * Verify a user account.
+   */
+  async verifyUser(userId: string): Promise<AdminUserListItem> {
+    return this.request<AdminUserListItem>(`/admin/users/${userId}/verify`, {
+      method: 'PATCH',
+    })
+  }
+
+  /**
+   * Toggle system admin status for a user.
+   */
+  async toggleUserAdminStatus(userId: string, isAdmin: boolean): Promise<AdminUserListItem> {
+    return this.request<AdminUserListItem>(`/admin/users/${userId}/admin`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isAdmin }),
+    })
   }
 }
 

@@ -1,8 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LiveKitWebhookController } from './livekit-webhook.controller';
 import { WebhooksService } from './webhooks.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AgentsModule } from '../agents/agents.module';
+import { SessionsModule } from '../sessions/sessions.module';
+import { LiveKitModule } from '../livekit/livekit.module';
 
 /**
  * Webhooks Module
@@ -10,9 +13,19 @@ import { PrismaModule } from '../prisma/prisma.module';
  * Handles incoming webhook events from external services.
  * Currently supports:
  * - LiveKit webhooks for participant and room events
+ *
+ * Features:
+ * - Message-recorder optimization: webhook-driven room management
+ * - Agent pausing: on-demand spawning when humans join
  */
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [
+    ConfigModule,
+    PrismaModule,
+    LiveKitModule,
+    forwardRef(() => AgentsModule),
+    forwardRef(() => SessionsModule),
+  ],
   controllers: [LiveKitWebhookController],
   providers: [WebhooksService],
   exports: [WebhooksService],

@@ -217,11 +217,22 @@ export class StateMachineService {
       throw new BadRequestException('Plan must have at least one state');
     }
 
+    // If state already exists for this session, resume from it instead of resetting.
+    // This preserves progress (completedTasks, deliverables, currentStateId) when an
+    // agent is restarted after being paused for inactivity.
+    const existingState = await this.prisma.sessionState.findUnique({
+      where: { sessionId },
+    });
+
+    if (existingState) {
+      this.logger.log(`Resuming existing state machine for session ${sessionId} (state: ${existingState.currentStateId}, tasks: ${existingState.completedTasks.length} completed)`);
+      return existingState;
+    }
+
     this.logger.log(`Initializing state machine for session ${sessionId} with plan ${normalizedPlan.id}`);
 
-    return this.prisma.sessionState.upsert({
-      where: { sessionId },
-      create: {
+    return this.prisma.sessionState.create({
+      data: {
         sessionId,
         planId: normalizedPlan.id,
         planData: normalizedPlan as unknown as Prisma.InputJsonValue,
@@ -231,17 +242,6 @@ export class StateMachineService {
         deliverables: {},
         turnsWithoutProgress: 0,
         totalTurns: 0,
-      },
-      update: {
-        planId: normalizedPlan.id,
-        planData: normalizedPlan as unknown as Prisma.InputJsonValue,
-        currentStateId: initialStateId,
-        completedTasks: [],
-        skippedTasks: [],
-        deliverables: {},
-        turnsWithoutProgress: 0,
-        totalTurns: 0,
-        lastTransitionAt: null,
       },
     });
   }

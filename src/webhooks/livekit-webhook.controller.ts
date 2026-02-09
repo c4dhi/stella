@@ -1,15 +1,18 @@
 import {
   Controller,
   Post,
-  Body,
   Headers,
   Logger,
   HttpCode,
   HttpStatus,
+  Body,
+  Req,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import * as crypto from 'crypto';
+import { Public } from '../common/decorators/public.decorator';
+import { WebhookReceiver } from 'livekit-server-sdk';
+import type { Request } from 'express';
 
 /**
  * LiveKit webhook event types
@@ -71,33 +74,74 @@ interface LiveKitWebhookEvent {
 @Controller('webhooks/livekit')
 export class LiveKitWebhookController {
   private readonly logger = new Logger(LiveKitWebhookController.name);
-  private readonly webhookSecret: string;
+  private readonly webhookReceiver: WebhookReceiver;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
   ) {
-    this.webhookSecret = this.configService.get<string>(
-      'LIVEKIT_WEBHOOK_SECRET',
-      '',
-    );
+    const apiKey = this.configService.get<string>('LIVEKIT_API_KEY', '');
+    const apiSecret = this.configService.get<string>('LIVEKIT_API_SECRET', '');
 
-    if (!this.webhookSecret) {
+    this.webhookReceiver = new WebhookReceiver(apiKey, apiSecret);
+
+    if (!apiKey || !apiSecret) {
       this.logger.warn(
-        'LIVEKIT_WEBHOOK_SECRET not set - webhook signature verification disabled',
+        'LIVEKIT_API_KEY or LIVEKIT_API_SECRET not set - webhook verification may fail',
       );
     }
   }
 
+  @Public()
   @Post()
   @HttpCode(HttpStatus.OK)
   async handleWebhook(
-    @Body() event: LiveKitWebhookEvent,
+    @Req() req: Request,
+    @Body() body: string | Buffer | object,
     @Headers('authorization') authHeader: string,
+    @Headers('content-type') contentType: string,
   ): Promise<{ received: boolean }> {
-    // Verify webhook signature if secret is configured
-    if (this.webhookSecret && !this.verifySignature(event, authHeader)) {
-      this.logger.warn('Invalid webhook signature');
+    // Debug logging
+    this.logger.debug(`Webhook content-type: ${contentType}`);
+    this.logger.debug(`Webhook body type: ${typeof body}`);
+    this.logger.debug(`Webhook body: ${JSON.stringify(body)?.substring(0, 200)}`);
+    this.logger.debug(`Webhook req.body type: ${typeof req.body}`);
+    this.logger.debug(`Webhook req.body: ${JSON.stringify(req.body)?.substring(0, 200)}`);
+    this.logger.debug(`Webhook authHeader: ${authHeader?.substring(0, 50)}...`);
+
+    // Get raw body as string - LiveKit sends webhooks as JWT-encoded data
+    let rawBody: string;
+    if (typeof body === 'string') {
+      rawBody = body;
+    } else if (Buffer.isBuffer(body)) {
+      rawBody = body.toString('utf-8');
+    } else if (typeof req.body === 'string') {
+      rawBody = req.body;
+    } else if (body && typeof body === 'object') {
+      // Body was already parsed as JSON - this shouldn't happen with proper config
+      // but handle it just in case
+      rawBody = JSON.stringify(body);
+    } else {
+      rawBody = '';
+    }
+
+    if (!rawBody || rawBody === '{}') {
+      this.logger.warn('Empty webhook body received');
+      return { received: false };
+    }
+
+    this.logger.debug(`Webhook raw body (first 200 chars): ${rawBody.substring(0, 200)}`);
+
+    // Decode and verify the webhook using LiveKit SDK
+    let event: LiveKitWebhookEvent;
+    try {
+      const webhookEvent = await this.webhookReceiver.receive(
+        rawBody,
+        authHeader,
+      );
+      event = webhookEvent as unknown as LiveKitWebhookEvent;
+    } catch (error) {
+      this.logger.error(`Failed to verify webhook: ${error.message}`);
       return { received: false };
     }
 
@@ -139,29 +183,6 @@ export class LiveKitWebhookController {
     return { received: true };
   }
 
-  private verifySignature(
-    event: LiveKitWebhookEvent,
-    authHeader: string,
-  ): boolean {
-    if (!authHeader) {
-      return false;
-    }
-
-    try {
-      // LiveKit uses JWT for webhook authentication
-      // The authorization header contains: Bearer <jwt>
-      const token = authHeader.replace('Bearer ', '');
-
-      // For now, we'll do a basic check - in production,
-      // you should verify the JWT signature using the API secret
-      // This requires the livekit-server-sdk
-      return token.length > 0;
-    } catch (error) {
-      this.logger.error(`Signature verification error: ${error.message}`);
-      return false;
-    }
-  }
-
   private async handleParticipantJoined(
     event: LiveKitWebhookEvent,
   ): Promise<void> {
@@ -172,13 +193,14 @@ export class LiveKitWebhookController {
       `Participant joined: ${participant.identity} in room ${room.name}`,
     );
 
-    // Skip agent participants (they manage themselves)
-    if (participant.identity.startsWith('agent-')) {
-      this.logger.debug(`Agent ${participant.identity} joined - skipping`);
+    // Skip message-recorder (it's infrastructure, not a real participant)
+    if (participant.identity === 'message-recorder') {
+      this.logger.debug(`Message recorder joined - skipping event emission`);
       return;
     }
 
-    // Emit event for other services to handle
+    // Emit event for WebhooksService to handle (for ALL participants including agents)
+    // This is needed for recorder join state tracking (agents are meaningful participants)
     this.eventEmitter.emit('livekit.participant.joined', {
       roomName: room.name,
       participantIdentity: participant.identity,
@@ -188,15 +210,17 @@ export class LiveKitWebhookController {
       joinedAt: participant.joinedAt,
     });
 
-    // Also emit SSE event for frontend
-    this.eventEmitter.emit('sse.event', {
-      sessionId: room.name, // Room name is typically the session ID
-      event: 'participant.joined',
-      data: {
-        identity: participant.identity,
-        name: participant.name,
-      },
-    });
+    // Emit SSE event for frontend (skip agents - they're tracked differently)
+    if (!participant.identity.startsWith('agent-')) {
+      this.eventEmitter.emit('sse.event', {
+        sessionId: room.name, // Room name is typically the session ID
+        event: 'participant.joined',
+        data: {
+          identity: participant.identity,
+          name: participant.name,
+        },
+      });
+    }
   }
 
   private async handleParticipantLeft(
@@ -209,32 +233,35 @@ export class LiveKitWebhookController {
       `Participant left: ${participant.identity} from room ${room.name}`,
     );
 
-    // Skip agent participants
-    if (participant.identity.startsWith('agent-')) {
-      this.logger.debug(`Agent ${participant.identity} left - skipping`);
+    // Skip message-recorder (it's infrastructure, not a real participant)
+    if (participant.identity === 'message-recorder') {
+      this.logger.debug(`Message recorder left - skipping event emission`);
       return;
     }
 
-    // Emit event for other services
+    // Emit event for WebhooksService to handle (for ALL participants including agents)
+    // This is needed for recorder leave state tracking
     this.eventEmitter.emit('livekit.participant.left', {
       roomName: room.name,
       participantIdentity: participant.identity,
       participantSid: participant.sid,
     });
 
-    // Emit SSE event for frontend
-    this.eventEmitter.emit('sse.event', {
-      sessionId: room.name,
-      event: 'participant.left',
-      data: {
-        identity: participant.identity,
-      },
-    });
+    // Emit SSE event for frontend (skip agents - they're tracked differently)
+    if (!participant.identity.startsWith('agent-')) {
+      this.eventEmitter.emit('sse.event', {
+        sessionId: room.name,
+        event: 'participant.left',
+        data: {
+          identity: participant.identity,
+        },
+      });
+    }
 
     // Check if room is now empty (no users, only agents or empty)
+    // Note: numParticipants includes the message-recorder, so we check <= 1
     if (room.numParticipants <= 1) {
-      // Only agent(s) left or empty
-      this.logger.log(`Room ${room.name} has no users left`);
+      this.logger.log(`Room ${room.name} has no meaningful participants left`);
       this.eventEmitter.emit('livekit.room.empty', {
         roomName: room.name,
       });

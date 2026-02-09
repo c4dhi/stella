@@ -88,43 +88,12 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
     })
   }, [agents])
 
-  // Poll for agents status with smart merge
+  // Poll for agents as fallback (server is source of truth)
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const session = await apiClient.getSession(sessionId)
-
-        // Smart merge: validate state transitions before accepting server updates
-        setAgents(prev =>
-          session.agents.map(serverAgent => {
-            const localAgent = prev.find(a => a.id === serverAgent.id)
-
-            if (!localAgent) {
-              // New agent from server - accept as-is
-              return serverAgent
-            }
-
-            // Define valid state transitions
-            const isValidTransition = (from: AgentStatus, to: AgentStatus): boolean => {
-              const validTransitions: Record<AgentStatus, AgentStatus[]> = {
-                [AgentStatus.STARTING]: [AgentStatus.RUNNING, AgentStatus.FAILED, AgentStatus.STOPPED],
-                [AgentStatus.RUNNING]: [AgentStatus.STOPPING, AgentStatus.STOPPED, AgentStatus.FAILED],
-                [AgentStatus.STOPPING]: [AgentStatus.STOPPED, AgentStatus.FAILED],
-                [AgentStatus.STOPPED]: [], // Terminal state
-                [AgentStatus.FAILED]: []   // Terminal state
-              }
-              return validTransitions[from]?.includes(to) ?? false
-            }
-
-            // Keep local state if server transition is invalid (likely stale data)
-            if (!isValidTransition(localAgent.status, serverAgent.status)) {
-              return { ...serverAgent, status: localAgent.status }
-            }
-
-            // Accept valid server transition
-            return serverAgent
-          })
-        )
+        setAgents(session.agents)
       } catch (err) {
         console.error('Failed to refresh agents:', err)
       }

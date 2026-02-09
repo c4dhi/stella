@@ -115,6 +115,7 @@ export class AuthService {
         email: true,
         name: true,
         verified: true,
+        isSystemAdmin: true,
         createdAt: true,
         projectMemberships: {
           select: {

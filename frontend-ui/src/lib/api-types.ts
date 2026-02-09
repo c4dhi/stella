@@ -37,6 +37,7 @@ export interface Project {
   name: string
   createdAt: string
   updatedAt: string
+  agentInactivityTimeoutMinutes?: number | null
 }
 
 export interface ProjectWithCounts extends Project {
@@ -199,6 +200,7 @@ export interface Timeline {
 
 export interface CreateProjectDto {
   name: string // 1-255 characters
+  agentInactivityTimeoutMinutes?: number | null
 }
 
 export interface CreateSessionDto {
@@ -1038,4 +1040,99 @@ export interface TranscriptExport {
   participants: TranscriptExportParticipant[]
   agents: TranscriptExportAgent[]
   messages: TranscriptExportMessage[]
+}
+
+// ============================================================================
+// Admin Dashboard Types
+// ============================================================================
+
+export interface AdminDashboardMetrics {
+  timestamp: string
+  activeParticipants: number
+  totalParticipants: number
+  activeSessions: number
+  totalSessions: number
+  runningAgents: number
+  startingAgents: number
+  failedAgents: number
+  pausedAgents: number  // Agents paused due to inactivity
+  stoppedAgents: number // Agents that are stopped (not paused)
+  totalAgents: number
+  totalMessages: number
+  messagesToday: number
+  // Auto-stop feature metrics
+  sessionsWithTimeout: number  // Sessions with inactivity timeout configured
+}
+
+export interface SessionActivityDay {
+  date: string // YYYY-MM-DD
+  activeCount: number
+  closedCount: number
+  errorCount: number
+}
+
+export interface HistoricalUsageData {
+  date: string
+  sessionsCreated: number
+  peakParticipants: number
+}
+
+export interface ServerMetrics {
+  timestamp: string
+  cpuUsage: number
+  cpuCores: number
+  memoryTotal: string // BigInt as string
+  memoryUsed: string
+  memoryFree: string
+  gpuUsage: number | null
+  gpuMemoryUsed: string | null
+  gpuMemoryTotal: string | null
+  gpuAvailable: boolean
+  k8sNodeCount: number | null
+  k8sPodCount: number | null
+  k8sCpuRequests: number | null
+  k8sMemoryUsed: string | null
+}
+
+export interface AdminUserListItem {
+  id: string
+  email: string
+  name: string | null
+  verified: boolean
+  isSystemAdmin: boolean
+  createdAt: string
+  projectCount: number
+}
+
+export interface AdminUsersResponse {
+  users: AdminUserListItem[]
+  total: number
+  page: number
+  totalPages: number
+}
+
+export interface SessionResourceUsage {
+  cpuMillicores: number
+  memoryBytes: number
+  cpuPercent: number
+  memoryPercent: number
+}
+
+export interface SessionAgentError {
+  agentName: string
+  status: string
+  lastError: string | null
+  healthState: string | null
+}
+
+export interface SessionStatusItem {
+  id: string
+  status: string // 'ACTIVE', 'CLOSED'
+  hasError: boolean
+  isIdle: boolean
+  resourceUsage: SessionResourceUsage | null
+  hasResourceWarning: boolean
+  errors: SessionAgentError[]
+  projectId: string
+  createdAt: string
 }

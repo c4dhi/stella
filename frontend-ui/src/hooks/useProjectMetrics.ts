@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiClient } from '../services/ApiClient'
+import { getSharedSSEManager } from '../services/SharedSSEManager'
+import { usePageVisibility } from './usePageVisibility'
 import type { ProjectMetrics } from '../lib/api-types'
 
 interface UseProjectMetricsResult {
@@ -18,6 +20,8 @@ interface UseProjectMetricsResult {
  * - Real-time SSE updates every 5 seconds
  * - Connection status tracking
  * - Manual refresh capability
+ * - Cross-tab SSE sharing via BroadcastChannel (reduces HTTP connections)
+ * - Pauses when tab is hidden
  *
  * @param projectId - The project ID to fetch metrics for
  * @returns Metrics data, loading/connection states, and refresh function
@@ -27,6 +31,8 @@ export function useProjectMetrics(projectId: string | undefined): UseProjectMetr
   const [isLoading, setIsLoading] = useState(true)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  const isVisible = usePageVisibility()
+  const callbackRef = useRef<((data: any) => void) | null>(null)
 
   // Manual refresh function
   const refresh = useCallback(async () => {
@@ -50,6 +56,13 @@ export function useProjectMetrics(projectId: string | undefined): UseProjectMetr
       return
     }
 
+    // Skip SSE when tab is hidden to reduce connection usage
+    if (!isVisible) {
+      console.debug('[useProjectMetrics] Tab hidden, pausing SSE subscription')
+      setIsConnected(false)
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
@@ -65,13 +78,17 @@ export function useProjectMetrics(projectId: string | undefined): UseProjectMetr
         setIsLoading(false)
       })
 
-    // Subscribe to real-time updates via SSE
-    const unsubscribe = apiClient.subscribeToProjectMetrics(
-      projectId,
-      (data) => {
-        setMetrics(data)
-        setError(null)
-      },
+    // Subscribe to real-time updates via shared SSE manager
+    const manager = getSharedSSEManager('project-metrics', projectId)
+
+    const callback = (data: any) => {
+      setMetrics(data as ProjectMetrics)
+      setError(null)
+    }
+    callbackRef.current = callback
+
+    manager.subscribe(
+      callback,
       () => {
         // On error - SSE will auto-reconnect
         setIsConnected(false)
@@ -83,10 +100,13 @@ export function useProjectMetrics(projectId: string | undefined): UseProjectMetr
     )
 
     return () => {
-      unsubscribe()
+      if (callbackRef.current) {
+        manager.unsubscribe(callbackRef.current)
+        callbackRef.current = null
+      }
       setIsConnected(false)
     }
-  }, [projectId])
+  }, [projectId, isVisible])
 
   return {
     metrics,
