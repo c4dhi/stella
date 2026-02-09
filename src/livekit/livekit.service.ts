@@ -1,13 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
 @Injectable()
 export class LiveKitService {
+  private readonly logger = new Logger(LiveKitService.name);
   private readonly apiKey: string;
   private readonly apiSecret: string;
   private readonly url: string;           // Internal URL (for backend connections)
   private readonly publicUrl: string;     // Public URL (for frontend/browsers)
+  private readonly roomService: RoomServiceClient;
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('LIVEKIT_API_KEY');
@@ -23,6 +25,10 @@ export class LiveKitService {
     this.apiSecret = apiSecret;
     this.url = url;
     this.publicUrl = publicUrl;
+
+    // RoomServiceClient needs an HTTP URL, convert ws:// to http://
+    const httpUrl = url.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
+    this.roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
   }
 
   async createToken(
@@ -74,5 +80,22 @@ export class LiveKitService {
 
   getApiSecret(): string {
     return this.apiSecret;
+  }
+
+  /**
+   * List current participants in a LiveKit room.
+   * Queries LiveKit directly (source of truth) rather than relying on DB state.
+   */
+  async listRoomParticipants(roomName: string): Promise<Array<{ identity: string; name: string }>> {
+    try {
+      const participants = await this.roomService.listParticipants(roomName);
+      return participants.map(p => ({
+        identity: p.identity,
+        name: p.name,
+      }));
+    } catch (error) {
+      this.logger.error(`Failed to list participants for room ${roomName}: ${error.message}`);
+      return [];
+    }
   }
 }

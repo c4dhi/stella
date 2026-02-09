@@ -5,8 +5,7 @@ import { Globe, Users, Settings } from 'lucide-react'
 import { apiClient } from '../services/ApiClient'
 import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
-import CreateProjectModal from '../components/modals/CreateProjectModal'
-import ProjectSettingsPanel from '../components/modals/ProjectSettingsPanel'
+import ProjectModal from '../components/modals/ProjectModal'
 import ShareProjectModal from '../components/modals/ShareProjectModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import AppHeader from '../components/layout/AppHeader'
@@ -48,11 +47,10 @@ export default function ProjectsDashboard() {
     loadProjects()
   }, [])
 
-  const handleCreateProject = async (name: string): Promise<string> => {
-    const newProject = await apiClient.createProject({ name })
-    setProjects(prev => [newProject as ProjectWithCounts, ...prev])
-    addToast({ message: `Project "${name}" created`, type: 'success' })
-    return newProject.id
+  const handleProjectCreated = (projectId: string) => {
+    // Reload projects list to get the new project with all counts
+    loadProjects()
+    addToast({ message: 'Project created', type: 'success' })
   }
 
   const handleProjectUpdated = (updatedProject: Project) => {
@@ -297,14 +295,14 @@ export default function ProjectsDashboard() {
       </main>
 
       {/* Modals */}
-      <CreateProjectModal
+      <ProjectModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
-        onSubmit={handleCreateProject}
+        onProjectCreated={handleProjectCreated}
       />
 
       {editingProject && (
-        <ProjectSettingsPanel
+        <ProjectModal
           isOpen={!!editingProject}
           onClose={() => setEditingProject(null)}
           project={editingProject}

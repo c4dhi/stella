@@ -4,11 +4,27 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import * as express from 'express';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+    bodyParser: false, // Disable default body parser so we can handle webhooks specially
+  });
+
+  // Use JSON parser for all routes except webhooks
+  app.use((req, res, next) => {
+    if (req.path === '/webhooks/livekit') {
+      // For LiveKit webhooks, use text parser to get raw JWT token
+      express.text({ type: '*/*' })(req, res, next);
+    } else {
+      // For all other routes, use JSON parser
+      express.json()(req, res, next);
+    }
+  });
+  app.use(express.urlencoded({ extended: true }));
 
   // Determine proto path
   // In Docker: __dirname is /app/dist/src, proto files are at /app/dist/proto (../proto)

@@ -200,6 +200,7 @@ export interface Timeline {
 
 export interface CreateProjectDto {
   name: string // 1-255 characters
+  agentInactivityTimeoutMinutes?: number | null
 }
 
 export interface CreateSessionDto {

@@ -3,6 +3,7 @@ import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentsService } from '../agents/agents.service';
 import { SessionsService } from '../sessions/sessions.service';
+import { LiveKitService } from '../livekit/livekit.service';
 
 interface ParticipantJoinedEvent {
   roomName: string;
@@ -35,6 +36,7 @@ export class WebhooksService {
   constructor(
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
+    private livekitService: LiveKitService,
     @Inject(forwardRef(() => AgentsService))
     private agentsService: AgentsService,
     @Inject(forwardRef(() => SessionsService))
@@ -205,37 +207,21 @@ export class WebhooksService {
 
   /**
    * Count participants in a room by type.
-   * Uses database participant records as proxy (webhook-updated).
+   * Queries LiveKit directly (source of truth) instead of relying on DB records,
+   * which may have mismatched identities.
    */
   private async countRoomParticipants(roomName: string): Promise<{ humans: number; agents: number }> {
-    // Find session by room name
-    const room = await this.prisma.room.findUnique({
-      where: { livekitRoomName: roomName },
-      include: {
-        session: {
-          include: {
-            participants: {
-              where: { leftAt: null }, // Only active participants
-            },
-            agents: {
-              where: { status: { in: ['RUNNING', 'STARTING'] } },
-            },
-          },
-        },
-      },
-    });
+    const participants = await this.livekitService.listRoomParticipants(roomName);
 
-    if (!room?.session) {
-      return { humans: 0, agents: 0 };
+    let humans = 0;
+    let agents = 0;
+    for (const p of participants) {
+      if (this.isHumanParticipant(p.identity)) {
+        humans++;
+      } else if (this.isAgentParticipant(p.identity)) {
+        agents++;
+      }
     }
-
-    // Count human participants (exclude message-recorder identity)
-    const humans = room.session.participants.filter(
-      p => this.isHumanParticipant(p.identity),
-    ).length;
-
-    // Count running agents
-    const agents = room.session.agents.length;
 
     return { humans, agents };
   }

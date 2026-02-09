@@ -5,6 +5,7 @@ import { WebhooksService } from './webhooks.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AgentsModule } from '../agents/agents.module';
 import { SessionsModule } from '../sessions/sessions.module';
+import { LiveKitModule } from '../livekit/livekit.module';
 
 /**
  * Webhooks Module
@@ -21,6 +22,7 @@ import { SessionsModule } from '../sessions/sessions.module';
   imports: [
     ConfigModule,
     PrismaModule,
+    LiveKitModule,
     forwardRef(() => AgentsModule),
     forwardRef(() => SessionsModule),
   ],
