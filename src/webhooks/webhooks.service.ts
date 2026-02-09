@@ -399,20 +399,7 @@ export class WebhooksService {
     this.logger.log(`Spawning agent for on_demand session ${session.id}`);
 
     try {
-      // Get project owner for env var template access
-      const projectMembership = await this.prisma.projectMembership.findFirst({
-        where: {
-          projectId: session.projectId,
-          role: { in: ['OWNER', 'ADMIN'] },
-        },
-      });
-
-      if (!projectMembership) {
-        this.logger.error(`No owner found for project ${session.projectId}`);
-        return;
-      }
-
-      // Find any paused agent to increment resume count
+      // Find the most recently paused agent to restart it
       const pausedAgent = await this.prisma.agentInstance.findFirst({
         where: {
           sessionId: session.id,
@@ -421,30 +408,48 @@ export class WebhooksService {
         orderBy: { pausedAt: 'desc' },
       });
 
-      // Create new agent instance
-      const agent = await this.agentsService.create(
-        session.id,
-        {
-          name: config.name || 'Agent',
-          icon: config.icon || '🤖',
-          agentType: config.agentType || 'stella-agent',
-          config: config.agentConfig || {},
-          envVarTemplateId: config.envVarTemplateId,
-        },
-        projectMembership.userId,
-      );
-
-      // If resuming from paused state, increment resume count
       if (pausedAgent) {
+        // Restart the existing agent (reuses same agent record and ID)
+        this.logger.log(`Restarting paused agent ${pausedAgent.id} for session ${session.id}`);
+        await this.agentsService.restartAgent(pausedAgent.id);
         await this.prisma.agentInstance.update({
-          where: { id: agent.id },
-          data: { resumeCount: pausedAgent.resumeCount + 1 },
+          where: { id: pausedAgent.id },
+          data: {
+            pausedAt: null,
+            pauseReason: null,
+            resumeCount: pausedAgent.resumeCount + 1,
+          },
         });
-      }
+        this.logger.log(`Resumed agent ${pausedAgent.id} for session ${session.id} (resume #${pausedAgent.resumeCount + 1})`);
+      } else {
+        // No paused agent found — create a new one from saved config
+        const projectMembership = await this.prisma.projectMembership.findFirst({
+          where: {
+            projectId: session.projectId,
+            role: { in: ['OWNER', 'ADMIN'] },
+          },
+        });
 
-      this.logger.log(`Spawned agent ${agent.id} for on_demand session ${session.id}`);
+        if (!projectMembership) {
+          this.logger.error(`No owner found for project ${session.projectId}`);
+          return;
+        }
+
+        const agent = await this.agentsService.create(
+          session.id,
+          {
+            name: config.name || 'Agent',
+            icon: config.icon || '🤖',
+            agentType: config.agentType || 'stella-agent',
+            config: config.agentConfig || {},
+            envVarTemplateId: config.envVarTemplateId,
+          },
+          projectMembership.userId,
+        );
+        this.logger.log(`Spawned new agent ${agent.id} for session ${session.id}`);
+      }
     } catch (error) {
-      this.logger.error(`Failed to spawn agent for session ${session.id}: ${error.message}`);
+      this.logger.error(`Failed to spawn/resume agent for session ${session.id}: ${error.message}`);
     }
   }
 

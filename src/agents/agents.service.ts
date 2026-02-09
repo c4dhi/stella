@@ -822,6 +822,11 @@ export class AgentsService {
       },
     });
 
+    // Emit SSE event so frontend updates in real-time
+    if (this.sessionsService) {
+      this.sessionsService.emitAgentStarting(agent.sessionId, id, agent.name, agent.agentType || 'stella-agent');
+    }
+
     // Get environment variables
     const livekitApiKey = this.configService.get<string>('LIVEKIT_API_KEY');
     const livekitApiSecret = this.configService.get<string>('LIVEKIT_API_SECRET');
@@ -846,6 +851,18 @@ export class AgentsService {
         role: { in: ['OWNER', 'ADMIN'] },
       },
     });
+
+    // Register pending session so gRPC agent registration can match
+    if (this.agentServerService) {
+      const agentType = agent.agentType || 'stella-agent';
+      const config: Record<string, string> = {
+        sessionId: agent.sessionId,
+        roomName: agent.session.room.livekitRoomName,
+        projectId: agent.session.projectId,
+      };
+      this.agentServerService.registerPendingSession(agent.sessionId, agentType, config);
+      this.logger.log(`Registered pending session ${agent.sessionId} for restarted agent type: ${agentType}`);
+    }
 
     // Recreate Kubernetes pod with SAME agent ID
     try {
