@@ -250,8 +250,8 @@ export default function ProjectsDashboard() {
                     }}
                     className={`p-2 rounded-lg transition-colors ${
                       isDark
-                        ? 'text-content-inverse-tertiary hover:text-primary hover:bg-primary/10'
-                        : 'text-content-tertiary hover:text-primary hover:bg-primary/10'
+                        ? 'text-content-inverse-tertiary hover:text-content-inverse hover:bg-surface-dark-tertiary'
+                        : 'text-content-tertiary hover:text-content hover:bg-surface-secondary'
                     }`}
                     title="Share"
                   >

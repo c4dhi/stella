@@ -112,7 +112,7 @@ export default function SessionView() {
     connectionId: 0
   })
 
-  // Load session details
+  // Load session details, then participants (serialized to avoid connection burst)
   useEffect(() => {
     const loadSession = async () => {
       if (!sessionId) return
@@ -127,6 +127,14 @@ export default function SessionView() {
         const hasRunningAgent = data.agents?.some(agent => agent.status === 'RUNNING')
         if (hasRunningAgent) {
           setAgentReady(true)
+        }
+
+        // Load participants after session (not in parallel) to reduce connection burst
+        try {
+          const participantData = await apiClient.listParticipants(sessionId)
+          setParticipants(participantData)
+        } catch (err) {
+          console.error('Failed to load participants:', err)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load session')
@@ -744,10 +752,7 @@ export default function SessionView() {
     }
   }
 
-  // Load participants on mount
-  useEffect(() => {
-    loadParticipants()
-  }, [sessionId])
+  // Participants are loaded as part of loadSession above (serialized to reduce connection burst)
 
   // Poll listener status every 2 seconds
   useEffect(() => {

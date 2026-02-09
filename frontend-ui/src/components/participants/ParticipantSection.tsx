@@ -89,9 +89,10 @@ export default function ParticipantSection({
     }
   }, [sessionId])
 
-  // Load invitations on mount
+  // Load invitations on mount (deferred to avoid competing with critical page-load requests)
   useEffect(() => {
-    fetchInvitations()
+    const timer = setTimeout(fetchInvitations, 500)
+    return () => clearTimeout(timer)
   }, [fetchInvitations])
 
   // Refresh invitations when refreshTrigger changes (e.g., after revoke from modal)
