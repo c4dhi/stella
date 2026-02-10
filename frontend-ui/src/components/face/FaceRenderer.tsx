@@ -89,10 +89,15 @@ const interpolate = (value: number, inputRange: number[], outputRange: number[])
 };
 
 // Calculate mouth SVG path using UNIFIED cubic bezier structure
-// This prevents glitches when transitioning between speaking/not-speaking
-// because the path structure remains consistent (always M -> C -> C -> Z)
+// Path is always M -> C -> C -> Z to prevent glitches during transitions.
+//
+// Two independent axes drive the speaking shape:
+//   mouthOpenness  — jaw drop (0 = closed, ~1 = fully open)
+//   mouthSpread    — lip width (0 = narrow/rounded "oo", 1 = wide "ah"/"ee")
+// The top lip moves less than the bottom lip (jaw drops, upper lip stays).
 const calculateMouthPath = (
   mouthOpenness: number,
+  mouthSpread: number,
   mouthEmotion: MouthEmotion,
   isSpeaking: boolean
 ): string => {
@@ -101,68 +106,74 @@ const calculateMouthPath = (
 
   const shape = MOUTH_EXPRESSIONS[mouthEmotion] || MOUTH_EXPRESSIONS.neutral;
 
-  // Calculate speaking dimensions (oval) - LARGER and more expressive
-  const speakingBaseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.2, 45);  // Increased from 0.8, 30
-  const speakingBaseHeight = Math.max(shape.height * 20, 20);  // Increased from 12, 12
+  // --- Speaking dimensions ---
+  // Height driven by openness
+  const speakingBaseHeight = Math.max(shape.height * 55, 50);
   const openness = interpolate(
     mouthOpenness,
-    [0, 0.05, 0.15, 0.4, 1.0],      // More responsive to lower values
-    [0.5, 0.8, 1.2, 1.8, 2.5]       // More expressive range
+    [0, 0.05, 0.15, 0.4, 1.0],
+    [0, 1.2, 2.2, 3.0, 3.8]
   );
   const speakingHeight = speakingBaseHeight * openness;
-  const widthFactor = interpolate(openness, [0.5, 2.5], [1.0, 0.8]);
-  const speakingWidth = speakingBaseWidth * widthFactor;
 
-  // Calculate non-speaking dimensions - BIGGER smile
-  const smileWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.0, 35);  // Increased from 0.6, 20
+  // Width driven independently by spread
+  const speakingBaseWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.3, 48);
+  const spreadFactor = interpolate(mouthSpread, [0, 0.5, 1.0], [0.65, 0.9, 1.15]);
+  const speakingWidth = speakingBaseWidth * spreadFactor;
 
-  // Blend between speaking and non-speaking based on isSpeaking flag
+  // --- Non-speaking dimensions ---
+  const smileWidth = Math.max(shape.width * MOUTH_HEIGHT_BASE * 1.0, 35);
+
+  // Blend between speaking and non-speaking
   const talkingAmount = isSpeaking ? Math.min(mouthOpenness * 5, 1) : 0;
 
   const finalWidth = smileWidth + (speakingWidth - smileWidth) * talkingAmount;
+  const radiusX = Math.max(finalWidth / 2, 18);
 
-  // Calculate radii
-  const radiusX = Math.max(finalWidth / 2, 18);  // Increased minimum from 10
+  // Vertical radii: top lip (small movement) vs bottom lip (big jaw drop)
+  const speakingRadiusY = Math.max(speakingHeight / 2, 18);
+  const smileRadiusY = 2;
+  const totalRadiusY = smileRadiusY + (speakingRadiusY - smileRadiusY) * talkingAmount;
 
-  // For speaking: use oval height; For smile: very thin
-  const speakingRadiusY = Math.max(speakingHeight / 2, 12);  // Increased from 8
-  const smileRadiusY = 2; // Slightly thicker line for smile
-  const radiusY = smileRadiusY + (speakingRadiusY - smileRadiusY) * talkingAmount;
+  // Asymmetric split: upper lip 40%, lower jaw 60%
+  const topRadiusY = totalRadiusY * 0.4;
+  const bottomRadiusY = totalRadiusY * 0.6;
 
-  // Smile curvature: positive = smile (curves down), negative = frown (curves up)
-  // This is the vertical offset for the smile curve - MORE PRONOUNCED
-  const smileCurveAmount = shape.curvature * 22 * (1 - talkingAmount);  // Increased from 15
+  // Smile curvature (only when not talking)
+  const smileCurveAmount = shape.curvature * 22 * (1 - talkingAmount);
 
-  // Bezier control point factor (0.552 approximates a circle)
-  const k = 0.552;
+  // Bezier factor: 0.552 approximates a circle, but for a wide-open mouth
+  // we need higher values so the curve actually reaches the full radius height.
+  // Blend from 0.552 (idle) toward 0.85 (speaking) for a rounder, fuller opening.
+  const k = 0.552 + talkingAmount * 0.3;
 
-  // Start and end points (on the horizontal center line)
   const startX = centerX - radiusX;
   const endX = centerX + radiusX;
 
-  // KEY INSIGHT: For a smile, both top and bottom control points curve in the SAME direction
-  // For an oval, they curve in OPPOSITE directions
-  // We blend between these two behaviors based on talkingAmount
+  // --- Top curve (upper lip) ---
+  const topCurveOffset = -topRadiusY * k * talkingAmount + smileCurveAmount;
 
-  // When talking (oval): top goes up (-radiusY), bottom goes down (+radiusY)
-  // When smiling (curve): both go down by smileCurveAmount
+  // --- Bottom curve (lower jaw) ---
+  const bottomCurveOffset = bottomRadiusY * k * talkingAmount + smileCurveAmount;
 
-  const topCurveOffset = -radiusY * k * talkingAmount + smileCurveAmount;
-  const bottomCurveOffset = radiusY * k * talkingAmount + smileCurveAmount;
+  // Corner tension: when mouth is open wide, pull corners slightly inward
+  // This prevents the "balloon" look and creates a more organic shape
+  const cornerTension = talkingAmount * openness * 0.06;
+  const topCpSpread = 0.3 + cornerTension; // control points move toward center
+  const botCpSpread = 0.3 - cornerTension * 0.3; // bottom stays wider
 
-  // Control points for top curve (from left to right)
-  const topCp1X = startX + radiusX * 0.3;
+  // Control points for top curve (upper lip, left to right)
+  const topCp1X = startX + radiusX * topCpSpread;
   const topCp1Y = centerY + topCurveOffset;
-  const topCp2X = endX - radiusX * 0.3;
+  const topCp2X = endX - radiusX * topCpSpread;
   const topCp2Y = centerY + topCurveOffset;
 
-  // Control points for bottom curve (from right back to left)
-  const botCp1X = endX - radiusX * 0.3;
+  // Control points for bottom curve (lower jaw, right back to left)
+  const botCp1X = endX - radiusX * botCpSpread;
   const botCp1Y = centerY + bottomCurveOffset;
-  const botCp2X = startX + radiusX * 0.3;
+  const botCp2X = startX + radiusX * botCpSpread;
   const botCp2Y = centerY + bottomCurveOffset;
 
-  // Unified path: M -> C -> C -> Z (same structure always)
   return `M ${startX} ${centerY} C ${topCp1X} ${topCp1Y} ${topCp2X} ${topCp2Y} ${endX} ${centerY} C ${botCp1X} ${botCp1Y} ${botCp2X} ${botCp2Y} ${startX} ${centerY} Z`;
 };
 
@@ -191,10 +202,14 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
   leftEye,
   rightEye,
   mouthOpenness,
+  mouthSpread = 0.5,
   mouthEmotion,
   eyeEmotion,
   headRotation,
-  eyebrowHeight
+  eyebrowHeight,
+  pupilDilation = 1.0,
+  leftEyeScaleY,
+  rightEyeScaleY
 }) => {
   const scale = size / 600; // Base size is 600px
 
@@ -224,11 +239,14 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
     false
   );
 
-  const mouthPath = calculateMouthPath(mouthOpenness, mouthEmotion, isSpeaking);
+  const mouthPath = calculateMouthPath(mouthOpenness, mouthSpread, mouthEmotion, isSpeaking);
 
   const renderEye = (eye: typeof leftEye, index: number) => {
     const pupilOffsetX = clamp(eye.x * MAX_PUPIL_OFFSET_X, -MAX_PUPIL_OFFSET_X, MAX_PUPIL_OFFSET_X);
     const pupilOffsetY = clamp(eye.y * MAX_PUPIL_OFFSET_Y, -MAX_PUPIL_OFFSET_Y, MAX_PUPIL_OFFSET_Y);
+    const eyeMotionValue = index === 0 ? leftEyeScaleY : rightEyeScaleY;
+    const basePupilSize = PUPIL_SIZE_BASE * scale;
+    const baseReflectionSize = PUPIL_SIZE_BASE * 0.3 * scale;
 
     return (
       <div
@@ -252,19 +270,20 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
           </svg>
         </div>
 
-        {/* Eye */}
+        {/* Eye — MotionValue style binding for 60fps smooth blinks */}
         <motion.div
           className="relative flex items-center justify-center overflow-hidden rounded-full"
           style={{
             width: EYE_SIZE * scale,
             height: EYE_SIZE * scale,
             backgroundColor: 'transparent',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+            boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+            ...(eyeMotionValue ? { scaleY: eyeMotionValue } : {})
           }}
-          animate={{
-            scaleY: eye.scale
-          }}
-          transition={{ duration: 0.15 }}
+          {...(!eyeMotionValue ? {
+            animate: { scaleY: eye.scale },
+            transition: { duration: 0.15 }
+          } : {})}
         >
           {/* Iris */}
           <div
@@ -275,25 +294,30 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
               backgroundColor: IRIS_COLOR
             }}
           >
-            {/* Pupil Container (with offset) */}
+            {/* Pupil Container — dilation applied as CSS scale for smooth animation */}
             <motion.div
               className="relative flex items-center justify-center"
               style={{
-                width: PUPIL_SIZE_BASE * scale,
-                height: PUPIL_SIZE_BASE * scale
+                width: basePupilSize,
+                height: basePupilSize
               }}
               animate={{
                 x: pupilOffsetX * scale,
-                y: pupilOffsetY * scale
+                y: pupilOffsetY * scale,
+                scale: pupilDilation
               }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              transition={{
+                x: { type: 'spring', stiffness: 300, damping: 30 },
+                y: { type: 'spring', stiffness: 300, damping: 30 },
+                scale: { duration: 0.6, ease: 'easeInOut' }
+              }}
             >
               {/* Pupil */}
               <div
                 className="absolute rounded-full"
                 style={{
-                  width: PUPIL_SIZE_BASE * scale,
-                  height: PUPIL_SIZE_BASE * scale,
+                  width: basePupilSize,
+                  height: basePupilSize,
                   backgroundColor: PUPIL_COLOR
                 }}
               />
@@ -302,8 +326,8 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
               <div
                 className="absolute rounded-full"
                 style={{
-                  width: PUPIL_SIZE_BASE * 0.3 * scale,
-                  height: PUPIL_SIZE_BASE * 0.3 * scale,
+                  width: baseReflectionSize,
+                  height: baseReflectionSize,
                   backgroundColor: REFLECTION_COLOR,
                   top: `15%`,
                   left: `20%`,
@@ -349,7 +373,7 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
             fill="none"
             initial={false}
             animate={{ d: mouthPath }}
-            transition={{ duration: 0.1 }}  // Smooth transition for shape changes
+            transition={{ duration: 0.3 }}  // Smooth 300ms morph for emotion transitions
           />
         </svg>
       </div>
