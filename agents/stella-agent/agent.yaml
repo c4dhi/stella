@@ -47,6 +47,19 @@ configSchema:
           default: 0.7
   x-stella-env-vars:
     - OPENAI_API_KEY
+  x-stella-optional-env-vars:
+    - name: INTERRUPT_MODE
+      description: "Transcript interrupt behavior: 'none' (turn-based gating, default) or 'smart' (barge-in with re-prompting)"
+      default: "none"
+    - name: TTS_ENABLED
+      description: "Enable text-to-speech audio output. Set to 'false' for text-only mode."
+      default: "true"
+    - name: TRANSCRIPT_DEBOUNCE_MS
+      description: "Debounce window (ms) for aggregating rapid successive final transcripts. 0 to disable."
+      default: "300"
+    - name: DISABLE_AEC
+      description: "Disable Acoustic Echo Cancellation (AEC) for debugging audio issues"
+      default: "false"
 
 defaultConfig: {}
 

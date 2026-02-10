@@ -128,6 +128,15 @@ class AudioPipeline:
         self._pending_transcript_time: float = 0
         self._debounce_task: Optional[asyncio.Task] = None
 
+        # Transcript gating (turn management)
+        self._transcript_gate_closed = False
+
+        # Interrupt mode: "none" = strict gating (default), "smart" = future barge-in
+        self._interrupt_mode = os.getenv("INTERRUPT_MODE", "none")
+
+        # TTS enabled flag
+        self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
+
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
 
@@ -140,6 +149,50 @@ class AudioPipeline:
     def is_listening(self) -> bool:
         """Whether the pipeline is actively listening for user audio."""
         return self._is_listening
+
+    def close_transcript_gate(self) -> None:
+        """Close the transcript gate (turn management).
+
+        When TTS is enabled: suppresses ALL transcript activity — no partials
+        published to LiveKit, no finals queued, no barge-in callbacks. The user's
+        speech is invisible in the frontend while the agent processes and narrates.
+
+        When TTS is disabled: only finals are discarded; partials still publish
+        to LiveKit (lighter turn management since the gate opens quickly).
+
+        The STT stream itself stays alive in both cases (no reconnection cost).
+        """
+        if not self._transcript_gate_closed:
+            logger.info("[GATE] Closing transcript gate")
+            self._transcript_gate_closed = True
+            # Cancel pending debounce to prevent stale emission
+            if self._debounce_task:
+                self._debounce_task.cancel()
+                self._debounce_task = None
+            self._pending_transcript = None
+
+    def open_transcript_gate(self) -> None:
+        """Re-open the transcript gate. Drains any stale queue items first.
+
+        After this call, STT transcripts flow normally again: partials
+        publish to LiveKit and finals queue for the agent.
+        """
+        if self._transcript_gate_closed:
+            drained = 0
+            while not self._transcript_queue.empty():
+                try:
+                    self._transcript_queue.get_nowait()
+                    drained += 1
+                except asyncio.QueueEmpty:
+                    break
+            if drained > 0:
+                logger.info(f"[GATE] Drained {drained} stale transcript(s)")
+            logger.info("[GATE] Opening transcript gate")
+            self._transcript_gate_closed = False
+
+    @property
+    def is_gate_closed(self) -> bool:
+        return self._transcript_gate_closed
 
     @property
     def session_id(self) -> str:
@@ -313,6 +366,33 @@ class AudioPipeline:
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
+            # ── Turn-based transcription suppression ──────────────────────
+            # When the transcript gate is closed AND TTS is enabled, the agent
+            # is processing + narrating its response. Suppress ALL transcript
+            # activity: no partials published to LiveKit (so the frontend
+            # doesn't show the user's speech during narration), no finals
+            # queued, and no barge-in callbacks fired.
+            #
+            # The STT stream itself stays alive (audio keeps flowing to STT)
+            # so there's no reconnection cost when the gate re-opens.
+            #
+            # When TTS is disabled the gate still discards finals (step 3
+            # below) but partials are allowed through — the agent responds
+            # with text only and the gate opens quickly after processing,
+            # so brief partial display is acceptable.
+            #
+            # Controlled by: TTS_ENABLED env var (determines narration) and
+            # INTERRUPT_MODE env var (determines gating behavior).
+            if self._transcript_gate_closed and self._tts_enabled:
+                # Still track speaker identity so attribution is correct
+                # when the gate re-opens and the next utterance arrives.
+                if event.speech_started:
+                    self._current_utterance_speaker = self._room.current_audio_speaker
+                    logger.debug(f"[GATE] Speech started during closed gate - updated speaker: {self._current_utterance_speaker}")
+                if event.is_final and event.text.strip():
+                    logger.info(f"[GATE] Suppressing transcript (gate closed, TTS active): '{event.text}'")
+                continue
+
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
             # Use Envelope format: { type, data: { ... } }
@@ -354,8 +434,14 @@ class AudioPipeline:
                 await self._handle_speech_started()
 
             # 3. Queue ONLY final transcripts for agent (with optional debouncing)
+            # When TTS is disabled, gate still discards finals even though
+            # partials are allowed through (lighter turn management).
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
+
+                if self._transcript_gate_closed:
+                    logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
+                    continue
 
                 # Apply debouncing to aggregate rapid successive finals
                 if self._debounce_window_ms > 0:
@@ -372,6 +458,11 @@ class AudioPipeline:
         # 3. All subsequent partial/final transcripts for this utterance use this speaker
         self._current_utterance_speaker = self._room.current_audio_speaker
         logger.debug(f"Speech started detected - locked speaker: {self._current_utterance_speaker}")
+
+        # In "none" mode, ignore barge-in while gate is closed
+        if self._interrupt_mode == "none" and self._transcript_gate_closed:
+            logger.debug("[GATE] speech_started during closed gate (mode=none) - skipping callbacks")
+            return
 
         # Fire all registered callbacks
         for callback in self._speech_started_callbacks:
@@ -584,7 +675,18 @@ class AudioPipeline:
                     self._transcript_queue.get(),
                     timeout=1.0,
                 )
-                yield event
+
+                # Close gate before yielding — no more finals until consumer
+                # resumes the iterator (i.e., finishes processing this turn).
+                # This is SDK-level turn management: every agent using audio_in()
+                # gets gating automatically, even with custom run_audio_loop().
+                self.close_transcript_gate()
+                try:
+                    yield event
+                finally:
+                    # Re-open gate when consumer comes back for next event
+                    # (or if consumer breaks/errors out of the loop)
+                    self.open_transcript_gate()
 
             except asyncio.TimeoutError:
                 # No event available, continue waiting
@@ -704,6 +806,10 @@ class AudioPipeline:
         if not text.strip():
             return
 
+        if not self._tts_enabled:
+            logger.debug("TTS disabled (TTS_ENABLED=false), skipping speak()")
+            return
+
         if self._tts is None:
             logger.debug("TTS not available, skipping speak()")
             return
@@ -720,7 +826,7 @@ class AudioPipeline:
     @property
     def has_tts(self) -> bool:
         """Whether TTS is available for audio synthesis."""
-        return self._tts is not None
+        return self._tts is not None and self._tts_enabled
 
     async def _speak_sentence(
         self,
