@@ -46,13 +46,32 @@ spec:
           set -e
           echo "[TTS Init] Starting model download check..."
 
-          # Get provider from env (default: edge_tts)
-          TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
+          # Get provider from env (default: piper)
+          TTS_PROVIDER="${TTS_PROVIDER:-piper}"
 
           # ================================================================
-          # Kokoro Model (only when TTS_PROVIDER=kokoro)
+          # Piper Model (when TTS_PROVIDER=piper or auto)
           # ================================================================
-          if [ "$TTS_PROVIDER" = "kokoro" ]; then
+          if [ "$TTS_PROVIDER" = "piper" ] || [ "$TTS_PROVIDER" = "auto" ]; then
+            PIPER_VOICE="${PIPER_VOICE:-en_US-lessac-medium}"
+            PIPER_VERSION_FILE="/models/piper/.version"
+            PIPER_VERSION="v1.0-${PIPER_VOICE}"
+
+            if [ -f "$PIPER_VERSION_FILE" ] && [ "$(cat $PIPER_VERSION_FILE)" = "$PIPER_VERSION" ]; then
+              echo "[TTS Init] Piper model already downloaded (version: $PIPER_VERSION)"
+            else
+              echo "[TTS Init] Downloading Piper model..."
+              mkdir -p /models/piper
+              PIPER_CACHE_DIR=/models/piper python download_piper_models.py
+              echo "$PIPER_VERSION" > "$PIPER_VERSION_FILE"
+              echo "[TTS Init] Piper model download complete"
+            fi
+          fi
+
+          # ================================================================
+          # Kokoro Model (when TTS_PROVIDER=kokoro or auto)
+          # ================================================================
+          if [ "$TTS_PROVIDER" = "kokoro" ] || [ "$TTS_PROVIDER" = "auto" ]; then
             KOKORO_VERSION_FILE="/models/kokoro/.version"
             KOKORO_VERSION="v1.0"
 
@@ -65,7 +84,9 @@ spec:
               echo "$KOKORO_VERSION" > "$KOKORO_VERSION_FILE"
               echo "[TTS Init] Kokoro model download complete"
             fi
-          else
+          fi
+
+          if [ "$TTS_PROVIDER" = "edge_tts" ] || [ "$TTS_PROVIDER" = "elevenlabs" ]; then
             echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
           fi
 
@@ -94,11 +115,14 @@ spec:
         ports:
         - containerPort: 50052
           name: grpc
-        # Mount PV with models at cache directory
+        # Mount PV with models at cache directories
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/kokoro
           subPath: kokoro
+        - name: model-cache
+          mountPath: /root/.cache/piper
+          subPath: piper
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -116,6 +140,8 @@ spec:
               optional: true
         - name: KOKORO_CACHE_DIR
           value: "/root/.cache/kokoro"
+        - name: PIPER_CACHE_DIR
+          value: "/root/.cache/piper"
         resources:
           requests:
             memory: "512Mi"

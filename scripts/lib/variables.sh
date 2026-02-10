@@ -117,7 +117,7 @@ get_var_metadata() {
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
 
         # --- TTS ---
-        TTS_PROVIDER)          echo "tts|select|optional|edge_tts|kokoro|Text-to-speech engine|edge_tts,kokoro,elevenlabs,auto|" ;;
+        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,edge_tts,kokoro,elevenlabs,auto|" ;;
         ELEVENLABS_VOICE_ID)   echo "tts|text|optional|Xb7hH8MSUJpSbSDYk0k2|Xb7hH8MSUJpSbSDYk0k2|ElevenLabs voice ID||" ;;
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
@@ -313,8 +313,9 @@ get_option_description() {
         STT_PROVIDER:whisper) echo "GPU-accelerated (large-v3 ~3GB, best accuracy)" ;;
 
         # TTS Provider
+        TTS_PROVIDER:piper)      echo "Fast local CPU TTS (~0.19 RTF, 5x real-time)" ;;
         TTS_PROVIDER:edge_tts)   echo "Free Microsoft cloud TTS (200-300ms latency)" ;;
-        TTS_PROVIDER:kokoro)     echo "Fast local TTS (50-100ms, GPU-accelerated)" ;;
+        TTS_PROVIDER:kokoro)     echo "Local TTS (GPU-accelerated, slower on CPU)" ;;
         TTS_PROVIDER:elevenlabs) echo "Premium cloud TTS (best quality, costs apply)" ;;
         TTS_PROVIDER:auto)       echo "Automatic fallback chain" ;;
 

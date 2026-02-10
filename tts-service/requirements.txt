@@ -3,9 +3,9 @@ grpcio>=1.60.0
 grpcio-tools>=1.60.0
 
 # TTS Engines
-# Pin to 7.2.1 - version 7.2.3 has NoAudioReceived bug (GitHub issue #443)
-edge-tts==7.2.1
+edge-tts>=7.2.7
 kokoro-onnx>=0.4.0
+piper-tts>=1.2.0
 
 # Audio Processing
 numpy>=1.24.0

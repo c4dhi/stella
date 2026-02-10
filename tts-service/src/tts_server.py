@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-from providers import EdgeTTSProvider, KokoroProvider, TTSProvider
+from providers import EdgeTTSProvider, KokoroProvider, PiperProvider, TTSProvider
 
 
 class TTSEngine:
@@ -32,24 +32,27 @@ class TTSEngine:
     async def initialize(self) -> bool:
         """Initialize TTS with provider selection based on TTS_PROVIDER env var."""
         try:
-            tts_provider = os.getenv('TTS_PROVIDER', 'edge_tts').lower()
+            tts_provider = os.getenv('TTS_PROVIDER', 'piper').lower()
             print(f"[TTS Engine] TTS_PROVIDER={tts_provider}")
 
             # Create providers
             edge_provider = EdgeTTSProvider()
             kokoro_provider = KokoroProvider()
+            piper_provider = PiperProvider()
 
             # Determine priority based on TTS_PROVIDER
-            if tts_provider == 'kokoro':
-                primary_providers = [kokoro_provider, edge_provider]
+            if tts_provider == 'piper':
+                primary_providers = [piper_provider, edge_provider, kokoro_provider]
+            elif tts_provider == 'kokoro':
+                primary_providers = [kokoro_provider, piper_provider, edge_provider]
             elif tts_provider == 'edge_tts':
-                primary_providers = [edge_provider, kokoro_provider]
+                primary_providers = [edge_provider, piper_provider, kokoro_provider]
             elif tts_provider == 'auto':
-                # Auto: prefer Kokoro for speed
-                primary_providers = [kokoro_provider, edge_provider]
+                # Auto: prefer Piper for speed on CPU, then Kokoro, then Edge
+                primary_providers = [piper_provider, kokoro_provider, edge_provider]
             else:
-                # Default to Edge TTS
-                primary_providers = [edge_provider, kokoro_provider]
+                # Default to Piper
+                primary_providers = [piper_provider, edge_provider, kokoro_provider]
 
             # Try to initialize providers in priority order
             for provider in primary_providers:

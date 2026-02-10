@@ -86,7 +86,7 @@ generate_configmap() {
         -e "s|\${PUBLIC_DB_HOST}|${PUBLIC_DB_HOST:-}|g" \
         -e "s|\${PUBLIC_DB_PORT}|${PUBLIC_DB_PORT:-}|g" \
         -e "s|\${STT_PROVIDER}|${STT_PROVIDER:-sherpa}|g" \
-        -e "s|\${TTS_PROVIDER}|${TTS_PROVIDER:-edge_tts}|g" \
+        -e "s|\${TTS_PROVIDER}|${TTS_PROVIDER:-piper}|g" \
         -e "s|\${WHISPER_MODEL}|${WHISPER_MODEL:-base.en}|g" \
         -e "s|\${WHISPER_DEVICE}|${WHISPER_DEVICE:-cpu}|g" \
         -e "s|\${WHISPER_COMPUTE_TYPE}|${WHISPER_COMPUTE_TYPE:-int8}|g" \
@@ -1178,8 +1178,13 @@ check_service_runtime_status() {
         fi
 
     elif [[ "$service" == "tts-service" ]]; then
+        # Check for Piper (local CPU)
+        if echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
+            status="CPU"
+            provider="piper"
+            details="Piper TTS (local CPU)"
         # Check for Kokoro CUDA success
-        if echo "$logs" | grep -iq "CUDAExecutionProvider"; then
+        elif echo "$logs" | grep -iq "CUDAExecutionProvider"; then
             if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
                 status="CPU"
                 provider="edge_tts"

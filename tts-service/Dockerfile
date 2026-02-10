@@ -77,11 +77,12 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
-# Model download script (models are downloaded at runtime via init container)
+# Model download scripts (models are downloaded at runtime via init container)
 # Models are stored on PersistentVolume, not in the image.
 # This keeps the image slim (~400MB instead of ~1GB).
-# The init container runs this script to populate the PV on first startup.
+# The init container runs these scripts to populate the PV on first startup.
 COPY download_kokoro_models.py .
+COPY download_piper_models.py .
 
 # Generate gRPC code from proto
 COPY proto/ ./proto/
@@ -95,11 +96,11 @@ RUN python -m grpc_tools.protoc \
 COPY src/ ./src/
 
 # Environment defaults
-# Use kokoro as default when GPU available for lowest latency
-ENV TTS_PROVIDER=edge_tts
+ENV TTS_PROVIDER=piper
 ENV ONNX_PROVIDER=CPUExecutionProvider
 ENV GRPC_PORT=50052
 ENV KOKORO_CACHE_DIR=/root/.cache/kokoro
+ENV PIPER_CACHE_DIR=/root/.cache/piper
 ENV PYTHONUNBUFFERED=1
 
 # Health check
