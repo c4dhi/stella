@@ -216,6 +216,54 @@ pipeline.on_speech_start = lambda: print("Speech started")
 pipeline.on_speech_end = lambda audio: print(f"Speech ended: {len(audio)} bytes")
 ```
 
+## Turn Management (Transcript Gating)
+
+The SDK enforces turn-based conversation flow at the pipeline level. Every agent using `audio_in()` gets this automatically — no agent-side code required.
+
+### How It Works
+
+```
+User speaks → Final transcript yielded → Gate CLOSES
+    → Agent processes (LLM) → Agent narrates (TTS) →
+Gate OPENS → User can speak again
+```
+
+When the gate is closed:
+
+| What happens | TTS enabled (`TTS_ENABLED=true`) | TTS disabled (`TTS_ENABLED=false`) |
+|--------------|----------------------------------|-------------------------------------|
+| Partial transcripts | Suppressed (not shown in frontend) | Still published to LiveKit |
+| Final transcripts | Discarded | Discarded |
+| Barge-in callbacks | Skipped (when `INTERRUPT_MODE=none`) | Skipped (when `INTERRUPT_MODE=none`) |
+| STT stream | Stays alive (no reconnection) | Stays alive (no reconnection) |
+| Data channel text | Queues for next turn | Queues for next turn |
+
+With TTS enabled, the user's speech is completely invisible during the agent's turn — no partial transcripts appear in the frontend while the agent is processing or narrating. With TTS disabled, the gate opens quickly after processing, so brief partial display is acceptable.
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `TTS_ENABLED` | `true` | Controls whether TTS is active. When `true`, full transcription suppression during agent turn. When `false`, lighter gating |
+| `INTERRUPT_MODE` | `none` | `none` = strict turn-based (default). `smart` = reserved for future barge-in with re-prompting |
+| `TRANSCRIPT_DEBOUNCE_MS` | `300` | Debounce window for aggregating rapid successive finals before they reach the agent |
+
+### SDK-Level Enforcement
+
+The gating lives inside `audio_in()` in the `AudioPipeline`, so **every agent** gets it automatically:
+
+```python
+# Inside AudioPipeline.audio_in() — agents don't need to do anything
+async for event in self.audio.audio_in():
+    # Gate closes automatically when this yields
+    # Gate opens automatically when the loop resumes
+    response = await self.generate_response(event.text)
+    await self.audio.speak(response)
+    # ← gate opens here, user can speak again
+```
+
+Custom agents that override `run_audio_loop()` still get gating as long as they use `self.audio.audio_in()`. The gate methods (`close_transcript_gate()`, `open_transcript_gate()`) are also public for manual control.
+
 ## Interruption Handling
 
 Handle when the user interrupts the agent:

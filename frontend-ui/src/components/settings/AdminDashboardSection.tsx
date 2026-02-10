@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
@@ -80,9 +80,45 @@ const MessagesIcon = () => (
   </svg>
 )
 
+const ExpandIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="15 3 21 3 21 9" />
+    <polyline points="9 21 3 21 3 15" />
+    <line x1="21" y1="3" x2="14" y2="10" />
+    <line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+)
+
+const CompressIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="4 14 10 14 10 20" />
+    <polyline points="20 10 14 10 14 4" />
+    <line x1="14" y1="10" x2="21" y2="3" />
+    <line x1="3" y1="21" x2="10" y2="14" />
+  </svg>
+)
+
 export default function AdminDashboardSection() {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const fullscreenRef = useRef<HTMLDivElement>(null)
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      fullscreenRef.current?.requestFullscreen()
+    } else {
+      document.exitFullscreen()
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleChange)
+    return () => document.removeEventListener('fullscreenchange', handleChange)
+  }, [])
 
   // Real-time dashboard metrics
   const { metrics, isConnected, error: dashboardError } = useAdminDashboardStream()
@@ -122,50 +158,39 @@ export default function AdminDashboardSection() {
     setHistoryDays(days)
   }, [])
 
-  return (
-    <motion.div
-      className="max-w-6xl space-y-6"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
-      {/* Header */}
-      <motion.div variants={itemVariants}>
-        <h2
-          className={`text-heading-lg mb-2 ${
-            isDark ? 'text-content-inverse' : 'text-content'
-          }`}
-        >
-          Admin Dashboard
-        </h2>
-        <div className="flex items-center gap-4">
-          <p
-            className={`text-body-sm ${
-              isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-            }`}
-          >
-            Real-time platform monitoring and metrics
-          </p>
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-2 h-2 rounded-full ${
-                isConnected ? 'bg-green-500' : 'bg-red-500'
-              }`}
-            />
-            <span
-              className={`text-caption ${
-                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
-              }`}
-            >
-              {isConnected ? 'Connected' : 'Reconnecting...'}
-            </span>
-          </div>
-        </div>
-        {dashboardError && (
-          <p className="text-caption text-red-500 mt-1">{dashboardError}</p>
-        )}
-      </motion.div>
+  const connectionIndicator = (
+    <div className="flex items-center gap-2">
+      <div
+        className={`w-2 h-2 rounded-full ${
+          isConnected ? 'bg-green-500' : 'bg-red-500'
+        }`}
+      />
+      <span
+        className={`text-caption ${
+          isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+        }`}
+      >
+        {isConnected ? 'Connected' : 'Reconnecting...'}
+      </span>
+    </div>
+  )
 
+  const fullscreenButton = (
+    <button
+      onClick={toggleFullscreen}
+      title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+      className={`p-1.5 rounded-lg transition-colors ${
+        isDark
+          ? 'hover:bg-white/10 text-content-inverse-secondary'
+          : 'hover:bg-black/5 text-content-secondary'
+      }`}
+    >
+      {isFullscreen ? <CompressIcon /> : <ExpandIcon />}
+    </button>
+  )
+
+  const dashboardContent = (
+    <>
       {/* Stats Cards - Row 1: Core Metrics */}
       <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard
@@ -288,6 +313,99 @@ export default function AdminDashboardSection() {
           </div>
         </motion.div>
       )}
-    </motion.div>
+    </>
+  )
+
+  return (
+    <div ref={fullscreenRef}>
+      {isFullscreen ? (
+        /* Fullscreen layout — fills the entire screen */
+        <div
+          className={`h-screen flex flex-col ${
+            isDark ? 'bg-surface-dark' : 'bg-surface'
+          }`}
+        >
+          {/* Top bar */}
+          <div
+            className={`flex-shrink-0 border-b px-6 py-3 flex items-center justify-between ${
+              isDark ? 'border-white/10' : 'border-black/5'
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <h2
+                className={`text-heading-lg ${
+                  isDark ? 'text-content-inverse' : 'text-content'
+                }`}
+              >
+                Admin Dashboard
+              </h2>
+              {connectionIndicator}
+            </div>
+            <div className="flex items-center gap-3">
+              <span
+                className={`text-caption ${
+                  isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+                }`}
+              >
+                ESC to exit
+              </span>
+              {fullscreenButton}
+            </div>
+          </div>
+
+          {/* Scrollable dashboard content */}
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-[1400px] mx-auto px-6 py-6">
+              {dashboardError && (
+                <p className="text-caption text-red-500 mb-4">{dashboardError}</p>
+              )}
+              <motion.div
+                className="space-y-6"
+                variants={containerVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                {dashboardContent}
+              </motion.div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Inline layout — embedded in settings page */
+        <motion.div
+          className="max-w-6xl space-y-6"
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          {/* Header */}
+          <motion.div variants={itemVariants}>
+            <h2
+              className={`text-heading-lg mb-2 ${
+                isDark ? 'text-content-inverse' : 'text-content'
+              }`}
+            >
+              Admin Dashboard
+            </h2>
+            <div className="flex items-center gap-4">
+              <p
+                className={`text-body-sm ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}
+              >
+                Real-time platform monitoring and metrics
+              </p>
+              {connectionIndicator}
+              {fullscreenButton}
+            </div>
+            {dashboardError && (
+              <p className="text-caption text-red-500 mt-1">{dashboardError}</p>
+            )}
+          </motion.div>
+
+          {dashboardContent}
+        </motion.div>
+      )}
+    </div>
   )
 }
