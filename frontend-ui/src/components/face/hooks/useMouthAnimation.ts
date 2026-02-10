@@ -29,9 +29,9 @@ export const useMouthAnimation = ({
     let audioEMA = 0; // exponential moving average of audio
     let prevAudio = 0;
 
-    const SPRING_STIFFNESS = 0.3;
-    const SPRING_DAMPING = 0.6;
-    const SPREAD_LERP = 0.06;
+    const SPRING_STIFFNESS = 0.55;
+    const SPRING_DAMPING = 0.65;
+    const SPREAD_LERP = 0.12;
 
     // Noise gate: only silence below this (very low threshold)
     const GATE_THRESHOLD = 0.04;

@@ -108,11 +108,11 @@ const calculateMouthPath = (
 
   // --- Speaking dimensions ---
   // Height driven by openness
-  const speakingBaseHeight = Math.max(shape.height * 55, 50);
+  const speakingBaseHeight = Math.max(shape.height * 35, 30);
   const openness = interpolate(
     mouthOpenness,
-    [0, 0.05, 0.15, 0.4, 1.0],
-    [0, 1.2, 2.2, 3.0, 3.8]
+    [0, 0.05, 0.2, 0.5, 1.0],
+    [0, 0.6, 1.2, 1.8, 2.4]
   );
   const speakingHeight = speakingBaseHeight * openness;
 
@@ -373,7 +373,7 @@ const FaceRenderer: React.FC<FaceRendererProps> = ({
             fill="none"
             initial={false}
             animate={{ d: mouthPath }}
-            transition={{ duration: 0.3 }}  // Smooth 300ms morph for emotion transitions
+            transition={{ duration: 0.05 }}  // Near-instant path updates for snappy mouth
           />
         </svg>
       </div>
