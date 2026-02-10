@@ -4,6 +4,7 @@ import { apiClient } from '../../services/ApiClient'
 import ConfirmDialog from '../modals/ConfirmDialog'
 import { useToastStore } from '../../store/toastStore'
 import { useThemeStore } from '../../store/themeStore'
+import { useStore } from '../../store'
 import type { AgentInstance, AgentWithPodStatus } from '../../lib/api-types'
 import { AgentStatus, POLL_INTERVALS } from '../../lib/api-types'
 import { getRuntimeConfig } from '../../config/runtime'
@@ -18,6 +19,9 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   const { addToast } = useToastStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const removeAgentFromTimeline = useStore(s => s.removeAgentFromTimeline)
+  const agentTaskLists = useStore(s => s.agentTaskLists)
+  const taskUpdateHistory = useStore(s => s.taskUpdateHistory)
   const [agents, setAgents] = useState<AgentInstance[]>(initialAgents)
   const [selectedAgent, setSelectedAgent] = useState<AgentWithPodStatus | null>(null)
   const [showLogs, setShowLogs] = useState(false)
@@ -192,6 +196,9 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
 
   // Delete agent permanently
   const handleDeleteAgent = (agentId: string) => {
+    // Capture agent info before deletion for todo data matching
+    const agentToDelete = agents.find(a => a.id === agentId)
+
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Agent',
@@ -203,6 +210,42 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
         try {
           await apiClient.deleteAgent(agentId)
           setAgents(prev => prev.filter(a => a.id !== agentId))
+
+          // Purge todo data for this agent from the timeline
+          // Match agentTaskLists keys using same fuzzy logic as SessionView
+          const keysToRemove = new Set<string>()
+
+          // Check agentTaskLists keys
+          for (const taskAgentId of agentTaskLists.keys()) {
+            if (
+              taskAgentId === agentId ||
+              (agentToDelete?.podName && (
+                taskAgentId === agentToDelete.podName ||
+                agentToDelete.podName.startsWith(taskAgentId + '-') ||
+                agentToDelete.podName.includes(taskAgentId)
+              ))
+            ) {
+              keysToRemove.add(taskAgentId)
+            }
+          }
+
+          // Also check taskUpdateHistory for matching agentIds
+          for (const entry of taskUpdateHistory) {
+            if (
+              entry.agentId === agentId ||
+              (agentToDelete?.podName && (
+                entry.agentId === agentToDelete.podName ||
+                agentToDelete.podName.startsWith(entry.agentId + '-') ||
+                agentToDelete.podName.includes(entry.agentId)
+              ))
+            ) {
+              keysToRemove.add(entry.agentId)
+            }
+          }
+
+          // Remove all matched keys from timeline
+          keysToRemove.forEach(key => removeAgentFromTimeline(key))
+
           addToast({ message: 'Agent deleted successfully', type: 'success' })
         } catch (err) {
           addToast({

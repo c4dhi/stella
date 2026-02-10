@@ -8,6 +8,8 @@ export default function TaskPanel() {
   const showTaskPanel = useStore(s => s.showTaskPanel)
   const isTaskPanelInHistoryMode = useStore(s => s.isTaskPanelInHistoryMode)
   const currentHistoricalTimestamp = useStore(s => s.currentHistoricalTimestamp)
+  const hiddenAgentIds = useStore(s => s.hiddenAgentIds)
+  const unhideAgentTaskList = useStore(s => s.unhideAgentTaskList)
 
   const [isVisible, setIsVisible] = useState(false)
 
@@ -71,6 +73,24 @@ export default function TaskPanel() {
               </motion.div>
             ))}
           </div>
+
+          {/* Hidden agents indicator */}
+          {hiddenAgentIds.size > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center justify-center py-1.5"
+            >
+              <button
+                onClick={() => {
+                  hiddenAgentIds.forEach(id => unhideAgentTaskList(id))
+                }}
+                className="text-xs text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors duration-200"
+              >
+                {hiddenAgentIds.size} hidden &middot; Show all
+              </button>
+            </motion.div>
+          )}
         </div>
       )}
     </AnimatePresence>

@@ -188,11 +188,16 @@ type TaskState = {
   }>
   isTaskPanelInHistoryMode: boolean
   currentHistoricalTimestamp: number | null
+  // Per-card hide/show (soft hide — data preserved in timeline)
+  hiddenAgentIds: Set<string>
 }
 type TaskActions = {
   // Multi-agent actions
   setAgentTaskList: (agentId: string, todoList: TodoList, agentName?: string) => void
   removeAgentTaskList: (agentId: string) => void
+  hideAgentTaskList: (agentId: string) => void
+  unhideAgentTaskList: (agentId: string) => void
+  removeAgentFromTimeline: (agentId: string) => void
   addLiveTaskUpdate: (agentId: string, todoList: TodoList, agentName?: string) => void
 
   // Legacy actions (for backward compatibility)
@@ -491,6 +496,7 @@ export const useStore = create<
   taskUpdateHistory: [],
   isTaskPanelInHistoryMode: false,
   currentHistoricalTimestamp: null,
+  hiddenAgentIds: new Set<string>(),
 
   // Multi-agent actions
   setAgentTaskList: (agentId, todoList, agentName) => set((state) => {
@@ -513,6 +519,51 @@ export const useStore = create<
     newMap.delete(agentId)
     return {
       agentTaskLists: newMap,
+      showTaskPanel: newMap.size > 0
+    }
+  }),
+
+  hideAgentTaskList: (agentId) => set((state) => {
+    const newHidden = new Set(state.hiddenAgentIds)
+    newHidden.add(agentId)
+    const newMap = new Map(state.agentTaskLists)
+    newMap.delete(agentId)
+    return {
+      hiddenAgentIds: newHidden,
+      agentTaskLists: newMap,
+      showTaskPanel: newMap.size > 0
+    }
+  }),
+
+  unhideAgentTaskList: (agentId) => set((state) => {
+    const newHidden = new Set(state.hiddenAgentIds)
+    newHidden.delete(agentId)
+
+    // Re-add the agent's latest data from taskUpdateHistory
+    const newMap = new Map(state.agentTaskLists)
+    const agentUpdates = state.taskUpdateHistory.filter(u => u.agentId === agentId)
+    if (agentUpdates.length > 0) {
+      const latest = agentUpdates[agentUpdates.length - 1]
+      newMap.set(agentId, { ...latest.todoList, agentName: latest.agentName })
+    }
+
+    return {
+      hiddenAgentIds: newHidden,
+      agentTaskLists: newMap,
+      showTaskPanel: true
+    }
+  }),
+
+  removeAgentFromTimeline: (agentId) => set((state) => {
+    const newTimeline = state.taskUpdateHistory.filter(u => u.agentId !== agentId)
+    const newMap = new Map(state.agentTaskLists)
+    newMap.delete(agentId)
+    const newHidden = new Set(state.hiddenAgentIds)
+    newHidden.delete(agentId)
+    return {
+      taskUpdateHistory: newTimeline,
+      agentTaskLists: newMap,
+      hiddenAgentIds: newHidden,
       showTaskPanel: newMap.size > 0
     }
   }),
@@ -744,7 +795,8 @@ export const useStore = create<
     notifications: [],
     recentUpdates: [],
     focusMode: false,
-    lastUpdateTimestamp: null
+    lastUpdateTimestamp: null,
+    hiddenAgentIds: new Set<string>()
   }),
 
   // New notification and update actions
@@ -813,7 +865,7 @@ export const useStore = create<
   },
 
   applyLatestTaskState: () => {
-    const { taskUpdateHistory } = get()
+    const { taskUpdateHistory, hiddenAgentIds } = get()
 
     if (taskUpdateHistory.length === 0) {
       console.log('[TaskTimeline] No task updates in history')
@@ -832,15 +884,17 @@ export const useStore = create<
 
     console.log('[TaskTimeline] Applying latest task state for', agentLatestUpdates.size, 'agent(s)')
 
-    // Apply latest state for ALL agents
+    // Apply latest state for ALL agents, filtering out hidden ones
     set((state) => {
       const newMap = new Map<string, TodoList & { agentName?: string }>()
 
       agentLatestUpdates.forEach((update, agentId) => {
-        newMap.set(agentId, {
-          ...update.todoList,
-          agentName: update.agentName
-        })
+        if (!hiddenAgentIds.has(agentId)) {
+          newMap.set(agentId, {
+            ...update.todoList,
+            agentName: update.agentName
+          })
+        }
       })
 
       // Get the most recent update overall for legacy todoList
@@ -857,7 +911,7 @@ export const useStore = create<
   },
 
   applyTaskStateAtTime: (timestamp) => {
-    const { taskUpdateHistory } = get()
+    const { taskUpdateHistory, hiddenAgentIds } = get()
 
     // Find all updates at or before the given timestamp
     const updatesAtTime = taskUpdateHistory.filter(update => update.timestamp <= timestamp)
@@ -879,15 +933,17 @@ export const useStore = create<
 
     console.log('[TaskTimeline] Applying task state for', agentUpdatesAtTime.size, 'agent(s) at', new Date(timestamp).toLocaleTimeString())
 
-    // Apply the historical state for ALL agents
+    // Apply the historical state for ALL agents, filtering out hidden ones
     set((state) => {
       const newMap = new Map<string, TodoList & { agentName?: string }>()
 
       agentUpdatesAtTime.forEach((update, agentId) => {
-        newMap.set(agentId, {
-          ...update.todoList,
-          agentName: update.agentName
-        })
+        if (!hiddenAgentIds.has(agentId)) {
+          newMap.set(agentId, {
+            ...update.todoList,
+            agentName: update.agentName
+          })
+        }
       })
 
       // Get the most recent update overall for legacy todoList
@@ -914,7 +970,8 @@ export const useStore = create<
     set({
       taskUpdateHistory: [],
       isTaskPanelInHistoryMode: false,
-      currentHistoricalTimestamp: null
+      currentHistoricalTimestamp: null,
+      hiddenAgentIds: new Set<string>()
     })
   },
 
