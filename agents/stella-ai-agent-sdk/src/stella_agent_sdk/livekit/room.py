@@ -498,6 +498,22 @@ class RoomManager:
         if self._on_data_received:
             self._on_data_received(identity, packet.data)
 
+    def flush_audio_queue(self) -> None:
+        """Flush all buffered audio frames from the queue.
+
+        Called by AudioPipeline when opening the transcript gate to discard
+        any echo frames that were queued during the gate period.
+        """
+        flushed = 0
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+                flushed += 1
+            except asyncio.QueueEmpty:
+                break
+        if flushed > 0:
+            logger.info(f"[ROOM] Flushed {flushed} buffered audio frames")
+
     async def subscribe_to_audio(self) -> AsyncIterator[bytes]:
         """
         Yield audio chunks from subscribed remote tracks.

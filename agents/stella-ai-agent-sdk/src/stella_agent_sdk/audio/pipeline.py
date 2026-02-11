@@ -137,6 +137,11 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
+        # Post-gate settling: keep audio muted briefly after gate opens
+        # to let browser finish playing TTS (WebRTC jitter buffer ~50-200ms)
+        self._post_gate_settle_ms = 200
+        self._audio_mute_until: float = 0.0
+
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
 
@@ -151,17 +156,7 @@ class AudioPipeline:
         return self._is_listening
 
     def close_transcript_gate(self) -> None:
-        """Close the transcript gate (turn management).
-
-        When TTS is enabled: suppresses ALL transcript activity — no partials
-        published to LiveKit, no finals queued, no barge-in callbacks. The user's
-        speech is invisible in the frontend while the agent processes and narrates.
-
-        When TTS is disabled: only finals are discarded; partials still publish
-        to LiveKit (lighter turn management since the gate opens quickly).
-
-        The STT stream itself stays alive in both cases (no reconnection cost).
-        """
+        """Close the transcript gate — suppresses transcripts until reopened."""
         if not self._transcript_gate_closed:
             logger.info("[GATE] Closing transcript gate")
             self._transcript_gate_closed = True
@@ -172,11 +167,8 @@ class AudioPipeline:
             self._pending_transcript = None
 
     def open_transcript_gate(self) -> None:
-        """Re-open the transcript gate. Drains any stale queue items first.
-
-        After this call, STT transcripts flow normally again: partials
-        publish to LiveKit and finals queue for the agent.
-        """
+        """Re-open the transcript gate. Drains stale items and applies
+        a post-gate settling period to let echo from browser playback clear."""
         if self._transcript_gate_closed:
             drained = 0
             while not self._transcript_queue.empty():
@@ -187,6 +179,12 @@ class AudioPipeline:
                     break
             if drained > 0:
                 logger.info(f"[GATE] Drained {drained} stale transcript(s)")
+
+            self._room.flush_audio_queue()
+
+            if self._tts_enabled:
+                self._audio_mute_until = time.time() + (self._post_gate_settle_ms / 1000.0)
+
             logger.info("[GATE] Opening transcript gate")
             self._transcript_gate_closed = False
 
@@ -339,13 +337,17 @@ class AudioPipeline:
         chunk_count = 0
 
         async def audio_generator():
-            """Generate audio chunks from LiveKit room."""
+            """Generate audio chunks from LiveKit, muting during gate/settling."""
             nonlocal chunk_count
             logger.info("Audio generator started, subscribing to LiveKit audio...")
             async for audio_data in self._room.subscribe_to_audio():
                 if not self._is_listening:
                     logger.info("Pipeline stopped listening, ending audio generator")
                     break
+                # Mute audio to STT while gate is closed (with TTS) or during
+                # post-gate settling (~500ms for WebRTC jitter buffer echo tail).
+                if (self._transcript_gate_closed and self._tts_enabled) or time.time() < self._audio_mute_until:
+                    continue
                 chunk_count += 1
                 if chunk_count == 1:
                     logger.info(f"First audio chunk received ({len(audio_data)} bytes)")
@@ -366,31 +368,14 @@ class AudioPipeline:
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
-            # ── Turn-based transcription suppression ──────────────────────
-            # When the transcript gate is closed AND TTS is enabled, the agent
-            # is processing + narrating its response. Suppress ALL transcript
-            # activity: no partials published to LiveKit (so the frontend
-            # doesn't show the user's speech during narration), no finals
-            # queued, and no barge-in callbacks fired.
-            #
-            # The STT stream itself stays alive (audio keeps flowing to STT)
-            # so there's no reconnection cost when the gate re-opens.
-            #
-            # When TTS is disabled the gate still discards finals (step 3
-            # below) but partials are allowed through — the agent responds
-            # with text only and the gate opens quickly after processing,
-            # so brief partial display is acceptable.
-            #
-            # Controlled by: TTS_ENABLED env var (determines narration) and
-            # INTERRUPT_MODE env var (determines gating behavior).
-            if self._transcript_gate_closed and self._tts_enabled:
-                # Still track speaker identity so attribution is correct
-                # when the gate re-opens and the next utterance arrives.
+            # Suppress all transcript events while gate is closed (with TTS)
+            # or during post-gate settling. Catches delayed STT events from
+            # buffered audio. When TTS disabled, only finals are discarded
+            # (step 3 below) — partials still publish for lighter gating.
+            is_settling = time.time() < self._audio_mute_until
+            if (self._transcript_gate_closed and self._tts_enabled) or is_settling:
                 if event.speech_started:
                     self._current_utterance_speaker = self._room.current_audio_speaker
-                    logger.debug(f"[GATE] Speech started during closed gate - updated speaker: {self._current_utterance_speaker}")
-                if event.is_final and event.text.strip():
-                    logger.info(f"[GATE] Suppressing transcript (gate closed, TTS active): '{event.text}'")
                 continue
 
             # 1. Publish ALL transcripts to LiveKit for frontend display
