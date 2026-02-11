@@ -157,13 +157,10 @@ export default function GpuMonitor({
   const isDark = resolvedTheme === 'dark'
 
   const gpus = currentMetrics?.gpus ?? []
-
-  // Don't render anything if no GPUs detected
-  if (!currentMetrics?.gpuAvailable || gpus.length === 0) {
-    return null
-  }
+  const hasGpus = gpus.length > 0
 
   const chartData = useMemo(() => {
+    if (!hasGpus) return []
     return metricsHistory.map((m, i) => {
       const point: Record<string, number> = { index: i }
       for (const gpu of m.gpus ?? []) {
@@ -174,13 +171,13 @@ export default function GpuMonitor({
       }
       return point
     })
-  }, [metricsHistory])
+  }, [metricsHistory, hasGpus])
 
   return (
     <div
       className={`p-6 rounded-2xl ${
         isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200/60'
-      }`}
+      } ${!hasGpus ? 'opacity-50' : ''}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -194,7 +191,8 @@ export default function GpuMonitor({
         <div className="flex items-center gap-2">
           <div
             className={`w-2 h-2 rounded-full ${
-              isConnected ? 'bg-green-500' : 'bg-red-500'
+              !hasGpus ? (isDark ? 'bg-neutral-600' : 'bg-neutral-300')
+                : isConnected ? 'bg-green-500' : 'bg-red-500'
             }`}
           />
           <span
@@ -202,101 +200,124 @@ export default function GpuMonitor({
               isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
             }`}
           >
-            {gpus.length} GPU{gpus.length > 1 ? 's' : ''} detected
+            {hasGpus
+              ? `${gpus.length} GPU${gpus.length > 1 ? 's' : ''} detected`
+              : 'No GPU detected'
+            }
           </span>
         </div>
       </div>
 
+      {/* No GPU state */}
+      {!hasGpus && (
+        <div className={`flex flex-col items-center justify-center py-8 ${
+          isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+        }`}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
+            <rect x="2" y="6" width="20" height="12" rx="2" />
+            <path d="M6 10h4v4H6z" />
+            <path d="M14 10h4" />
+            <path d="M14 14h4" />
+          </svg>
+          <p className="text-body-sm">No NVIDIA GPU available on this server</p>
+          <p className="text-caption mt-1">GPU metrics will appear automatically when a GPU is detected</p>
+        </div>
+      )}
+
       {/* GPU cards grid */}
-      <div className={`grid gap-4 mb-6 ${
-        gpus.length === 1 ? 'grid-cols-1 max-w-sm' : gpus.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-      }`}>
-        {gpus.map((gpu) => (
-          <GpuGauge
-            key={gpu.index}
-            gpu={gpu}
-            color={GPU_COLORS[gpu.index % GPU_COLORS.length]}
-            isDark={isDark}
-          />
-        ))}
-      </div>
-
-      {/* History chart */}
-      {chartData.length > 1 && (
+      {hasGpus && (
         <>
-          <div className={`text-body-sm font-medium mb-3 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-            Load History
-          </div>
-          <div className="h-[120px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
-                <XAxis dataKey="index" hide />
-                <YAxis domain={[0, 100]} hide />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
-                    borderColor: isDark ? '#374151' : '#E5E7EB',
-                    borderRadius: '8px',
-                    fontSize: '12px',
-                  }}
-                  formatter={(value, name) => {
-                    const nameStr = String(name)
-                    const gpuIdx = nameStr.match(/gpu(\d+)/)?.[1] ?? '?'
-                    const type = nameStr.includes('vram') ? 'VRAM' : 'Load'
-                    return [`${(value as number ?? 0).toFixed(1)}%`, `GPU ${gpuIdx} ${type}`]
-                  }}
-                  labelFormatter={() => ''}
-                />
-                {gpus.map((gpu) => (
-                  <Line
-                    key={`gpu${gpu.index}_load`}
-                    type="monotone"
-                    dataKey={`gpu${gpu.index}_load`}
-                    stroke={GPU_COLORS[gpu.index % GPU_COLORS.length]}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-                {gpus.map((gpu) => (
-                  <Line
-                    key={`gpu${gpu.index}_vram`}
-                    type="monotone"
-                    dataKey={`gpu${gpu.index}_vram`}
-                    stroke={GPU_COLORS[gpu.index % GPU_COLORS.length]}
-                    strokeWidth={1.5}
-                    strokeDasharray="4 3"
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+          <div className={`grid gap-4 mb-6 ${
+            gpus.length === 1 ? 'grid-cols-1 max-w-sm' : gpus.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+          }`}>
+            {gpus.map((gpu) => (
+              <GpuGauge
+                key={gpu.index}
+                gpu={gpu}
+                color={GPU_COLORS[gpu.index % GPU_COLORS.length]}
+                isDark={isDark}
+              />
+            ))}
           </div>
 
-          {/* Legend */}
-          <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 mt-3">
-            {gpus.map((gpu) => (
-              <div key={gpu.index} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: GPU_COLORS[gpu.index % GPU_COLORS.length] }} />
-                <span className={`text-caption ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                  GPU {gpu.index}
-                </span>
+          {/* History chart */}
+          {chartData.length > 1 && (
+            <>
+              <div className={`text-body-sm font-medium mb-3 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                Load History
               </div>
-            ))}
-            <div className="flex items-center gap-2">
-              <div className={`w-5 h-0 border-t-2 ${isDark ? 'border-neutral-400' : 'border-neutral-500'}`} />
-              <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
-                Load
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-5 h-0 border-t-2 border-dashed ${isDark ? 'border-neutral-400' : 'border-neutral-500'}`} />
-              <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
-                VRAM
-              </span>
-            </div>
-          </div>
+              <div className="h-[120px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
+                    <XAxis dataKey="index" hide />
+                    <YAxis domain={[0, 100]} hide />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+                        borderColor: isDark ? '#374151' : '#E5E7EB',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                      }}
+                      formatter={(value, name) => {
+                        const nameStr = String(name)
+                        const gpuIdx = nameStr.match(/gpu(\d+)/)?.[1] ?? '?'
+                        const type = nameStr.includes('vram') ? 'VRAM' : 'Load'
+                        return [`${(value as number ?? 0).toFixed(1)}%`, `GPU ${gpuIdx} ${type}`]
+                      }}
+                      labelFormatter={() => ''}
+                    />
+                    {gpus.map((gpu) => (
+                      <Line
+                        key={`gpu${gpu.index}_load`}
+                        type="monotone"
+                        dataKey={`gpu${gpu.index}_load`}
+                        stroke={GPU_COLORS[gpu.index % GPU_COLORS.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                    {gpus.map((gpu) => (
+                      <Line
+                        key={`gpu${gpu.index}_vram`}
+                        type="monotone"
+                        dataKey={`gpu${gpu.index}_vram`}
+                        stroke={GPU_COLORS[gpu.index % GPU_COLORS.length]}
+                        strokeWidth={1.5}
+                        strokeDasharray="4 3"
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Legend */}
+              <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 mt-3">
+                {gpus.map((gpu) => (
+                  <div key={gpu.index} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: GPU_COLORS[gpu.index % GPU_COLORS.length] }} />
+                    <span className={`text-caption ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                      GPU {gpu.index}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-0 border-t-2 ${isDark ? 'border-neutral-400' : 'border-neutral-500'}`} />
+                  <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                    Load
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-0 border-t-2 border-dashed ${isDark ? 'border-neutral-400' : 'border-neutral-500'}`} />
+                  <span className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                    VRAM
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>

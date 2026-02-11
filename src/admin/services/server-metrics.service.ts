@@ -53,11 +53,14 @@ export class ServerMetricsService implements OnModuleInit {
   private readonly logger = new Logger(ServerMetricsService.name);
   private gpuAvailable = false;
   private lastCpuTimes: CpuTimes | null = null;
+  private lastGpuDetectionTime = 0;
+  private readonly GPU_REDETECT_INTERVAL_MS = 30_000; // Re-check every 30s if GPU not found
 
   async onModuleInit() {
     // Detect GPU availability at startup
     this.gpuAvailable = await this.detectGpu();
-    this.logger.log(`GPU detection: ${this.gpuAvailable ? 'NVIDIA GPU available' : 'No GPU detected'}`);
+    this.lastGpuDetectionTime = Date.now();
+    this.logger.log(`GPU detection: ${this.gpuAvailable ? 'NVIDIA GPU available' : 'No GPU detected (will retry every 30s)'}`);
   }
 
   /**
@@ -65,9 +68,13 @@ export class ServerMetricsService implements OnModuleInit {
    */
   private async detectGpu(): Promise<boolean> {
     try {
-      await execAsync('nvidia-smi --query-gpu=name --format=csv,noheader');
-      return true;
-    } catch {
+      const { stdout } = await execAsync('nvidia-smi --query-gpu=name --format=csv,noheader');
+      if (stdout.trim().length > 0) {
+        return true;
+      }
+      return false;
+    } catch (error) {
+      this.logger.debug(`GPU detection failed: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -107,8 +114,19 @@ export class ServerMetricsService implements OnModuleInit {
     memoryTotal: bigint | null;
     gpus: GpuDeviceMetrics[];
   }> {
+    // Periodically re-detect GPU if not currently available
     if (!this.gpuAvailable) {
-      return { usage: null, memoryUsed: null, memoryTotal: null, gpus: [] };
+      const now = Date.now();
+      if (now - this.lastGpuDetectionTime >= this.GPU_REDETECT_INTERVAL_MS) {
+        this.lastGpuDetectionTime = now;
+        this.gpuAvailable = await this.detectGpu();
+        if (this.gpuAvailable) {
+          this.logger.log('GPU detected on re-check — nvidia-smi is now available');
+        }
+      }
+      if (!this.gpuAvailable) {
+        return { usage: null, memoryUsed: null, memoryTotal: null, gpus: [] };
+      }
     }
 
     try {
@@ -144,7 +162,9 @@ export class ServerMetricsService implements OnModuleInit {
         };
       }
     } catch (error) {
-      this.logger.warn('Failed to get GPU metrics:', error);
+      this.logger.warn('Failed to get GPU metrics, marking GPU as unavailable:', error);
+      this.gpuAvailable = false;
+      this.lastGpuDetectionTime = Date.now();
     }
 
     return { usage: null, memoryUsed: null, memoryTotal: null, gpus: [] };

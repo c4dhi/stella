@@ -196,13 +196,17 @@ generate_gpu_manifests() {
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/06-session-management-server-updated.yaml"
         else
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "${TEMP_DIR}/06-session-management-server-updated.yaml"
         fi
-        verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode)"
+        verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode, including session-management-server for GPU monitoring)"
     fi
 
     # NOTE: Custom DNS is now applied globally via apply_dns_to_all_manifests()

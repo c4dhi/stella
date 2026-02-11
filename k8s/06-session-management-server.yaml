@@ -30,6 +30,7 @@ spec:
       labels:
         app: session-management-server
     spec:
+      # GPU: runtimeClassName: nvidia
       serviceAccountName: session-management-sa
       initContainers:
       # Step 1: Wait for PostgreSQL to be ready
