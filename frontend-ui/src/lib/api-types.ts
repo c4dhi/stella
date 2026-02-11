@@ -1077,6 +1077,15 @@ export interface HistoricalUsageData {
   peakParticipants: number
 }
 
+export interface GpuDeviceMetrics {
+  index: number
+  name: string
+  usage: number // Percentage 0-100
+  memoryUsed: string // BigInt as string
+  memoryTotal: string // BigInt as string
+  temperature: number | null // Celsius
+}
+
 export interface ServerMetrics {
   timestamp: string
   cpuUsage: number
@@ -1088,6 +1097,7 @@ export interface ServerMetrics {
   gpuMemoryUsed: string | null
   gpuMemoryTotal: string | null
   gpuAvailable: boolean
+  gpus: GpuDeviceMetrics[] // Per-GPU metrics for all detected GPUs
   k8sNodeCount: number | null
   k8sPodCount: number | null
   k8sCpuRequests: number | null

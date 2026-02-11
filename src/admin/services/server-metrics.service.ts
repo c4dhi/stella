@@ -5,6 +5,15 @@ import * as os from 'os';
 
 const execAsync = promisify(exec);
 
+export interface GpuDeviceMetrics {
+  index: number;
+  name: string;
+  usage: number; // Percentage 0-100
+  memoryUsed: bigint;
+  memoryTotal: bigint;
+  temperature: number | null; // Celsius
+}
+
 export interface ServerMetrics {
   timestamp: string;
   // Node.js server metrics
@@ -18,6 +27,7 @@ export interface ServerMetrics {
   gpuMemoryUsed: bigint | null;
   gpuMemoryTotal: bigint | null;
   gpuAvailable: boolean;
+  gpus: GpuDeviceMetrics[]; // Per-GPU metrics for all detected GPUs
   // Kubernetes cluster metrics (if available)
   k8sNodeCount: number | null;
   k8sPodCount: number | null;
@@ -89,36 +99,55 @@ export class ServerMetricsService implements OnModuleInit {
   }
 
   /**
-   * Get GPU metrics via nvidia-smi
+   * Get GPU metrics via nvidia-smi for all detected GPUs
    */
   private async getGpuMetrics(): Promise<{
     usage: number | null;
     memoryUsed: bigint | null;
     memoryTotal: bigint | null;
+    gpus: GpuDeviceMetrics[];
   }> {
     if (!this.gpuAvailable) {
-      return { usage: null, memoryUsed: null, memoryTotal: null };
+      return { usage: null, memoryUsed: null, memoryTotal: null, gpus: [] };
     }
 
     try {
       const { stdout } = await execAsync(
-        'nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits',
+        'nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits',
       );
 
       const lines = stdout.trim().split('\n');
-      if (lines.length > 0) {
-        const [usage, memUsed, memTotal] = lines[0].split(',').map((s) => s.trim());
+      const gpus: GpuDeviceMetrics[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(',').map((s) => s.trim());
+        if (parts.length >= 5) {
+          const [idx, name, usage, memUsed, memTotal, temp] = parts;
+          gpus.push({
+            index: parseInt(idx),
+            name,
+            usage: parseFloat(usage),
+            memoryUsed: BigInt(parseInt(memUsed) * 1024 * 1024),
+            memoryTotal: BigInt(parseInt(memTotal) * 1024 * 1024),
+            temperature: temp ? parseFloat(temp) : null,
+          });
+        }
+      }
+
+      // Aggregate: use first GPU for backward-compatible top-level fields
+      if (gpus.length > 0) {
         return {
-          usage: parseFloat(usage),
-          memoryUsed: BigInt(parseInt(memUsed) * 1024 * 1024), // Convert MiB to bytes
-          memoryTotal: BigInt(parseInt(memTotal) * 1024 * 1024),
+          usage: gpus[0].usage,
+          memoryUsed: gpus[0].memoryUsed,
+          memoryTotal: gpus[0].memoryTotal,
+          gpus,
         };
       }
     } catch (error) {
       this.logger.warn('Failed to get GPU metrics:', error);
     }
 
-    return { usage: null, memoryUsed: null, memoryTotal: null };
+    return { usage: null, memoryUsed: null, memoryTotal: null, gpus: [] };
   }
 
   /**
@@ -166,6 +195,7 @@ export class ServerMetricsService implements OnModuleInit {
       gpuMemoryUsed: gpuMetrics.memoryUsed,
       gpuMemoryTotal: gpuMetrics.memoryTotal,
       gpuAvailable: this.gpuAvailable,
+      gpus: gpuMetrics.gpus,
       k8sNodeCount: k8sMetrics.nodeCount,
       k8sPodCount: k8sMetrics.podCount,
       k8sCpuRequests: k8sMetrics.cpuRequests,

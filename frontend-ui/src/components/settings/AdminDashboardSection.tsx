@@ -8,6 +8,7 @@ import { apiClient } from '../../services/ApiClient'
 import StatsCard from './admin/StatsCard'
 import SessionsGrid from './admin/SessionsGrid'
 import ServerPerformanceMonitor from './admin/ServerPerformanceMonitor'
+import GpuMonitor from './admin/GpuMonitor'
 import HistoricalUsageCharts from './admin/HistoricalUsageCharts'
 
 const containerVariants = {
@@ -255,6 +256,15 @@ export default function AdminDashboardSection() {
       {/* Server Performance Monitor - Full Width */}
       <motion.div variants={itemVariants}>
         <ServerPerformanceMonitor
+          currentMetrics={serverMetrics}
+          metricsHistory={metricsHistory}
+          isConnected={serverConnected}
+        />
+      </motion.div>
+
+      {/* GPU Performance Monitor - Full Width (hidden if no GPUs) */}
+      <motion.div variants={itemVariants}>
+        <GpuMonitor
           currentMetrics={serverMetrics}
           metricsHistory={metricsHistory}
           isConnected={serverConnected}
