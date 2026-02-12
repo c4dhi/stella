@@ -1502,8 +1502,11 @@ export class SessionsService {
     options: {
       includeDebug?: boolean;
       includeMetadata?: boolean;
+      includeDeliverables?: boolean;
     } = {},
   ) {
+    const includeDeliverables = options.includeDeliverables !== false;
+
     // Fetch session with project info
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
@@ -1538,8 +1541,10 @@ export class SessionsService {
       ? [...chatMessageTypes, ...debugMessageTypes]
       : chatMessageTypes;
 
-    // Fetch all messages (no pagination limit for export)
-    const [messages, participants, agents] = await Promise.all([
+    // Fetch messages, participants, agents, and session state
+    // Deliverable data comes from SessionState.deliverables (populated by gRPC setDeliverable calls)
+    // NOT from Message rows — the set_deliverable tool only calls gRPC, it doesn't send LiveKit data messages
+    const [messages, participants, agents, sessionState] = await Promise.all([
       this.prisma.message.findMany({
         where: {
           sessionId,
@@ -1555,10 +1560,97 @@ export class SessionsService {
         where: { sessionId },
         orderBy: { createdAt: 'asc' },
       }),
+      includeDeliverables
+        ? this.prisma.sessionState.findUnique({
+            where: { sessionId },
+            select: { deliverables: true, planData: true },
+          })
+        : Promise.resolve(null),
     ]);
 
+    // Build deliverables data from SessionState (the source of truth)
+    const userMessageDeliverables = new Map<string, any[]>();
+    let deliverablesSummary: Record<string, any> | undefined;
+    let deliverableCount = 0;
+
+    if (includeDeliverables && sessionState) {
+      const stateDeliverables = sessionState.deliverables as Record<string, any> || {};
+      const planData = sessionState.planData as any;
+
+      // Build description lookup from plan definition
+      // Deliverables are nested: planData.states[].tasks[].deliverables[]
+      const planDeliverableDescs: Record<string, { description?: string; required?: boolean }> = {};
+      if (planData?.states) {
+        for (const state of planData.states) {
+          for (const task of state.tasks || []) {
+            for (const del of task.deliverables || []) {
+              if (del.key) {
+                planDeliverableDescs[del.key] = {
+                  description: del.description,
+                  required: del.required,
+                };
+              }
+            }
+          }
+        }
+      }
+
+      if (Object.keys(stateDeliverables).length > 0) {
+        // Build summary section
+        deliverablesSummary = {};
+        for (const [key, val] of Object.entries(stateDeliverables)) {
+          const v = val as any;
+          deliverablesSummary[key] = {
+            value: v.value,
+            ...(v.reasoning ? { reasoning: v.reasoning } : {}),
+            ...(v.collectedAt ? { collectedAt: v.collectedAt } : {}),
+            ...(planDeliverableDescs[key]?.description ? { description: planDeliverableDescs[key].description } : {}),
+            ...(planDeliverableDescs[key]?.required != null ? { required: planDeliverableDescs[key].required } : {}),
+          };
+        }
+        deliverableCount = Object.keys(deliverablesSummary).length;
+
+        // Attach deliverables to user messages using collectedAt timestamps
+        // Each deliverable in SessionState has { value, reasoning, collectedAt }
+        const userMessages = messages.filter(
+          (m) => m.role === 'user' && ['transcript', 'user_text'].includes(m.messageType),
+        );
+
+        if (userMessages.length > 0) {
+          for (const [key, val] of Object.entries(stateDeliverables)) {
+            const v = val as any;
+            if (!v.collectedAt) continue;
+
+            const collectedAt = new Date(v.collectedAt);
+
+            // Find the closest preceding user message by collectedAt timestamp
+            let targetId: string | null = null;
+            for (let i = userMessages.length - 1; i >= 0; i--) {
+              if (userMessages[i].timestamp <= collectedAt) {
+                targetId = userMessages[i].id;
+                break;
+              }
+            }
+            // If no preceding user message, attach to the first one
+            if (!targetId) {
+              targetId = userMessages[0].id;
+            }
+
+            if (!userMessageDeliverables.has(targetId)) {
+              userMessageDeliverables.set(targetId, []);
+            }
+            userMessageDeliverables.get(targetId)!.push({
+              key,
+              value: v.value,
+              ...(v.reasoning ? { reasoning: v.reasoning } : {}),
+            });
+          }
+        }
+      }
+    }
+
     // Format into structured JSON
-    const transcript = {
+    const transcript: any = {
       meta: {
         sessionId: session.id,
         sessionName: session.name,
@@ -1570,6 +1662,7 @@ export class SessionsService {
         closedAt: session.closedAt?.toISOString() || null,
         messageCount: messages.length,
         participantCount: participants.length,
+        ...(includeDeliverables ? { deliverableCount } : {}),
       },
       participants: participants.map((p) => ({
         id: p.id,
@@ -1584,8 +1677,10 @@ export class SessionsService {
         agentType: a.agentTypeId || null,
         status: a.status,
       })),
+      ...(includeDeliverables && deliverablesSummary ? { deliverables: deliverablesSummary } : {}),
       messages: messages.map((m) => {
         const metadata = m.metadata as any;
+        const collected = userMessageDeliverables.get(m.id);
         return {
           id: m.id,
           timestamp: m.timestamp.toISOString(),
@@ -1595,6 +1690,7 @@ export class SessionsService {
           speakerName: metadata?.speaker_name || metadata?.participant_name || null,
           speakerId: metadata?.speaker_id || metadata?.participant_identity || null,
           ...(options.includeMetadata && metadata ? { metadata } : {}),
+          ...(collected ? { collectedDeliverables: collected } : {}),
         };
       }),
     };

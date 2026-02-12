@@ -791,11 +791,12 @@ class SessionManagementClient {
    */
   async downloadTranscript(
     sessionId: string,
-    options?: { includeDebug?: boolean; includeMetadata?: boolean }
+    options?: { includeDebug?: boolean; includeMetadata?: boolean; includeDeliverables?: boolean }
   ): Promise<void> {
     const params = new URLSearchParams()
     if (options?.includeDebug) params.append('includeDebug', 'true')
     if (options?.includeMetadata) params.append('includeMetadata', 'true')
+    if (options?.includeDeliverables === false) params.append('includeDeliverables', 'false')
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/transcript${queryString ? `?${queryString}` : ''}`

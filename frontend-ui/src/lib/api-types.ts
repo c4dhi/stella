@@ -1008,6 +1008,7 @@ export interface TranscriptExportMeta {
   closedAt: string | null
   messageCount: number
   participantCount: number
+  deliverableCount?: number
 }
 
 export interface TranscriptExportParticipant {
@@ -1025,6 +1026,13 @@ export interface TranscriptExportAgent {
   status: string
 }
 
+export interface TranscriptExportMessageDeliverable {
+  key: string
+  value: string
+  confidence?: number
+  reasoning?: string
+}
+
 export interface TranscriptExportMessage {
   id: string
   timestamp: string
@@ -1033,12 +1041,22 @@ export interface TranscriptExportMessage {
   content: string
   speakerName: string | null
   speakerId: string | null
+  collectedDeliverables?: TranscriptExportMessageDeliverable[]
+}
+
+export interface TranscriptExportDeliverable {
+  value: string
+  reasoning?: string
+  collectedAt?: string
+  description?: string
+  required?: boolean
 }
 
 export interface TranscriptExport {
   meta: TranscriptExportMeta
   participants: TranscriptExportParticipant[]
   agents: TranscriptExportAgent[]
+  deliverables?: Record<string, TranscriptExportDeliverable>
   messages: TranscriptExportMessage[]
 }
 
