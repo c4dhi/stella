@@ -12,6 +12,23 @@ import { UpdateSessionDto } from './dto/update-session.dto';
 import { CreateTokenDto } from './dto/create-token.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { Prisma } from '@prisma/client';
+import type { PlanData, DeliverableValue } from '../state-machine/state-machine.service';
+
+/** Deliverable entry in the transcript summary section */
+interface TranscriptDeliverableSummaryEntry {
+  value: unknown;
+  reasoning?: string;
+  collectedAt?: string;
+  description?: string;
+  required?: boolean;
+}
+
+/** Deliverable attached to a specific user message in the transcript */
+interface TranscriptMessageDeliverable {
+  key: string;
+  value: unknown;
+  reasoning?: string;
+}
 
 // Session event types for SSE streaming
 export interface SessionEvent {
@@ -1541,15 +1558,11 @@ export class SessionsService {
       ? [...chatMessageTypes, ...debugMessageTypes]
       : chatMessageTypes;
 
-    // Fetch messages, participants, agents, and session state
-    // Deliverable data comes from SessionState.deliverables (populated by gRPC setDeliverable calls)
-    // NOT from Message rows — the set_deliverable tool only calls gRPC, it doesn't send LiveKit data messages
+    // Deliverable data comes from SessionState.deliverables (populated by gRPC setDeliverable calls),
+    // NOT from Message rows — the set_deliverable tool only calls gRPC, not LiveKit data messages.
     const [messages, participants, agents, sessionState] = await Promise.all([
       this.prisma.message.findMany({
-        where: {
-          sessionId,
-          messageType: { in: messageTypes },
-        },
+        where: { sessionId, messageType: { in: messageTypes } },
         orderBy: { timestamp: 'asc' },
       }),
       this.prisma.participant.findMany({
@@ -1569,88 +1582,63 @@ export class SessionsService {
     ]);
 
     // Build deliverables data from SessionState (the source of truth)
-    const userMessageDeliverables = new Map<string, any[]>();
-    let deliverablesSummary: Record<string, any> | undefined;
-    let deliverableCount = 0;
+    let deliverablesSummary: Record<string, TranscriptDeliverableSummaryEntry> | undefined;
+    const messageDeliverables = new Map<string, TranscriptMessageDeliverable[]>();
 
-    if (includeDeliverables && sessionState) {
-      const stateDeliverables = sessionState.deliverables as Record<string, any> || {};
-      const planData = sessionState.planData as any;
+    const collected = this.parseJsonRecord<DeliverableValue>(sessionState?.deliverables);
 
-      // Build description lookup from plan definition
-      // Deliverables are nested: planData.states[].tasks[].deliverables[]
-      const planDeliverableDescs: Record<string, { description?: string; required?: boolean }> = {};
-      if (planData?.states) {
-        for (const state of planData.states) {
-          for (const task of state.tasks || []) {
-            for (const del of task.deliverables || []) {
-              if (del.key) {
-                planDeliverableDescs[del.key] = {
-                  description: del.description,
-                  required: del.required,
-                };
-              }
-            }
+    if (includeDeliverables && collected) {
+      const planData = sessionState!.planData as PlanData | null;
+
+      // Build description lookup: planData.states[].tasks[].deliverables[]
+      const planLookup = new Map<string, { description: string; required?: boolean }>();
+      for (const state of planData?.states ?? []) {
+        for (const task of state.tasks) {
+          for (const del of task.deliverables ?? []) {
+            planLookup.set(del.key, { description: del.description, required: del.required });
           }
         }
       }
 
-      if (Object.keys(stateDeliverables).length > 0) {
-        // Build summary section
-        deliverablesSummary = {};
-        for (const [key, val] of Object.entries(stateDeliverables)) {
-          const v = val as any;
-          deliverablesSummary[key] = {
-            value: v.value,
-            ...(v.reasoning ? { reasoning: v.reasoning } : {}),
-            ...(v.collectedAt ? { collectedAt: v.collectedAt } : {}),
-            ...(planDeliverableDescs[key]?.description ? { description: planDeliverableDescs[key].description } : {}),
-            ...(planDeliverableDescs[key]?.required != null ? { required: planDeliverableDescs[key].required } : {}),
-          };
-        }
-        deliverableCount = Object.keys(deliverablesSummary).length;
+      // Build top-level summary
+      deliverablesSummary = {};
+      for (const [key, del] of Object.entries(collected)) {
+        const plan = planLookup.get(key);
+        deliverablesSummary[key] = {
+          value: del.value,
+          reasoning: del.reasoning,
+          collectedAt: del.collectedAt,
+          description: plan?.description,
+          required: plan?.required,
+        };
+      }
 
-        // Attach deliverables to user messages using collectedAt timestamps
-        // Each deliverable in SessionState has { value, reasoning, collectedAt }
-        const userMessages = messages.filter(
-          (m) => m.role === 'user' && ['transcript', 'user_text'].includes(m.messageType),
-        );
+      // Attach deliverables to user messages using collectedAt timestamps
+      const userMessages = messages.filter(
+        (m) => m.role === 'user' && (m.messageType === 'transcript' || m.messageType === 'user_text'),
+      );
+      for (const [key, del] of Object.entries(collected)) {
+        if (!del.collectedAt || userMessages.length === 0) continue;
+        const collectedAt = new Date(del.collectedAt);
 
-        if (userMessages.length > 0) {
-          for (const [key, val] of Object.entries(stateDeliverables)) {
-            const v = val as any;
-            if (!v.collectedAt) continue;
-
-            const collectedAt = new Date(v.collectedAt);
-
-            // Find the closest preceding user message by collectedAt timestamp
-            let targetId: string | null = null;
-            for (let i = userMessages.length - 1; i >= 0; i--) {
-              if (userMessages[i].timestamp <= collectedAt) {
-                targetId = userMessages[i].id;
-                break;
-              }
-            }
-            // If no preceding user message, attach to the first one
-            if (!targetId) {
-              targetId = userMessages[0].id;
-            }
-
-            if (!userMessageDeliverables.has(targetId)) {
-              userMessageDeliverables.set(targetId, []);
-            }
-            userMessageDeliverables.get(targetId)!.push({
-              key,
-              value: v.value,
-              ...(v.reasoning ? { reasoning: v.reasoning } : {}),
-            });
+        // Walk backwards to find nearest preceding user message
+        let targetId = userMessages[0].id;
+        for (let i = userMessages.length - 1; i >= 0; i--) {
+          if (userMessages[i].timestamp <= collectedAt) {
+            targetId = userMessages[i].id;
+            break;
           }
         }
+
+        const list = messageDeliverables.get(targetId) ?? [];
+        list.push({ key, value: del.value, reasoning: del.reasoning });
+        messageDeliverables.set(targetId, list);
       }
     }
 
-    // Format into structured JSON
-    const transcript: any = {
+    const deliverableCount = deliverablesSummary ? Object.keys(deliverablesSummary).length : 0;
+
+    return {
       meta: {
         sessionId: session.id,
         sessionName: session.name,
@@ -1677,10 +1665,10 @@ export class SessionsService {
         agentType: a.agentTypeId || null,
         status: a.status,
       })),
-      ...(includeDeliverables && deliverablesSummary ? { deliverables: deliverablesSummary } : {}),
+      ...(deliverablesSummary ? { deliverables: deliverablesSummary } : {}),
       messages: messages.map((m) => {
-        const metadata = m.metadata as any;
-        const collected = userMessageDeliverables.get(m.id);
+        const metadata = m.metadata as Record<string, any> | null;
+        const collected = messageDeliverables.get(m.id);
         return {
           id: m.id,
           timestamp: m.timestamp.toISOString(),
@@ -1694,8 +1682,16 @@ export class SessionsService {
         };
       }),
     };
+  }
 
-    return transcript;
+  /**
+   * Safely parse a Prisma JSON field as a Record<string, T>.
+   * Returns null if the value is not a non-empty object.
+   */
+  private parseJsonRecord<T>(json: Prisma.JsonValue | undefined | null): Record<string, T> | null {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
+    if (Object.keys(json).length === 0) return null;
+    return json as Record<string, T>;
   }
 
   /**

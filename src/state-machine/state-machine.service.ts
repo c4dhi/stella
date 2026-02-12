@@ -5,7 +5,7 @@ import { SessionState, Prisma } from '@prisma/client';
 /**
  * Plan data structure (matches SDK Plan type)
  */
-interface PlanData {
+export interface PlanData {
   id: string;
   title?: string;
   initial_state_id?: string;
@@ -13,7 +13,7 @@ interface PlanData {
   system_prompt?: string;
 }
 
-interface PlanState {
+export interface PlanState {
   id: string;
   title?: string;
   description?: string;
@@ -22,7 +22,7 @@ interface PlanState {
   transitions?: StateTransition[];
 }
 
-interface PlanTask {
+export interface PlanTask {
   id: string;
   description: string;
   instruction?: string;
@@ -30,7 +30,7 @@ interface PlanTask {
   deliverables?: PlanDeliverable[];
 }
 
-interface PlanDeliverable {
+export interface PlanDeliverable {
   key: string;
   description: string;
   type?: string;
@@ -39,7 +39,7 @@ interface PlanDeliverable {
   examples?: string[];
 }
 
-interface StateTransition {
+export interface StateTransition {
   target_state_id: string;
   condition_type: 'all_tasks_complete' | 'deliverable_value' | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
@@ -49,7 +49,7 @@ interface StateTransition {
 /**
  * Deliverable value stored in state
  */
-interface DeliverableValue {
+export interface DeliverableValue {
   value: unknown;
   reasoning: string;
   collectedAt: string;
