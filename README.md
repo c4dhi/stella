@@ -1,11 +1,3 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/stella-banner.png">
-    <source media="(prefers-color-scheme: light)" srcset=".github/stella-banner.png">
-    <img alt="STELLA - System for Testing and Engineering LLM-based Conversational Agents" src=".github/stella-banner.png" width="800">
-  </picture>
-</p>
-
 <h1 align="center">STELLA</h1>
 
 <p align="center">
