@@ -1,6 +1,7 @@
 """BaseAgent abstract class - the interface agents must implement."""
 
 from abc import ABC, abstractmethod
+import asyncio
 import logging
 import time
 import uuid
@@ -72,6 +73,7 @@ class BaseAgent(ABC):
         self._history_client: Optional["HistoryClient"] = None
         # Last progress payload (for re-sending to new participants)
         self._last_progress_payload: Optional[Dict[str, Any]] = None
+        self._speak_task: Optional[asyncio.Task] = None
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
@@ -549,10 +551,11 @@ class BaseAgent(ABC):
                             # Track text for TTS on final
                             last_text = output.content
 
-                            # On final chunk, send to TTS
+                            # On final chunk, send to TTS in background so the output
+                            # loop continues processing deliverables/progress immediately
                             if output.is_final:
                                 if last_text.strip():
-                                    await self.audio.speak(last_text)
+                                    self._speak_task = asyncio.create_task(self.audio.speak(last_text))
                                 last_text = ""
                                 current_transcript_id = None
 
@@ -568,8 +571,8 @@ class BaseAgent(ABC):
                                     transcript_id=transcript_id
                                 )
 
-                                # Send to TTS
-                                await self.audio.speak(output.content)
+                                # Send to TTS in background
+                                self._speak_task = asyncio.create_task(self.audio.speak(output.content))
 
                         elif output.type == OutputType.DEBUG:
                             # Forward debug messages to frontend via LiveKit
@@ -669,4 +672,8 @@ class BaseAgent(ABC):
                             await self.audio._room.publish_data(progress_payload)
 
                 finally:
+                    # Ensure TTS finishes before accepting next input
+                    if self._speak_task and not self._speak_task.done():
+                        await self._speak_task
+                    self._speak_task = None
                     self._is_processing = False
