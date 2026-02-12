@@ -137,11 +137,6 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
-        # Post-gate settling: keep audio muted briefly after gate opens
-        # to let browser finish playing TTS (WebRTC jitter buffer ~50-200ms)
-        self._post_gate_settle_ms = 200
-        self._audio_mute_until: float = 0.0
-
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
 
@@ -181,9 +176,6 @@ class AudioPipeline:
                 logger.info(f"[GATE] Drained {drained} stale transcript(s)")
 
             self._room.flush_audio_queue()
-
-            if self._tts_enabled:
-                self._audio_mute_until = time.time() + (self._post_gate_settle_ms / 1000.0)
 
             logger.info("[GATE] Opening transcript gate")
             self._transcript_gate_closed = False
@@ -344,9 +336,8 @@ class AudioPipeline:
                 if not self._is_listening:
                     logger.info("Pipeline stopped listening, ending audio generator")
                     break
-                # Mute audio to STT while gate is closed (with TTS) or during
-                # post-gate settling (~500ms for WebRTC jitter buffer echo tail).
-                if (self._transcript_gate_closed and self._tts_enabled) or time.time() < self._audio_mute_until:
+                # Mute audio to STT while gate is closed (with TTS enabled).
+                if self._transcript_gate_closed and self._tts_enabled:
                     continue
                 chunk_count += 1
                 if chunk_count == 1:
@@ -368,12 +359,9 @@ class AudioPipeline:
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
-            # Suppress all transcript events while gate is closed (with TTS)
-            # or during post-gate settling. Catches delayed STT events from
-            # buffered audio. When TTS disabled, only finals are discarded
-            # (step 3 below) — partials still publish for lighter gating.
-            is_settling = time.time() < self._audio_mute_until
-            if (self._transcript_gate_closed and self._tts_enabled) or is_settling:
+            # Suppress all transcript events while gate is closed (with TTS).
+            # When TTS disabled, only finals are discarded (step 3 below).
+            if self._transcript_gate_closed and self._tts_enabled:
                 if event.speech_started:
                     self._current_utterance_speaker = self._room.current_audio_speaker
                 continue

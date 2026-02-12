@@ -190,23 +190,35 @@ generate_gpu_manifests() {
     # If nvidia.com/gpu: 1 is requested, Kubernetes reserves the GPU exclusively for that pod
     if [[ "$ENABLE_GPU" == "true" ]]; then
         verbose "Enabling GPU runtime class (shared GPU mode)..."
-        # macOS sed requires '' for in-place edit, Linux doesn't
+        # Enable runtimeClassName: nvidia on STT, TTS, and session-management-server
+        # Also enable NVIDIA_VISIBLE_DEVICES on session-management-server (node:20-slim
+        # doesn't set it like the nvidia/cuda base images do, so nvidia runtime won't
+        # inject nvidia-smi without it)
+        # NOTE: We do NOT uncomment nvidia.com/gpu resource requests — that would
+        # reserve GPUs exclusively and prevent sharing between pods
+        local sms_manifest="${TEMP_DIR}/06-session-management-server-updated.yaml"
         if [[ "$OS_TYPE" == "macos" ]]; then
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-                "${TEMP_DIR}/06-session-management-server-updated.yaml"
+                "$sms_manifest"
+            # Enable NVIDIA_VISIBLE_DEVICES env var for GPU monitoring
+            sed -i '' '/# GPU: - name: NVIDIA_VISIBLE_DEVICES/{s/# GPU: //;}' "$sms_manifest"
+            sed -i '' '/# GPU:   value: "all"/{s/# GPU: //;}' "$sms_manifest"
         else
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
-                "${TEMP_DIR}/06-session-management-server-updated.yaml"
+                "$sms_manifest"
+            # Enable NVIDIA_VISIBLE_DEVICES env var for GPU monitoring
+            sed -i '/# GPU: - name: NVIDIA_VISIBLE_DEVICES/{s/# GPU: //;}' "$sms_manifest"
+            sed -i '/# GPU:   value: "all"/{s/# GPU: //;}' "$sms_manifest"
         fi
-        verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode, including session-management-server for GPU monitoring)"
+        verbose "GPU manifests: runtimeClassName=nvidia + NVIDIA_VISIBLE_DEVICES=all (shared GPU mode)"
     fi
 
     # NOTE: Custom DNS is now applied globally via apply_dns_to_all_manifests()

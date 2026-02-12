@@ -145,6 +145,9 @@ spec:
             secretKeyRef:
               name: stella-ai-secrets
               key: elevenlabs-api-key
+        # Tell NVIDIA container runtime to inject GPU drivers + nvidia-smi (enabled by deploy script)
+        # GPU: - name: NVIDIA_VISIBLE_DEVICES
+        # GPU:   value: "all"
         # Docker socket for building agent images
         - name: DOCKER_HOST
           value: "unix:///var/run/docker.sock"
