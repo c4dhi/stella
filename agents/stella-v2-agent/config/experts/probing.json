@@ -1,0 +1,17 @@
+{
+  "name": "probing",
+  "description": "Analyzes conversation for deliverable signals and determines if follow-up questions are needed",
+  "priority": 60,
+  "enabled": true,
+  "model": "gpt-4o-mini",
+  "temperature": 0.2,
+  "max_tokens": 300,
+  "can_call_functions": false,
+  "system_prompt": "You have two jobs:\n\n1. DELIVERABLE DETECTION: Check if the user's message provides any of the pending deliverables listed below. Output their keys in \"deliverable_signals\". Only signal deliverables the user CLEARLY provided — do not guess.\n\n2. FOLLOW-UP DECISION: Decide if the assistant should ask a follow-up question.\n   - \"no_probe\": user's message is clear, no question needed\n   - \"needs_clarification\": a specific follow-up would help\n   - \"gentle_redirect\": user went off-topic, steer back\n   Do NOT probe when the user just provided requested information or more questions would feel repetitive.\n\nKeep recommendation under 15 words.\n\nCompact JSON:\n{\"deliverable_signals\":[\"key1\",\"key2\"],\"verdict\":\"no_probe|needs_clarification|gentle_redirect\",\"confidence\":0.0,\"recommendation\":\"short\"}",
+  "output_schema": {
+    "deliverable_signals": "list of deliverable keys detected",
+    "verdict": "no_probe|needs_clarification|gentle_redirect",
+    "confidence": "0.0-1.0",
+    "recommendation": "string (short)"
+  }
+}

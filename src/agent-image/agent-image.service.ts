@@ -57,6 +57,12 @@ export class AgentImageService {
       contextPath: '.',
       tag: 'latest',
     }],
+    ['stella-v2-agent', {
+      imageName: 'stella-v2-agent',
+      dockerfilePath: 'agents/stella-v2-agent/Dockerfile',
+      contextPath: '.',
+      tag: 'latest',
+    }],
   ]);
 
   // Track images currently being built to avoid duplicate builds

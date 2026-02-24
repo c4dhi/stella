@@ -285,10 +285,16 @@ export class AgentsService {
     const agentType = createAgentDto.agentType || 'stella-agent';
 
     // Security: Validate agent type against allowed list
-    const allowedAgentTypes = ['stella-agent', 'stella-light-agent', 'echo-agent'];
+    const allowedAgentTypes = ['stella-agent', 'stella-v2-agent', 'stella-light-agent', 'echo-agent'];
     if (!allowedAgentTypes.includes(agentType)) {
       throw new BadRequestException(`Invalid agent type: ${agentType}. Allowed: ${allowedAgentTypes.join(', ')}`);
     }
+
+    // Look up AgentType from DB for per-agent resource limits
+    const agentTypeRecord = await this.prisma.agentType.findUnique({
+      where: { slug: agentType },
+      select: { resourceCpu: true, resourceMemory: true },
+    });
 
     // Security: Sanitize agent name (max 255 chars, no control characters)
     const sanitizedName = createAgentDto.name
@@ -336,7 +342,7 @@ export class AgentsService {
     // 4. Create K8s pod asynchronously (don't block response)
     // NOTE: In the new architecture, agents connect directly to LiveKit rooms via SDK
     // No need for session-management-server to join rooms
-    this.createAgentPodAsync(agent.id, session, sanitizedName, createAgentDto, agentType, userId, agentConfig);
+    this.createAgentPodAsync(agent.id, session, sanitizedName, createAgentDto, agentType, userId, agentConfig, agentTypeRecord);
 
     return agent;
   }
@@ -352,6 +358,7 @@ export class AgentsService {
     agentType: string,
     userId: string,
     sanitizedConfig: Record<string, unknown>,
+    agentTypeRecord?: { resourceCpu: string | null; resourceMemory: string | null } | null,
   ): Promise<void> {
     try {
       // Get environment variables for LiveKit (agent pod needs these for gRPC config)
@@ -381,6 +388,8 @@ export class AgentsService {
         forceRebuild: createAgentDto.forceRebuild,
         envVarTemplateId: createAgentDto.envVarTemplateId,
         envVars: createAgentDto.envVars,  // Pass additional env vars to merge with template
+        resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
+        resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
 
       // Update agent with pod info
@@ -867,8 +876,8 @@ export class AgentsService {
     });
 
     // Register pending session so gRPC agent registration can match
+    const agentType = agent.agentType || 'stella-agent';
     if (this.agentServerService) {
-      const agentType = agent.agentType || 'stella-agent';
       const config: Record<string, string> = {
         sessionId: agent.sessionId,
         roomName: agent.session.room.livekitRoomName,
@@ -877,6 +886,12 @@ export class AgentsService {
       this.agentServerService.registerPendingSession(agent.sessionId, agentType, config);
       this.logger.log(`Registered pending session ${agent.sessionId} for restarted agent type: ${agentType}`);
     }
+
+    // Look up AgentType from DB for per-agent resource limits
+    const agentTypeRecord = await this.prisma.agentType.findUnique({
+      where: { slug: agentType },
+      select: { resourceCpu: true, resourceMemory: true },
+    });
 
     // Recreate Kubernetes pod with SAME agent ID
     try {
@@ -893,8 +908,10 @@ export class AgentsService {
         livekitApiSecret,
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
-        agentType: agent.agentType || 'stella-agent',  // Use stored agent type for image selection
+        agentType,
         envVarTemplateId: agent.envVarTemplateId || undefined,  // Pass stored env var template for API keys
+        resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
+        resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
 
       // Update agent with new pod info

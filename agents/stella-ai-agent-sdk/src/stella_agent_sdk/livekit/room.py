@@ -435,7 +435,7 @@ class RoomManager:
 
                 # Create AudioFrame for APM processing (10ms)
                 aec_frame = rtc.AudioFrame(
-                    data=chunk_10ms,
+                    data=chunk_10ms.tobytes(),
                     sample_rate=sample_rate,
                     num_channels=1,
                     samples_per_channel=samples_10ms,
@@ -558,9 +558,9 @@ class RoomManager:
             if self._aec_enabled and self._apm:
                 self._process_reverse_stream_24k(audio_int16)
 
-            # Create AudioFrame
+            # Create AudioFrame (LiveKit requires bytes, not numpy array)
             frame = rtc.AudioFrame(
-                data=audio_int16,
+                data=audio_int16.tobytes(),
                 sample_rate=24000,
                 num_channels=1,
                 samples_per_channel=len(audio_int16),
@@ -597,7 +597,7 @@ class RoomManager:
 
                 # Create AudioFrame for APM (10ms at 24kHz)
                 frame = rtc.AudioFrame(
-                    data=chunk_10ms,
+                    data=chunk_10ms.tobytes(),
                     sample_rate=24000,
                     num_channels=1,
                     samples_per_channel=self._aec_10ms_samples_24k,

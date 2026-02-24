@@ -158,13 +158,12 @@ class PiperProvider(TTSProvider):
         """
         try:
             audio_chunks = []
-            sample_rate = self.PIPER_SAMPLE_RATE
+            sample_rate = self._voice.config.sample_rate or self.PIPER_SAMPLE_RATE
 
             for audio_chunk in self._voice.synthesize(text):
-                # AudioChunk has audio_float_array (float32, normalized [-1,1])
-                # and sample_rate
+                # synthesize() yields AudioChunk objects with audio_float_array
+                # already in float32 [-1, 1] range
                 audio_chunks.append(audio_chunk.audio_float_array)
-                sample_rate = audio_chunk.sample_rate
 
             if not audio_chunks:
                 return None, 0

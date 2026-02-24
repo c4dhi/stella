@@ -12,15 +12,27 @@ import { ToastContainer } from './components/Toast'
 import PlanBuilderModal from './components/settings/PlanBuilder/PlanBuilderModal'
 import { useAuthStore } from './store/authStore'
 import { useToastStore } from './store/toastStore'
+import { useNotificationStore } from './store/notificationStore'
 
 export default function App() {
-  const { checkAuth } = useAuthStore()
+  const { checkAuth, isAuthenticated } = useAuthStore()
   const { toasts, removeToast } = useToastStore()
+  const { initialize, disconnect } = useNotificationStore()
 
   // Check authentication status on app mount
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
+
+  // Manage notification SSE connection based on auth state.
+  // Placed here (App never unmounts) so route changes don't tear down the connection.
+  useEffect(() => {
+    if (isAuthenticated) {
+      initialize()
+    } else {
+      disconnect()
+    }
+  }, [isAuthenticated])
 
   return (
     <BrowserRouter>

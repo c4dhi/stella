@@ -860,6 +860,50 @@ wait_for_parallel_builds() {
 }
 
 # =============================================================================
+# Agent Auto-Discovery
+# =============================================================================
+# Scans agents/ for subdirectories containing a Dockerfile.
+# This allows new agents to be built automatically without editing this script.
+
+# Discovered agent names (populated by discover_agents)
+declare -a DISCOVERED_AGENTS=()
+
+discover_agents() {
+    DISCOVERED_AGENTS=()
+    local agents_dir="${PROJECT_DIR:-.}/agents"
+
+    if [[ ! -d "$agents_dir" ]]; then
+        verbose "No agents/ directory found"
+        return
+    fi
+
+    for agent_dir in "$agents_dir"/*/; do
+        # Skip if not a directory
+        [[ ! -d "$agent_dir" ]] && continue
+
+        local agent_name
+        agent_name=$(basename "$agent_dir")
+
+        # An agent must have a Dockerfile to be buildable
+        if [[ -f "${agent_dir}Dockerfile" ]]; then
+            DISCOVERED_AGENTS+=("$agent_name")
+            verbose "Discovered agent: $agent_name"
+        fi
+    done
+
+    if [[ ${#DISCOVERED_AGENTS[@]} -gt 0 ]]; then
+        verbose "Auto-discovered ${#DISCOVERED_AGENTS[@]} agent(s): ${DISCOVERED_AGENTS[*]}"
+    fi
+}
+
+# Returns the full list of all buildable image names (core services + agents).
+# Used by cleanup_for_rebuild and sync_images_to_k3s for consistent handling.
+get_all_image_names() {
+    local core_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python")
+    echo "${core_images[@]} ${DISCOVERED_AGENTS[*]}"
+}
+
+# =============================================================================
 # Build All Images
 # =============================================================================
 
@@ -872,6 +916,9 @@ build_images() {
     setup_buildkit
 
     [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] build_images: buildkit setup complete"
+
+    # Auto-discover agents from agents/ directory (needed by cleanup and build)
+    discover_agents
 
     # Clean up if rebuild mode
     if [[ "$REBUILD_MODE" == "true" ]]; then
@@ -904,14 +951,18 @@ build_images() {
     # ==========================================================================
 
     # Start all builds in parallel (each docker build uses multiple cores internally)
+
+    # Core services
     start_parallel_build "session-management-server" "session-management-server:latest" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:latest" "./stt-service" "$gpu_args"
     start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$gpu_args"
     start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
-    start_parallel_build "stella-agent" "stella-agent:latest" "." "" "agents/stella-agent/Dockerfile"
-    start_parallel_build "echo-agent" "echo-agent:latest" "." "" "agents/echo-agent/Dockerfile"
-    start_parallel_build "stella-light-agent" "stella-light-agent:latest" "." "" "agents/stella-light-agent/Dockerfile"
+
+    # Auto-discovered agents (any directory under agents/ with a Dockerfile)
+    for agent_name in "${DISCOVERED_AGENTS[@]}"; do
+        start_parallel_build "$agent_name" "${agent_name}:latest" "." "" "agents/${agent_name}/Dockerfile"
+    done
 
     # Wait for all parallel builds to complete
     set +e
@@ -997,7 +1048,9 @@ import_images_to_k3s() {
 sync_images_to_k3s() {
     [[ "$DRY_RUN_MODE" == "true" ]] && return 0
 
-    local all_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent" "stella-light-agent")
+    # Build image list dynamically from core services + discovered agents
+    local all_images
+    read -ra all_images <<< "$(get_all_image_names)"
     local images_to_sync=()
 
     # Find images that exist in Docker but not in K3s
@@ -1065,8 +1118,9 @@ cleanup_for_rebuild() {
     # Clean up failed pods
     kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
 
-    # Remove old Docker images
-    local images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python" "stella-agent" "echo-agent" "stella-light-agent")
+    # Remove old Docker images (core services + discovered agents)
+    local images
+    read -ra images <<< "$(get_all_image_names)"
     for img in "${images[@]}"; do
         docker rmi "${img}:latest" 2>/dev/null || true
     done

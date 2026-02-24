@@ -1,0 +1,76 @@
+version: "1.0"
+
+metadata:
+  name: "STELLA V2"
+  slug: "stella-v2-agent"
+  version: "1.0.0"
+  description: "Streamlined 4-stage pipeline: Input Gate, Expert Pool, Deterministic Arbitration, Response Generator."
+  icon: "🧠"
+  tags:
+    - voice
+    - ai
+    - expert-consultation
+    - v2
+
+capabilities:
+  - voice
+  - text
+  - plans
+  - experts
+
+image:
+  dockerfile: "Dockerfile"
+
+resources:
+  memory:
+    request: "512Mi"
+    limit: "2Gi"
+  cpu:
+    request: "500m"
+    limit: "2000m"
+
+configSchema:
+  type: object
+  properties:
+    plan:
+      type: object
+      description: "Plan configuration with states, tasks, and deliverables"
+      x-stella-requires-plan: true
+    experts_dir:
+      type: string
+      description: "Path to external experts config directory (overrides built-in)"
+    expert_overrides:
+      type: object
+      description: "Per-expert runtime overrides (e.g., {\"medical\": {\"enabled\": false}})"
+    llm:
+      type: object
+      description: "LLM configuration (model, temperature, etc.)"
+      properties:
+        model:
+          type: string
+          default: "gpt-4o-mini"
+        temperature:
+          type: number
+          default: 0.7
+  x-stella-env-vars:
+    - OPENAI_API_KEY
+  x-stella-optional-env-vars:
+    - name: INTERRUPT_MODE
+      description: "Transcript interrupt behavior: 'none' (turn-based gating, default) or 'smart' (barge-in with re-prompting)"
+      default: "none"
+    - name: TTS_ENABLED
+      description: "Enable text-to-speech audio output. Set to 'false' for text-only mode."
+      default: "true"
+    - name: TRANSCRIPT_DEBOUNCE_MS
+      description: "Debounce window (ms) for aggregating rapid successive final transcripts. 0 to disable."
+      default: "300"
+    - name: STELLA_EXPERTS_DIR
+      description: "External directory for expert JSON configs (overrides built-in)"
+    - name: EXPERT_TIMEOUT_MS
+      description: "Timeout per expert in milliseconds"
+      default: "3000"
+
+defaultConfig: {}
+
+sdk:
+  minVersion: "0.4.0"

@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useThemeStore } from '../../store/themeStore'
@@ -9,7 +8,7 @@ export default function ProfileButton() {
   const { user } = useAuthStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
-  const { unreadCount, initialize, disconnect } = useNotificationStore()
+  const { unreadCount } = useNotificationStore()
 
   const displayName = user?.name || user?.email?.split('@')[0] || 'User'
   const initials = displayName
@@ -18,12 +17,6 @@ export default function ProfileButton() {
     .join('')
     .toUpperCase()
     .slice(0, 2)
-
-  // Initialize notification store SSE connection on mount
-  useEffect(() => {
-    initialize()
-    return () => disconnect()
-  }, [])
 
   return (
     <button
