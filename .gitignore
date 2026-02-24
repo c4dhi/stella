@@ -82,3 +82,5 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Compiled prisma seed script (generated from seed.ts)
 prisma/seed.js
+
+.claude/
