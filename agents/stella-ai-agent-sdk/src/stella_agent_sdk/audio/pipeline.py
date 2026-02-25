@@ -12,11 +12,13 @@ INPUT FLOW (user → agent):
 
 OUTPUT FLOW (agent → user) - DECOUPLED:
 1. publish_text() - Send text to frontend for display (independent of TTS)
-2. speak() - Send text to TTS for audio synthesis (independent of frontend)
+2. enqueue_sentence() - Dispatch sentences to TTS as they complete (independent of frontend)
+3. speak() - Send complete text to TTS (for non-streaming use cases)
 
 The SDK's run_audio_loop handles the coordination:
 - Stream text chunks to frontend immediately via publish_text()
-- Accumulate chunks and send final text to TTS via speak()
+- Detect sentence boundaries and dispatch each sentence to TTS immediately
+- TTS synthesis starts on the first complete sentence, not on is_final
 
 Usage:
     # In your agent's run_audio_loop:
@@ -136,6 +138,10 @@ class AudioPipeline:
 
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
+
+        # Sentence-level streaming TTS queue
+        self._speech_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self._speech_worker_task: Optional[asyncio.Task] = None
 
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
@@ -865,16 +871,104 @@ class AudioPipeline:
         Interrupt current TTS playback.
 
         Call this when user starts speaking (barge-in) to immediately
-        stop agent speech.
+        stop agent speech. Also drains any queued sentences.
         """
         if not self._is_speaking:
             return
 
         logger.info("Stopping TTS playback")
+
+        # Drain queued sentences so they don't play after interruption
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         self._stop_speaking_event.set()
 
         # Wait briefly for TTS to notice interruption
         await asyncio.sleep(0.05)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Sentence-level streaming TTS
+    # ─────────────────────────────────────────────────────────────────────
+
+    def enqueue_sentence(self, sentence: str) -> None:
+        """Enqueue a complete sentence for TTS synthesis.
+
+        Sentences are spoken sequentially by a background worker in the
+        order they are enqueued. This allows the agent to dispatch TTS
+        at sentence boundaries while streaming, without blocking the
+        output loop.
+
+        The worker is started lazily on the first enqueue and shut down
+        by flush_speech_queue().
+        """
+        if not sentence.strip():
+            return
+
+        # Start worker lazily
+        if self._speech_worker_task is None or self._speech_worker_task.done():
+            self._speech_worker_task = asyncio.create_task(self._speech_worker())
+
+        self._speech_queue.put_nowait(sentence)
+        logger.info(f"[TTS] Enqueued sentence ({len(sentence.split())} words): {sentence[:60]}...")
+
+    async def flush_speech_queue(self) -> None:
+        """Signal end-of-stream and wait for all queued sentences to finish.
+
+        Must be called after the last sentence is enqueued (typically in
+        the finally block of run_audio_loop). Blocks until the worker
+        has spoken every queued sentence or is interrupted.
+        """
+        if self._speech_worker_task is None or self._speech_worker_task.done():
+            return
+
+        # Send sentinel to tell worker there are no more sentences
+        await self._speech_queue.put(None)
+
+        try:
+            await self._speech_worker_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._speech_worker_task = None
+
+    async def _speech_worker(self) -> None:
+        """Background worker that speaks queued sentences sequentially.
+
+        Runs until it receives a None sentinel or is cancelled. Each
+        sentence uses the existing _speak_sentence() which has retry
+        and interruption logic built in.
+        """
+        logger.info("[TTS] Speech worker started")
+        self._is_speaking = True
+        self._stop_speaking_event.clear()
+
+        try:
+            while True:
+                sentence = await self._speech_queue.get()
+
+                # Sentinel: no more sentences
+                if sentence is None:
+                    break
+
+                # Skip if interrupted (barge-in drained the queue, but
+                # we may have dequeued just before the drain)
+                if self._stop_speaking_event.is_set():
+                    logger.info("[TTS] Speech worker: interrupted, skipping remaining")
+                    break
+
+                await self._speak_sentence(sentence)
+
+        except asyncio.CancelledError:
+            logger.info("[TTS] Speech worker cancelled")
+        except Exception as e:
+            logger.error(f"[TTS] Speech worker error: {e}")
+        finally:
+            self._is_speaking = False
+            logger.info("[TTS] Speech worker stopped")
 
     def on_speech_started(self, callback: Callable[[], Awaitable[None]]) -> None:
         """
