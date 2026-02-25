@@ -166,9 +166,18 @@ class StellaV2Agent(BaseAgent):
             # ── Stage 2: Expert Pool (foreground + background) ──
             # Foreground experts (probing, safety, etc.) block until done — needed for arbitration.
             # Background experts (task_extraction) launch concurrently, collected after response.
-            print(f"[StellaV2Agent] Stage 2: Expert Pool — {gate_result.experts}")
+
+            # Layer 4: Guarantee timekeeper runs when stagnation threshold is hit
+            experts_to_run = list(gate_result.experts)
+            if (self.state_machine.is_initialized
+                    and self.state_machine.should_invoke_timekeeper(threshold=self.timekeeper_threshold)
+                    and "timekeeper" not in experts_to_run):
+                experts_to_run.append("timekeeper")
+                print(f"[StellaV2Agent] Injected timekeeper (turns >= {self.timekeeper_threshold})")
+
+            print(f"[StellaV2Agent] Stage 2: Expert Pool — {experts_to_run}")
             fg_verdicts, bg_task = await self.expert_pool.run_foreground(
-                gate_result.experts, input.text, history, sm_context
+                experts_to_run, input.text, history, sm_context
             )
 
             for v in fg_verdicts:
@@ -450,6 +459,27 @@ class StellaV2Agent(BaseAgent):
         # Increment turn counter if no progress was made
         if not deliverables_found and not tasks_completed:
             self.state_machine.increment_turn()
+
+        # Layer 3: Deterministic auto-skip safety net
+        skipped = self.state_machine.handle_stagnation(threshold=3)
+        if skipped:
+            yield AgentOutput.debug(
+                session_id,
+                f"Stagnation prevention: skipped {len(skipped)} optional items: {skipped}",
+                component="stagnation_handler",
+                skipped_keys=skipped,
+            )
+            for key in skipped:
+                yield AgentOutput.deliverable(session_id, key=key, value="skipped (optional)")
+
+            # Re-evaluate state completion
+            result = self.state_machine.process_deliverables({})
+            if result.should_advance and result.next_state_id:
+                transition_output = self._handle_state_transition(
+                    session_id, "stagnation_auto_skip"
+                )
+                if transition_output:
+                    yield transition_output
 
         # Clear state changed flag and emit progress
         self.state_machine.clear_state_changed_flag()

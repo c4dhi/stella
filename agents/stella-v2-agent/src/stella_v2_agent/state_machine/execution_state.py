@@ -218,6 +218,36 @@ class ExecutionState:
                     return True
         return False
 
+    def skip_optional_pending(self) -> List[str]:
+        """Skip all optional pending deliverables/tasks in the current state."""
+        state = self.current_state
+        if not state:
+            return []
+
+        skipped_keys: List[str] = []
+
+        for task in state.tasks:
+            # Skip optional pending deliverables
+            for deliverable in task.deliverables:
+                if (deliverable.status == DeliverableStatus.PENDING
+                        and not deliverable.required):
+                    deliverable.status = DeliverableStatus.SKIPPED
+                    deliverable.value = "skipped (optional)"
+                    deliverable.reasoning = "Auto-skipped: optional deliverable after stagnation"
+                    skipped_keys.append(deliverable.key)
+
+            # Update task status after deliverable changes
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.SKIPPED):
+                if not task.required and task.is_complete():
+                    task.status = TaskStatus.SKIPPED
+                elif task.required and task.is_complete():
+                    task.status = TaskStatus.COMPLETED
+
+        if skipped_keys:
+            self.turns_without_deliverable = 0
+
+        return skipped_keys
+
     def get_context_summary(self) -> Dict[str, Any]:
         state = self.current_state
         return {

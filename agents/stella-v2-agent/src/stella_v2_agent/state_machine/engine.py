@@ -211,25 +211,26 @@ class StateMachine:
                     result.completed_tasks.append(task.id)
 
         result.state_complete = self.execution_state.is_current_state_complete()
+        state = self.execution_state.current_state
         if result.state_complete:
-            state = self.execution_state.current_state
             if state:
                 print(f"[StateMachine] State '{state.title}' is complete. Tasks: "
                       + ", ".join(f"{t.description}(req={t.required},status={t.status.value},"
                                   f"deliverables=[{','.join(f'{d.key}(req={d.required})={d.status.value}' for d in t.deliverables)}])"
                                   for t in state.tasks))
         else:
-            state = self.execution_state.current_state
             if state:
                 pending = [(t.description, [d.key for d in t.deliverables if d.status == DeliverableStatus.PENDING])
                            for t in state.tasks if t.status not in (TaskStatus.COMPLETED, TaskStatus.SKIPPED)]
                 if pending:
                     print(f"[StateMachine] State '{state.title}' NOT complete. Pending: "
                           + ", ".join(f"{desc}[{','.join(keys)}]" for desc, keys in pending if keys))
-            result.next_state_id = self.execution_state.evaluate_transitions()
-            result.should_advance = result.next_state_id is not None
-            if result.should_advance:
-                result.transition_reason = "all_required_tasks_complete"
+
+        # Always evaluate transitions — especially needed when state is complete
+        result.next_state_id = self.execution_state.evaluate_transitions()
+        result.should_advance = result.next_state_id is not None
+        if result.should_advance:
+            result.transition_reason = "all_tasks_complete" if result.state_complete else "transition_condition_met"
 
         return result
 
@@ -297,6 +298,32 @@ class StateMachine:
                 completed.append(task_id)
                 print(f"[StateMachine] Task explicitly completed: {task_id}")
         return completed
+
+    def handle_stagnation(self, threshold: int = 3) -> Optional[List[str]]:
+        """Auto-skip optional items if stagnation threshold exceeded and no required items pending."""
+        if not self.execution_state:
+            return None
+        if self.execution_state.turns_without_deliverable < threshold:
+            return None
+
+        state = self.execution_state.current_state
+        if not state:
+            return None
+
+        # Don't auto-skip if required items are still pending
+        for task in state.tasks:
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED):
+                continue
+            for d in task.deliverables:
+                if d.required and d.status == DeliverableStatus.PENDING:
+                    return None
+            if task.required and not task.deliverables and task.status == TaskStatus.PENDING:
+                return None
+
+        skipped = self.execution_state.skip_optional_pending()
+        if skipped:
+            print(f"[StateMachine] Stagnation: auto-skipped optional: {skipped}")
+        return skipped if skipped else None
 
     def get_status_summary(self) -> Dict[str, Any]:
         if not self.execution_state:

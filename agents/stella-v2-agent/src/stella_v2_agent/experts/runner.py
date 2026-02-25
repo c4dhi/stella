@@ -222,6 +222,7 @@ class ExpertRunner:
 
         Probing needs to know what deliverables are pending so it can detect
         whether the user provided any of them (deliverable_signals).
+        Includes required/optional flags and turn counter for stagnation awareness.
         """
         parts: List[str] = []
 
@@ -229,10 +230,14 @@ class ExpertRunner:
         pending = [d for d in deliverables if d.get("status") == "pending"]
         completed = [d for d in deliverables if d.get("status") == "completed"]
 
+        turns = sm_context.get("progress", {}).get("turns_without_deliverable", 0)
+        parts.append(f"TURNS WITHOUT PROGRESS: {turns}")
+
         if pending:
             parts.append("PENDING DELIVERABLES (signal if user provided any):")
             for d in pending:
-                parts.append(f"- {d['key']}: {d.get('description', '')}")
+                req_label = "REQUIRED" if d.get("required") else "OPTIONAL"
+                parts.append(f"- {d['key']} [{req_label}]: {d.get('description', '')}")
         else:
             parts.append("No pending deliverables.")
 
