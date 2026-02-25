@@ -95,15 +95,12 @@ export default function PlanBuilderModal() {
         >
           {/* Backdrop - use blur when standalone, solid overlay when nested to avoid double blur */}
           {/* Don't close on click - require explicit close action */}
-          <motion.div
+          <div
             className={`absolute inset-0 backdrop-blur-sm ${
               isNested
                 ? isDark ? 'bg-black/70' : 'bg-black/40'  // Solid overlay when opened from another modal
                 : isDark ? 'bg-black/50' : 'bg-black/20'  // Blurred when standalone - lighter for light mode
             }`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
             onClick={requestClose}
           />
 
@@ -112,9 +109,9 @@ export default function PlanBuilderModal() {
             className={`relative w-full h-full max-w-7xl max-h-[95vh] m-4 rounded-2xl overflow-hidden shadow-2xl ring-1 ${
               isDark ? 'bg-surface-dark ring-white/10' : 'bg-surface ring-black/5'
             }`}
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={{ scale: 0.95, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           >
             <AnimatePresence mode="wait">

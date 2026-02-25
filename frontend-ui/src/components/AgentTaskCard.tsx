@@ -55,19 +55,14 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 20, scale: 0.95 }}
       animate={{
-        opacity: 1,
-        x: 0,
-        scale: 1,
         filter: isHistoryMode ? 'grayscale(100%)' : 'grayscale(0%)'
       }}
-      exit={{ opacity: 0, x: 20, scale: 0.95 }}
       transition={{
         duration: 0.4,
         ease: [0.16, 1, 0.3, 1]
       }}
-      className={`w-96 h-full flex flex-col ${isHistoryMode ? 'opacity-75' : 'opacity-100'} transition-opacity duration-300`}
+      className={`w-96 h-full flex flex-col ${isHistoryMode ? 'opacity-75' : 'opacity-100'} transition-[opacity] duration-300`}
     >
       {/* Card Container */}
       <div className={`

@@ -76,9 +76,7 @@ export default function TaskPanel() {
 
           {/* Hidden agents indicator */}
           {hiddenAgentIds.size > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
+            <div
               className="flex items-center justify-center py-1.5"
             >
               <button
@@ -89,7 +87,7 @@ export default function TaskPanel() {
               >
                 {hiddenAgentIds.size} hidden &middot; Show all
               </button>
-            </motion.div>
+            </div>
           )}
         </div>
       )}
