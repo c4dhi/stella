@@ -2,9 +2,8 @@ import { motion } from 'framer-motion'
 import { useThemeStore, type Theme } from '../../store/themeStore'
 
 const containerVariants = {
-  hidden: { opacity: 0 },
+  hidden: {},
   visible: {
-    opacity: 1,
     transition: {
       staggerChildren: 0.1
     }
@@ -120,9 +119,6 @@ export default function PreferencesSection() {
                       ? 'hover:bg-surface-dark-tertiary'
                       : 'hover:bg-surface-tertiary'
                 }`}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 + index * 0.1 }}
                 whileHover={{ scale: 1.02, y: -2 }}
                 whileTap={{ scale: 0.98 }}
               >
@@ -226,13 +222,10 @@ export default function PreferencesSection() {
         </div>
 
         {/* Current theme indicator */}
-        <motion.div
+        <div
           className={`mt-6 pt-6 border-t flex items-center justify-between ${
             isDark ? 'border-border-dark/50' : 'border-border/50'
           }`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
         >
           <span className={`text-body-sm ${
             isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
@@ -249,7 +242,7 @@ export default function PreferencesSection() {
             }`} />
             {resolvedTheme === 'dark' ? 'Dark' : 'Light'} mode
           </span>
-        </motion.div>
+        </div>
       </motion.div>
     </motion.div>
   )

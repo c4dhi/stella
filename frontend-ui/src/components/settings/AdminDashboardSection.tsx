@@ -12,9 +12,8 @@ import GpuMonitor from './admin/GpuMonitor'
 import HistoricalUsageCharts from './admin/HistoricalUsageCharts'
 
 const containerVariants = {
-  hidden: { opacity: 0 },
+  hidden: {},
   visible: {
-    opacity: 1,
     transition: {
       staggerChildren: 0.1,
     },

@@ -93,7 +93,7 @@ const ActivityItem = forwardRef<HTMLDivElement, {
         delay: index * 0.08,
         ease: [0.25, 0.46, 0.45, 0.94]
       }}
-      className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200/50 bg-white/60 hover:bg-white/80 hover:border-neutral-300/60 transition-all duration-200"
+      className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200/50 bg-white/60 hover:bg-white/80 hover:border-neutral-300/60 transition-[color,background-color,border-color] duration-200"
     >
       <motion.div
         initial={{ scale: 0 }}

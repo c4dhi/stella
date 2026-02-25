@@ -518,7 +518,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className={`
-                    p-4 rounded-xl transition-all duration-200
+                    p-4 rounded-xl transition-[color,background-color,border-color,box-shadow] duration-200
                     ${isDark
                       ? 'bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20'
                       : 'bg-white border border-neutral-200 hover:border-neutral-300 shadow-sm'

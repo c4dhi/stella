@@ -8,9 +8,8 @@ import { useNotificationStore } from '../../store/notificationStore'
 import type { UserMessage, UserMessageType } from '../../lib/api-types'
 
 const containerVariants = {
-  hidden: { opacity: 0 },
+  hidden: {},
   visible: {
-    opacity: 1,
     transition: {
       staggerChildren: 0.1
     }
@@ -208,7 +207,7 @@ export default function InboxSection() {
                 <motion.div
                   key={message.id}
                   layout
-                  initial={{ opacity: 0, x: -20 }}
+                  initial={false}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20, height: 0 }}
                   transition={{ duration: 0.3 }}

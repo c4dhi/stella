@@ -512,7 +512,7 @@ export default function SessionsDashboard() {
                   hidden: { opacity: 0, y: 10 },
                   visible: { opacity: 1, y: 0 },
                 }}
-                className={`group cursor-pointer rounded-xl p-5 transition-all duration-200 ${
+                className={`group cursor-pointer rounded-xl p-5 transition-[color,background-color,border-color,box-shadow] duration-200 ${
                   isDark
                     ? 'bg-surface-dark-secondary border border-border-dark hover:border-border-dark-secondary'
                     : 'bg-white border border-border shadow-sm hover:shadow-md hover:border-border-secondary'

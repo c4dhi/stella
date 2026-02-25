@@ -4,9 +4,8 @@ import { useAuthStore } from '../../store/authStore'
 import { useThemeStore } from '../../store/themeStore'
 
 const containerVariants = {
-  hidden: { opacity: 0 },
+  hidden: {},
   visible: {
-    opacity: 1,
     transition: {
       staggerChildren: 0.1
     }
@@ -86,24 +85,18 @@ export default function ProfileSection() {
           </motion.div>
 
           <div>
-            <motion.h3
+            <h3
               className={`text-heading font-semibold ${isDark ? 'text-content-inverse' : 'text-content'
                 }`}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.2 }}
             >
               {displayName}
-            </motion.h3>
-            <motion.p
+            </h3>
+            <p
               className={`text-body-sm mt-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                 }`}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 }}
             >
               {user?.email}
-            </motion.p>
+            </p>
           </div>
         </div>
       </motion.div>
@@ -131,13 +124,10 @@ export default function ProfileSection() {
               isVerified: user?.verified
             }
           ].map((item, index) => (
-            <motion.div
+            <div
               key={item.label}
               className={`flex justify-between items-center py-4 ${index !== 3 ? `border-b ${isDark ? 'border-border-dark/50' : 'border-border/50'}` : ''
                 }`}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 + index * 0.1 }}
             >
               <span className={`text-body-sm ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                 }`}>
@@ -167,7 +157,7 @@ export default function ProfileSection() {
                   {item.value}
                 </span>
               )}
-            </motion.div>
+            </div>
           ))}
         </div>
       </motion.div>

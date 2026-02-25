@@ -9,9 +9,8 @@ import AgentDetailModal from './AgentDetailModal'
 import ConfirmDialog from '../modals/ConfirmDialog'
 
 const containerVariants = {
-  hidden: { opacity: 0 },
+  hidden: {},
   visible: {
-    opacity: 1,
     transition: {
       staggerChildren: 0.08
     }

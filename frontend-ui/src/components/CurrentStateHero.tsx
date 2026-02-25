@@ -112,12 +112,11 @@ export default function CurrentStateHero({ currentState, currentTask, processing
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -20, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{
         duration: 0.6,
         ease: [0.16, 1, 0.3, 1],
-        staggerChildren: 0.1
       }}
       className="relative"
     >
@@ -130,11 +129,8 @@ export default function CurrentStateHero({ currentState, currentTask, processing
       {/* Content */}
       <div className="relative p-6 space-y-4">
         {/* Header with processing mode */}
-        <motion.div
+        <div
           className="flex items-center justify-between"
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
         >
           <div className="flex items-center gap-3">
             <motion.div
@@ -159,13 +155,10 @@ export default function CurrentStateHero({ currentState, currentTask, processing
           </div>
 
           {processingMode && <ProcessingModeIndicator type={processingMode} />}
-        </motion.div>
+        </div>
 
         {/* State title and description */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
+        <div
           className="space-y-2"
         >
           <h2 className="text-xl font-light text-neutral-900 leading-tight">
@@ -174,7 +167,7 @@ export default function CurrentStateHero({ currentState, currentTask, processing
           <p className="text-sm text-neutral-600 leading-relaxed">
             {currentState.description}
           </p>
-        </motion.div>
+        </div>
 
         {/* Current task section */}
         <AnimatePresence>
@@ -204,10 +197,7 @@ export default function CurrentStateHero({ currentState, currentTask, processing
               </div>
 
               {/* Task instruction */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3, delay: 0.5 }}
+              <div
                 className="bg-neutral-50/80 border border-neutral-200/40 rounded-lg p-3"
               >
                 <div className="text-[10px] text-neutral-500 tracking-wider uppercase font-medium mb-1">
@@ -216,7 +206,7 @@ export default function CurrentStateHero({ currentState, currentTask, processing
                 <p className="text-xs text-neutral-700 leading-relaxed italic">
                   {currentTask.instruction}
                 </p>
-              </motion.div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

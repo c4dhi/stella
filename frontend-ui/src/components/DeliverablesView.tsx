@@ -139,7 +139,7 @@ const DeliverableCard = ({
     >
       <motion.div
         className={`
-          p-4 rounded-[12px] border transition-all duration-300 cursor-pointer
+          p-4 rounded-[12px] border transition-[color,background-color,border-color,box-shadow] duration-300 cursor-pointer
           ${hasValue
             ? 'bg-neutral-50/80 border-neutral-300/60 shadow-sm'
             : 'bg-white/60 border-neutral-200/50'

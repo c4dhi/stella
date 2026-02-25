@@ -117,36 +117,27 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
   const visibleSections = sections.filter(section => !section.adminOnly || isSystemAdmin)
 
   return (
-    <motion.aside
+    <aside
       className={`w-72 border-r flex flex-col ${
         isDark ? 'border-border-dark bg-surface-dark' : 'border-border bg-surface'
       }`}
-      initial={{ x: -20, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
     >
       {/* Header */}
       <div className={`px-6 py-5 border-b ${isDark ? 'border-border-dark' : 'border-border'}`}>
-        <motion.h1
+        <h1
           className={`text-heading-lg font-semibold ${
             isDark ? 'text-content-inverse' : 'text-content'
           }`}
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
         >
           Settings
-        </motion.h1>
-        <motion.p
+        </h1>
+        <p
           className={`text-body-sm mt-1 ${
             isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
           }`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
         >
           Manage your account and preferences
-        </motion.p>
+        </p>
       </div>
 
       {/* Navigation */}
@@ -166,9 +157,6 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
                     ? 'hover:bg-surface-dark-secondary'
                     : 'hover:bg-surface-secondary'
               }`}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 + index * 0.05 }}
               whileHover={{ scale: isActive ? 1 : 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
@@ -257,18 +245,15 @@ export default function SettingsSidebar({ activeSection, onSectionChange }: Sett
       </nav>
 
       {/* Footer */}
-      <motion.div
+      <div
         className={`px-6 py-4 border-t ${isDark ? 'border-border-dark' : 'border-border'}`}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4 }}
       >
         <div className={`text-caption ${
           isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
         }`}>
           STELLA v{__APP_VERSION__}
         </div>
-      </motion.div>
-    </motion.aside>
+      </div>
+    </aside>
   )
 }
