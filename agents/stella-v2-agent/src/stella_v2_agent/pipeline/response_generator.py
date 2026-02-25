@@ -56,7 +56,7 @@ class ResponseGenerator:
 
     # Default config for response generation
     RESPONSE_MODEL = "gpt-4o-mini"
-    RESPONSE_MAX_TOKENS = 800
+    RESPONSE_MAX_TOKENS = 150
     RESPONSE_TEMPERATURE = 0.7
 
     def __init__(self, llm_service: LLMService):

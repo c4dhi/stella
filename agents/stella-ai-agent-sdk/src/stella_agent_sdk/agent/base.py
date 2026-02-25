@@ -534,7 +534,7 @@ class BaseAgent(ABC):
 
                 try:
                     current_transcript_id = None
-                    tts_buffer = ""  # Buffer for sentence-level TTS dispatch
+                    tts_buffer = ""  # Tracks last accumulated text for diffing
 
                     async for output in self.process(input_msg):
                         logger.info(f"[AGENT OUTPUT] type={output.type}, content={output.content[:50] if output.content else 'None'}...")
@@ -563,6 +563,21 @@ class BaseAgent(ABC):
 
                             # Check for sentence boundaries in the new text and dispatch
                             self._dispatch_sentences(new_text)
+
+                            # If the buffer is a complete sentence (ends with
+                            # punctuation) and this is NOT the final chunk,
+                            # dispatch immediately. This handles the bridge:
+                            # "Good question." is a complete sentence that
+                            # should be synthesized right away, without
+                            # waiting for the next output event.
+                            if (
+                                not output.is_final
+                                and self._sentence_buffer
+                                and self._sentence_buffer.rstrip()[-1:] in ".!?"
+                            ):
+                                remaining = self._flush_sentence_buffer()
+                                if remaining:
+                                    self.audio.enqueue_sentence(remaining)
 
                             if output.is_final:
                                 # Flush any remaining partial sentence to TTS

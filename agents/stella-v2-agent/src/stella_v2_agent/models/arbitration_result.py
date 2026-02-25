@@ -40,14 +40,23 @@ class ResponseDirective:
     deliverable_signals: List[str] = field(default_factory=list)
 
     def to_prompt_section(self) -> str:
-        """Render as a structured section for injection into the response system prompt.
+        """Render as a single coherent instruction for the response system prompt.
 
-        Only includes conversational guidance — no raw expert metadata, no technical
-        summaries. Everything here must be phrased so the LLM can weave it naturally
-        into a spoken response.
+        CRITICAL: This must produce ONE clear direction. The LLM should never
+        receive competing instructions (e.g. "focus on X" AND "ask about Y" AND
+        "also consider Z"). That produces incoherent multi-direction responses.
+
+        Priority: must_avoid > deliverable acknowledgment > primary_action.
+        The follow-up question is folded INTO the primary action, not added on top.
         """
         lines: list[str] = []
 
+        # Safety boundaries — always included
+        if self.must_avoid:
+            for item in self.must_avoid:
+                lines.append(f"Avoid: {item}")
+
+        # Acknowledge what the user just provided
         if self.deliverable_signals:
             signals_str = ", ".join(self.deliverable_signals)
             lines.append(
@@ -58,18 +67,12 @@ class ResponseDirective:
         if self.tone and self.tone != "neutral":
             lines.append(f"Tone: {self.tone}")
 
-        if self.must_avoid:
-            for item in self.must_avoid:
-                lines.append(f"Avoid: {item}")
-
-        if self.primary_action:
-            lines.append(f"Focus: {self.primary_action}")
-
-        if self.secondary_action:
-            lines.append(f"Also consider: {self.secondary_action}")
-
+        # Single direction — pick ONE: follow-up question wins over generic action,
+        # because it's more specific. Never emit both.
         if self.ask_followup and self.followup_question:
-            lines.append(f"End with a follow-up question like: {self.followup_question}")
+            lines.append(f"Your response should lead to: {self.followup_question}")
+        elif self.primary_action:
+            lines.append(f"Focus: {self.primary_action}")
 
         if not lines:
             return ""

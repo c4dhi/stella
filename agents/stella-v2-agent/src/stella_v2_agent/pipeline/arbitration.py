@@ -107,18 +107,10 @@ class Arbitration:
             # Set tone from highest-priority flagging expert
             directive.tone = _TONE_MAP.get(primary.expert_name, "neutral")
 
-            # Primary action (only from conversational experts)
+            # Primary action — ONE direction from the highest-priority expert.
+            # Secondary actions and must_include lists are intentionally omitted
+            # to prevent competing directions in the response.
             directive.primary_action = primary.recommendation
-
-            # Secondary action (if available and not contradicting)
-            if len(conversational_verdicts) > 1:
-                secondary = conversational_verdicts[1]
-                directive.secondary_action = secondary.recommendation
-
-            # Must-include from high-confidence conversational experts
-            for v in conversational_verdicts:
-                if v.confidence >= 0.7 and v.recommendation:
-                    directive.must_include.append(v.recommendation)
         elif active_verdicts:
             # Only task_extraction flagged — keep neutral tone, no action directives
             favored_expert = active_verdicts[0].expert_name
@@ -148,14 +140,15 @@ class Arbitration:
             if isinstance(signals, list) and signals:
                 directive.deliverable_signals = [s for s in signals if isinstance(s, str)]
 
-        # 4. Handle timekeeper
+        # 4. Handle timekeeper — only set follow-up if probing didn't already
         timekeeper_verdict = self._find_verdict(sorted_verdicts, "timekeeper")
         if timekeeper_verdict and timekeeper_verdict.success:
             if timekeeper_verdict.verdict in ("stuck", "force_advance"):
                 # Timekeeper can suggest deliverables and force transitions,
-                # but this is handled in agent.py post-response processing
-                directive.ask_followup = True
-                if timekeeper_verdict.recommendation:
+                # but this is handled in agent.py post-response processing.
+                # Only override the follow-up if probing didn't already set one.
+                if not directive.ask_followup and timekeeper_verdict.recommendation:
+                    directive.ask_followup = True
                     directive.followup_question = timekeeper_verdict.recommendation
 
         # 5. Build expert summary

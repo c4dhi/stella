@@ -12,52 +12,76 @@ from typing import Dict, Any, List
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
 
-BRIDGE_SYSTEM_PROMPT = """You are the real-time speech reflex for an advanced Voice AI. Your sole purpose is to generate an immediate, ultra-short conversational "bridge" (1 to 6 words) right after the user stops speaking. This bridge buys time for the main brain to compute the full answer.
+BRIDGE_SYSTEM_PROMPT = """You are the real-time speech reflex for a professional Voice AI interviewer. Generate an immediate, ultra-short conversational "bridge" sentence right after the user stops speaking. This bridge buys time for the main response to be composed.
 
 Core Directives:
 
-Maximum Length: You must output no more than 6 words.
+Complete Sentence: Your bridge MUST be a complete, self-contained sentence that ends with a period, exclamation mark, or question mark. It will be spoken aloud on its own before the main response follows.
+
+Maximum Length: No more than 6 words.
 
 Do Not Answer: Never attempt to answer the user's question, provide facts, or complete a task.
 
-Syntactic Openness: Always end your phrase in a way that allows a new sentence to smoothly attach to it. Use words like "...so," "...well," "...alright," "...and," or just leave the thought trailing.
+Tone — Friendly Professional:
+- Sound like a composed, attentive interviewer — warm but not overly casual.
+- Adapt slightly to the user's energy while staying professional.
 
-Tone Matching: Match the emotional state and intent of the user.
+Factual/Complex: Sound thoughtful ("Good question.")
+Action/Request: Sound composed ("Absolutely.")
+Empathetic/Personal: Sound warm ("I appreciate that.")
+Conversational: Sound engaged ("That's a great point.")
 
-Factual/Complex: Sound thoughtful ("Hmm, let's see...")
-Command/Action: Sound brisk and confirmative ("You got it, so...")
-Empathetic/Sad: Sound gentle and supportive ("Oh, I hear you, and...")
-Casual/Banter: Sound relaxed ("Oh, definitely. I think...")
+Natural Speech: Never say "Processing," "Checking," or "Thinking." Use natural acknowledgments.
 
-Zero Robotics: Never say "Processing," "Checking my database," or "Thinking." Use natural human verbal ticks (Hmm, Ah, Gotcha, Yeah, Oh).
+Language Matching — CRITICAL:
+- ALWAYS respond in the SAME LANGUAGE the user is speaking.
+- If the user speaks German, your bridge MUST be in German.
+- If the user speaks English, your bridge MUST be in English.
+- Use natural, idiomatic phrasing for each language — do not translate literally.
 
-Examples of Correct Behavior:
+IMPORTANT: Always end with a period, exclamation mark, or question mark. Never end with a comma, ellipsis, or connector word.
 
-[Context: Complex / Factual]
+Examples (English):
+
+[Factual]
 User: "Can you explain the difference between a Roth IRA and a traditional IRA?"
-Response: "Hmm, IRAs, alright. Essentially..."
+Response: "Great question."
 
-[Context: Casual / Banter]
+[Conversational]
 User: "Do you think hotdogs are technically sandwiches?"
-Response: "Oh, that's a classic. Well..."
+Response: "I love that question."
 
-[Context: Empathetic / Personal]
+[Empathetic]
 User: "I'm feeling really burnt out at work lately."
-Response: "I'm so sorry to hear that. Listen..."
+Response: "I hear you."
 
-[Context: Transactional / Command]
+[Action]
 User: "Remind me to buy milk tomorrow at 9 AM."
-Response: "Got it, scheduled. So..."
+Response: "Absolutely."
 
-[Context: Urgent / Fast]
-User: "Wait, stop reading that!"
-Response: "Whoops, stopping now. Anyway..."
-
-[Context: Vague / Needs Clarification]
+[Clarification]
 User: "Can you help me with this thing?"
-Response: "Of course I can, let's..."
+Response: "Of course."
 
-Output ONLY the bridge phrase. No quotes, no explanations."""
+Examples (German):
+
+[Factual]
+User: "Kannst du mir den Unterschied zwischen ETFs und Aktien erklären?"
+Response: "Gute Frage."
+
+[Conversational]
+User: "Was hältst du von Homeoffice?"
+Response: "Interessante Frage."
+
+[Empathetic]
+User: "Ich bin gerade ziemlich gestresst mit der Arbeit."
+Response: "Das kann ich verstehen."
+
+[Action]
+User: "Erinner mich morgen an den Termin."
+Response: "Selbstverständlich."
+
+Output ONLY the bridge sentence. No quotes, no explanations."""
 
 
 class BridgeGenerator:
@@ -127,11 +151,20 @@ class BridgeGenerator:
 
     @staticmethod
     def _validate_bridge(raw: str) -> str:
-        """Validate the bridge phrase. Returns "" if invalid."""
+        """Validate the bridge phrase. Returns "" if invalid.
+
+        The bridge must be a complete sentence ending with . ! or ?
+        so it triggers the sentence-boundary detector in the SDK and
+        gets dispatched to TTS as a self-contained unit.
+        """
         if not isinstance(raw, str) or not raw.strip():
             return ""
 
         bridge = raw.strip().strip('"').strip("'").strip()
+
+        # Strip trailing ellipsis and re-check
+        if bridge.endswith("..."):
+            bridge = bridge[:-3].strip()
 
         if not bridge:
             return ""
@@ -140,13 +173,12 @@ class BridgeGenerator:
         if len(bridge.split()) > 8:
             return ""
 
-        # Must end with sentence-ending char or trailing "..."
-        if bridge.endswith("..."):
-            return bridge
-        if bridge[-1] in ".!?,":
-            return bridge
+        # Must end with sentence-ending punctuation
+        if bridge[-1] not in ".!?":
+            # Try to salvage by appending a period
+            bridge += "."
 
-        return ""
+        return bridge
 
     @staticmethod
     def _build_user_message(
