@@ -79,29 +79,29 @@ wizard_setup_traps() {
 
 # Clear screen and position cursor
 wizard_clear_screen() {
-    printf '\033[2J\033[H'
+    printf '\033[2J\033[H' >&2
 }
 
 # Move cursor to position
 wizard_move_cursor() {
     local row="$1"
     local col="$2"
-    printf '\033[%d;%dH' "$row" "$col"
+    printf '\033[%d;%dH' "$row" "$col" >&2
 }
 
 # Hide cursor
 wizard_hide_cursor() {
-    printf '\033[?25l'
+    printf '\033[?25l' >&2
 }
 
 # Show cursor
 wizard_show_cursor() {
-    printf '\033[?25h'
+    printf '\033[?25h' >&2
 }
 
 # Clear line from cursor
 wizard_clear_line() {
-    printf '\033[K'
+    printf '\033[K' >&2
 }
 
 # =============================================================================
