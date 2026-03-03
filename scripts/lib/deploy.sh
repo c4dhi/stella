@@ -699,8 +699,12 @@ run_database_migrations() {
             sleep 0.1
         done
 
+        # Prevent set -e from aborting here so we can handle migration failures
+        # and print diagnostics below.
+        set +e
         wait $migration_pid
         migration_exit_code=$?
+        set -e
         migration_output=$(cat "$migration_log" 2>/dev/null)
 
         # Success - we're done
