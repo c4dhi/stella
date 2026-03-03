@@ -31,7 +31,8 @@ init_config_values() {
 get_config_value() {
     local key="$1"
     if [[ -f "$CONFIG_VALUES_FILE" ]]; then
-        grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+        # Missing keys are expected for optional vars; do not fail under pipefail.
+        grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 
@@ -346,6 +347,14 @@ configure_section() {
                 return 1
             fi
         else
+            # Enforce non-empty required values
+            if is_var_required "$var_name" "$env" && [[ -z "$value" ]]; then
+                echo "" >&2
+                warning "${var_name} is required and cannot be empty."
+                echo -e "  ${DIM}Please enter a value to continue.${NC}" >&2
+                sleep 1.2
+                continue
+            fi
             set_config_value "$var_name" "$value"
             ((var_idx++))
         fi

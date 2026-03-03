@@ -31,7 +31,8 @@ init_wizard_config() {
 get_wizard_config() {
     local key="$1"
     if [[ -f "$WIZARD_CONFIG_FILE" ]]; then
-        grep "^${key}=" "$WIZARD_CONFIG_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+        # Missing keys are expected for optional vars; do not fail under pipefail.
+        grep "^${key}=" "$WIZARD_CONFIG_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 
@@ -350,6 +351,14 @@ setup_configure_section() {
                 return 1
             fi
         else
+            # Enforce non-empty required values
+            if is_var_required "$var_name" "$env" && [[ -z "$value" ]]; then
+                echo ""
+                warning "${var_name} is required and cannot be empty."
+                echo -e "  ${DIM}Please enter a value to continue.${NC}"
+                sleep 1.2
+                continue
+            fi
             set_wizard_config "$var_name" "$value"
             ((var_idx++))
         fi
