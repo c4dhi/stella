@@ -241,6 +241,7 @@ export interface AgentType {
   defaultConfig: Record<string, unknown>  // Default config for this agent type
   validationStatus?: AgentValidationStatus
   configSchema?: Record<string, unknown>  // JSON Schema for config options
+  pipelineSchema?: PipelineSchema | null  // Pipeline topology + configurable slots
   resourceGpu?: boolean
   authorName?: string | null
   authorEmail?: string | null
@@ -768,6 +769,7 @@ export interface UpdateEnvVarTemplateDto {
 export interface AgentRequirements {
   requiresPlan: boolean
   requiredEnvVars: string[]
+  supportsConfigurator: boolean
 }
 
 /**
@@ -780,7 +782,7 @@ export function parseAgentRequirements(
   configSchema: Record<string, unknown> | null | undefined
 ): AgentRequirements {
   if (!configSchema) {
-    return { requiresPlan: false, requiredEnvVars: [] }
+    return { requiresPlan: false, requiredEnvVars: [], supportsConfigurator: false }
   }
 
   const properties = (configSchema.properties as Record<string, any>) || {}
@@ -789,8 +791,9 @@ export function parseAgentRequirements(
   )
 
   const requiredEnvVars = (configSchema['x-stella-env-vars'] as string[]) || []
+  const supportsConfigurator = configSchema['x-stella-supports-configurator'] === true
 
-  return { requiresPlan, requiredEnvVars }
+  return { requiresPlan, requiredEnvVars, supportsConfigurator }
 }
 
 // ============================================================================
@@ -1163,4 +1166,94 @@ export interface SessionStatusItem {
   errors: SessionAgentError[]
   projectId: string
   createdAt: string
+}
+
+// ============================================================================
+// Agent Configurator Types
+// ============================================================================
+
+export interface ConfigurableSlot {
+  id: string
+  label: string
+  type: 'text' | 'number' | 'select' | 'string_list' | 'key_value' | 'expert_list'
+  description?: string
+  default?: unknown
+  options?: string[]  // for select type
+  min?: number        // for number type
+  max?: number        // for number type
+  step?: number       // for number type
+  maxLength?: number  // for text type
+  isCustom?: boolean  // for expert_list type (custom experts)
+}
+
+export interface PipelineNode {
+  id: string
+  label: string
+  description?: string
+  icon?: string
+  position: { row: number; col: number }
+  slots: ConfigurableSlot[]
+}
+
+export interface PipelineEdge {
+  source: string
+  target: string
+  label?: string
+  style?: 'solid' | 'dashed'
+}
+
+export interface PipelineThreshold {
+  id: string
+  label: string
+  description?: string
+  type: 'number'
+  min?: number
+  max?: number
+  step?: number
+  default?: number
+}
+
+export interface PipelineSchema {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
+  thresholds: PipelineThreshold[]
+}
+
+export interface AgentConfigurationPayload {
+  nodes?: Record<string, Record<string, unknown>>
+  thresholds?: Record<string, unknown>
+}
+
+export interface AgentConfiguration {
+  id: string
+  userId: string
+  name: string
+  description: string | null
+  agentTypeId: string
+  agentType?: {
+    id: string
+    slug: string
+    name: string
+    icon: string | null
+    pipelineSchema?: PipelineSchema | null
+  }
+  configuration: AgentConfigurationPayload
+  agentVersion: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateAgentConfigurationDto {
+  name: string
+  description?: string
+  agentTypeId: string
+  configuration: AgentConfigurationPayload
+  agentVersion?: string
+}
+
+export interface UpdateAgentConfigurationDto {
+  name?: string
+  description?: string
+  configuration?: AgentConfigurationPayload
+  agentVersion?: string
 }

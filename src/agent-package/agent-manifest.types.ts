@@ -54,6 +54,9 @@ export interface AgentManifest {
   // Default config values
   defaultConfig?: Record<string, unknown>
 
+  // Pipeline schema (topology + configurable slots for Agent Configurator)
+  pipelineSchema?: Record<string, unknown>
+
   sdk?: {
     minVersion?: string     // Minimum stella-ai-agent-sdk version
   }

@@ -3,7 +3,7 @@ import { useThemeStore } from '../../store/themeStore'
 import { useNotificationStore } from '../../store/notificationStore'
 import { useAuthStore } from '../../store/authStore'
 
-export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'env-vars' | 'agent-library' | 'inbox' | 'admin'
+export type SettingsSection = 'profile' | 'preferences' | 'plan-builder' | 'agent-configs' | 'env-vars' | 'agent-library' | 'inbox' | 'admin'
 
 interface SettingsSidebarProps {
   activeSection: SettingsSection
@@ -76,6 +76,16 @@ const sections: SectionItem[] = [
         <polygon points="12 2 2 7 12 12 22 7 12 2" />
         <polyline points="2 17 12 22 22 17" />
         <polyline points="2 12 12 17 22 12" />
+      </svg>
+    ),
+  },
+  {
+    id: 'agent-configs',
+    label: 'Agent Configs',
+    description: 'Pipeline configurations',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
       </svg>
     ),
   },

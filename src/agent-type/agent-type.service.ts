@@ -13,6 +13,7 @@ export interface AgentTypeInfo {
   capabilities: string[]
   defaultConfig: Record<string, unknown>  // Default config for this agent type
   configSchema: Record<string, unknown> | null  // JSON Schema for agent config (includes x-stella-* extensions)
+  pipelineSchema: Record<string, unknown> | null  // Pipeline topology + configurable slots
 }
 
 @Injectable()
@@ -62,6 +63,7 @@ export class AgentTypeService {
       capabilities: (t.capabilities as string[]) || [],
       defaultConfig: (t.defaultConfig as Record<string, unknown>) || {},
       configSchema: (t.configSchema as Record<string, unknown>) || null,
+      pipelineSchema: (t.pipelineSchema as Record<string, unknown>) || null,
     }))
   }
 }

@@ -16,6 +16,8 @@ def build_response_system_prompt(
     sm_context: Dict[str, Any],
     directive: ResponseDirective,
     plan_system_prompt: Optional[str] = None,
+    custom_persona: Optional[str] = None,
+    custom_guidelines: Optional[str] = None,
 ) -> str:
     """Build the complete system prompt for the Response Generator.
 
@@ -23,20 +25,27 @@ def build_response_system_prompt(
         sm_context: State machine context for conversation awareness.
         directive: Arbitration directive with expert guidance.
         plan_system_prompt: Optional custom system prompt from the plan.
+        custom_persona: Optional custom persona from Agent Configurator.
+        custom_guidelines: Optional custom guidelines from Agent Configurator.
 
     Returns:
         Complete system prompt string.
     """
     sections: List[str] = []
 
-    # 1. Base persona
+    # 1. Base persona (priority: plan > configurator > default)
     if plan_system_prompt:
         sections.append(plan_system_prompt)
+    elif custom_persona:
+        sections.append(custom_persona)
     else:
         sections.append(_default_persona())
 
-    # 2. Conversation guidelines
-    sections.append(_conversation_guidelines())
+    # 2. Conversation guidelines (priority: configurator > default)
+    if custom_guidelines:
+        sections.append(custom_guidelines)
+    else:
+        sections.append(_conversation_guidelines())
 
     # 3. State machine context
     sm_section = _state_machine_section(sm_context)

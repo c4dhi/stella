@@ -12,8 +12,11 @@ import type {
   AgentUploadResponse,
   PlanTemplate,
   EnvVarTemplate,
+  AgentConfiguration,
+  AgentConfigurationPayload,
 } from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
+import ConfigurationSelectionStep from '../shared/ConfigurationSelectionStep'
 
 interface DeployAgentModalProps {
   isOpen: boolean
@@ -21,7 +24,7 @@ interface DeployAgentModalProps {
   onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>) => Promise<void>
 }
 
-type Step = 'gallery' | 'upload' | 'configure' | 'plan' | 'envvars'
+type Step = 'gallery' | 'upload' | 'configure' | 'configuration' | 'plan' | 'envvars'
 type GalleryTab = 'builtin' | 'myagents'
 type EnvVarsView = 'select' | 'edit'  // select=choose template, edit=manual entry
 
@@ -55,23 +58,30 @@ export default function DeployAgentModal({
   const [envVars, setEnvVars] = useState<Record<string, string>>({})  // Current env vars being edited
   const [newEnvVarKey, setNewEnvVarKey] = useState('')  // For adding new variables
 
+  // Agent configuration state (pipeline configurator)
+  const [selectedConfiguration, setSelectedConfiguration] = useState<AgentConfiguration | null>(null)
+  const [customConfiguration, setCustomConfiguration] = useState<AgentConfigurationPayload | null>(null)
+
   // Parse agent requirements from configSchema
   const agentRequirements = useMemo(() => {
-    if (!selectedType) return { requiresPlan: false, requiredEnvVars: [] as string[] }
+    if (!selectedType) return { requiresPlan: false, requiredEnvVars: [] as string[], supportsConfigurator: false }
     return parseAgentRequirements(selectedType.configSchema)
   }, [selectedType])
 
   // Determine dynamic steps based on agent requirements
-  // Flow: Gallery → Configure → (Plan if required) → Env Vars
+  // Flow: Gallery → Configure → (Configuration if supported) → (Plan if required) → Env Vars
   const dynamicSteps = useMemo((): Step[] => {
     const steps: Step[] = ['gallery', 'configure']
+    if (agentRequirements.supportsConfigurator && selectedType?.pipelineSchema) {
+      steps.push('configuration')
+    }
     if (agentRequirements.requiresPlan) {
       steps.push('plan')
     }
     // Always show env vars step (templates or manual entry)
     steps.push('envvars')
     return steps
-  }, [agentRequirements])
+  }, [agentRequirements, selectedType?.pipelineSchema])
 
   // Reset state when modal opens
   useEffect(() => {
@@ -87,6 +97,8 @@ export default function DeployAgentModal({
       setEnvVarsView('select')
       setEnvVars({})
       setNewEnvVarKey('')
+      setSelectedConfiguration(null)
+      setCustomConfiguration(null)
 
       // Fetch agent types
       setIsLoadingTypes(true)
@@ -237,6 +249,8 @@ export default function DeployAgentModal({
         return !!selectedType
       case 'configure':
         return !!name.trim()
+      case 'configuration':
+        return true  // Configuration is optional
       case 'plan':
         return !!selectedPlan
       case 'envvars':
@@ -281,6 +295,11 @@ export default function DeployAgentModal({
       }
     }
 
+    // Merge pipeline configuration if one is selected or customized
+    if (selectedConfiguration || customConfiguration) {
+      config.pipeline_config = selectedConfiguration?.configuration ?? customConfiguration
+    }
+
     setIsSubmitting(true)
     setError(null)
 
@@ -323,6 +342,7 @@ export default function DeployAgentModal({
       case 'gallery': return 'Choose an Agent'
       case 'upload': return 'Upload Agent'
       case 'configure': return 'Customize Agent'
+      case 'configuration': return 'Pipeline Configuration'
       case 'plan': return 'Select a Plan'
       case 'envvars': return envVarsView === 'select' ? 'Environment Variables' : 'Configure Variables'
     }
@@ -333,6 +353,7 @@ export default function DeployAgentModal({
       case 'gallery': return 'Select an agent type to deploy to this session'
       case 'upload': return 'Upload a custom agent package (.zip)'
       case 'configure': return `Set a name and icon for your ${selectedType?.name || 'agent'}`
+      case 'configuration': return `Customize the pipeline configuration for ${selectedType?.name || 'the agent'}`
       case 'plan': return `Choose a conversation plan for ${selectedType?.name || 'the agent'}`
       case 'envvars': return envVarsView === 'select'
         ? 'Select a template or enter variables manually'
@@ -656,6 +677,26 @@ export default function DeployAgentModal({
                       </motion.div>
                     )}
                   </div>
+                </motion.div>
+              ) : step === 'configuration' ? (
+                <motion.div
+                  key="configuration"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  {selectedType?.pipelineSchema && (
+                    <ConfigurationSelectionStep
+                      agentTypeId={selectedType.id}
+                      pipelineSchema={selectedType.pipelineSchema}
+                      selectedConfiguration={selectedConfiguration}
+                      customConfiguration={customConfiguration}
+                      onSelectConfiguration={setSelectedConfiguration}
+                      onCustomConfiguration={setCustomConfiguration}
+                    />
+                  )}
                 </motion.div>
               ) : step === 'plan' ? (
                 <motion.div

@@ -4,18 +4,20 @@ The Input Gate classifies user input and selects which experts to activate.
 Returns structured JSON — no SAFE/UNSAFE routing in V2.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 def build_input_gate_system_prompt(
     available_experts: List[Dict[str, str]],
     sm_context: Dict[str, Any],
+    custom_system_prompt: Optional[str] = None,
 ) -> str:
     """Build the Input Gate system prompt.
 
     Args:
         available_experts: List of dicts with "name" and "description" for each expert.
         sm_context: State machine context (current state, tasks, deliverables).
+        custom_system_prompt: Optional custom system prompt from Agent Configurator.
 
     Returns:
         Complete system prompt string for the Input Gate LLM call.
@@ -42,6 +44,15 @@ def build_input_gate_system_prompt(
             state_info += "\nPending deliverables to collect:"
             for d in pending:
                 state_info += f"\n  - {d['key']} ({d['type']}): {d['description']}"
+
+    if custom_system_prompt:
+        return f"""{custom_system_prompt}
+
+EXPERTS:
+{expert_list}
+{state_info}
+
+Respond with JSON only: {{"experts": ["name1", "name2"]}}"""
 
     return f"""You are a routing classifier. Select which expert modules to activate for this message.
 

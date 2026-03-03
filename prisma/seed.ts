@@ -35,6 +35,7 @@ interface AgentManifest {
   }
   configSchema?: Record<string, unknown>
   defaultConfig?: Record<string, unknown>
+  pipelineSchema?: Record<string, unknown>
   sdk?: { minVersion?: string }
 }
 
@@ -241,6 +242,7 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
     resourceGpu: manifest.resources?.gpu || false,
     configSchema: manifest.configSchema ? (manifest.configSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     defaultConfig: manifest.defaultConfig ? (manifest.defaultConfig as Prisma.InputJsonValue) : Prisma.JsonNull,
+    pipelineSchema: manifest.pipelineSchema ? (manifest.pipelineSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     sdkMinVersion: manifest.sdk?.minVersion || null,
   }
 }
@@ -277,6 +279,7 @@ async function main() {
         resourceGpu: dbFields.resourceGpu,
         configSchema: dbFields.configSchema,
         defaultConfig: dbFields.defaultConfig,
+        pipelineSchema: dbFields.pipelineSchema,
         sdkMinVersion: dbFields.sdkMinVersion,
         // Preserve isBuiltIn and validationStatus on update
       },

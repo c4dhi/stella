@@ -114,7 +114,8 @@ class StellaV2Agent(BaseAgent):
 
         try:
             # Fetch context
-            history = await self._fetch_conversation_history(limit=20)
+            history_limit = getattr(self, "_custom_history_limit", 20)
+            history = await self._fetch_conversation_history(limit=history_limit)
             sm_context = (
                 self.state_machine.get_context_for_prompt()
                 if self.state_machine.is_initialized
@@ -363,7 +364,7 @@ class StellaV2Agent(BaseAgent):
 
             # Extract deliverables — trust the background expert but filter obvious junk
             raw_deliverables = raw.get("deliverables", {})
-            min_confidence = 0.7
+            min_confidence = getattr(self, "_custom_min_confidence", 0.7)
             extracted_deliverables = {}
             rejected_deliverables = {}
 
@@ -461,7 +462,8 @@ class StellaV2Agent(BaseAgent):
             self.state_machine.increment_turn()
 
         # Layer 3: Deterministic auto-skip safety net
-        skipped = self.state_machine.handle_stagnation(threshold=3)
+        stagnation_threshold = getattr(self, "_custom_stagnation_threshold", 3)
+        skipped = self.state_machine.handle_stagnation(threshold=stagnation_threshold)
         if skipped:
             yield AgentOutput.debug(
                 session_id,
@@ -563,6 +565,11 @@ class StellaV2Agent(BaseAgent):
         if "temperature" in config:
             self.llm_service.default_config.temperature = config["temperature"]
 
+        # Apply pipeline configuration (from Agent Configurator)
+        pipeline_config = config.get("pipeline_config", {})
+        if pipeline_config:
+            self._apply_pipeline_config(pipeline_config)
+
         print(f"[StellaV2Agent] Session started: {session_id}")
 
     async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
@@ -579,6 +586,55 @@ class StellaV2Agent(BaseAgent):
                 agent_name=self.agent_name,
                 agent_icon="🧠",
             )
+
+    def _apply_pipeline_config(self, pipeline_config: Dict[str, Any]) -> None:
+        """Apply pipeline configuration overrides from Agent Configurator.
+
+        Reads 'nodes' and 'thresholds' from the config dict and calls
+        apply_config() on each pipeline stage.
+        """
+        nodes = pipeline_config.get("nodes", {})
+        thresholds = pipeline_config.get("thresholds", {})
+
+        # Apply per-node config overrides
+        node_stage_map = {
+            "input_gate": self.input_gate,
+            "expert_pool": self.expert_pool,
+            "arbitration": self.arbitration,
+            "response_generator": self.response_generator,
+            "bridge_generator": self.bridge_generator,
+        }
+
+        for node_id, node_config in nodes.items():
+            stage = node_stage_map.get(node_id)
+            if stage and isinstance(node_config, dict) and hasattr(stage, "apply_config"):
+                stage.apply_config(node_config)
+                print(f"[StellaV2Agent] Applied config to {node_id}")
+
+        # Apply expert registry config (experts and custom_experts are in expert_pool node)
+        expert_pool_config = nodes.get("expert_pool", {})
+        if isinstance(expert_pool_config, dict):
+            experts_config = {
+                k: v for k, v in expert_pool_config.items()
+                if k in ("experts", "custom_experts")
+            }
+            if experts_config:
+                self.expert_registry.apply_config(experts_config)
+                # Rebuild input gate with updated registry summaries
+                # (no need to rebuild objects — registry is shared by reference)
+
+        # Apply threshold overrides
+        if "min_confidence" in thresholds:
+            # min_confidence is used inline in on_message; store on self
+            self._custom_min_confidence = float(thresholds["min_confidence"])
+        if "timekeeper_threshold" in thresholds:
+            self.timekeeper_threshold = int(thresholds["timekeeper_threshold"])
+        if "stagnation_threshold" in thresholds:
+            self._custom_stagnation_threshold = int(thresholds["stagnation_threshold"])
+        if "history_limit" in thresholds:
+            self._custom_history_limit = int(thresholds["history_limit"])
+
+        print(f"[StellaV2Agent] Pipeline config applied: {len(nodes)} nodes, {len(thresholds)} thresholds")
 
     async def on_session_end(self, session_id: str) -> Dict[str, Any]:
         """Cleanup and return session summary."""

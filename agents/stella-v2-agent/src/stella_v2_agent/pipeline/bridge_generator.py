@@ -8,7 +8,7 @@ On failure: returns "" silently. The bridge is optional and never blocks the pip
 """
 
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
 
@@ -92,12 +92,25 @@ class BridgeGenerator:
     is used immediately.
     """
 
-    BRIDGE_MODEL = "gpt-4o-mini"
-    BRIDGE_MAX_TOKENS = 30
-    BRIDGE_TEMPERATURE = 0.4
-
     def __init__(self, llm_service: LLMService):
         self._llm_service = llm_service
+
+        # LLM config (overridable via apply_config)
+        self.bridge_model = "gpt-4o-mini"
+        self.bridge_max_tokens = 30
+        self.bridge_temperature = 0.4
+        self.custom_system_prompt: Optional[str] = None
+
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator."""
+        if "model" in config:
+            self.bridge_model = config["model"]
+        if "max_tokens" in config:
+            self.bridge_max_tokens = int(config["max_tokens"])
+        if "temperature" in config:
+            self.bridge_temperature = float(config["temperature"])
+        if "system_prompt" in config:
+            self.custom_system_prompt = config["system_prompt"]
 
     async def generate(
         self,
@@ -118,15 +131,16 @@ class BridgeGenerator:
         try:
             user_message = self._build_user_message(user_input, conversation_history)
 
+            system_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
             messages = [
-                LLMMessage(role="system", content=BRIDGE_SYSTEM_PROMPT),
+                LLMMessage(role="system", content=system_prompt),
                 LLMMessage(role="user", content=user_message),
             ]
 
             config = LLMConfig(
-                model=self.BRIDGE_MODEL,
-                temperature=self.BRIDGE_TEMPERATURE,
-                max_tokens=self.BRIDGE_MAX_TOKENS,
+                model=self.bridge_model,
+                temperature=self.bridge_temperature,
+                max_tokens=self.bridge_max_tokens,
                 provider=LLMProvider.OPENAI_LANGCHAIN,
                 streaming=False,
                 json_mode=False,

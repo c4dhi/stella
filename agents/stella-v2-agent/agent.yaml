@@ -31,6 +31,7 @@ resources:
 
 configSchema:
   type: object
+  x-stella-supports-configurator: true
   properties:
     plan:
       type: object
@@ -71,6 +72,274 @@ configSchema:
       default: "3000"
 
 defaultConfig: {}
+
+pipelineSchema:
+  nodes:
+    - id: input_gate
+      label: "Input Gate"
+      description: "Fast JSON classification — selects which experts to activate (~100ms)"
+      icon: "🚦"
+      position: { row: 0, col: 0 }
+      slots:
+        - id: system_prompt
+          label: "System Prompt"
+          type: text
+          description: "System prompt for the input gate routing classifier"
+          default: |
+            You are a routing classifier. Select which expert modules to activate for this message.
+
+            RULES:
+            1. Include "noise_detection" if the message seems garbled or inaudible.
+            2. Include "medical" if health topics are mentioned.
+            3. Include "legal" if legal topics are mentioned.
+            4. Include "probing" if clarification might be needed.
+            5. Include "timekeeper" if the conversation seems stuck (many turns without progress).
+            6. Select multiple experts if needed — they run in parallel.
+        - id: model
+          label: "Model"
+          type: select
+          options: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"]
+          default: "gpt-4o-mini"
+        - id: temperature
+          label: "Temperature"
+          type: number
+          min: 0
+          max: 1
+          step: 0.1
+          default: 0.0
+        - id: max_tokens
+          label: "Max Tokens"
+          type: number
+          min: 20
+          max: 500
+          step: 10
+          default: 60
+
+    - id: expert_pool
+      label: "Expert Pool"
+      description: "Parallel expert execution with structured verdicts (~200ms)"
+      icon: "🧪"
+      position: { row: 0, col: 1 }
+      slots:
+        - id: experts
+          label: "Built-in Experts"
+          type: expert_list
+          description: "Configure built-in experts (enable/disable, priority, model, etc.)"
+        - id: custom_experts
+          label: "Custom Experts"
+          type: expert_list
+          description: "Define new custom experts with name, description, priority, model, and prompt"
+          isCustom: true
+        - id: always_run
+          label: "Always Run"
+          type: string_list
+          description: "Experts that always run regardless of Input Gate selection"
+          default: ["task_extraction"]
+        - id: background_experts
+          label: "Background Experts"
+          type: string_list
+          description: "Experts whose results are collected after response (non-blocking)"
+          default: ["task_extraction"]
+
+    - id: arbitration
+      label: "Arbitration"
+      description: "Deterministic priority-based conflict resolution — no LLM (~1ms)"
+      icon: "⚖️"
+      position: { row: 0, col: 2 }
+      slots:
+        - id: tone_map
+          label: "Tone Map"
+          type: key_value
+          description: "Expert name → tone when that expert flags something"
+          default:
+            medical: "cautious"
+            legal: "cautious"
+            noise_detection: "neutral"
+            task_extraction: "friendly"
+            probing: "curious"
+            timekeeper: "encouraging"
+        - id: gate_failure_message
+          label: "Gate Failure Message"
+          type: text
+          description: "Message sent when noise_detection classifies input as unclear"
+          default: "I'm sorry, I didn't quite catch that. Could you say that again?"
+          maxLength: 500
+
+    - id: response_generator
+      label: "Response Generator"
+      description: "Streaming final answer with arbitration context injected (~500ms)"
+      icon: "💬"
+      position: { row: 0, col: 3 }
+      slots:
+        - id: persona
+          label: "Persona"
+          type: text
+          description: "Custom persona description (overrides default STELLA persona)"
+          default: |
+            You are STELLA, a warm and engaging AI companion.
+            You have natural spoken conversations while working toward collecting specific information and completing tasks.
+
+            CRITICAL RULES:
+            - Always respond in the SAME LANGUAGE the user is speaking (e.g. German if they speak German, English if they speak English)
+            - Keep responses to 30-50 words (this is a voice conversation, not a text chat)
+            - NEVER mention internal systems, experts, extraction, deliverables, or any technical metadata
+            - NEVER say things like "Extracted X" or "deliverables not provided" — that is internal data, not conversation
+            - If you collected information from what the user said, acknowledge it naturally before moving on
+            - Ask for missing information naturally, one thing at a time
+        - id: conversation_guidelines
+          label: "Conversation Guidelines"
+          type: text
+          description: "Custom conversation style guidelines (overrides defaults)"
+          default: |
+            CONVERSATIONAL STYLE (spoken aloud via TTS — follow strictly):
+
+            All rules apply in WHATEVER LANGUAGE the user speaks. Use that language's natural spoken register.
+
+            Tone — Friendly Professional:
+            - Think of a skilled interviewer or consultant: warm, attentive, composed.
+            - Be genuinely interested without being overly enthusiastic or performative.
+            - Stay professional but never stiff. You can be personable without being casual.
+
+            Name Usage — CRITICAL:
+            - Use the user's name at MOST once every 4-5 responses.
+            - Never put the name at the start of a sentence as a greeting pattern.
+            - When you do use it, place it mid-sentence or at the end, only when it adds warmth.
+
+            Register:
+            - Use natural contractions — speak like a real person, not a document.
+            - Avoid slang, excessive fillers, and overly casual interjections.
+            - Use clean, professional connectors.
+
+            Variety — the most important rule:
+            - NEVER use the same opening pattern twice in a row.
+            - Do NOT always follow the pattern "acknowledge + question."
+
+            Response Shape — STRICT LENGTH:
+            - 1-2 sentences, max 3. Aim for 20-35 words.
+            - ONE direction per response. At most ONE question per response.
+            - Match the user's energy and length.
+            - If you can say it in fewer words, do.
+
+            Formatting:
+            - No markdown, bullets, numbered lists, or emojis.
+            - Write exactly as a professional interviewer would speak.
+        - id: model
+          label: "Model"
+          type: select
+          options: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"]
+          default: "gpt-4o-mini"
+        - id: temperature
+          label: "Temperature"
+          type: number
+          min: 0
+          max: 1.5
+          step: 0.1
+          default: 0.7
+        - id: max_tokens
+          label: "Max Tokens"
+          type: number
+          min: 50
+          max: 1000
+          step: 10
+          default: 150
+
+    - id: bridge_generator
+      label: "Bridge Generator"
+      description: "Ultra-short conversational bridge for early TTS synthesis (~100ms)"
+      icon: "🌉"
+      position: { row: 1, col: 0 }
+      slots:
+        - id: system_prompt
+          label: "System Prompt"
+          type: text
+          description: "System prompt for bridge phrase generation"
+          default: |
+            You are the real-time speech reflex for a professional Voice AI interviewer. Generate an immediate, ultra-short conversational "bridge" sentence right after the user stops speaking.
+
+            Core Directives:
+            - Complete Sentence: Must end with . ! or ? — it will be spoken aloud on its own.
+            - Maximum Length: No more than 6 words.
+            - Do Not Answer: Never attempt to answer the user's question or provide facts.
+
+            Tone — Friendly Professional:
+            - Factual/Complex: Sound thoughtful ("Good question.")
+            - Action/Request: Sound composed ("Absolutely.")
+            - Empathetic/Personal: Sound warm ("I appreciate that.")
+            - Conversational: Sound engaged ("That's a great point.")
+
+            Language Matching — CRITICAL:
+            - ALWAYS respond in the SAME LANGUAGE the user is speaking.
+            - Use natural, idiomatic phrasing — do not translate literally.
+
+            Output ONLY the bridge sentence. No quotes, no explanations.
+        - id: model
+          label: "Model"
+          type: select
+          options: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"]
+          default: "gpt-4o-mini"
+        - id: temperature
+          label: "Temperature"
+          type: number
+          min: 0
+          max: 1
+          step: 0.1
+          default: 0.4
+        - id: max_tokens
+          label: "Max Tokens"
+          type: number
+          min: 10
+          max: 100
+          step: 5
+          default: 30
+
+  edges:
+    - source: input_gate
+      target: expert_pool
+      label: "expert names[]"
+    - source: expert_pool
+      target: arbitration
+      label: "ExpertVerdict[]"
+    - source: arbitration
+      target: response_generator
+      label: "ResponseDirective"
+    - source: bridge_generator
+      target: response_generator
+      label: "bridge phrase"
+      style: dashed
+
+  thresholds:
+    - id: min_confidence
+      label: "Min Confidence"
+      description: "Minimum confidence threshold for accepting expert verdicts"
+      type: number
+      min: 0
+      max: 1
+      step: 0.05
+      default: 0.7
+    - id: timekeeper_threshold
+      label: "Timekeeper Threshold"
+      description: "Number of turns without progress before timekeeper is injected"
+      type: number
+      min: 1
+      max: 10
+      step: 1
+      default: 2
+    - id: stagnation_threshold
+      label: "Stagnation Threshold"
+      description: "Number of turns without progress before auto-skipping tasks"
+      type: number
+      min: 1
+      max: 15
+      step: 1
+      default: 3
+    - id: history_limit
+      label: "History Limit"
+      description: "Maximum number of conversation history messages to include"
+      type: number
+      min: 5
+      max: 50
+      step: 5
+      default: 20
 
 sdk:
   minVersion: "0.4.0"

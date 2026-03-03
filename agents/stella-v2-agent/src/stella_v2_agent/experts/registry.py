@@ -136,6 +136,61 @@ class ExpertRegistry:
                 if hasattr(config, key):
                     setattr(config, key, value)
 
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator.
+
+        Supports:
+        - experts: dict of {expert_name: {enabled, priority, model, ...}} for built-in experts
+        - custom_experts: dict of {name: {description, priority, model, ...}} for new user-defined experts
+        """
+        # Apply overrides to built-in experts
+        experts_config = config.get("experts", {})
+        if isinstance(experts_config, dict):
+            for name, overrides in experts_config.items():
+                if name not in self._experts:
+                    continue
+                expert = self._experts[name]
+                if not isinstance(overrides, dict):
+                    continue
+                for key, value in overrides.items():
+                    if hasattr(expert, key):
+                        setattr(expert, key, value)
+
+        # Register custom experts
+        custom_experts = config.get("custom_experts", {})
+        if isinstance(custom_experts, dict):
+            for name, expert_def in custom_experts.items():
+                if not isinstance(expert_def, dict):
+                    continue
+                # Prevent collision with built-in names
+                if name in self._experts:
+                    print(f"[ExpertRegistry] Custom expert '{name}' collides with built-in, skipping")
+                    continue
+                # Validate priority range
+                priority = expert_def.get("priority", 50)
+                if not (1 <= priority <= 100):
+                    print(f"[ExpertRegistry] Custom expert '{name}' priority {priority} out of range, clamping")
+                    priority = max(1, min(100, priority))
+                try:
+                    custom_config = ExpertConfig(
+                        name=name,
+                        description=expert_def.get("description", ""),
+                        system_prompt=expert_def.get("system_prompt", ""),
+                        model=expert_def.get("model", "gpt-4o-mini"),
+                        max_tokens=int(expert_def.get("max_tokens", 200)),
+                        temperature=float(expert_def.get("temperature", 0.3)),
+                        priority=priority,
+                        enabled=True,
+                        output_schema=expert_def.get("output_schema"),
+                    )
+                    self._experts[name] = custom_config
+                    print(f"[ExpertRegistry] Registered custom expert: {name} (priority={priority})")
+                except Exception as e:
+                    print(f"[ExpertRegistry] Failed to register custom expert '{name}': {e}")
+
+        updated_count = sum(1 for e in self._experts.values() if e.enabled)
+        print(f"[ExpertRegistry] After config: {len(self._experts)} experts ({updated_count} enabled)")
+
     def get(self, name: str) -> Optional[ExpertConfig]:
         """Get an expert config by name. Returns None if not found."""
         return self._experts.get(name)

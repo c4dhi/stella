@@ -54,13 +54,28 @@ class ResponseGenerator:
     - Arbitration directive (expert guidance for this specific response)
     """
 
-    # Default config for response generation
-    RESPONSE_MODEL = "gpt-4o-mini"
-    RESPONSE_MAX_TOKENS = 150
-    RESPONSE_TEMPERATURE = 0.7
-
     def __init__(self, llm_service: LLMService):
         self._llm_service = llm_service
+
+        # LLM config (overridable via apply_config)
+        self.response_model = "gpt-4o-mini"
+        self.response_max_tokens = 150
+        self.response_temperature = 0.7
+        self.custom_persona: Optional[str] = None
+        self.custom_guidelines: Optional[str] = None
+
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator."""
+        if "model" in config:
+            self.response_model = config["model"]
+        if "max_tokens" in config:
+            self.response_max_tokens = int(config["max_tokens"])
+        if "temperature" in config:
+            self.response_temperature = float(config["temperature"])
+        if "persona" in config:
+            self.custom_persona = config["persona"]
+        if "conversation_guidelines" in config:
+            self.custom_guidelines = config["conversation_guidelines"]
 
     async def generate(
         self,
@@ -89,7 +104,11 @@ class ResponseGenerator:
         Yields:
             AgentOutput.text_chunk() for each token, with is_final=True on the last one.
         """
-        system_prompt = build_response_system_prompt(sm_context, directive, plan_system_prompt)
+        system_prompt = build_response_system_prompt(
+            sm_context, directive, plan_system_prompt,
+            custom_persona=self.custom_persona,
+            custom_guidelines=self.custom_guidelines,
+        )
         user_message = build_response_user_message(user_input, conversation_history)
 
         messages = [
@@ -106,9 +125,9 @@ class ResponseGenerator:
             messages.append(LLMMessage(role="assistant", content=bridge))
 
         config = LLMConfig(
-            model=self.RESPONSE_MODEL,
-            temperature=self.RESPONSE_TEMPERATURE,
-            max_tokens=self.RESPONSE_MAX_TOKENS,
+            model=self.response_model,
+            temperature=self.response_temperature,
+            max_tokens=self.response_max_tokens,
             provider=LLMProvider.OPENAI_LANGCHAIN,
             streaming=True,
         )

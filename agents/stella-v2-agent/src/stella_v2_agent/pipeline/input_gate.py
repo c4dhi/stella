@@ -28,14 +28,26 @@ class InputGate:
     which experts should analyze the current user message.
     """
 
-    # LLM config optimized for fast classification
-    GATE_MODEL = "gpt-4o-mini"
-    GATE_MAX_TOKENS = 60
-    GATE_TEMPERATURE = 0.0
-
     def __init__(self, llm_service: LLMService, expert_registry: ExpertRegistry):
         self._llm_service = llm_service
         self._registry = expert_registry
+
+        # LLM config (overridable via apply_config)
+        self.gate_model = "gpt-4o-mini"
+        self.gate_max_tokens = 60
+        self.gate_temperature = 0.0
+        self.custom_system_prompt: Optional[str] = None
+
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator."""
+        if "model" in config:
+            self.gate_model = config["model"]
+        if "max_tokens" in config:
+            self.gate_max_tokens = int(config["max_tokens"])
+        if "temperature" in config:
+            self.gate_temperature = float(config["temperature"])
+        if "system_prompt" in config:
+            self.custom_system_prompt = config["system_prompt"]
 
     async def classify(
         self,
@@ -59,6 +71,7 @@ class InputGate:
             system_prompt = build_input_gate_system_prompt(
                 available_experts=self._registry.get_summaries(),
                 sm_context=sm_context,
+                custom_system_prompt=self.custom_system_prompt,
             )
             user_message = build_input_gate_user_message(user_input, conversation_history)
 
@@ -68,9 +81,9 @@ class InputGate:
             ]
 
             config = LLMConfig(
-                model=self.GATE_MODEL,
-                temperature=self.GATE_TEMPERATURE,
-                max_tokens=self.GATE_MAX_TOKENS,
+                model=self.gate_model,
+                temperature=self.gate_temperature,
+                max_tokens=self.gate_max_tokens,
                 provider=LLMProvider.OPENAI_LANGCHAIN,
                 streaming=False,
                 json_mode=True,

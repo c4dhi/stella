@@ -28,6 +28,7 @@ import { ProjectInvitationsModule } from './project-invitations/project-invitati
 import { AgentRegistryModule } from './agent-registry/agent-registry.module';
 import { StateMachineModule } from './state-machine/state-machine.module';
 import { AdminModule } from './admin/admin.module';
+import { AgentConfigurationsModule } from './agent-configurations/agent-configurations.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { AdminModule } from './admin/admin.module';
     AgentRegistryModule,
     StateMachineModule,
     AdminModule,
+    AgentConfigurationsModule,
   ],
   controllers: [AppController],
   providers: [

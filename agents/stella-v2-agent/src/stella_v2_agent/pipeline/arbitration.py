@@ -18,8 +18,8 @@ from stella_v2_agent.models.expert_verdict import ExpertVerdict
 from stella_v2_agent.models.arbitration_result import ArbitrationResult, ResponseDirective
 
 
-# Tone mapping: expert name → tone when that expert flags something
-_TONE_MAP: Dict[str, str] = {
+# Default tone mapping: expert name → tone when that expert flags something
+_DEFAULT_TONE_MAP: Dict[str, str] = {
     "medical": "cautious",
     "legal": "cautious",
     "noise_detection": "neutral",
@@ -28,8 +28,8 @@ _TONE_MAP: Dict[str, str] = {
     "timekeeper": "encouraging",
 }
 
-# Verdicts that indicate the expert flagged something noteworthy
-_FLAGGING_VERDICTS: Dict[str, set] = {
+# Default verdicts that indicate the expert flagged something noteworthy
+_DEFAULT_FLAGGING_VERDICTS: Dict[str, set] = {
     "noise_detection": {"unclear", "partial"},
     "medical": {"low", "high", "critical"},
     "legal": {"low", "high", "critical"},
@@ -38,6 +38,8 @@ _FLAGGING_VERDICTS: Dict[str, set] = {
     "timekeeper": {"slowing", "stuck", "force_advance"},
 }
 
+_DEFAULT_GATE_FAILURE_MESSAGE = "I'm sorry, I didn't quite catch that. Could you say that again?"
+
 
 class Arbitration:
     """Deterministic arbitration engine: resolves expert conflicts without an LLM.
@@ -45,6 +47,20 @@ class Arbitration:
     Priority ordering (higher priority number = higher importance):
     noise_detection (100) > medical (95) > legal (90) > task_extraction (70) > probing (60) > timekeeper (50)
     """
+
+    def __init__(self):
+        self._tone_map: Dict[str, str] = dict(_DEFAULT_TONE_MAP)
+        self._flagging_verdicts: Dict[str, set] = {
+            k: set(v) for k, v in _DEFAULT_FLAGGING_VERDICTS.items()
+        }
+        self._gate_failure_message = _DEFAULT_GATE_FAILURE_MESSAGE
+
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator."""
+        if "tone_map" in config and isinstance(config["tone_map"], dict):
+            self._tone_map.update(config["tone_map"])
+        if "gate_failure_message" in config:
+            self._gate_failure_message = str(config["gate_failure_message"])
 
     def resolve(self, verdicts: List[ExpertVerdict]) -> ArbitrationResult:
         """Resolve expert verdicts into a ResponseDirective.
@@ -78,9 +94,7 @@ class Arbitration:
         noise_verdict = self._find_verdict(sorted_verdicts, "noise_detection")
         if noise_verdict and noise_verdict.success and noise_verdict.verdict == "unclear":
             directive.short_circuit = True
-            directive.redirect_message = (
-                "I'm sorry, I didn't quite catch that. Could you say that again?"
-            )
+            directive.redirect_message = self._gate_failure_message
             directive.tone = "neutral"
             directive.expert_summary = f"noise_detection: unclear (confidence={noise_verdict.confidence:.2f})"
             favored_expert = "noise_detection"
@@ -105,7 +119,7 @@ class Arbitration:
             favored_expert = primary.expert_name
 
             # Set tone from highest-priority flagging expert
-            directive.tone = _TONE_MAP.get(primary.expert_name, "neutral")
+            directive.tone = self._tone_map.get(primary.expert_name, "neutral")
 
             # Primary action — ONE direction from the highest-priority expert.
             # Secondary actions and must_include lists are intentionally omitted
@@ -173,7 +187,7 @@ class Arbitration:
 
     def _is_flagging(self, verdict: ExpertVerdict) -> bool:
         """Check if the expert's verdict indicates it flagged something."""
-        flagging_set = _FLAGGING_VERDICTS.get(verdict.expert_name)
+        flagging_set = self._flagging_verdicts.get(verdict.expert_name)
         if flagging_set:
             return verdict.verdict in flagging_set
         # For unknown experts, any non-empty verdict is considered flagging

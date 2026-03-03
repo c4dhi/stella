@@ -32,17 +32,21 @@ class ExpertPool:
     - Background: only needed post-response (runs concurrently, collected later)
     """
 
-    # Experts that always run regardless of Input Gate selection
-    _ALWAYS_RUN = {"task_extraction"}
-
-    # Experts whose results are only needed after response generation.
-    # They run in parallel with foreground experts but don't block the response.
-    _BACKGROUND_EXPERTS = {"task_extraction"}
-
     def __init__(self, llm_service: LLMService, expert_registry: ExpertRegistry):
         self._runner = ExpertRunner(llm_service)
         self._registry = expert_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "5000"))
+
+        # Configurable sets (overridable via apply_config)
+        self._always_run: set = {"task_extraction"}
+        self._background_experts: set = {"task_extraction"}
+
+    def apply_config(self, config: dict) -> None:
+        """Apply configuration overrides from Agent Configurator."""
+        if "always_run" in config:
+            self._always_run = set(config["always_run"])
+        if "background_experts" in config:
+            self._background_experts = set(config["background_experts"])
 
     async def run_foreground(
         self,
@@ -64,7 +68,7 @@ class ExpertPool:
         """
         # Ensure always-run experts are included
         names_set = set(expert_names)
-        for name in self._ALWAYS_RUN:
+        for name in self._always_run:
             if name not in names_set and self._registry.get(name):
                 expert_names = list(expert_names) + [name]
 
@@ -74,8 +78,8 @@ class ExpertPool:
         timeout_seconds = self._timeout_ms / 1000.0
 
         # Split into foreground and background
-        fg_names = [n for n in expert_names if n not in self._BACKGROUND_EXPERTS]
-        bg_names = [n for n in expert_names if n in self._BACKGROUND_EXPERTS]
+        fg_names = [n for n in expert_names if n not in self._background_experts]
+        bg_names = [n for n in expert_names if n in self._background_experts]
 
         # Launch background experts immediately (don't await yet)
         bg_task: Optional[asyncio.Task] = None
