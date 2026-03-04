@@ -25,6 +25,9 @@ from stella_v2_agent.prompts.response_prompt import (
     build_response_system_prompt,
     build_response_user_message,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class _StreamingResponseCallback(LLMStreamingCallback):
@@ -63,6 +66,7 @@ class ResponseGenerator:
         self.response_temperature = 0.7
         self.custom_persona: Optional[str] = None
         self.custom_guidelines: Optional[str] = None
+        self.history_limit: int = 0  # 0 = default (10)
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -76,6 +80,8 @@ class ResponseGenerator:
             self.custom_persona = config["persona"]
         if "conversation_guidelines" in config:
             self.custom_guidelines = config["conversation_guidelines"]
+        if "history_limit" in config:
+            self.history_limit = int(config["history_limit"])
 
     async def generate(
         self,
@@ -109,7 +115,9 @@ class ResponseGenerator:
             custom_persona=self.custom_persona,
             custom_guidelines=self.custom_guidelines,
         )
-        user_message = build_response_user_message(user_input, conversation_history)
+        user_message = build_response_user_message(
+            user_input, conversation_history, history_limit=self.history_limit or 10
+        )
 
         messages = [
             LLMMessage(role="system", content=system_prompt),
@@ -177,7 +185,7 @@ class ResponseGenerator:
 
                 elif event_type == "error":
                     error = event[1]
-                    print(f"[ResponseGenerator] Streaming error: {error}")
+                    logger.error(f"Streaming error: {error}")
                     # Send error as final text
                     error_msg = "I'm sorry, I encountered an issue. Could you try again?"
                     yield AgentOutput.text_chunk(
@@ -189,7 +197,7 @@ class ResponseGenerator:
                     break
 
         except Exception as e:
-            print(f"[ResponseGenerator] Unexpected error: {e}")
+            logger.error(f"Unexpected error: {e}")
             if not generation_task.done():
                 generation_task.cancel()
             raise

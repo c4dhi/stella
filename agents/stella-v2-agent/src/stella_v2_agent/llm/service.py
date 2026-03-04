@@ -12,13 +12,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(Enum):
     """Supported LLM providers."""
     OPENAI_LANGCHAIN = "openai_langchain"
     OPENAI_DIRECT = "openai_direct"
-    ANTHROPIC = "anthropic"
     OLLAMA = "ollama"
     MOCK = "mock"
 
@@ -40,8 +42,6 @@ class LLMConfig:
     provider: LLMProvider = LLMProvider.OPENAI_LANGCHAIN
     streaming: bool = True
     timeout: float = 30.0
-    retry_attempts: int = 3
-    retry_delay: float = 1.0
     base_url: Optional[str] = None
     context_length: int = 4096
     tools: Optional[List[Dict[str, Any]]] = None
@@ -135,9 +135,9 @@ class OpenAILangChainProvider(LLMProviderInterface):
             from langchain_openai import ChatOpenAI
             self.ChatOpenAI = ChatOpenAI
             self.available = True
-            print("[LLMService] OpenAI LangChain provider initialized")
+            logger.info("OpenAI LangChain provider initialized")
         except ImportError as e:
-            print(f"[LLMService] OpenAI LangChain provider not available: {e}")
+            logger.warning(f"OpenAI LangChain provider not available: {e}")
             self.available = False
 
     def get_provider_name(self) -> str:
@@ -245,9 +245,9 @@ class OpenAIDirectProvider(LLMProviderInterface):
             self.openai = openai
             self.client = openai.AsyncOpenAI()
             self.available = True
-            print("[LLMService] OpenAI Direct provider initialized")
+            logger.info("OpenAI Direct provider initialized")
         except ImportError as e:
-            print(f"[LLMService] OpenAI Direct provider not available: {e}")
+            logger.warning(f"OpenAI Direct provider not available: {e}")
             self.available = False
 
     def get_provider_name(self) -> str:
@@ -435,9 +435,9 @@ class OllamaProvider(LLMProviderInterface):
             import requests
             self.requests = requests
             self.available = True
-            print("[LLMService] Ollama provider initialized")
+            logger.info("Ollama provider initialized")
         except ImportError:
-            print("[LLMService] Ollama provider requires 'requests' package")
+            logger.warning("Ollama provider requires 'requests' package")
             self.available = False
 
     def get_provider_name(self) -> str:
@@ -663,7 +663,7 @@ class LLMService:
 
         self.providers[LLMProvider.MOCK] = MockLLMProvider()
 
-        print(f"[LLMService] Initialized {len(self.providers)} providers: {list(self.providers.keys())}")
+        logger.info(f"Initialized {len(self.providers)} providers: {list(self.providers.keys())}")
 
     def _load_config(self):
         if self.config_path and Path(self.config_path).exists():
@@ -676,15 +676,15 @@ class LLMService:
                                 try:
                                     value = LLMProvider(value)
                                 except ValueError:
-                                    print(f"[LLMService] Unknown provider '{value}', using default")
+                                    logger.warning(f"Unknown provider '{value}', using default")
                                     continue
                             setattr(self.default_config, key, value)
-                print(f"[LLMService] Loaded config from {self.config_path}")
+                logger.info(f"Loaded config from {self.config_path}")
 
                 provider_name = getattr(self.default_config.provider, 'value', str(self.default_config.provider))
-                print(f"[LLMService] Provider: {provider_name}, Model: {self.default_config.model}")
+                logger.info(f"Provider: {provider_name}, Model: {self.default_config.model}")
             except Exception as e:
-                print(f"[LLMService] Failed to load config: {e}")
+                logger.error(f"Failed to load config: {e}")
 
     def get_available_providers(self) -> List[str]:
         return [provider.get_provider_name() for provider in self.providers.values()]
@@ -722,7 +722,7 @@ class LLMService:
         if not provider:
             if self.providers:
                 provider = list(self.providers.values())[0]
-                print(f"[LLMService] Provider {config.provider} not available, using {provider.get_provider_name()}")
+                logger.warning(f"Provider {config.provider} not available, using {provider.get_provider_name()}")
             else:
                 raise RuntimeError("No LLM providers available")
 
@@ -753,12 +753,12 @@ class LLMService:
             stats["cost"] += response.cost_usd
             stats["avg_time"] = (stats["avg_time"] * (stats["requests"] - 1) + response.response_time) / stats["requests"]
 
-            print(f"[LLMService] {component_name}: {provider_name} response in {response.response_time:.2f}s")
+            logger.info(f"{component_name}: {provider_name} response in {response.response_time:.2f}s")
             return response
 
         except Exception as e:
             self.usage_stats.failed_requests += 1
-            print(f"[LLMService] {component_name}: Request failed: {e}")
+            logger.error(f"{component_name}: Request failed: {e}")
             raise
 
     def get_usage_stats(self) -> Dict[str, Any]:

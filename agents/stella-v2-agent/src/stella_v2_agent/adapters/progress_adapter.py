@@ -1,16 +1,15 @@
 """Adapter for converting state machine state to SDK ProgressState.
 
 Mapping:
-    State Machine                ->  SDK Progress Types
+    gRPC Full State              ->  SDK Progress Types
     ─────────────────────────────────────────────────────
     Plan                        ->  ProgressState
     State (strict/loose)        ->  ProgressGroup (sequential/flexible)
-    Task                        ->  ProgressItem (within group)
     Deliverable                 ->  ProgressItem (with value capture)
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from stella_agent_sdk.progress import (
     ExecutionMode,
@@ -21,30 +20,9 @@ from stella_agent_sdk.progress import (
     ProgressState,
 )
 
-from stella_v2_agent.state_machine.execution_state import ExecutionState
-from stella_v2_agent.models.state_machine import (
-    Plan, State, StateType, Task, TaskStatus, DeliverableStatus,
-)
-
 
 class ProgressAdapter:
-    """Converts state machine state to generic SDK ProgressState."""
-
-    @staticmethod
-    def state_type_to_execution_mode(state_type: StateType) -> ExecutionMode:
-        if state_type == StateType.STRICT:
-            return ExecutionMode.SEQUENTIAL
-        return ExecutionMode.FLEXIBLE
-
-    @staticmethod
-    def task_status_to_item_status(status: TaskStatus) -> ItemStatus:
-        mapping = {
-            TaskStatus.PENDING: ItemStatus.PENDING,
-            TaskStatus.IN_PROGRESS: ItemStatus.IN_PROGRESS,
-            TaskStatus.COMPLETED: ItemStatus.COMPLETED,
-            TaskStatus.SKIPPED: ItemStatus.SKIPPED,
-        }
-        return mapping.get(status, ItemStatus.PENDING)
+    """Converts gRPC state machine state to generic SDK ProgressState."""
 
     @staticmethod
     def deliverable_status_to_item_status(status: str) -> ItemStatus:
@@ -57,127 +35,112 @@ class ProgressAdapter:
         return mapping.get(status, ItemStatus.PENDING)
 
     @classmethod
-    def from_execution_state(
+    def from_full_state_dict(
         cls,
-        execution_state: ExecutionState,
+        full_state: Dict[str, Any],
         started_at: Optional[str] = None,
     ) -> ProgressState:
-        """Convert an ExecutionState to a generic ProgressState."""
-        plan = execution_state.plan
-        groups = []
+        """Build ProgressState from a gRPC get_full_state() response dict.
 
-        for state in plan.states:
-            group = cls._state_to_group(
-                state, is_current=(state.id == execution_state.current_state_id)
+        Used when state is managed by the external gRPC state machine service.
+        Mirrors stella-light's _build_progress_from_full_state().
+        """
+        groups: List[ProgressGroup] = []
+        current_group_id: Optional[str] = None
+        current_item_id: Optional[str] = None
+
+        for state in full_state.get("states", []):
+            items: List[ProgressItem] = []
+            is_active = state.get("status") == "active"
+
+            for task in state.get("tasks", []):
+                for d in task.get("deliverables", []):
+                    status_str = d.get("status", "pending")
+                    item = ProgressItem(
+                        id=d.get("key"),
+                        label=d.get("description"),
+                        status=cls.deliverable_status_to_item_status(status_str),
+                        description=f"Task: {task.get('description', '')}",
+                        required=d.get("required", True),
+                        value=d.get("value"),
+                        confidence=d.get("confidence"),
+                        collected_at=d.get("collected_at"),
+                        metadata={
+                            "task_id": task.get("id"),
+                            "task_description": task.get("description"),
+                            "deliverable_type": d.get("type", "string"),
+                            "acceptance_criteria": d.get("acceptance_criteria"),
+                            "reasoning": d.get("reasoning"),
+                        },
+                    )
+                    items.append(item)
+
+                    # Track first pending item in the active state
+                    if is_active and status_str == "pending" and not current_item_id:
+                        current_item_id = d.get("key")
+
+            # Determine group status
+            all_completed = items and all(
+                i.status == ItemStatus.COMPLETED for i in items
+            )
+            group_status_str = state.get("status", "pending")
+            if all_completed:
+                group_status = GroupStatus.COMPLETED
+            elif group_status_str == "active" or is_active:
+                group_status = GroupStatus.IN_PROGRESS
+            else:
+                group_status = GroupStatus.PENDING
+
+            state_type = state.get("type", "loose")
+            exec_mode = (
+                ExecutionMode.SEQUENTIAL if state_type == "strict"
+                else ExecutionMode.FLEXIBLE
+            )
+
+            group = ProgressGroup(
+                id=state.get("id"),
+                label=state.get("title"),
+                execution_mode=exec_mode,
+                status=group_status,
+                items=items,
+                is_current=is_active,
+                description=state.get("description"),
+                metadata={},
             )
             groups.append(group)
+
+            if is_active:
+                current_group_id = state.get("id")
 
         elapsed_minutes = 0.0
         if started_at:
             try:
-                start_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                elapsed_minutes = (datetime.now(start_time.tzinfo) - start_time).total_seconds() / 60
+                start_time = datetime.fromisoformat(
+                    started_at.replace("Z", "+00:00")
+                )
+                elapsed_minutes = (
+                    (datetime.now(start_time.tzinfo) - start_time).total_seconds()
+                    / 60
+                )
             except (ValueError, TypeError):
                 pass
 
-        metadata = {
-            "plan_id": plan.id,
-            "plan_title": plan.title,
-            "turns_without_deliverable": execution_state.turns_without_deliverable,
-            "architecture": "stella_v2_pipeline",
-        }
-
-        current_item_id = None
-        current_state = execution_state.current_state
-        if current_state and current_state.type == StateType.STRICT:
-            for task in current_state.tasks:
-                for deliverable in task.deliverables:
-                    if deliverable.status == DeliverableStatus.PENDING:
-                        current_item_id = deliverable.key
-                        break
-                if current_item_id:
-                    break
-
         return ProgressState(
             groups=groups,
-            current_group_id=execution_state.current_state_id,
+            current_group_id=current_group_id or full_state.get("current_state_id"),
             current_item_id=current_item_id,
-            progress_percentage=execution_state.calculate_progress(),
+            progress_percentage=full_state.get("progress", 0) * 100,
             elapsed_minutes=elapsed_minutes,
             started_at=started_at,
             last_updated=datetime.utcnow().isoformat() + "Z",
-            metadata=metadata,
-        )
-
-    @classmethod
-    def _state_to_group(cls, state: State, is_current: bool = False) -> ProgressGroup:
-        items = []
-
-        for task in state.tasks:
-            for deliverable in task.deliverables:
-                status_value = deliverable.status.value if hasattr(deliverable.status, 'value') else str(deliverable.status)
-                item = ProgressItem(
-                    id=deliverable.key,
-                    label=deliverable.description,
-                    status=cls.deliverable_status_to_item_status(status_value),
-                    description=f"Task: {task.description}",
-                    required=deliverable.required,
-                    value=deliverable.value if deliverable.value else None,
-                    confidence=getattr(deliverable, 'confidence', None),
-                    collected_at=getattr(deliverable, 'collected_at', None),
-                    metadata={
-                        "task_id": task.id,
-                        "task_description": task.description,
-                        "deliverable_type": deliverable.type,
-                        "acceptance_criteria": getattr(deliverable, 'acceptance_criteria', None),
-                        "reasoning": getattr(deliverable, 'reasoning', None),
-                    },
-                )
-                items.append(item)
-
-        all_completed = all(item.status == ItemStatus.COMPLETED for item in items)
-        any_in_progress = any(item.status == ItemStatus.IN_PROGRESS for item in items)
-
-        if all_completed and items:
-            group_status = GroupStatus.COMPLETED
-        elif is_current or any_in_progress:
-            group_status = GroupStatus.IN_PROGRESS
-        else:
-            group_status = GroupStatus.PENDING
-
-        return ProgressGroup(
-            id=state.id,
-            label=state.title,
-            execution_mode=cls.state_type_to_execution_mode(state.type),
-            status=group_status,
-            items=items,
-            is_current=is_current,
-            description=state.description,
             metadata={
-                "state_type": state.type.value,
-                "transitions": [
-                    {"target": t.target_state_id, "condition": t.condition_type, "priority": t.priority}
-                    for t in state.transitions
-                ] if state.transitions else [],
-            },
-        )
-
-    @classmethod
-    def from_plan(cls, plan: Plan, current_state_id: Optional[str] = None) -> ProgressState:
-        """Create a ProgressState from a Plan definition (before execution starts)."""
-        groups = []
-        for state in plan.states:
-            is_current = (state.id == current_state_id) if current_state_id else (state.id == plan.initial_state_id)
-            group = cls._state_to_group(state, is_current=is_current)
-            groups.append(group)
-
-        return ProgressState(
-            groups=groups,
-            current_group_id=current_state_id or plan.initial_state_id,
-            progress_percentage=0.0,
-            metadata={
-                "plan_id": plan.id,
-                "plan_title": plan.title,
+                "plan_id": full_state.get("plan_id"),
+                "plan_title": full_state.get("plan_title"),
+                "current_state_id": full_state.get("current_state_id"),
+                "total_turns": full_state.get("total_turns", 0),
+                "turns_without_progress": full_state.get(
+                    "turns_without_progress", 0
+                ),
                 "architecture": "stella_v2_pipeline",
             },
         )

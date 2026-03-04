@@ -15,10 +15,8 @@ class ResponseDirective:
 
     Attributes:
         tone: Suggested tone for the response (e.g. "cautious", "friendly", "neutral").
-        must_include: Things the response MUST mention.
         must_avoid: Things the response MUST NOT mention.
         primary_action: The highest-priority expert's recommendation.
-        secondary_action: Second-priority recommendation (if not contradicting primary).
         expert_summary: One-line summary of all expert verdicts for prompt injection.
         ask_followup: If True, the response should include a follow-up question.
         followup_question: Specific follow-up question to include.
@@ -27,10 +25,8 @@ class ResponseDirective:
         short_circuit: If True, skip response generation and use redirect_message directly.
     """
     tone: str = "neutral"
-    must_include: List[str] = field(default_factory=list)
     must_avoid: List[str] = field(default_factory=list)
     primary_action: str = ""
-    secondary_action: str = ""
     expert_summary: str = ""
     ask_followup: bool = False
     followup_question: str = ""
@@ -91,8 +87,6 @@ class ResponseDirective:
             result["deliverable_signals"] = self.deliverable_signals
         if self.must_avoid:
             result["must_avoid"] = self.must_avoid
-        if self.secondary_action:
-            result["secondary_action"] = self.secondary_action
         if self.followup_question:
             result["followup_question"] = self.followup_question
         if self.force_redirect:

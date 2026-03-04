@@ -11,6 +11,9 @@ import time
 from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+import logging
+
+logger = logging.getLogger(__name__)
 
 BRIDGE_SYSTEM_PROMPT = """You are the real-time speech reflex for a professional Voice AI interviewer. Generate an immediate, ultra-short conversational "bridge" sentence right after the user stops speaking. This bridge buys time for the main response to be composed.
 
@@ -100,6 +103,7 @@ class BridgeGenerator:
         self.bridge_max_tokens = 30
         self.bridge_temperature = 0.4
         self.custom_system_prompt: Optional[str] = None
+        self.history_limit: int = 0  # 0 = default (2)
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -111,6 +115,8 @@ class BridgeGenerator:
             self.bridge_temperature = float(config["temperature"])
         if "system_prompt" in config:
             self.custom_system_prompt = config["system_prompt"]
+        if "history_limit" in config:
+            self.history_limit = int(config["history_limit"])
 
     async def generate(
         self,
@@ -155,12 +161,12 @@ class BridgeGenerator:
             latency_ms = (time.time() - start_time) * 1000
             bridge = self._validate_bridge(response.content)
             if bridge:
-                print(f"[BridgeGenerator] '{bridge}' in {latency_ms:.0f}ms")
+                logger.info(f"'{bridge}' in {latency_ms:.0f}ms")
             return bridge
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            print(f"[BridgeGenerator] Failed in {latency_ms:.0f}ms: {e}")
+            logger.error(f"Failed in {latency_ms:.0f}ms: {e}")
             return ""
 
     @staticmethod
@@ -194,15 +200,16 @@ class BridgeGenerator:
 
         return bridge
 
-    @staticmethod
     def _build_user_message(
+        self,
         user_input: str,
         conversation_history: List[Dict[str, str]],
     ) -> str:
         """Build the user message with minimal context."""
+        limit = self.history_limit or 2
         parts = []
         if conversation_history:
-            recent = conversation_history[-2:]
+            recent = conversation_history[-limit:]
             lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
             parts.append("CONTEXT:\n" + "\n".join(lines))
 

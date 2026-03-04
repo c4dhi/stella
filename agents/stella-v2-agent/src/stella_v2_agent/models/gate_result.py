@@ -5,7 +5,7 @@ The gate selects which experts to activate and provides cleaned input.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 
 @dataclass
@@ -15,13 +15,11 @@ class GateResult:
     Attributes:
         experts: List of expert names to activate for this input.
         cleaned_input: Optionally cleaned/normalized user input.
-        context_hints: Additional context hints for downstream stages.
         failed: True if the gate LLM call failed entirely.
         latency_ms: Time taken for gate classification in milliseconds.
     """
     experts: List[str] = field(default_factory=list)
     cleaned_input: str = ""
-    context_hints: Dict[str, Any] = field(default_factory=dict)
     failed: bool = False
     latency_ms: float = 0.0
 

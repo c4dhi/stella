@@ -20,9 +20,13 @@ class ExpertConfig:
         model: LLM model to use for this expert.
         temperature: LLM temperature.
         max_tokens: Maximum tokens for expert response.
-        can_call_functions: Whether this expert can trigger side-effects (e.g. state machine updates).
+        can_call_functions: Whether this expert uses tool calling (e.g. set_deliverable, complete_task).
+            When True, the expert runs in tool-calling mode (OPENAI_DIRECT, no JSON mode).
+            When False, the expert runs in JSON mode (OPENAI_LANGCHAIN, structured JSON output).
         system_prompt: The expert's system prompt.
         output_schema: Expected output format (for documentation, not enforced by code).
+        output_format: Compact JSON example appended to the compiled prompt so the LLM knows the schema.
+            Not used for tool-calling experts (output_format should be empty when can_call_functions=True).
     """
     name: str
     description: str = ""
@@ -34,6 +38,11 @@ class ExpertConfig:
     can_call_functions: bool = False
     system_prompt: str = ""
     output_schema: Dict[str, Any] = field(default_factory=dict)
+    output_format: str = ""
+    trigger_criteria: str = ""
+    always_triggered: bool = False
+    history_limit: int = 0  # 0 = use runner default (8 for most, 10 for task_extraction)
+    min_confidence: float = 0.0  # 0 = not applicable (unused with tool-calling experts)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExpertConfig":
@@ -49,6 +58,11 @@ class ExpertConfig:
             can_call_functions=data.get("can_call_functions", False),
             system_prompt=data.get("system_prompt", ""),
             output_schema=data.get("output_schema", {}),
+            output_format=data.get("output_format", ""),
+            trigger_criteria=data.get("trigger_criteria", ""),
+            always_triggered=data.get("always_triggered", False),
+            history_limit=data.get("history_limit", 0),
+            min_confidence=data.get("min_confidence", 0.0),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -63,4 +77,9 @@ class ExpertConfig:
             "can_call_functions": self.can_call_functions,
             "system_prompt": self.system_prompt,
             "output_schema": self.output_schema,
+            "output_format": self.output_format,
+            "trigger_criteria": self.trigger_criteria,
+            "always_triggered": self.always_triggered,
+            "history_limit": self.history_limit,
+            "min_confidence": self.min_confidence,
         }

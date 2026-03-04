@@ -33,8 +33,15 @@ def build_response_system_prompt(
     """
     sections: List[str] = []
 
-    # 1. Base persona (priority: plan > configurator > default)
-    if plan_system_prompt:
+    # 1. Base persona
+    # Plan provides the primary persona at runtime.
+    # Configurator persona is APPENDED after the plan persona (additional instructions).
+    # If no plan, configurator persona is the sole persona.
+    # If neither, fall back to hardcoded default.
+    if plan_system_prompt and custom_persona:
+        sections.append(plan_system_prompt)
+        sections.append(custom_persona)
+    elif plan_system_prompt:
         sections.append(plan_system_prompt)
     elif custom_persona:
         sections.append(custom_persona)
@@ -63,19 +70,21 @@ def build_response_system_prompt(
 def build_response_user_message(
     user_input: str,
     conversation_history: List[Dict[str, str]],
+    history_limit: int = 10,
 ) -> str:
     """Build the user message for the Response Generator.
 
     Args:
         user_input: Current user message.
         conversation_history: Recent conversation messages.
+        history_limit: Number of recent messages to include (default: 10).
 
     Returns:
         Formatted user message string.
     """
     history_text = ""
     if conversation_history:
-        recent = conversation_history[-10:]
+        recent = conversation_history[-history_limit:]
         lines = []
         for msg in recent:
             role = msg["role"].upper()

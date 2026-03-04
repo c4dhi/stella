@@ -69,7 +69,7 @@ function PipelineNodeComponent({ data }: NodeProps) {
       <div
         className={`
           px-5 py-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer
-          min-w-[170px] max-w-[190px] relative
+          min-w-[180px] max-w-[210px] relative
           ${isSelected
             ? isDark
               ? 'border-primary-400 bg-primary-500/10 shadow-[0_0_24px_rgba(139,92,246,0.15)]'

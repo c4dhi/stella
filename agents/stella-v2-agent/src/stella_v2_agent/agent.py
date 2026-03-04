@@ -27,19 +27,21 @@ from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
 from stella_agent_sdk.messages.types import StatusSubtype
+from stella_agent_sdk.services.state_machine_client import StateMachineClient
+from stella_agent_sdk.tools import ToolRegistry
+from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 
 from stella_v2_agent.llm.service import LLMService
 from stella_v2_agent.experts.registry import ExpertRegistry
 from stella_v2_agent.pipeline.input_gate import InputGate
 from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
-from stella_v2_agent.pipeline.arbitration import Arbitration
+from stella_v2_agent.pipeline.arbitration import Arbitration, _DEFAULT_GATE_FAILURE_MESSAGE
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
-from stella_v2_agent.state_machine import StateMachine
 from stella_v2_agent.adapters import ProgressAdapter
+import logging
 
-# Hardcoded fallback message when Input Gate fails
-_GATE_FAILURE_MESSAGE = "I'm sorry, I didn't quite catch that. Could you say that again?"
+logger = logging.getLogger(__name__)
 
 
 class StellaV2Agent(BaseAgent):
@@ -61,12 +63,14 @@ class StellaV2Agent(BaseAgent):
         self,
         llm_config_path: Optional[str] = None,
         experts_dir: Optional[str] = None,
+        state_machine_address: Optional[str] = None,
     ):
         """Initialize the STELLA V2 Agent.
 
         Args:
             llm_config_path: Path to LLM configuration JSON file.
             experts_dir: Path to directory containing expert JSON configs.
+            state_machine_address: gRPC address for state machine service.
         """
         super().__init__()
 
@@ -75,6 +79,12 @@ class StellaV2Agent(BaseAgent):
         # Resolve config paths
         if llm_config_path is None:
             llm_config_path = self._find_config_file("config/llm_config.json")
+
+        # State machine gRPC address
+        self._state_machine_address = (
+            state_machine_address
+            or os.environ.get("STATE_MACHINE_ADDRESS", "localhost:50051")
+        )
 
         # Initialize core services
         self.llm_service = LLMService(config_path=llm_config_path)
@@ -87,17 +97,19 @@ class StellaV2Agent(BaseAgent):
         self.arbitration = Arbitration()
         self.response_generator = ResponseGenerator(self.llm_service)
 
-        # State machine (initialized per session)
-        self.state_machine = StateMachine()
-        self.timekeeper_threshold = 2
+        # gRPC state machine client (initialized per session)
+        self.sm_client: Optional[StateMachineClient] = None
+        self.tool_registry: Optional[ToolRegistry] = None
 
         # Session state
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
+        self._plan_config: Optional[Dict[str, Any]] = None  # stored for context building
+        self._custom_history_limit: int = 20  # overridable via pipeline_config thresholds
 
-        print(
-            f"[StellaV2Agent] Initialized with {self.expert_registry.enabled_count} experts"
+        logger.info(
+            f"Initialized with {self.expert_registry.enabled_count} experts"
         )
 
     # ─────────────────────────────────────────────────────────────────────
@@ -114,15 +126,13 @@ class StellaV2Agent(BaseAgent):
 
         try:
             # Fetch context
-            history_limit = getattr(self, "_custom_history_limit", 20)
+            history_limit = self._custom_history_limit
             history = await self._fetch_conversation_history(limit=history_limit)
-            sm_context = (
-                self.state_machine.get_context_for_prompt()
-                if self.state_machine.is_initialized
-                else {}
-            )
-            if self.state_machine.is_initialized:
-                sm_context["full_plan"] = self.state_machine.get_full_plan_context()
+
+            # Fetch state from gRPC backend (parallel calls for performance)
+            sm_context = {}
+            if self.sm_client:
+                sm_context = await self._fetch_sm_context()
             if self._plan_system_prompt:
                 sm_context["plan_system_prompt"] = self._plan_system_prompt
 
@@ -131,7 +141,7 @@ class StellaV2Agent(BaseAgent):
             )
 
             # ── Stage 1: Input Gate + Bridge Generator (parallel) ──
-            print(f"[StellaV2Agent] Stage 1: Input Gate + Bridge for: '{input.text}'")
+            logger.info(f"Stage 1: Input Gate + Bridge for: '{input.text}'")
             gate_result, bridge = await asyncio.gather(
                 self.input_gate.classify(input.text, history, sm_context),
                 self.bridge_generator.generate(input.text, history),
@@ -147,7 +157,7 @@ class StellaV2Agent(BaseAgent):
             # On gate failure: ignore bridge, send hardcoded message, skip all downstream stages
             if gate_result.failed:
                 yield AgentOutput.text_chunk(
-                    input.session_id, _GATE_FAILURE_MESSAGE, is_final=True
+                    input.session_id, _DEFAULT_GATE_FAILURE_MESSAGE, is_final=True
                 )
                 return
 
@@ -156,7 +166,7 @@ class StellaV2Agent(BaseAgent):
 
             # Emit bridge immediately for early TTS synthesis
             if bridge:
-                print(f"[StellaV2Agent] Bridge: '{bridge}'")
+                logger.info(f"Bridge: '{bridge}'")
                 yield AgentOutput.text_chunk(
                     input.session_id,
                     bridge,
@@ -168,15 +178,9 @@ class StellaV2Agent(BaseAgent):
             # Foreground experts (probing, safety, etc.) block until done — needed for arbitration.
             # Background experts (task_extraction) launch concurrently, collected after response.
 
-            # Layer 4: Guarantee timekeeper runs when stagnation threshold is hit
             experts_to_run = list(gate_result.experts)
-            if (self.state_machine.is_initialized
-                    and self.state_machine.should_invoke_timekeeper(threshold=self.timekeeper_threshold)
-                    and "timekeeper" not in experts_to_run):
-                experts_to_run.append("timekeeper")
-                print(f"[StellaV2Agent] Injected timekeeper (turns >= {self.timekeeper_threshold})")
 
-            print(f"[StellaV2Agent] Stage 2: Expert Pool — {experts_to_run}")
+            logger.info(f"Stage 2: Expert Pool — {experts_to_run}")
             fg_verdicts, bg_task = await self.expert_pool.run_foreground(
                 experts_to_run, input.text, history, sm_context
             )
@@ -190,7 +194,7 @@ class StellaV2Agent(BaseAgent):
                 )
 
             # ── Stage 3: Deterministic Arbitration (foreground verdicts only) ──
-            print(f"[StellaV2Agent] Stage 3: Arbitration")
+            logger.info("Stage 3: Arbitration")
             arb_result = self.arbitration.resolve(fg_verdicts)
 
             yield AgentOutput.debug(
@@ -220,7 +224,7 @@ class StellaV2Agent(BaseAgent):
                     bg_task.cancel()
                 yield AgentOutput.text_chunk(
                     input.session_id,
-                    arb_result.directive.redirect_message or _GATE_FAILURE_MESSAGE,
+                    arb_result.directive.redirect_message or _DEFAULT_GATE_FAILURE_MESSAGE,
                     is_final=True,
                 )
                 return
@@ -229,7 +233,7 @@ class StellaV2Agent(BaseAgent):
             # Response streams to user while task_extraction finishes in background.
             # As soon as extraction completes, deliverables and progress updates
             # are emitted immediately — the frontend todo list updates in real-time.
-            print(f"[StellaV2Agent] Stage 4: Response Generator (streaming)")
+            logger.info("Stage 4: Response Generator (streaming)")
             yield AgentOutput.status(
                 input.session_id, "Generating response...", StatusSubtype.PROCESSING
             )
@@ -251,12 +255,12 @@ class StellaV2Agent(BaseAgent):
                             **v.to_debug_dict(),
                         ))
 
-                    # Debug: validation — compare probing signals vs extraction
+                    # Debug: validation — compare probing signals vs tool extraction
                     task_v = next(
                         (v for v in bg_verdicts if v.expert_name == "task_extraction" and v.success),
                         None,
                     )
-                    extracted_keys = list(task_v.raw_output.get("deliverables", {}).keys()) if task_v else []
+                    extracted_keys = task_v.raw_output.get("deliverables_set", []) if task_v and task_v.raw_output else []
                     if pre_signals or extracted_keys:
                         await bg_queue.put(AgentOutput.debug(
                             input.session_id,
@@ -276,7 +280,7 @@ class StellaV2Agent(BaseAgent):
                         await bg_queue.put(output)
 
                 except Exception as e:
-                    print(f"[StellaV2Agent] Background extraction error: {e}")
+                    logger.error(f"Background extraction error: {e}")
                     await bg_queue.put(AgentOutput.debug(
                         input.session_id,
                         f"Background extraction error: {str(e)[:200]}",
@@ -318,7 +322,7 @@ class StellaV2Agent(BaseAgent):
                     yield bg_output
 
         except Exception as e:
-            print(f"[StellaV2Agent] Processing error: {e}")
+            logger.error(f"Processing error: {e}")
             yield AgentOutput.error(
                 input.session_id,
                 f"Processing error: {str(e)}",
@@ -341,155 +345,63 @@ class StellaV2Agent(BaseAgent):
     ) -> AsyncIterator[AgentOutput]:
         """Process expert results after response generation completes.
 
-        Handles:
-        - task_extraction deliverables → state machine updates
-        - Completed tasks → state machine mark_tasks_completed
-        - Timekeeper suggestions → apply deliverables / force transitions
-        - State transitions
-        - Progress updates
+        With tool calling, task_extraction updates the backend state machine
+        directly via set_deliverable/complete_task tools. We just need to:
+        1. Read what tools did from the verdict
+        2. Emit AgentOutput.deliverable() for each set deliverable
+        3. Increment turn counter if no progress
+        4. Fetch updated full state and emit progress
         """
-        if not self.state_machine.is_initialized:
+        if not self.sm_client:
             return
 
         deliverables_found = False
         tasks_completed = False
 
-        # Process task_extraction verdict
+        # Process task_extraction verdict (tool-based)
         task_verdict = next(
             (v for v in expert_verdicts if v.expert_name == "task_extraction" and v.success),
             None,
         )
         if task_verdict and task_verdict.raw_output:
             raw = task_verdict.raw_output
+            deliverables_set = raw.get("deliverables_set", [])
+            tasks_done = raw.get("tasks_completed", [])
 
-            # Extract deliverables — trust the background expert but filter obvious junk
-            raw_deliverables = raw.get("deliverables", {})
-            min_confidence = getattr(self, "_custom_min_confidence", 0.7)
-            extracted_deliverables = {}
-            rejected_deliverables = {}
-
-            for key, data in raw_deliverables.items():
-                if isinstance(data, dict):
-                    confidence = float(data.get("confidence", 0.0))
-                    if confidence < min_confidence:
-                        rejected_deliverables[key] = {
-                            "reason": f"confidence {confidence:.2f} < {min_confidence}",
-                            "value": data.get("value"),
-                        }
-                        continue
-                extracted_deliverables[key] = data
-
-            if rejected_deliverables:
-                yield AgentOutput.debug(
-                    session_id,
-                    f"Rejected {len(rejected_deliverables)} low-confidence deliverables: {list(rejected_deliverables.keys())}",
-                    component="post_response",
-                    rejected=rejected_deliverables,
-                    threshold=min_confidence,
-                )
-
-            if extracted_deliverables:
+            if deliverables_set:
                 deliverables_found = True
+                # Fetch collected values from backend to emit accurate data
+                collected = await self.sm_client.get_collected_deliverables()
+
                 yield AgentOutput.debug(
                     session_id,
-                    f"Accepted {len(extracted_deliverables)} deliverables",
+                    f"Tool extraction: {len(deliverables_set)} deliverables set",
                     component="post_response",
-                    deliverable_keys=list(extracted_deliverables.keys()),
+                    deliverable_keys=deliverables_set,
                 )
 
-                result = self.state_machine.process_deliverables(extracted_deliverables)
-
-                # Emit deliverables via SDK
-                for key, data in extracted_deliverables.items():
-                    value = data.get("value", data) if isinstance(data, dict) else data
+                for key in deliverables_set:
+                    value = collected.get(key)
                     yield AgentOutput.deliverable(session_id, key=key, value=value)
 
-                # Handle state transition
-                if result.should_advance and result.next_state_id:
-                    transition_output = self._handle_state_transition(session_id, result.transition_reason)
-                    if transition_output:
-                        yield transition_output
-
-            # Mark explicitly completed tasks
-            completed_task_ids = raw.get("completed_tasks", [])
-            if completed_task_ids:
+            if tasks_done:
                 tasks_completed = True
-                marked = self.state_machine.mark_tasks_completed(completed_task_ids)
-
                 yield AgentOutput.debug(
                     session_id,
-                    f"Completed tasks: {marked}",
+                    f"Completed tasks: {tasks_done}",
                     component="post_response",
-                    completed_task_ids=marked,
+                    completed_task_ids=tasks_done,
                 )
-
-                # Check for state transitions after marking tasks
-                result = self.state_machine.process_deliverables({})
-                if result.should_advance and result.next_state_id:
-                    transition_output = self._handle_state_transition(
-                        session_id, "explicit_task_completion"
-                    )
-                    if transition_output:
-                        yield transition_output
-
-            # Handle state transition from task_extraction
-            state_transition = raw.get("state_transition")
-            if state_transition:
-                self.state_machine.force_transition(state_transition)
-
-        # Process timekeeper verdict (apply suggested deliverables, force transitions)
-        timekeeper_verdict = next(
-            (v for v in expert_verdicts if v.expert_name == "timekeeper" and v.success),
-            None,
-        )
-        if timekeeper_verdict and timekeeper_verdict.raw_output:
-            raw = timekeeper_verdict.raw_output
-            suggested = raw.get("suggested_deliverables", {})
-            if suggested:
-                applied = self.state_machine.apply_timekeeper_deliverables(suggested)
-                if applied:
-                    deliverables_found = True
-                    for key in applied:
-                        yield AgentOutput.deliverable(
-                            session_id, key=key, value=suggested[key]
-                        )
-
-            if raw.get("force_transition"):
-                self.state_machine.force_transition()
 
         # Increment turn counter if no progress was made
         if not deliverables_found and not tasks_completed:
-            self.state_machine.increment_turn()
+            await self.sm_client.increment_turn()
 
-        # Layer 3: Deterministic auto-skip safety net
-        stagnation_threshold = getattr(self, "_custom_stagnation_threshold", 3)
-        skipped = self.state_machine.handle_stagnation(threshold=stagnation_threshold)
-        if skipped:
-            yield AgentOutput.debug(
-                session_id,
-                f"Stagnation prevention: skipped {len(skipped)} optional items: {skipped}",
-                component="stagnation_handler",
-                skipped_keys=skipped,
-            )
-            for key in skipped:
-                yield AgentOutput.deliverable(session_id, key=key, value="skipped (optional)")
-
-            # Re-evaluate state completion
-            result = self.state_machine.process_deliverables({})
-            if result.should_advance and result.next_state_id:
-                transition_output = self._handle_state_transition(
-                    session_id, "stagnation_auto_skip"
-                )
-                if transition_output:
-                    yield transition_output
-
-        # Clear state changed flag and emit progress
-        self.state_machine.clear_state_changed_flag()
-
-        execution_state = self.state_machine.execution_state
-        if execution_state:
-            progress_state = ProgressAdapter.from_execution_state(
-                execution_state, started_at=self._session_started_at
+        # Fetch updated full state and emit progress
+        full_state = await self.sm_client.get_full_state()
+        if full_state:
+            progress_state = ProgressAdapter.from_full_state_dict(
+                full_state, started_at=self._session_started_at
             )
             yield AgentOutput.progress_update(
                 session_id,
@@ -498,32 +410,6 @@ class StellaV2Agent(BaseAgent):
                 agent_name=self.agent_name,
                 agent_icon="🧠",
             )
-
-    def _handle_state_transition(
-        self, session_id: str, reason: Optional[str] = None
-    ) -> Optional[AgentOutput]:
-        """Handle a state transition and return debug output (or None)."""
-        old_state = self.state_machine.current_state
-        old_id = old_state.id if old_state else "Unknown"
-        old_title = old_state.title if old_state else "Unknown"
-
-        if self.state_machine.advance_state():
-            new_state = self.state_machine.current_state
-            new_id = new_state.id if new_state else "Unknown"
-            new_title = new_state.title if new_state else "Unknown"
-
-            return AgentOutput.debug(
-                session_id,
-                f"State transition: {old_title} -> {new_title}",
-                component="state_machine",
-                stage="state_transition",
-                from_state_id=old_id,
-                from_state_title=old_title,
-                to_state_id=new_id,
-                to_state_title=new_title,
-                transition_reason=reason or "all_tasks_complete",
-            )
-        return None
 
     # ─────────────────────────────────────────────────────────────────────
     # Session lifecycle
@@ -536,14 +422,34 @@ class StellaV2Agent(BaseAgent):
         self._session_started_at = datetime.utcnow().isoformat() + "Z"
         self.config = config
         self._plan_system_prompt = None
+        self._plan_config = None
 
-        # Load plan
+        # Load plan and initialize gRPC state machine
         plan = self._load_plan_config(config)
         if plan:
-            if self.state_machine.initialize(plan):
-                print(f"[StellaV2Agent] State machine initialized: {plan.get('title', 'Unknown')}")
+            self._plan_config = plan
+
+            # Connect to gRPC state machine service
+            self.sm_client = StateMachineClient(
+                session_id=session_id,
+                address=self._state_machine_address,
+            )
+            await self.sm_client.connect()
+            result = await self.sm_client.initialize(plan)
+
+            if result and result.get("success"):
+                logger.info(f"State machine initialized via gRPC: {plan.get('title', 'Unknown')}")
             else:
-                print("[StellaV2Agent] Failed to initialize state machine from plan")
+                error = result.get("error", "unknown") if result else "no response"
+                logger.error(f"Failed to initialize state machine: {error}")
+
+            # Create tool registry with SDK state machine tools
+            self.tool_registry = ToolRegistry()
+            for tool in create_state_machine_tools(self.sm_client):
+                self.tool_registry.register(tool)
+
+            # Wire tool registry into expert pool
+            self.expert_pool.set_tool_registry(self.tool_registry)
 
             if "system_prompt" in plan:
                 self._plan_system_prompt = plan["system_prompt"]
@@ -557,7 +463,10 @@ class StellaV2Agent(BaseAgent):
             )
             # Rebuild pipeline stages with updated registry
             self.input_gate = InputGate(self.llm_service, self.expert_registry)
-            self.expert_pool = ExpertPool(self.llm_service, self.expert_registry)
+            self.expert_pool = ExpertPool(
+                self.llm_service, self.expert_registry,
+                tool_registry=self.tool_registry,
+            )
 
         # Apply LLM config overrides
         if "model" in config:
@@ -570,22 +479,23 @@ class StellaV2Agent(BaseAgent):
         if pipeline_config:
             self._apply_pipeline_config(pipeline_config)
 
-        print(f"[StellaV2Agent] Session started: {session_id}")
+        logger.info(f"Session started: {session_id}")
 
     async def on_ready(self, session_id: str) -> AsyncIterator[AgentOutput]:
         """Send initial progress state when agent joins the room."""
-        if self.state_machine.is_initialized and self.state_machine.execution_state:
-            progress_state = ProgressAdapter.from_execution_state(
-                self.state_machine.execution_state,
-                started_at=self._session_started_at,
-            )
-            yield AgentOutput.progress_update(
-                session_id,
-                progress_state,
-                update_trigger="session_start",
-                agent_name=self.agent_name,
-                agent_icon="🧠",
-            )
+        if self.sm_client:
+            full_state = await self.sm_client.get_full_state()
+            if full_state:
+                progress_state = ProgressAdapter.from_full_state_dict(
+                    full_state, started_at=self._session_started_at,
+                )
+                yield AgentOutput.progress_update(
+                    session_id,
+                    progress_state,
+                    update_trigger="session_start",
+                    agent_name=self.agent_name,
+                    agent_icon="🧠",
+                )
 
     def _apply_pipeline_config(self, pipeline_config: Dict[str, Any]) -> None:
         """Apply pipeline configuration overrides from Agent Configurator.
@@ -609,7 +519,7 @@ class StellaV2Agent(BaseAgent):
             stage = node_stage_map.get(node_id)
             if stage and isinstance(node_config, dict) and hasattr(stage, "apply_config"):
                 stage.apply_config(node_config)
-                print(f"[StellaV2Agent] Applied config to {node_id}")
+                logger.info(f"Applied config to {node_id}")
 
         # Apply expert registry config (experts and custom_experts are in expert_pool node)
         expert_pool_config = nodes.get("expert_pool", {})
@@ -624,17 +534,10 @@ class StellaV2Agent(BaseAgent):
                 # (no need to rebuild objects — registry is shared by reference)
 
         # Apply threshold overrides
-        if "min_confidence" in thresholds:
-            # min_confidence is used inline in on_message; store on self
-            self._custom_min_confidence = float(thresholds["min_confidence"])
-        if "timekeeper_threshold" in thresholds:
-            self.timekeeper_threshold = int(thresholds["timekeeper_threshold"])
-        if "stagnation_threshold" in thresholds:
-            self._custom_stagnation_threshold = int(thresholds["stagnation_threshold"])
         if "history_limit" in thresholds:
             self._custom_history_limit = int(thresholds["history_limit"])
 
-        print(f"[StellaV2Agent] Pipeline config applied: {len(nodes)} nodes, {len(thresholds)} thresholds")
+        logger.info(f"Pipeline config applied: {len(nodes)} nodes, {len(thresholds)} thresholds")
 
     async def on_session_end(self, session_id: str) -> Dict[str, Any]:
         """Cleanup and return session summary."""
@@ -646,25 +549,28 @@ class StellaV2Agent(BaseAgent):
             **result,
         }
 
-        if self.state_machine.is_initialized:
-            todo_list = self.state_machine.get_todo_list()
-            if todo_list:
+        if self.sm_client:
+            full_state = await self.sm_client.get_full_state()
+            if full_state:
                 summary["state_machine"] = {
-                    "plan_id": todo_list.plan_id,
-                    "plan_title": todo_list.plan_title,
-                    "final_state": todo_list.current_state_id,
-                    "progress_percentage": todo_list.progress_percentage,
-                    "completed_deliverables": todo_list.completed_deliverables,
+                    "plan_id": full_state.get("plan_id"),
+                    "plan_title": full_state.get("plan_title"),
+                    "final_state": full_state.get("current_state_id"),
+                    "progress_percentage": full_state.get("progress", 0) * 100,
+                    "collected_deliverables": full_state.get("collected_deliverables", {}),
                 }
-            self.state_machine = StateMachine()
+            await self.sm_client.disconnect()
+            self.sm_client = None
+            self.tool_registry = None
 
         self.config = {}
-        print(f"[StellaV2Agent] Session ended: {session_id}")
+        self._plan_config = None
+        logger.info(f"Session ended: {session_id}")
         return summary
 
     async def on_interrupt(self, session_id: str) -> None:
         """Handle user interrupt (barge-in)."""
-        print(f"[StellaV2Agent] Interrupt received: {session_id}")
+        logger.info(f"Interrupt received: {session_id}")
         self._is_processing = False
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
@@ -677,7 +583,7 @@ class StellaV2Agent(BaseAgent):
         if "temperature" in config:
             self.llm_service.default_config.temperature = config["temperature"]
 
-        print(f"[StellaV2Agent] Config updated: {list(config.keys())}")
+        logger.info(f"Config updated: {list(config.keys())}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Helper methods
@@ -688,12 +594,12 @@ class StellaV2Agent(BaseAgent):
         if "plan_id" in config:
             plan = self._load_plan(config["plan_id"])
             if plan:
-                print(f"[StellaV2Agent] Loaded plan '{config['plan_id']}' from disk")
+                logger.info(f"Loaded plan '{config['plan_id']}' from disk")
                 return plan
-            print(f"[StellaV2Agent] Failed to load plan '{config['plan_id']}'")
+            logger.error(f"Failed to load plan '{config['plan_id']}'")
 
         elif "plan" in config:
-            print("[StellaV2Agent] Using direct plan from config")
+            logger.info("Using direct plan from config")
             return config["plan"]
 
         return None
@@ -719,12 +625,12 @@ class StellaV2Agent(BaseAgent):
                 try:
                     with open(plan_file, "r", encoding="utf-8") as f:
                         plan = json.load(f)
-                    print(f"[StellaV2Agent] Loaded plan from {plan_file}")
+                    logger.info(f"Loaded plan from {plan_file}")
                     return plan
                 except (json.JSONDecodeError, OSError) as e:
-                    print(f"[StellaV2Agent] Failed to load plan {plan_file}: {e}")
+                    logger.error(f"Failed to load plan {plan_file}: {e}")
 
-        print(f"[StellaV2Agent] Plan '{plan_id}' not found")
+        logger.warning(f"Plan '{plan_id}' not found")
         return None
 
     def _find_config_file(self, relative_path: str) -> Optional[str]:
@@ -739,6 +645,124 @@ class StellaV2Agent(BaseAgent):
                 return str(path)
         return None
 
+    async def _fetch_sm_context(self) -> Dict[str, Any]:
+        """Fetch state from gRPC backend and build sm_context for the pipeline.
+
+        Makes parallel gRPC calls, then assembles the dict structure that the
+        template compiler's {{placeholders}} expect. Mirrors the shape of the
+        old local StateMachine.get_context_for_prompt() / get_full_plan_context().
+        """
+        if not self.sm_client:
+            return {}
+
+        full_state, current_state, pending_tasks, pending_deliverables, collected = (
+            await asyncio.gather(
+                self.sm_client.get_full_state(),
+                self.sm_client.get_current_state(),
+                self.sm_client.get_pending_tasks(),
+                self.sm_client.get_pending_deliverables(),
+                self.sm_client.get_collected_deliverables(),
+            )
+        )
+
+        if not full_state or not current_state:
+            return {}
+
+        current_state_id = full_state.get("current_state_id")
+
+        # Build state description lookup from stored plan config
+        state_descriptions: Dict[str, str] = {}
+        if self._plan_config:
+            for s in self._plan_config.get("states", []):
+                state_descriptions[s.get("id", "")] = s.get("description", "")
+
+        # Examples lookup from pending_deliverables (not in full_state)
+        examples_map: Dict[str, list] = {
+            d["key"]: d.get("examples", []) for d in pending_deliverables
+        }
+
+        # Build full_plan from full_state (for {{plan}} and {{current_focus}})
+        full_plan: List[Dict[str, Any]] = []
+        for state in full_state.get("states", []):
+            state_entry: Dict[str, Any] = {
+                "id": state.get("id"),
+                "title": state.get("title"),
+                "is_current": state.get("id") == current_state_id,
+                "tasks": [],
+            }
+            for task in state.get("tasks", []):
+                task_entry: Dict[str, Any] = {
+                    "id": task.get("id"),
+                    "description": task.get("description"),
+                    "instruction": task.get("instruction", ""),
+                    "status": task.get("status", "pending"),
+                    "has_deliverables": len(task.get("deliverables", [])) > 0,
+                    "deliverables": [],
+                }
+                for d in task.get("deliverables", []):
+                    task_entry["deliverables"].append({
+                        "key": d.get("key"),
+                        "description": d.get("description"),
+                        "type": d.get("type", "string"),
+                        "required": d.get("required", True),
+                        "status": d.get("status", "pending"),
+                        "value": d.get("value"),
+                        "acceptance_criteria": d.get("acceptance_criteria"),
+                        "examples": examples_map.get(d.get("key", ""), []),
+                    })
+                state_entry["tasks"].append(task_entry)
+            full_plan.append(state_entry)
+
+        # Build deliverables list (pending with full detail + completed summary)
+        deliverables_list: List[Dict[str, Any]] = [
+            {
+                "key": d.get("key"),
+                "description": d.get("description"),
+                "type": d.get("type", "string"),
+                "required": d.get("required", True),
+                "status": "pending",
+                "acceptance_criteria": d.get("acceptance_criteria"),
+                "examples": d.get("examples", []),
+            }
+            for d in pending_deliverables
+        ]
+        for key, value in collected.items():
+            deliverables_list.append({
+                "key": key,
+                "status": "completed",
+                "value": value,
+            })
+
+        # Current task from pending_tasks (exclude previews)
+        current_tasks = [t for t in pending_tasks if not t.get("is_preview")]
+        current_task = current_tasks[0] if current_tasks else None
+
+        state_type = current_state.get("state_type", "loose")
+
+        return {
+            "full_plan": full_plan,
+            "state": {
+                "id": current_state.get("state_id"),
+                "title": current_state.get("state_title"),
+                "type": state_type,
+                "description": state_descriptions.get(
+                    current_state.get("state_id", ""), ""
+                ),
+            },
+            "processing_mode": state_type,
+            "available_tasks": current_tasks,
+            "current_task": current_task,
+            "deliverables": deliverables_list,
+            "progress": {
+                "percentage": current_state.get("progress", 0) * 100,
+                "turns_without_deliverable": current_state.get(
+                    "turns_without_progress", 0
+                ),
+            },
+            "state_just_changed": False,
+            "collected_deliverables": collected,
+        }
+
     async def _fetch_conversation_history(self, limit: int = 20) -> List[Dict[str, str]]:
         """Fetch conversation history from database via SDK."""
         if not self.has_history:
@@ -752,5 +776,5 @@ class StellaV2Agent(BaseAgent):
                     history.append({"role": role, "content": msg.content})
             return history
         except Exception as e:
-            print(f"[StellaV2Agent] Failed to fetch history: {e}")
+            logger.error(f"Failed to fetch history: {e}")
             return []

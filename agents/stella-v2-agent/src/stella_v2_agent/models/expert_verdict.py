@@ -22,7 +22,9 @@ class ExpertVerdict:
         latency_ms: Time taken by this expert in milliseconds.
         success: Whether the expert call succeeded.
         error_message: Error description if the expert call failed.
-        raw_output: Complete parsed JSON output from the expert (for task_extraction etc.).
+        raw_output: Complete output from the expert. For JSON-mode experts, this is the parsed
+            JSON dict. For tool-calling experts, this contains:
+            {"tool_results": [...], "deliverables_set": [...], "tasks_completed": [...], "text_content": ""}.
     """
     expert_name: str
     verdict: str = ""

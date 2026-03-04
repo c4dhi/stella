@@ -33,7 +33,7 @@ _DEFAULT_FLAGGING_VERDICTS: Dict[str, set] = {
     "noise_detection": {"unclear", "partial"},
     "medical": {"low", "high", "critical"},
     "legal": {"low", "high", "critical"},
-    "task_extraction": {"extracted", "partial"},
+    "task_extraction": {"tool_calls_executed"},
     "probing": {"needs_clarification", "gentle_redirect"},
     "timekeeper": {"slowing", "stuck", "force_advance"},
 }
@@ -122,8 +122,6 @@ class Arbitration:
             directive.tone = self._tone_map.get(primary.expert_name, "neutral")
 
             # Primary action — ONE direction from the highest-priority expert.
-            # Secondary actions and must_include lists are intentionally omitted
-            # to prevent competing directions in the response.
             directive.primary_action = primary.recommendation
         elif active_verdicts:
             # Only task_extraction flagged — keep neutral tone, no action directives

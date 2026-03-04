@@ -9,17 +9,18 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useThemeStore } from '../../store/themeStore'
 import type { PipelineSchema, AgentConfigurationPayload } from '../../lib/api-types'
-import PipelineNodeComponent from './PipelineNode'
+import PipelineNodeCardComponent from './PipelineNodeCard'
+import type { StageSummary } from './PipelineNodeCard'
 
 // Horizontal layout spacing
-const COL_SPACING = 260
-const ROW_SPACING = 140
-const X_OFFSET = 60
-const Y_OFFSET = 60
+const COL_SPACING = 340
+const ROW_SPACING = 200
+const X_OFFSET = 80
+const Y_OFFSET = 80
 
 // Annotation node offsets
-const INPUT_ANNOTATION_X = X_OFFSET - 180
-const OUTPUT_ANNOTATION_X_PAD = 50 // added after last column
+const INPUT_ANNOTATION_X = X_OFFSET - 200
+const OUTPUT_ANNOTATION_X_PAD = 70 // added after last column
 
 interface PipelineViewProps {
   schema: PipelineSchema
@@ -27,18 +28,24 @@ interface PipelineViewProps {
   selectedNodeId: string | null
   onNodeClick: (nodeId: string) => void
   onPaneClick?: () => void
+  /** Per-node stage summaries for hybrid display */
+  stageSummaries?: Record<string, StageSummary>
 }
 
 const nodeTypes = {
-  pipeline: PipelineNodeComponent,
+  pipeline: PipelineNodeCardComponent,
 }
 
-export default function PipelineView({ schema, configuration, selectedNodeId, onNodeClick, onPaneClick }: PipelineViewProps) {
+export default function PipelineView({ schema, configuration, selectedNodeId, onNodeClick, onPaneClick, stageSummaries }: PipelineViewProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
   // Find the max column for output annotation placement
   const maxCol = useMemo(() => Math.max(...schema.nodes.map((n) => n.position.col)), [schema.nodes])
+  const maxRow = useMemo(() => Math.max(...schema.nodes.map((n) => n.position.row)), [schema.nodes])
+
+  // Center annotations vertically between all rows
+  const annotationY = Y_OFFSET + (maxRow * ROW_SPACING) / 2
 
   const nodes: Node[] = useMemo(() => {
     const pipelineNodes: Node[] = schema.nodes.map((n) => {
@@ -56,22 +63,24 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
           label: n.label,
           icon: n.icon,
           description: n.description,
+          nodeId: n.id,
           isModified,
           isSelected: selectedNodeId === n.id,
           isDark,
+          stageSummary: stageSummaries?.[n.id],
         },
         draggable: false,
         selectable: true,
       }
     })
 
-    // Add input annotation node (before first column)
+    // Add input annotation node (before first column, vertically centered)
     pipelineNodes.push({
       id: '__input__',
       type: 'pipeline',
-      position: { x: INPUT_ANNOTATION_X, y: Y_OFFSET + 12 },
+      position: { x: INPUT_ANNOTATION_X, y: annotationY },
       data: {
-        label: 'User Message',
+        label: 'Input Message',
         isAnnotation: true,
         annotationType: 'input',
         isDark,
@@ -81,13 +90,13 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       focusable: false,
     })
 
-    // Add output annotation node (after last column)
+    // Add output annotation node (after last column, vertically centered)
     pipelineNodes.push({
       id: '__output__',
       type: 'pipeline',
-      position: { x: X_OFFSET + maxCol * COL_SPACING + 190 + OUTPUT_ANNOTATION_X_PAD, y: Y_OFFSET + 12 },
+      position: { x: X_OFFSET + maxCol * COL_SPACING + 210 + OUTPUT_ANNOTATION_X_PAD, y: annotationY },
       data: {
-        label: 'Voice Stream',
+        label: 'Output Message',
         isAnnotation: true,
         annotationType: 'output',
         isDark,
@@ -98,7 +107,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
     })
 
     return pipelineNodes
-  }, [schema.nodes, configuration, selectedNodeId, isDark, maxCol])
+  }, [schema.nodes, configuration, selectedNodeId, isDark, maxCol, annotationY])
 
   // Find the first node (col=0, row=0) and last node (max col, row=0)
   const firstNodeId = useMemo(
@@ -111,24 +120,20 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
   )
 
   const edgeColor = isDark ? '#52525b' : '#d4d4d8'
-  const edgeColorActive = isDark ? '#71717a' : '#a1a1aa'
+  const edgeLabelColor = isDark ? '#71717a' : '#a1a1aa'
   const annotationEdgeColor = isDark ? '#3f3f46' : '#e5e5e5'
+  const dashedEdgeColor = isDark ? '#52525b' : '#c4c4c8'
 
   const edges: Edge[] = useMemo(() => {
     const pipelineEdges: Edge[] = schema.edges.map((e, i) => {
       const isDashed = e.style === 'dashed'
 
-      // Determine source/target handles for bridge_generator → response_generator
-      const sourceNode = schema.nodes.find((n) => n.id === e.source)
-      const targetNode = schema.nodes.find((n) => n.id === e.target)
-      const isVerticalConnection = sourceNode && targetNode && sourceNode.position.row !== targetNode.position.row
-
       return {
         id: `edge-${i}`,
         source: e.source,
         target: e.target,
-        sourceHandle: isVerticalConnection ? 'top-source' : 'right',
-        targetHandle: isVerticalConnection ? 'bottom' : 'left',
+        sourceHandle: 'right',
+        targetHandle: 'left',
         label: e.label,
         type: 'default',
         animated: isDashed,
@@ -136,16 +141,16 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
           type: MarkerType.ArrowClosed,
           width: 16,
           height: 16,
-          color: isDashed ? (isDark ? '#6366f1' : '#818cf8') : edgeColor,
+          color: isDashed ? dashedEdgeColor : edgeColor,
         },
         style: {
-          stroke: isDashed ? (isDark ? '#6366f1' : '#818cf8') : edgeColor,
+          stroke: isDashed ? dashedEdgeColor : edgeColor,
           strokeWidth: isDashed ? 1.5 : 2,
           strokeDasharray: isDashed ? '8 4' : undefined,
         },
         labelStyle: {
-          fontSize: 10,
-          fill: isDashed ? (isDark ? '#818cf8' : '#6366f1') : edgeColorActive,
+          fontSize: 9,
+          fill: edgeLabelColor,
           fontWeight: 500,
           fontFamily: 'ui-monospace, monospace',
           letterSpacing: '0.02em',
@@ -238,7 +243,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       },
     })
 
-    // Bridge generator → output annotation (bridge also produces early TTS output)
+    // Bridge generator → output annotation (early TTS)
     if (bridgeNode) {
       pipelineEdges.push({
         id: 'edge-bridge-output',
@@ -247,21 +252,21 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         target: '__output__',
         type: 'default',
         animated: false,
-        label: 'early TTS',
+        label: 'bridge phrase',
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: isDark ? '#6366f1' : '#818cf8',
+          color: dashedEdgeColor,
         },
         style: {
-          stroke: isDark ? '#6366f1' : '#818cf8',
+          stroke: dashedEdgeColor,
           strokeWidth: 1.5,
           strokeDasharray: '8 4',
         },
         labelStyle: {
           fontSize: 9,
-          fill: isDark ? '#818cf8' : '#6366f1',
+          fill: edgeLabelColor,
           fontWeight: 500,
           fontStyle: 'italic',
         },
@@ -275,7 +280,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
     }
 
     return pipelineEdges
-  }, [schema.edges, schema.nodes, isDark, edgeColor, edgeColorActive, annotationEdgeColor, firstNodeId, lastNodeId])
+  }, [schema.edges, schema.nodes, isDark, edgeColor, edgeLabelColor, dashedEdgeColor, annotationEdgeColor, firstNodeId, lastNodeId])
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {

@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from stella_v2_agent.experts.base import ExpertConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ExpertRegistry:
@@ -48,7 +51,7 @@ class ExpertRegistry:
         self._apply_runtime_overrides()
 
         enabled_count = sum(1 for e in self._experts.values() if e.enabled)
-        print(f"[ExpertRegistry] Loaded {len(self._experts)} experts ({enabled_count} enabled)")
+        logger.info(f"Loaded {len(self._experts)} experts ({enabled_count} enabled)")
 
     def _resolve_experts_dir(self, explicit_dir: Optional[str]) -> Optional[Path]:
         """Resolve the experts config directory from multiple sources."""
@@ -72,10 +75,10 @@ class ExpertRegistry:
 
         for path in candidates:
             if path.exists() and path.is_dir():
-                print(f"[ExpertRegistry] Loading experts from: {path}")
+                logger.info(f"Loading experts from: {path}")
                 return path
 
-        print(f"[ExpertRegistry] No experts directory found. Searched: {candidates}")
+        logger.warning(f"No experts directory found. Searched: {candidates}")
         return None
 
     def _load_from_directory(self, config_dir: Path) -> None:
@@ -86,9 +89,9 @@ class ExpertRegistry:
                     data = json.load(f)
                 config = ExpertConfig.from_dict(data)
                 self._experts[config.name] = config
-                print(f"[ExpertRegistry] Loaded expert: {config.name} (priority={config.priority})")
+                logger.info(f"Loaded expert: {config.name} (priority={config.priority})")
             except (json.JSONDecodeError, KeyError) as e:
-                print(f"[ExpertRegistry] Failed to load {json_file.name}: {e}")
+                logger.error(f"Failed to load {json_file.name}: {e}")
 
     def _apply_env_overrides(self) -> None:
         """Apply per-expert environment variable overrides."""
@@ -164,12 +167,12 @@ class ExpertRegistry:
                     continue
                 # Prevent collision with built-in names
                 if name in self._experts:
-                    print(f"[ExpertRegistry] Custom expert '{name}' collides with built-in, skipping")
+                    logger.warning(f"Custom expert '{name}' collides with built-in, skipping")
                     continue
                 # Validate priority range
                 priority = expert_def.get("priority", 50)
                 if not (1 <= priority <= 100):
-                    print(f"[ExpertRegistry] Custom expert '{name}' priority {priority} out of range, clamping")
+                    logger.warning(f"Custom expert '{name}' priority {priority} out of range, clamping")
                     priority = max(1, min(100, priority))
                 try:
                     custom_config = ExpertConfig(
@@ -182,14 +185,17 @@ class ExpertRegistry:
                         priority=priority,
                         enabled=True,
                         output_schema=expert_def.get("output_schema"),
+                        output_format=expert_def.get("output_format", ""),
+                        trigger_criteria=expert_def.get("trigger_criteria", ""),
+                        always_triggered=bool(expert_def.get("always_triggered", False)),
                     )
                     self._experts[name] = custom_config
-                    print(f"[ExpertRegistry] Registered custom expert: {name} (priority={priority})")
+                    logger.info(f"Registered custom expert: {name} (priority={priority})")
                 except Exception as e:
-                    print(f"[ExpertRegistry] Failed to register custom expert '{name}': {e}")
+                    logger.error(f"Failed to register custom expert '{name}': {e}")
 
         updated_count = sum(1 for e in self._experts.values() if e.enabled)
-        print(f"[ExpertRegistry] After config: {len(self._experts)} experts ({updated_count} enabled)")
+        logger.info(f"After config: {len(self._experts)} experts ({updated_count} enabled)")
 
     def get(self, name: str) -> Optional[ExpertConfig]:
         """Get an expert config by name. Returns None if not found."""
@@ -208,11 +214,19 @@ class ExpertRegistry:
         return [e.name for e in self.get_enabled()]
 
     def get_summaries(self) -> List[Dict[str, str]]:
-        """Get name + description for all enabled experts (used in Input Gate prompt)."""
+        """Get name + description + trigger_criteria for all enabled experts (used in Input Gate prompt)."""
         return [
-            {"name": e.name, "description": e.description}
+            {
+                "name": e.name,
+                "description": e.description,
+                "trigger_criteria": e.trigger_criteria,
+            }
             for e in self.get_enabled()
         ]
+
+    def get_always_triggered_names(self) -> List[str]:
+        """Get names of all enabled experts marked as always_triggered."""
+        return [e.name for e in self._experts.values() if e.enabled and e.always_triggered]
 
     def filter_valid_names(self, names: List[str]) -> List[str]:
         """Filter a list of expert names to only those that exist and are enabled."""

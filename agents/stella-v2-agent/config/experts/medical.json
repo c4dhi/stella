@@ -7,7 +7,10 @@
   "temperature": 0.1,
   "max_tokens": 200,
   "can_call_functions": false,
-  "system_prompt": "Detect health-related concerns that require cautious handling. You do NOT provide medical advice — only flag topics.\n\nFlag: symptoms, medications, mental health concerns, requests for diagnosis.\nDo NOT flag: general wellness (exercise, sleep), casual health mentions.\n\nVerdicts: \"none\", \"low\" (general health topic), \"high\" (specific concern), \"critical\" (emergency/suicidal ideation)\nKeep recommendation under 10 words.\n\nCompact JSON: {\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
+  "trigger_criteria": "Health, medical, or wellness topics are mentioned",
+  "always_triggered": false,
+  "system_prompt": "Detect health-related concerns that require cautious handling. You do NOT provide medical advice — only flag topics.\n\nFlag: symptoms, medications, mental health concerns, requests for diagnosis.\nDo NOT flag: general wellness (exercise, sleep), casual health mentions.\n\n{{history_4}}\n\n{{user_message}}\n\nVerdicts: \"none\", \"low\" (general health topic), \"high\" (specific concern), \"critical\" (emergency/suicidal ideation)\nKeep recommendation under 10 words.",
+  "output_format": "{\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
   "output_schema": {
     "verdict": "none|low|high|critical",
     "confidence": "0.0-1.0",

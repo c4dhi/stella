@@ -19,6 +19,9 @@ from stella_v2_agent.prompts.input_gate_prompt import (
     build_input_gate_system_prompt,
     build_input_gate_user_message,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class InputGate:
@@ -37,6 +40,7 @@ class InputGate:
         self.gate_max_tokens = 60
         self.gate_temperature = 0.0
         self.custom_system_prompt: Optional[str] = None
+        self.history_limit: int = 0  # 0 = default (2)
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -48,6 +52,8 @@ class InputGate:
             self.gate_temperature = float(config["temperature"])
         if "system_prompt" in config:
             self.custom_system_prompt = config["system_prompt"]
+        if "history_limit" in config:
+            self.history_limit = int(config["history_limit"])
 
     async def classify(
         self,
@@ -73,7 +79,9 @@ class InputGate:
                 sm_context=sm_context,
                 custom_system_prompt=self.custom_system_prompt,
             )
-            user_message = build_input_gate_user_message(user_input, conversation_history)
+            user_message = build_input_gate_user_message(
+                user_input, conversation_history, history_limit=self.history_limit or 2
+            )
 
             messages = [
                 LLMMessage(role="system", content=system_prompt),
@@ -100,7 +108,7 @@ class InputGate:
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            print(f"[InputGate] Classification failed: {e}")
+            logger.error(f"Classification failed: {e}")
             return GateResult(
                 failed=True,
                 cleaned_input=user_input,
@@ -112,7 +120,7 @@ class InputGate:
         try:
             data = json.loads(raw_content)
         except json.JSONDecodeError:
-            print(f"[InputGate] Invalid JSON response: {raw_content[:200]}")
+            logger.error(f"Invalid JSON response: {raw_content[:200]}")
             return GateResult(
                 failed=True,
                 cleaned_input=user_input,
@@ -125,6 +133,12 @@ class InputGate:
 
         # Filter to only valid, enabled experts
         valid_experts = self._registry.filter_valid_names(raw_experts)
+
+        # Merge always_triggered experts (they bypass the gate)
+        always_triggered = self._registry.get_always_triggered_names()
+        for name in always_triggered:
+            if name not in valid_experts:
+                valid_experts.append(name)
 
         return GateResult(
             experts=valid_experts,

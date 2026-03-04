@@ -18,10 +18,15 @@ import os
 import time
 from typing import Dict, Any, List, Tuple, Optional
 
+from stella_agent_sdk.tools import ToolRegistry
+
 from stella_v2_agent.experts.registry import ExpertRegistry
 from stella_v2_agent.experts.runner import ExpertRunner
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
 from stella_v2_agent.llm.service import LLMService
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ExpertPool:
@@ -30,16 +35,29 @@ class ExpertPool:
     Splits experts into two tracks:
     - Foreground: needed for arbitration/response (blocks pipeline)
     - Background: only needed post-response (runs concurrently, collected later)
+
+    Experts with can_call_functions=True receive tools from the tool_registry
+    and execute in tool-calling mode instead of JSON mode.
     """
 
-    def __init__(self, llm_service: LLMService, expert_registry: ExpertRegistry):
+    def __init__(
+        self,
+        llm_service: LLMService,
+        expert_registry: ExpertRegistry,
+        tool_registry: Optional[ToolRegistry] = None,
+    ):
         self._runner = ExpertRunner(llm_service)
         self._registry = expert_registry
+        self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "5000"))
 
         # Configurable sets (overridable via apply_config)
         self._always_run: set = {"task_extraction"}
         self._background_experts: set = {"task_extraction"}
+
+    def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
+        """Set or update the tool registry (called after session start)."""
+        self._tool_registry = tool_registry
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -95,8 +113,8 @@ class ExpertPool:
         )
 
         total_ms = (time.time() - start_time) * 1000
-        print(
-            f"[ExpertPool] Foreground: {len(fg_verdicts)} experts in {total_ms:.0f}ms "
+        logger.info(
+            f"Foreground: {len(fg_verdicts)} experts in {total_ms:.0f}ms "
             f"| Background: {len(bg_names)} launched"
         )
 
@@ -111,7 +129,7 @@ class ExpertPool:
         try:
             return await bg_task
         except Exception as e:
-            print(f"[ExpertPool] Background experts failed: {e}")
+            logger.error(f"Background experts failed: {e}")
             return []
 
     async def _run_experts(
@@ -127,10 +145,10 @@ class ExpertPool:
         for name in expert_names:
             config = self._registry.get(name)
             if not config:
-                print(f"[ExpertPool] Expert '{name}' not found in registry, skipping")
+                logger.warning(f"Expert '{name}' not found in registry, skipping")
                 continue
             if not config.enabled:
-                print(f"[ExpertPool] Expert '{name}' is disabled, skipping")
+                logger.info(f"Expert '{name}' is disabled, skipping")
                 continue
             tasks.append(self._run_with_timeout(config, user_input, conversation_history, sm_context, timeout_seconds))
 
@@ -149,13 +167,18 @@ class ExpertPool:
         timeout_seconds: float,
     ) -> ExpertVerdict:
         """Run a single expert with a timeout wrapper."""
+        # Resolve tools for this expert (if tool-calling mode)
+        tools = None
+        if config.can_call_functions and self._tool_registry:
+            tools = self._tool_registry.list_tools()
+
         try:
             return await asyncio.wait_for(
-                self._runner.run(config, user_input, conversation_history, sm_context),
+                self._runner.run(config, user_input, conversation_history, sm_context, tools=tools),
                 timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
-            print(f"[ExpertPool] Expert '{config.name}' timed out after {self._timeout_ms}ms")
+            logger.warning(f"Expert '{config.name}' timed out after {self._timeout_ms}ms")
             return ExpertVerdict(
                 expert_name=config.name,
                 verdict="timeout",

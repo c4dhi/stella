@@ -1,30 +1,47 @@
 """Expert runner: executes a single expert LLM call and returns a structured verdict.
 
 Each expert gets:
-- Its own system prompt (from config)
-- User input + conversation history + state machine context
-- JSON mode enabled for structured output
+- Its own system prompt (compiled with {{placeholder}} resolution)
+- User input + conversation history
+- JSON mode OR tool calling depending on can_call_functions
 
 The runner handles timeouts, parsing, and error recovery.
 """
 
+import asyncio
 import json
+import re
 import time
 from typing import Dict, Any, List, Optional
 
+from stella_agent_sdk.tools import BaseTool
+
 from stella_v2_agent.experts.base import ExpertConfig
+from stella_v2_agent.experts.template_compiler import (
+    compile_prompt,
+    has_user_message_placeholder,
+    HISTORY_PATTERN,
+)
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ExpertRunner:
     """Runs a single expert and returns a structured ExpertVerdict.
 
+    Supports two execution modes:
+    - JSON mode (default): LLM returns structured JSON, parsed into verdict
+    - Tool mode (can_call_functions=True): LLM calls tools directly, results tracked in verdict
+
     The runner:
-    1. Builds the expert's LLM messages (system + user)
-    2. Calls the LLM in JSON mode (non-streaming)
-    3. Parses the JSON response into an ExpertVerdict
-    4. Handles timeouts and parsing failures gracefully
+    1. Compiles the expert's system prompt (resolves {{placeholder}} tokens)
+    2. Builds the user message (conversation history + current message)
+    3. Calls the LLM (JSON mode or tool mode)
+    4. Parses/executes results into an ExpertVerdict
+    5. Handles timeouts and failures gracefully
     """
 
     def __init__(self, llm_service: LLMService):
@@ -36,6 +53,7 @@ class ExpertRunner:
         user_input: str,
         conversation_history: List[Dict[str, str]],
         sm_context: Dict[str, Any],
+        tools: Optional[List[BaseTool]] = None,
     ) -> ExpertVerdict:
         """Execute a single expert and return its verdict.
 
@@ -43,11 +61,24 @@ class ExpertRunner:
             config: The expert's configuration.
             user_input: Current user message.
             conversation_history: Recent conversation messages.
-            sm_context: State machine context for plan-aware experts.
+            sm_context: State machine context for {{placeholder}} resolution.
+            tools: Available tools (only used when config.can_call_functions=True).
 
         Returns:
             ExpertVerdict with the expert's structured response.
         """
+        if config.can_call_functions and tools:
+            return await self._run_with_tools(config, user_input, conversation_history, sm_context, tools)
+        return await self._run_json_mode(config, user_input, conversation_history, sm_context)
+
+    async def _run_json_mode(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+    ) -> ExpertVerdict:
+        """Execute expert in JSON mode (structured JSON output)."""
         start_time = time.time()
 
         try:
@@ -66,12 +97,133 @@ class ExpertRunner:
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            print(f"[ExpertRunner] Expert '{config.name}' failed: {e}")
+            logger.error(f"Expert '{config.name}' failed: {e}")
             return ExpertVerdict(
                 expert_name=config.name,
                 verdict="error",
                 confidence=0.0,
                 recommendation=f"Expert failed: {str(e)[:100]}",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=False,
+                error_message=str(e),
+            )
+
+    async def _run_with_tools(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+        tools: List[BaseTool],
+    ) -> ExpertVerdict:
+        """Execute expert in tool-calling mode.
+
+        Single LLM call with tools enabled. The LLM calls tools (e.g.
+        set_deliverable, complete_task) which execute against the backend
+        state machine directly. No agentic loop — one call, execute tools, done.
+        """
+        start_time = time.time()
+
+        try:
+            # Build messages — same as JSON mode but without output_format
+            messages = self._build_messages(
+                config, user_input, conversation_history, sm_context,
+                append_output_format=False,
+            )
+
+            # Use OPENAI_DIRECT provider (supports tool calling, unlike LANGCHAIN)
+            tool_schemas = [t.to_openai_schema() for t in tools]
+            llm_config = LLMConfig(
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                provider=LLMProvider.OPENAI_DIRECT,
+                streaming=False,
+                json_mode=False,
+                tools=tool_schemas,
+                tool_choice="auto",
+            )
+
+            response = await self._llm_service.generate(
+                messages=messages,
+                config=llm_config,
+                component_name=f"expert:{config.name}",
+            )
+
+            # Execute tool calls in parallel
+            deliverables_set: List[str] = []
+            tasks_completed: List[str] = []
+            tool_calls_made: List[Dict[str, Any]] = []
+
+            if response.tool_calls:
+                tool_map = {t.name: t for t in tools}
+
+                async def _execute_single(tc):
+                    tool = tool_map.get(tc.name)
+                    if not tool:
+                        return {"name": tc.name, "error": f"Unknown tool: {tc.name}", "success": False}
+                    try:
+                        result = await tool.execute(**tc.arguments)
+                        entry = {
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                            "success": result.success,
+                            "data": result.data,
+                        }
+                        if not result.success and result.error:
+                            entry["error"] = result.error
+                        return entry
+                    except Exception as e:
+                        return {"name": tc.name, "arguments": tc.arguments, "error": str(e), "success": False}
+
+                results = await asyncio.gather(*[_execute_single(tc) for tc in response.tool_calls])
+
+                for r in results:
+                    tool_calls_made.append(r)
+                    if r.get("success"):
+                        if r["name"] == "set_deliverable":
+                            key = r.get("arguments", {}).get("key")
+                            if key:
+                                deliverables_set.append(key)
+                        elif r["name"] == "complete_task":
+                            task_id = r.get("arguments", {}).get("task_id")
+                            if task_id:
+                                tasks_completed.append(task_id)
+
+            latency_ms = (time.time() - start_time) * 1000
+            verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"
+
+            logger.info(
+                f"Expert '{config.name}' tool mode: "
+                f"{len(tool_calls_made)} calls, {len(deliverables_set)} deliverables, "
+                f"{len(tasks_completed)} tasks in {latency_ms:.0f}ms"
+            )
+
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict=verdict,
+                confidence=1.0,
+                recommendation=f"Set {len(deliverables_set)} deliverables" if deliverables_set else "No extractions",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=True,
+                raw_output={
+                    "tool_results": tool_calls_made,
+                    "deliverables_set": deliverables_set,
+                    "tasks_completed": tasks_completed,
+                    "text_content": response.content or "",
+                },
+            )
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error(f"Expert '{config.name}' tool mode failed: {e}")
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict="error",
+                confidence=0.0,
+                recommendation=f"Tool mode failed: {str(e)[:100]}",
                 priority=config.priority,
                 latency_ms=latency_ms,
                 success=False,
@@ -84,170 +236,64 @@ class ExpertRunner:
         user_input: str,
         conversation_history: List[Dict[str, str]],
         sm_context: Dict[str, Any],
+        append_output_format: bool = True,
     ) -> List[LLMMessage]:
-        """Build LLM messages for the expert call."""
-        messages = [LLMMessage(role="system", content=config.system_prompt)]
+        """Build LLM messages for the expert call.
 
-        # Build user message with context
+        System prompt is compiled with {{placeholder}} resolution from sm_context.
+        If the template uses {{history_N}} / {{user_message}}, those are resolved
+        inline and NOT duplicated in the user message. Otherwise the legacy
+        behavior (history + user message in the API user role) is preserved.
+
+        Args:
+            append_output_format: If False, skip appending output_format
+                (used in tool mode where tools replace structured JSON output).
+        """
+        template = config.system_prompt or ""
+
+        # Detect placeholder usage before compilation
+        prompt_has_history = bool(HISTORY_PATTERN.search(template))
+        prompt_has_user_msg = has_user_message_placeholder(template)
+
+        # Shallow copy to avoid mutating the shared sm_context across concurrent experts
+        sm_context = {**sm_context}
+        sm_context["_user_input"] = user_input
+        sm_context["_conversation_history"] = conversation_history
+
+        # Compile system prompt — resolve all {{placeholders}}
+        compiled_prompt = compile_prompt(template, sm_context)
+
+        # Append output format instruction if configured (not in tool mode)
+        if append_output_format and config.output_format:
+            compiled_prompt += f"\n\nRespond with compact JSON: {config.output_format}"
+
+        messages = [LLMMessage(role="system", content=compiled_prompt)]
+
+        # Build user message — only include what wasn't resolved via placeholders
         user_parts: List[str] = []
 
-        # Inject deliverable context for plan-aware experts
-        if config.name == "task_extraction" and sm_context:
-            user_parts.append(self._build_task_extraction_context(sm_context))
-        elif config.name == "probing" and sm_context:
-            user_parts.append(self._build_probing_context(sm_context))
-
-        # Conversation history (task_extraction runs in background with gpt-4o — give it full context)
-        if conversation_history:
-            limit = 10 if config.name == "task_extraction" else 8
+        if not prompt_has_history and conversation_history:
+            default_limit = 8
+            limit = config.history_limit if config.history_limit > 0 else default_limit
             recent = conversation_history[-limit:]
             history_lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
             user_parts.append("CONVERSATION:\n" + "\n".join(history_lines))
 
-        user_parts.append(f"CURRENT USER MESSAGE: {user_input}")
+        if not prompt_has_user_msg:
+            user_parts.append(f"CURRENT USER MESSAGE: {user_input}")
+        else:
+            # Still need a user message for API compliance
+            user_parts.append(user_input)
 
         messages.append(LLMMessage(role="user", content="\n\n".join(user_parts)))
         return messages
 
-    def _build_task_extraction_context(self, sm_context: Dict[str, Any]) -> str:
-        """Build full plan context for task_extraction expert.
-
-        Puts the CURRENT FOCUS (state + task) prominently at the top,
-        then shows the rest of the plan below for cross-state extraction.
-        """
-        full_plan = sm_context.get("full_plan", [])
-        if not full_plan:
-            return self._build_task_extraction_context_legacy(sm_context)
-
-        parts: List[str] = []
-
-        # ── Current focus: what we're working on RIGHT NOW ──
-        current_state_info = sm_context.get("state", {})
-        current_task_info = sm_context.get("current_task")
-        mode = sm_context.get("processing_mode", "loose")
-
-        parts.append("=== CURRENT FOCUS ===")
-        parts.append(f"State: {current_state_info.get('title', '?')}")
-        if current_state_info.get("description"):
-            parts.append(f"Goal: {current_state_info['description']}")
-        parts.append(f"Mode: {'sequential (one task at a time)' if mode == 'strict' else 'flexible (any order)'}")
-
-        if current_task_info:
-            parts.append(f"Active task: {current_task_info.get('description', '?')}")
-            if current_task_info.get("instruction"):
-                parts.append(f"Instruction: {current_task_info['instruction']}")
-
-        # Show current state's pending deliverables with full detail
-        current_state_id = current_state_info.get("id", "")
-        current_plan_state = next((s for s in full_plan if s.get("id") == current_state_id), None)
-        if current_plan_state:
-            pending_in_current = []
-            for task in current_plan_state.get("tasks", []):
-                for d in task.get("deliverables", []):
-                    if d.get("status") == "pending":
-                        pending_in_current.append(d)
-
-            if pending_in_current:
-                parts.append("")
-                parts.append("PRIORITY — extract these if the user provided them:")
-                for d in pending_in_current:
-                    req = "required" if d.get("required") else "optional"
-                    line = f"  ○ {d['key']} [{d.get('type', 'string')}, {req}]: {d.get('description', '')}"
-                    criteria = d.get("acceptance_criteria", "")
-                    if criteria:
-                        line += f" (criteria: {criteria})"
-                    examples = d.get("examples", [])
-                    if examples:
-                        line += f" (e.g. {', '.join(str(e) for e in examples)})"
-                    parts.append(line)
-
-        # ── Full plan: all states for cross-state extraction/overwrites ──
-        parts.append("")
-        parts.append("=== FULL PLAN (can also extract/overwrite deliverables in other states) ===")
-
-        for state in full_plan:
-            marker = " ← CURRENT" if state.get("is_current") else ""
-            parts.append(f"\n## {state['title']}{marker}")
-
-            for task in state.get("tasks", []):
-                task_status = task.get("status", "pending")
-                is_active = (current_task_info and task.get("id") == current_task_info.get("id"))
-                task_marker = " ← ACTIVE TASK" if is_active else ""
-                parts.append(f"  Task: {task['description']} ({task_status}){task_marker}")
-
-                for d in task.get("deliverables", []):
-                    status = d.get("status", "pending")
-                    req = "required" if d.get("required") else "optional"
-                    dtype = d.get("type", "string")
-
-                    if status == "completed":
-                        parts.append(f"    ✓ {d['key']} = {d.get('value', '?')}")
-                    else:
-                        parts.append(f"    ○ {d['key']} [{dtype}, {req}]: {d.get('description', '')}")
-
-                if not task.get("has_deliverables"):
-                    parts.append(f"    (no deliverables — mark completed when performed)")
-
-        return "\n".join(parts)
-
-    def _build_task_extraction_context_legacy(self, sm_context: Dict[str, Any]) -> str:
-        """Fallback context builder using only current state deliverables."""
-        parts: List[str] = []
-
-        deliverables = sm_context.get("deliverables", [])
-        pending = [d for d in deliverables if d.get("status") == "pending"]
-        completed = [d for d in deliverables if d.get("status") == "completed"]
-
-        if pending:
-            parts.append("PENDING DELIVERABLES TO EXTRACT:")
-            for d in pending:
-                line = f"- {d['key']} ({d.get('type', 'string')}, {'required' if d.get('required') else 'optional'}): {d.get('description', '')}"
-                criteria = d.get("acceptance_criteria", "")
-                if criteria:
-                    line += f"\n  Acceptance: {criteria}"
-                examples = d.get("examples", [])
-                if examples:
-                    line += f"\n  Examples: {', '.join(str(e) for e in examples)}"
-                parts.append(line)
-
-        if completed:
-            parts.append("\nCOMPLETED DELIVERABLES (already collected):")
-            for d in completed:
-                parts.append(f"- {d['key']}: {d.get('value', '?')}")
-
-        return "\n".join(parts)
-
-    def _build_probing_context(self, sm_context: Dict[str, Any]) -> str:
-        """Build lightweight deliverable context for probing expert.
-
-        Probing needs to know what deliverables are pending so it can detect
-        whether the user provided any of them (deliverable_signals).
-        Includes required/optional flags and turn counter for stagnation awareness.
-        """
-        parts: List[str] = []
-
-        deliverables = sm_context.get("deliverables", [])
-        pending = [d for d in deliverables if d.get("status") == "pending"]
-        completed = [d for d in deliverables if d.get("status") == "completed"]
-
-        turns = sm_context.get("progress", {}).get("turns_without_deliverable", 0)
-        parts.append(f"TURNS WITHOUT PROGRESS: {turns}")
-
-        if pending:
-            parts.append("PENDING DELIVERABLES (signal if user provided any):")
-            for d in pending:
-                req_label = "REQUIRED" if d.get("required") else "OPTIONAL"
-                parts.append(f"- {d['key']} [{req_label}]: {d.get('description', '')}")
-        else:
-            parts.append("No pending deliverables.")
-
-        if completed:
-            parts.append("Already collected: " + ", ".join(d['key'] for d in completed))
-
-        return "\n".join(parts)
-
     def _build_llm_config(self, config: ExpertConfig) -> LLMConfig:
-        """Build LLM config for this expert call."""
+        """Build LLM config for JSON-mode expert call.
+
+        JSON-mode experts use OPENAI_LANGCHAIN with json_mode=True.
+        Tool-calling experts use OPENAI_DIRECT instead — see _run_with_tools().
+        """
         return LLMConfig(
             model=config.model,
             temperature=config.temperature,
@@ -264,7 +310,7 @@ class ExpertRunner:
         try:
             data = json.loads(raw_content)
         except json.JSONDecodeError:
-            print(f"[ExpertRunner] Expert '{config.name}' returned invalid JSON: {raw_content[:200]}")
+            logger.error(f"Expert '{config.name}' returned invalid JSON: {raw_content[:200]}")
             return ExpertVerdict(
                 expert_name=config.name,
                 verdict="parse_error",
