@@ -133,26 +133,6 @@ function PipelineNodeCardComponent({ data }: NodeProps) {
               >
                 {label}
               </span>
-              {stageSummary?.receivesPlanData && (
-                <span
-                  className={`text-[9px] px-1 py-0.5 rounded shrink-0 ${
-                    isDark ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600'
-                  }`}
-                  title="Receives plan data at runtime"
-                >
-                  Plan
-                </span>
-              )}
-              {stageSummary?.receivesProgressData && (
-                <span
-                  className={`text-[9px] px-1 py-0.5 rounded shrink-0 ${
-                    isDark ? 'bg-sky-500/15 text-sky-400' : 'bg-sky-50 text-sky-600'
-                  }`}
-                  title="Receives turns_without_deliverable counter"
-                >
-                  Progress
-                </span>
-              )}
             </div>
 
             {/* Description (original fallback) */}

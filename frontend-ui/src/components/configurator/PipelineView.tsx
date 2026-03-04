@@ -119,15 +119,12 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
     [schema.nodes, maxCol],
   )
 
-  const edgeColor = isDark ? '#52525b' : '#d4d4d8'
   const edgeLabelColor = isDark ? '#71717a' : '#a1a1aa'
   const annotationEdgeColor = isDark ? '#3f3f46' : '#e5e5e5'
   const dashedEdgeColor = isDark ? '#52525b' : '#c4c4c8'
 
   const edges: Edge[] = useMemo(() => {
     const pipelineEdges: Edge[] = schema.edges.map((e, i) => {
-      const isDashed = e.style === 'dashed'
-
       return {
         id: `edge-${i}`,
         source: e.source,
@@ -136,22 +133,22 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         targetHandle: 'left',
         label: e.label,
         type: 'default',
-        animated: isDashed,
+        animated: false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          width: 16,
-          height: 16,
-          color: isDashed ? dashedEdgeColor : edgeColor,
+          width: 14,
+          height: 14,
+          color: dashedEdgeColor,
         },
         style: {
-          stroke: isDashed ? dashedEdgeColor : edgeColor,
-          strokeWidth: isDashed ? 1.5 : 2,
-          strokeDasharray: isDashed ? '8 4' : undefined,
+          stroke: dashedEdgeColor,
+          strokeWidth: 1.5,
+          strokeDasharray: '6 4',
         },
         labelStyle: {
-          fontSize: 9,
+          fontSize: 7,
           fill: edgeLabelColor,
-          fontWeight: 500,
+          fontWeight: 400,
           fontFamily: 'ui-monospace, monospace',
           letterSpacing: '0.02em',
         },
@@ -159,8 +156,8 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
           fill: isDark ? '#18181b' : '#ffffff',
           fillOpacity: 0.9,
         },
-        labelBgPadding: [6, 3] as [number, number],
-        labelBgBorderRadius: 4,
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgBorderRadius: 3,
       }
     })
 
@@ -181,7 +178,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       style: {
         stroke: annotationEdgeColor,
         strokeWidth: 1.5,
-        strokeDasharray: '4 3',
+        strokeDasharray: '6 4',
       },
     })
 
@@ -205,10 +202,10 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         style: {
           stroke: annotationEdgeColor,
           strokeWidth: 1.5,
-          strokeDasharray: '4 3',
+          strokeDasharray: '6 4',
         },
         labelStyle: {
-          fontSize: 9,
+          fontSize: 7,
           fill: isDark ? '#52525b' : '#a1a1aa',
           fontWeight: 400,
           fontStyle: 'italic',
@@ -239,7 +236,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       style: {
         stroke: annotationEdgeColor,
         strokeWidth: 1.5,
-        strokeDasharray: '4 3',
+        strokeDasharray: '6 4',
       },
     })
 
@@ -262,12 +259,12 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         style: {
           stroke: dashedEdgeColor,
           strokeWidth: 1.5,
-          strokeDasharray: '8 4',
+          strokeDasharray: '6 4',
         },
         labelStyle: {
-          fontSize: 9,
+          fontSize: 7,
           fill: edgeLabelColor,
-          fontWeight: 500,
+          fontWeight: 400,
           fontStyle: 'italic',
         },
         labelBgStyle: {
@@ -280,7 +277,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
     }
 
     return pipelineEdges
-  }, [schema.edges, schema.nodes, isDark, edgeColor, edgeLabelColor, dashedEdgeColor, annotationEdgeColor, firstNodeId, lastNodeId])
+  }, [schema.edges, schema.nodes, isDark, edgeLabelColor, dashedEdgeColor, annotationEdgeColor, firstNodeId, lastNodeId])
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {

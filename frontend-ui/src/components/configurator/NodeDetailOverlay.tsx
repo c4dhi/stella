@@ -324,27 +324,6 @@ export default function NodeDetailOverlay({
     )
   }
 
-  const PlanBadge = ({ text }: { text: string }) => (
-    <div
-      className={`flex items-center gap-3 px-4 py-3.5 rounded-xl text-[12px] leading-relaxed ${
-        isDark ? 'bg-amber-500/8 border border-amber-500/15 text-amber-300/90' : 'bg-amber-50/80 border border-amber-100 text-amber-700'
-      }`}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-70">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="16" y1="13" x2="8" y2="13" />
-        <line x1="16" y1="17" x2="8" y2="17" />
-        <polyline points="10 9 9 9 8 9" />
-      </svg>
-      <div>
-        <span className="font-semibold">Plan</span>
-        <span className="mx-1.5 opacity-40">|</span>
-        <span className="font-light opacity-80">{text}</span>
-      </div>
-    </div>
-  )
-
   const ReadOnlySection = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div>
       <label className={`text-[13px] font-medium block mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
@@ -471,22 +450,11 @@ export default function NodeDetailOverlay({
               {background.map((e) => (
                 <div key={e.name} className="flex items-center gap-2.5 py-1">
                   <span className="font-medium">{e.name}</span>
-                  {e.name === 'task_extraction' && (
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${isDark ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600'}`}>
-                      Plan: full plan
-                    </span>
-                  )}
                 </div>
               ))}
             </div>
           </ReadOnlySection>
         )}
-
-        <PlanBadge text="Each expert receives state context; task_extraction receives full plan (all states, tasks, deliverables)" />
-
-        <ReadOnlySection title="Standard Verdict Output">
-          <code className={`font-mono text-[11px] ${isDark ? 'text-zinc-300' : 'text-neutral-600'}`}>{`{"verdict":"...","confidence":0.0,"recommendation":"short"}`}</code>
-        </ReadOnlySection>
 
         <p className={`text-[12px] font-light italic text-center py-2 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}>
           Edit individual experts in the sidebar
