@@ -102,7 +102,7 @@ function PipelineNodeCardComponent({ data }: NodeProps) {
       <div
         className={`
           px-5 py-4 rounded-2xl border-2 transition-all duration-200 cursor-pointer
-          min-w-[200px] max-w-[240px] relative
+          w-[240px] relative
           ${
             isSelected
               ? isDark

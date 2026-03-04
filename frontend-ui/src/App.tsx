@@ -10,6 +10,7 @@ import PublicProjectJoinPage from './pages/PublicProjectJoinPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import { ToastContainer } from './components/Toast'
 import PlanBuilderModal from './components/settings/PlanBuilder/PlanBuilderModal'
+import GlobalConfiguratorModal from './components/configurator/GlobalConfiguratorModal'
 import { useAuthStore } from './store/authStore'
 import { useToastStore } from './store/toastStore'
 import { useNotificationStore } from './store/notificationStore'
@@ -41,6 +42,9 @@ export default function App() {
 
       {/* Global Plan Builder Modal */}
       <PlanBuilderModal />
+
+      {/* Global Pipeline Configurator Modal */}
+      <GlobalConfiguratorModal />
 
       <Routes>
         {/* Public Routes */}

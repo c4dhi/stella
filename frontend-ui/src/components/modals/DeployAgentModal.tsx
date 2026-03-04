@@ -13,7 +13,6 @@ import type {
   PlanTemplate,
   EnvVarTemplate,
   AgentConfiguration,
-  AgentConfigurationPayload,
 } from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
 import ConfigurationSelectionStep from '../shared/ConfigurationSelectionStep'
@@ -60,7 +59,6 @@ export default function DeployAgentModal({
 
   // Agent configuration state (pipeline configurator)
   const [selectedConfiguration, setSelectedConfiguration] = useState<AgentConfiguration | null>(null)
-  const [customConfiguration, setCustomConfiguration] = useState<AgentConfigurationPayload | null>(null)
 
   // Parse agent requirements from configSchema
   const agentRequirements = useMemo(() => {
@@ -98,7 +96,6 @@ export default function DeployAgentModal({
       setEnvVars({})
       setNewEnvVarKey('')
       setSelectedConfiguration(null)
-      setCustomConfiguration(null)
 
       // Fetch agent types
       setIsLoadingTypes(true)
@@ -250,7 +247,7 @@ export default function DeployAgentModal({
       case 'configure':
         return !!name.trim()
       case 'configuration':
-        return true  // Configuration is optional
+        return !!selectedConfiguration
       case 'plan':
         return !!selectedPlan
       case 'envvars':
@@ -295,9 +292,9 @@ export default function DeployAgentModal({
       }
     }
 
-    // Merge pipeline configuration if one is selected or customized
-    if (selectedConfiguration || customConfiguration) {
-      config.pipeline_config = selectedConfiguration?.configuration ?? customConfiguration
+    // Merge pipeline configuration if one is selected
+    if (selectedConfiguration) {
+      config.pipeline_config = selectedConfiguration.configuration
     }
 
     setIsSubmitting(true)
@@ -692,9 +689,7 @@ export default function DeployAgentModal({
                       agentTypeId={selectedType.id}
                       pipelineSchema={selectedType.pipelineSchema}
                       selectedConfiguration={selectedConfiguration}
-                      customConfiguration={customConfiguration}
                       onSelectConfiguration={setSelectedConfiguration}
-                      onCustomConfiguration={setCustomConfiguration}
                     />
                   )}
                 </motion.div>

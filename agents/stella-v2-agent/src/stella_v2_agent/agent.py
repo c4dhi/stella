@@ -474,10 +474,14 @@ class StellaV2Agent(BaseAgent):
         if "temperature" in config:
             self.llm_service.default_config.temperature = config["temperature"]
 
-        # Apply pipeline configuration (from Agent Configurator)
-        pipeline_config = config.get("pipeline_config", {})
-        if pipeline_config:
-            self._apply_pipeline_config(pipeline_config)
+        # Apply pipeline configuration (from Agent Configurator) — required
+        pipeline_config = config.get("pipeline_config")
+        if not pipeline_config:
+            raise ValueError(
+                "pipeline_config is required. Please select or create a pipeline "
+                "configuration before deploying the agent."
+            )
+        self._apply_pipeline_config(pipeline_config)
 
         logger.info(f"Session started: {session_id}")
 
