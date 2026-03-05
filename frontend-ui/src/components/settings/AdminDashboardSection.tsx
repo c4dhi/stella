@@ -382,7 +382,7 @@ export default function AdminDashboardSection() {
       ) : (
         /* Inline layout — embedded in settings page */
         <motion.div
-          className="max-w-6xl space-y-6"
+          className="max-w-6xl space-y-6 pb-12"
           variants={containerVariants}
           initial="hidden"
           animate="visible"

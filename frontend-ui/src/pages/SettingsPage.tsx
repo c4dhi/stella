@@ -95,7 +95,7 @@ export default function SettingsPage() {
 
   return (
     <motion.div
-      className={`min-h-screen flex flex-col transition-colors duration-200 ${
+      className={`h-screen flex flex-col transition-colors duration-200 ${
         isDark ? 'bg-surface-dark' : 'bg-surface'
       }`}
       initial={{ opacity: 0 }}
