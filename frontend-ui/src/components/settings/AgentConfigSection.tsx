@@ -7,29 +7,9 @@ import { apiClient } from '../../services/ApiClient'
 import type { AgentConfiguration, AgentConfigurationPayload, AgentType, PipelineSchema } from '../../lib/api-types'
 import ConfirmDialog from '../modals/ConfirmDialog'
 
-const containerVariants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.08
-    }
-  }
-}
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.4,
-      ease: [0.25, 0.46, 0.45, 0.94] as const
-    }
-  }
-}
 
 // Gradient color palette for configuration cards (matches ConfigurationSelectionStep)
-const getConfigCardStyle = (index: number) => {
+const getConfigCardStyle = (id: string) => {
   const gradients = [
     'from-indigo-500/20 to-blue-500/20',
     'from-teal-500/20 to-emerald-500/20',
@@ -44,7 +24,12 @@ const getConfigCardStyle = (index: number) => {
     'text-rose-500',
     'text-violet-500',
   ]
-  const colorIndex = index % 5
+  // Derive a stable hash from the config id so color doesn't shift on reorder
+  let hash = 0
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0
+  }
+  const colorIndex = Math.abs(hash) % 5
   return { gradient: gradients[colorIndex], iconColor: iconColors[colorIndex] }
 }
 
@@ -277,14 +262,9 @@ export default function AgentConfigSection() {
 
         {/* Grouped configurations */}
         {!isLoading && !error && Object.keys(groupedConfigs).length > 0 && (
-          <motion.div
-            variants={containerVariants}
-            initial="hidden"
-            animate="visible"
-            className="space-y-6"
-          >
+          <div className="space-y-6">
             {Object.entries(groupedConfigs).map(([agentTypeId, configs]) => (
-              <motion.div key={agentTypeId} variants={itemVariants}>
+              <div key={agentTypeId}>
                 <div className="flex items-center gap-2 mb-3">
                   <span className={`text-xs font-medium tracking-wider uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                     {getAgentTypeName(agentTypeId)}
@@ -295,16 +275,21 @@ export default function AgentConfigSection() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <AnimatePresence mode="popLayout">
                   {configs.map((config, index) => {
-                    const style = getConfigCardStyle(index)
+                    const style = getConfigCardStyle(config.id)
                     const modifiedNodes = countModifiedNodes(config.configuration)
                     const modifiedThresholds = Object.keys(config.configuration.thresholds || {}).length
 
                     return (
                       <motion.div
                         key={config.id}
-                        variants={itemVariants}
-                        className={`group/card relative p-4 rounded-xl border transition-all cursor-pointer ${
+                        layout
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                        transition={{ delay: index * 0.05, type: 'spring', stiffness: 300, damping: 25 }}
+                        className={`group/card relative p-4 rounded-xl border transition-[border-color,background-color,box-shadow] cursor-pointer ${
                           isDark
                             ? 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600 hover:bg-zinc-800/80'
                             : 'border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-md'
@@ -439,10 +424,11 @@ export default function AgentConfigSection() {
                       </motion.div>
                     )
                   })}
+                  </AnimatePresence>
                 </div>
-              </motion.div>
+              </div>
             ))}
-          </motion.div>
+          </div>
         )}
       </div>
 

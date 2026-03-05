@@ -17,7 +17,7 @@ interface ConfigurationSelectionStepProps {
 }
 
 // Gradient color palette for configuration cards
-const getConfigCardStyle = (index: number) => {
+const getConfigCardStyle = (id: string) => {
   const gradients = [
     'from-indigo-500/20 to-blue-500/20',
     'from-teal-500/20 to-emerald-500/20',
@@ -32,7 +32,12 @@ const getConfigCardStyle = (index: number) => {
     'text-rose-500',
     'text-violet-500',
   ]
-  const colorIndex = index % 5
+  // Derive a stable hash from the config id so color doesn't shift on reorder
+  let hash = 0
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0
+  }
+  const colorIndex = Math.abs(hash) % 5
   return { gradient: gradients[colorIndex], iconColor: iconColors[colorIndex] }
 }
 
@@ -130,7 +135,7 @@ export default function ConfigurationSelectionStep({
     <div className="grid grid-cols-2 gap-3 max-h-[350px] overflow-y-auto overflow-x-visible pr-2 pt-1 -mt-1">
       {/* Saved configuration cards */}
       {configurations.map((config, index) => {
-        const style = getConfigCardStyle(index)
+        const style = getConfigCardStyle(config.id)
         const isSelected = selectedConfiguration?.id === config.id
         const modifiedNodes = countModifiedNodes(config.configuration)
         const modifiedThresholds = Object.keys(config.configuration.thresholds || {}).length

@@ -2,6 +2,7 @@ import { useMemo, useCallback } from 'react'
 import {
   ReactFlow,
   Background,
+  BackgroundVariant,
   type Node,
   type Edge,
   MarkerType,
@@ -289,7 +290,7 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
   )
 
   return (
-    <div className="w-full h-full">
+    <div className={`w-full h-full ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -308,10 +309,19 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
       >
+        {/* Blueprint-style grid background */}
         <Background
-          color={isDark ? '#27272a' : '#e5e5e5'}
-          gap={20}
-          size={1}
+          variant={BackgroundVariant.Lines}
+          color={isDark ? 'rgba(168,85,247,0.06)' : 'rgba(0,0,0,0.04)'}
+          gap={24}
+          lineWidth={0.5}
+        />
+        <Background
+          id="coarse"
+          variant={BackgroundVariant.Lines}
+          color={isDark ? 'rgba(168,85,247,0.10)' : 'rgba(0,0,0,0.07)'}
+          gap={24 * 5}
+          lineWidth={1}
         />
       </ReactFlow>
     </div>

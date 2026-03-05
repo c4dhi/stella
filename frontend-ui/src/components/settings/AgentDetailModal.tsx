@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
@@ -18,6 +19,7 @@ export default function AgentDetailModal({
   onClose,
   onBuildTriggered,
 }: AgentDetailModalProps) {
+  const navigate = useNavigate()
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
@@ -330,7 +332,15 @@ export default function AgentDetailModal({
                   >
                     {/* Config Schema */}
                     {agent.configSchema ? (
-                      <ConfigSchemaViewer schema={agent.configSchema} isDark={isDark} />
+                      <ConfigSchemaViewer
+                        schema={agent.configSchema}
+                        pipelineSchema={'pipelineSchema' in agent ? agent.pipelineSchema : undefined}
+                        isDark={isDark}
+                        onNavigateToConfigs={() => {
+                          onClose()
+                          navigate('/settings/agent-configs')
+                        }}
+                      />
                     ) : (
                       <div className={`text-center py-12 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mx-auto mb-4 opacity-50">
@@ -550,14 +560,80 @@ function BuildStatusBadge({ status, isDark }: { status: string; isDark: boolean 
   )
 }
 
-function ConfigSchemaViewer({ schema, isDark }: { schema: Record<string, unknown>; isDark: boolean }) {
+function ConfigSchemaViewer({ schema, pipelineSchema, isDark, onNavigateToConfigs }: { schema: Record<string, unknown>; pipelineSchema?: import('../../lib/api-types').PipelineSchema | null; isDark: boolean; onNavigateToConfigs?: () => void }) {
   const properties = (schema.properties as Record<string, any>) || {}
   const requiredEnvVars = (schema['x-stella-env-vars'] as string[]) || []
+  const optionalEnvVars = (schema['x-stella-optional-env-vars'] as Array<{ name: string; description?: string; default?: string }>) || []
+  const supportsConfigurator = schema['x-stella-supports-configurator'] === true
 
   return (
     <div className="space-y-4">
-      {/* Config Properties */}
-      {Object.keys(properties).length > 0 && (
+      {/* Pipeline Configurator notice for agents with pipelineSchema */}
+      {supportsConfigurator && pipelineSchema ? (
+        <div>
+          <h3 className={`text-xs font-medium tracking-wider uppercase mb-3 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+            Pipeline Configuration
+          </h3>
+          <button
+            onClick={onNavigateToConfigs}
+            className={`w-full p-4 rounded-xl text-left transition-all duration-200 group ${isDark
+              ? 'bg-zinc-700/50 hover:bg-zinc-700/80 hover:border-zinc-500'
+              : 'bg-neutral-50 hover:bg-neutral-100 hover:border-neutral-300'
+            } border ${isDark ? 'border-zinc-700/50' : 'border-transparent'}`}
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-primary-500/10' : 'bg-primary-50'}`}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={isDark ? 'text-primary-400' : 'text-primary-600'}>
+                  <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-neutral-800'}`}>
+                  This agent uses the Pipeline Configurator
+                </p>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                  Create and manage configurations in Agent Configs
+                </p>
+              </div>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className={`transition-transform duration-200 group-hover:translate-x-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}
+              >
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </div>
+            {/* Pipeline nodes summary */}
+            <div className="flex flex-wrap gap-2 mt-3">
+              {pipelineSchema.nodes.map((node) => (
+                <span
+                  key={node.id}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${isDark
+                    ? 'bg-zinc-600/50 text-zinc-300'
+                    : 'bg-neutral-100 text-neutral-600'
+                  }`}
+                >
+                  {node.icon && <span>{node.icon}</span>}
+                  {node.label}
+                  <span className={`text-[10px] ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                    {node.slots.length} slot{node.slots.length !== 1 ? 's' : ''}
+                  </span>
+                </span>
+              ))}
+            </div>
+            {pipelineSchema.thresholds.length > 0 && (
+              <p className={`text-xs mt-2 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                + {pipelineSchema.thresholds.length} global threshold{pipelineSchema.thresholds.length !== 1 ? 's' : ''}
+              </p>
+            )}
+          </button>
+        </div>
+      ) : Object.keys(properties).length > 0 ? (
+        /* Fallback: Raw config properties for agents without pipeline configurator */
         <div>
           <h3 className={`text-xs font-medium tracking-wider uppercase mb-3 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
             Configuration Options
@@ -614,7 +690,7 @@ function ConfigSchemaViewer({ schema, isDark }: { schema: Record<string, unknown
             ))}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Required Environment Variables */}
       {requiredEnvVars.length > 0 && (
@@ -633,6 +709,39 @@ function ConfigSchemaViewer({ schema, isDark }: { schema: Record<string, unknown
               >
                 {envVar}
               </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Optional Environment Variables */}
+      {optionalEnvVars.length > 0 && (
+        <div>
+          <h3 className={`text-xs font-medium tracking-wider uppercase mb-3 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+            Optional Environment Variables
+          </h3>
+          <div className="space-y-2">
+            {optionalEnvVars.map((envVar) => (
+              <div
+                key={envVar.name}
+                className={`px-3 py-2 rounded-lg ${isDark ? 'bg-zinc-700/50' : 'bg-neutral-50'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`font-mono text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-neutral-800'}`}>
+                    {envVar.name}
+                  </span>
+                  {envVar.default && (
+                    <span className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                      default: {envVar.default}
+                    </span>
+                  )}
+                </div>
+                {envVar.description && (
+                  <p className={`text-xs mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                    {envVar.description}
+                  </p>
+                )}
+              </div>
             ))}
           </div>
         </div>

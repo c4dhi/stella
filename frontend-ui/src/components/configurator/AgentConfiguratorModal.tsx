@@ -128,76 +128,90 @@ export default function AgentConfiguratorModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={`px-6 py-3.5 border-b flex items-center justify-between ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
-          <div className="flex items-center gap-4 flex-1">
-            <div className="flex items-center gap-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-primary-500/10' : 'bg-primary-50'}`}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={isDark ? 'text-primary-400' : 'text-primary-600'}>
-                  <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                </svg>
-              </div>
-              <div>
-                <h2 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
-                  Pipeline Configurator
-                </h2>
-                <p className={`text-[11px] font-light ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                  Click a pipeline stage to configure
-                  {hasModifications && (
-                    <span className="ml-2 text-amber-500 font-medium">
-                      {modifiedNodeCount} node{modifiedNodeCount !== 1 ? 's' : ''}, {modifiedThresholdCount} threshold{modifiedThresholdCount !== 1 ? 's' : ''} modified
-                    </span>
-                  )}
-                </p>
-              </div>
+        <div className={`px-4 py-3 border-b flex items-center gap-3 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
+          {/* Close (X) button — left */}
+          <motion.button
+            onClick={onClose}
+            className={`p-2 rounded-xl transition-colors ${
+              isDark
+                ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-secondary'
+                : 'text-content-secondary hover:text-content hover:bg-surface-secondary'
+            }`}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </motion.button>
+
+          {/* Title + info */}
+          <div className="flex items-center gap-3">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDark ? 'bg-primary-500/10' : 'bg-primary-50'}`}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={isDark ? 'text-primary-400' : 'text-primary-600'}>
+                <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
             </div>
-            <div className="flex-1 flex gap-2.5 ml-6">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Configuration name..."
-                className={`flex-1 max-w-[220px] px-3 py-1.5 rounded-lg text-sm font-light focus:outline-none transition-all ${
-                  isDark
-                    ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
-                    : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60'
-                }`}
-              />
-              <input
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optional)"
-                className={`flex-1 max-w-[280px] px-3 py-1.5 rounded-lg text-sm font-light focus:outline-none transition-all ${
-                  isDark
-                    ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
-                    : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60'
-                }`}
-              />
+            <div>
+              <h2 className={`text-body-sm font-semibold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                Pipeline Configurator
+              </h2>
+              <p className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                Click a pipeline stage to configure
+                {hasModifications && (
+                  <span className="ml-2 text-amber-500 font-medium">
+                    {modifiedNodeCount} node{modifiedNodeCount !== 1 ? 's' : ''}, {modifiedThresholdCount} threshold{modifiedThresholdCount !== 1 ? 's' : ''} modified
+                  </span>
+                )}
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={onClose}
-              className={`py-2 px-4 rounded-xl text-sm font-light tracking-wider transition-all duration-200 ${
+
+          {/* Name & description inputs */}
+          <div className="flex-1 flex gap-2.5 ml-3">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Configuration name..."
+              className={`flex-1 max-w-[220px] px-3 py-1.5 rounded-lg text-body-sm focus:outline-none transition-all ${
                 isDark
-                  ? 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
-                  : 'bg-neutral-100/80 text-neutral-600 hover:bg-neutral-200/80'
+                  ? 'bg-surface-dark-secondary border border-border-dark text-content-inverse placeholder:text-content-inverse-tertiary focus:border-border-dark-secondary'
+                  : 'bg-surface-secondary border border-border text-content placeholder:text-content-tertiary focus:border-border-secondary'
               }`}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!name.trim()}
-              className={`py-2 px-4 rounded-xl text-sm font-light tracking-wider transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${
+            />
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className={`flex-1 max-w-[280px] px-3 py-1.5 rounded-lg text-body-sm focus:outline-none transition-all ${
                 isDark
-                  ? 'bg-primary-500 text-white hover:bg-primary-400 border border-primary-400/30'
-                  : 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-[0_1px_20px_rgba(0,0,0,0.12)]'
+                  ? 'bg-surface-dark-secondary border border-border-dark text-content-inverse placeholder:text-content-inverse-tertiary focus:border-border-dark-secondary'
+                  : 'bg-surface-secondary border border-border text-content placeholder:text-content-tertiary focus:border-border-secondary'
               }`}
-            >
-              {saveLabel}
-            </button>
+            />
           </div>
+
+          {/* Save button — right */}
+          <motion.button
+            onClick={handleSave}
+            disabled={!name.trim()}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-body-sm font-medium transition-all ${
+              isDark
+                ? 'bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90'
+                : 'bg-neutral-900 text-white shadow-lg shadow-neutral-900/20 hover:bg-neutral-800'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            whileHover={{ scale: 1.02, y: -1 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            {saveLabel}
+          </motion.button>
         </div>
 
         {/* Body — horizontal split: pipeline left, expert sidebar right */}
