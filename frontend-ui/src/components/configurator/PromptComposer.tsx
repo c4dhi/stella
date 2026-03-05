@@ -200,6 +200,8 @@ export interface PromptBlock {
   rows?: number
   placeholder?: string
   helperText?: string
+  /** Header hint rendered above the editor (like outputFormat footer, but on top) */
+  headerHint?: string
   /** Expert name — used to look up the enforced output format */
   expertName?: string
   /** Direct output format override (takes precedence over expertName lookup) */
@@ -506,6 +508,7 @@ function HighlightedEditor({
   blockId,
   outputFormat,
   fillHeight,
+  headerHint,
 }: {
   value: string
   onChange?: (value: string) => void
@@ -516,6 +519,8 @@ function HighlightedEditor({
   outputFormat?: string
   /** When true, the editor expands to fill its container height */
   fillHeight?: boolean
+  /** Header hint rendered above the editor */
+  headerHint?: string
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -550,11 +555,42 @@ function HighlightedEditor({
 
   return (
     <div className={`rounded-lg overflow-hidden ${fillHeight ? 'flex flex-col h-full' : ''}`}>
+      {/* Header hint — attached above the editor */}
+      {headerHint && (
+        <div className={`flex items-start gap-2 px-3.5 py-2.5 border rounded-t-lg border-b-0 ${
+          isDark
+            ? 'bg-zinc-800/60 border-zinc-700/80'
+            : 'bg-neutral-50/80 border-neutral-200'
+        }`}>
+          <svg
+            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            className={`shrink-0 mt-0.5 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}
+          >
+            <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <div className="flex-1 min-w-0">
+            <span className={`text-[9px] font-semibold uppercase tracking-wide ${
+              isDark ? 'text-zinc-500' : 'text-neutral-400'
+            }`}>
+              Bridge Phrase Injection
+            </span>
+            <p className={`mt-1 text-[10px] font-mono leading-relaxed ${
+              isDark ? 'text-zinc-400' : 'text-neutral-500'
+            }`}>
+              {headerHint}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Editor area */}
       <div className={`relative border border-b-0 transition-colors ${
         fillHeight ? 'flex-1 min-h-0 flex flex-col' : ''
       } ${
-        outputFormat ? 'rounded-t-lg' : 'rounded-lg border-b'
+        headerHint ? '' : 'rounded-t-lg'
+      } ${
+        outputFormat ? '' : 'rounded-b-lg border-b'
       } ${
         isDark
           ? 'bg-zinc-900/80 border-zinc-700/80 focus-within:border-zinc-500'
@@ -835,6 +871,7 @@ function FullscreenPromptModal({
               dimmed={showDefault}
               blockId="fullscreen-editor"
               outputFormat={outputFormat}
+              headerHint={block.headerHint}
               fillHeight
             />
           </div>
@@ -1004,6 +1041,7 @@ function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark:
         dimmed={showDefault}
         blockId={block.id}
         outputFormat={outputFormat}
+        headerHint={block.headerHint}
       />
 
       {showDefault && (

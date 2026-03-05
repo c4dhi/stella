@@ -67,6 +67,11 @@ Formatting:
 - No markdown, bullets, numbered lists, or emojis.
 - Write exactly as a professional interviewer would speak.
 
+Bridge Continuation:
+- A short bridge phrase (e.g. "Good question.", "Absolutely.") may already have been spoken aloud before your response.
+- If so, you will be told what was said. Continue naturally from it — do NOT repeat it, re-greet, or add another acknowledgment.
+- Just pick up mid-thought as if you already started talking.
+
 {{current_state}}
 {{pending_deliverables}}
 {{collected_deliverables}}
@@ -508,6 +513,7 @@ export default function NodeDetailOverlay({
         id: 'system_prompt',
         type: 'editable',
         label: 'Prompt Template',
+        headerHint: 'The bridge phrase (from Bridge Generator) is automatically prepended to every response. The model is instructed to continue naturally from it — do not repeat or re-acknowledge.',
         value: isOverridden ? String(systemPromptValue) : undefined,
         defaultValue: DEFAULT_RESPONSE_GENERATOR_TEMPLATE,
         onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v || undefined),

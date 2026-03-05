@@ -1,15 +1,15 @@
 {
-  "/STELLA_Documentation/docs-467": {
+  "/STELLA_Documentation/docs-06a": {
     "__comp": "5e95c892",
     "__context": {
       "plugin": "aba21aa0"
     }
   },
-  "/STELLA_Documentation/docs-7bb": {
+  "/STELLA_Documentation/docs-eed": {
     "__comp": "a7bd4aaa",
     "__props": "f970e451"
   },
-  "/STELLA_Documentation/docs-c16": {
+  "/STELLA_Documentation/docs-ad4": {
     "__comp": "a94703ab"
   },
   "/STELLA_Documentation/docs-f07": {
@@ -79,6 +79,18 @@
   "/STELLA_Documentation/docs/agents/stella-light-agent-a7f": {
     "__comp": "17896441",
     "content": "980c244d"
+  },
+  "/STELLA_Documentation/docs/agents/stella-v2-965": {
+    "__comp": "17896441",
+    "content": "40f0bdc5"
+  },
+  "/STELLA_Documentation/docs/agents/stella-v2/pipeline-configurator-df0": {
+    "__comp": "17896441",
+    "content": "94f76110"
+  },
+  "/STELLA_Documentation/docs/agents/stella-v2/pipeline-schema-991": {
+    "__comp": "17896441",
+    "content": "040563a5"
   },
   "/STELLA_Documentation/docs/architecture/data-flow-c22": {
     "__comp": "17896441",

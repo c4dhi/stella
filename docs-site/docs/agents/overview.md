@@ -11,7 +11,8 @@ STELLA supports multiple agent types, each designed for different use cases. All
 
 | Agent | Description | Best For |
 |-------|-------------|----------|
-| **stella-agent** | Full-featured agent with advanced STT, LLM, and TTS pipeline | Production conversations requiring high quality |
+| **stella-v2** | Streamlined 5-stage pipeline with deterministic arbitration and configurable pipeline | Configurable deployments, lower latency, predictable behavior |
+| **stella-agent** | Full-featured agent with LLM-based aggregation pipeline | Production conversations requiring high quality |
 | **stella-light-agent** | Lightweight agent with simplified pipeline | Quick responses, lower resource usage |
 | **echo-agent** | Simple test agent that echoes back messages | Testing and development |
 
@@ -38,6 +39,15 @@ All STELLA agents follow a similar pipeline architecture and can be configured w
 ```
 
 ## Choosing an Agent
+
+### stella-v2
+
+Use `stella-v2` when you need:
+- Configurable pipeline with visual Pipeline Configurator
+- Lower response latency (deterministic arbitration instead of LLM synthesis)
+- Predictable, debuggable expert conflict resolution
+- Reusable pipeline configurations across deployments
+- Bridge generation for reduced perceived latency in voice conversations
 
 ### stella-agent
 
@@ -80,6 +90,7 @@ All agents support these common environment variables:
 
 | Agent | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-------|-------------|-----------|----------------|--------------|
+| stella-v2 | 500m | 2000m | 512Mi | 2Gi |
 | stella-agent | 250m | 1000m | 512Mi | 2Gi |
 | stella-light-agent | 100m | 500m | 256Mi | 1Gi |
 | echo-agent | 50m | 200m | 128Mi | 512Mi |
@@ -94,6 +105,7 @@ All agents support these common environment variables:
 
 ## Next Steps
 
+- [stella-v2](/docs/agents/stella-v2) - Streamlined pipeline with configurator
 - [stella-agent](/docs/agents/stella-agent) - Full-featured agent details
 - [stella-light-agent](/docs/agents/stella-light-agent) - Lightweight agent details
 - [echo-agent](/docs/agents/echo-agent) - Test agent details

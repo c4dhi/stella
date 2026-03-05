@@ -1,4 +1,5 @@
 export default {
+  "040563a5": [() => import(/* webpackChunkName: "040563a5" */ "@site/docs/agents/stella-v2/pipeline-schema.md"), "@site/docs/agents/stella-v2/pipeline-schema.md", require.resolveWeak("@site/docs/agents/stella-v2/pipeline-schema.md")],
   "047f1178": [() => import(/* webpackChunkName: "047f1178" */ "@site/docs/contributing/coding-standards/index.md"), "@site/docs/contributing/coding-standards/index.md", require.resolveWeak("@site/docs/contributing/coding-standards/index.md")],
   "04da809a": [() => import(/* webpackChunkName: "04da809a" */ "@site/docs/deployment/kubernetes.md"), "@site/docs/deployment/kubernetes.md", require.resolveWeak("@site/docs/deployment/kubernetes.md")],
   "0b1ac180": [() => import(/* webpackChunkName: "0b1ac180" */ "@site/docs/architecture/overview.md"), "@site/docs/architecture/overview.md", require.resolveWeak("@site/docs/architecture/overview.md")],
@@ -17,6 +18,7 @@ export default {
   "315169aa": [() => import(/* webpackChunkName: "315169aa" */ "@site/docs/plan-structure/examples.md"), "@site/docs/plan-structure/examples.md", require.resolveWeak("@site/docs/plan-structure/examples.md")],
   "3b84e690": [() => import(/* webpackChunkName: "3b84e690" */ "@site/docs/deployment/production-checklist.md"), "@site/docs/deployment/production-checklist.md", require.resolveWeak("@site/docs/deployment/production-checklist.md")],
   "40d6ea0b": [() => import(/* webpackChunkName: "40d6ea0b" */ "@site/docs/plan-structure/states.md"), "@site/docs/plan-structure/states.md", require.resolveWeak("@site/docs/plan-structure/states.md")],
+  "40f0bdc5": [() => import(/* webpackChunkName: "40f0bdc5" */ "@site/docs/agents/stella-v2/index.md"), "@site/docs/agents/stella-v2/index.md", require.resolveWeak("@site/docs/agents/stella-v2/index.md")],
   "41a8f6d7": [() => import(/* webpackChunkName: "41a8f6d7" */ "@site/docs/guides/add-custom-ui.md"), "@site/docs/guides/add-custom-ui.md", require.resolveWeak("@site/docs/guides/add-custom-ui.md")],
   "4edc808e": [() => import(/* webpackChunkName: "4edc808e" */ "@site/docs/index.mdx"), "@site/docs/index.mdx", require.resolveWeak("@site/docs/index.mdx")],
   "54d6b8e0": [() => import(/* webpackChunkName: "54d6b8e0" */ "@site/docs/sdk/base-agent.md"), "@site/docs/sdk/base-agent.md", require.resolveWeak("@site/docs/sdk/base-agent.md")],
@@ -40,6 +42,7 @@ export default {
   "8fd4bb5c": [() => import(/* webpackChunkName: "8fd4bb5c" */ "@site/docs/agents/overview.md"), "@site/docs/agents/overview.md", require.resolveWeak("@site/docs/agents/overview.md")],
   "929b2849": [() => import(/* webpackChunkName: "929b2849" */ "@site/docs/sdk/tools.md"), "@site/docs/sdk/tools.md", require.resolveWeak("@site/docs/sdk/tools.md")],
   "92eeeb13": [() => import(/* webpackChunkName: "92eeeb13" */ "@site/docs/getting-started/first-agent.md"), "@site/docs/getting-started/first-agent.md", require.resolveWeak("@site/docs/getting-started/first-agent.md")],
+  "94f76110": [() => import(/* webpackChunkName: "94f76110" */ "@site/docs/agents/stella-v2/pipeline-configurator.md"), "@site/docs/agents/stella-v2/pipeline-configurator.md", require.resolveWeak("@site/docs/agents/stella-v2/pipeline-configurator.md")],
   "980c244d": [() => import(/* webpackChunkName: "980c244d" */ "@site/docs/agents/stella-light-agent.md"), "@site/docs/agents/stella-light-agent.md", require.resolveWeak("@site/docs/agents/stella-light-agent.md")],
   "99b5f0c0": [() => import(/* webpackChunkName: "99b5f0c0" */ "@site/docs/contributing/coding-standards/git.md"), "@site/docs/contributing/coding-standards/git.md", require.resolveWeak("@site/docs/contributing/coding-standards/git.md")],
   "9a4df4ac": [() => import(/* webpackChunkName: "9a4df4ac" */ "@site/docs/deployment/nginx-setup.md"), "@site/docs/deployment/nginx-setup.md", require.resolveWeak("@site/docs/deployment/nginx-setup.md")],
