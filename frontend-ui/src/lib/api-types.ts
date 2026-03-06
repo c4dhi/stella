@@ -605,8 +605,9 @@ export function isAgentRunning(agent: AgentInstance): boolean {
  * State execution mode (matches SDK StateType enum)
  * - strict: Sequential task processing - one task at a time
  * - loose: Flexible/parallel task processing - any order
+ * - goal: Goal-oriented natural conversation - agent sees information gaps, not tasks
  */
-export type StateType = 'strict' | 'loose'
+export type StateType = 'strict' | 'loose' | 'goal'
 
 /**
  * @deprecated Use StateType instead. Kept for backward compatibility.
@@ -624,9 +625,8 @@ export interface PlanDeliverable {
   type: DeliverableType
   description: string              // What to collect (was: label)
   required: boolean
-  acceptance_criteria?: string     // Validation rules (was: description)
+  acceptance_criteria?: string     // What constitutes a valid answer, with examples
   enum_values?: string[]           // For enum type (was: enumValues)
-  examples?: string[]
 }
 
 /**
@@ -651,6 +651,17 @@ export interface StateTransition {
 }
 
 /**
+ * Goal-mode context for natural, goal-oriented conversation states.
+ */
+export interface StateGoal {
+  objective: string
+  context?: string
+  depth_guidance?: string
+  boundaries?: string
+  success_description?: string
+}
+
+/**
  * A state in the plan, containing tasks.
  */
 export interface PlanState {
@@ -660,6 +671,7 @@ export interface PlanState {
   description?: string
   tasks: PlanTask[]
   transitions?: StateTransition[]
+  goal?: StateGoal                 // Only used when type === 'goal'
 }
 
 // Session context field for collecting participant information

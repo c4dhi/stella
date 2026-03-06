@@ -16,7 +16,6 @@ interface PlanDeliverable {
   required: boolean;
   acceptance_criteria?: string;
   enum_values?: string[];
-  examples?: string[];
 }
 
 interface PlanTask {
@@ -34,13 +33,22 @@ interface StateTransition {
   condition_config?: Record<string, unknown>;
 }
 
+interface StateGoal {
+  objective: string;
+  context?: string;
+  depth_guidance?: string;
+  boundaries?: string;
+  success_description?: string;
+}
+
 interface PlanState {
   id: string;
   title: string;
-  type: 'strict' | 'loose';
+  type: 'strict' | 'loose' | 'goal';
   description?: string;
   tasks: PlanTask[];
   transitions?: StateTransition[];
+  goal?: StateGoal;
 }
 
 interface PlanContent {
@@ -137,6 +145,22 @@ Think of it like this:
 - Tasks are individual questions or micro-goals (usually 1 deliverable per task)
 - Deliverables are the actual data points/variables collected
 
+STATE TYPES — choose carefully based on the conversational intent:
+- "strict": Tasks are completed sequentially, one at a time. Use for: tutorials, games, guided flows where order matters.
+- "loose": Tasks can be completed in any order, agent chooses. Use for: surveys, intake forms, structured data collection.
+- "goal": Agent has a NATURAL CONVERSATION toward an objective. Tasks are invisible to the agent — it sees information gaps instead. Use for: coaching, interviews, therapy, discovery conversations, any state where natural dialogue matters more than task execution. REQUIRES a "goal" object.
+
+When using type "goal", you MUST include a "goal" object on the state:
+{
+  "goal": {
+    "objective": "What the conversation should achieve",
+    "context": "Background the AI needs to understand the domain",
+    "depth_guidance": "How deep to probe — when to accept answers vs push further",
+    "boundaries": "What topics to avoid (covered elsewhere or out of scope)",
+    "success_description": "What a well-conducted version of this phase looks like"
+  }
+}
+
 The structure must follow this exact schema:
 {
   "content": {
@@ -148,13 +172,14 @@ The structure must follow this exact schema:
       {
         "id": "state_<unique_id>",
         "title": "State Name",
-        "type": "strict" | "loose",
+        "type": "strict" | "loose" | "goal",
         "description": "What this phase accomplishes",
+        "goal": { ... },
         "tasks": [
           {
             "id": "task_<unique_id>",
             "description": "What to ask/do",
-            "instruction": "How to ask it (optional)",
+            "instruction": "How to ask it (optional, not used in goal mode)",
             "required": true | false,
             "deliverables": [
               {
@@ -162,8 +187,8 @@ The structure must follow this exact schema:
                 "description": "What this captures",
                 "type": "string" | "number" | "boolean" | "enum",
                 "required": true | false,
-                "enum_values": ["option1", "option2"],
-                "examples": ["realistic example 1", "realistic example 2"]
+                "acceptance_criteria": "What constitutes a valid, complete answer. Include concrete examples of good and bad answers.",
+                "enum_values": ["option1", "option2"]
               }
             ]
           }
@@ -177,7 +202,7 @@ The structure must follow this exact schema:
   "suggestedDescription": "Brief description (1-2 sentences)"
 }
 
-Here is an example of a well-structured plan - notice how tasks are GRANULAR (one question = one task):
+EXAMPLE 1 — Structured plan with strict/loose states:
 
 {
   "content": {
@@ -203,7 +228,7 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
                 "description": "User's preferred name",
                 "type": "string",
                 "required": true,
-                "examples": ["Sarah", "Mike", "Dr. Johnson"]
+                "acceptance_criteria": "A real name or nickname the user wants to be called. E.g. 'Sarah', 'Mike', 'Dr. Johnson'. Reject generic non-answers like 'nobody' or 'doesn't matter'."
               }
             ]
           }
@@ -227,14 +252,13 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
                 "type": "enum",
                 "required": true,
                 "enum_values": ["Running", "Swimming", "Gym/Weights", "Yoga", "Team Sports", "Other"],
-                "examples": ["Running", "Yoga"]
+                "acceptance_criteria": "Must be a specific activity type. If user says 'cardio', probe for which specific cardio activity."
               }
             ]
           },
           {
             "id": "task_frequency",
             "description": "Ask about workout frequency",
-            "instruction": "Ask how often they exercise per week",
             "required": true,
             "deliverables": [
               {
@@ -242,22 +266,7 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
                 "description": "Times per week they exercise",
                 "type": "number",
                 "required": true,
-                "examples": ["3", "5", "7"]
-              }
-            ]
-          },
-          {
-            "id": "task_duration",
-            "description": "Ask about workout duration",
-            "instruction": "Ask how long their typical workout session is",
-            "required": true,
-            "deliverables": [
-              {
-                "key": "session_duration_minutes",
-                "description": "Typical workout length in minutes",
-                "type": "number",
-                "required": true,
-                "examples": ["30", "45", "60", "90"]
+                "acceptance_criteria": "A specific number between 0-7. If they say 'a few times' or 'sometimes', pin down the exact number."
               }
             ]
           },
@@ -271,7 +280,7 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
                 "description": "Their main fitness objective",
                 "type": "string",
                 "required": false,
-                "examples": ["Lose 10kg by summer", "Run a marathon", "Build muscle", "Improve flexibility"]
+                "acceptance_criteria": "A specific, measurable goal. E.g. 'Lose 10kg by summer', 'Run a marathon in under 4 hours'. Reject vague answers like 'get healthier' or 'be more fit' — probe for specifics."
               }
             ]
           }
@@ -293,26 +302,161 @@ Here is an example of a well-structured plan - notice how tasks are GRANULAR (on
         ]
       }
     ],
-    "system_prompt": "You are a friendly fitness coach conducting a quick check-in. Be encouraging and enthusiastic about exercise. Use casual, supportive language. Celebrate their efforts regardless of frequency or intensity."
+    "system_prompt": "You are a friendly fitness coach conducting a quick check-in. Be encouraging and enthusiastic about exercise. Use casual, supportive language."
   },
   "suggestedName": "Fitness Activity Check-in",
   "suggestedDescription": "A brief conversation to learn about someone's exercise habits and fitness goals."
 }
 
+EXAMPLE 2 — Goal-oriented plan for natural conversation:
+
+{
+  "content": {
+    "id": "plan_coaching_session",
+    "title": "Life Coaching Discovery",
+    "description": "A natural coaching conversation to understand the client's current situation and aspirations",
+    "initial_state_id": "state_rapport",
+    "states": [
+      {
+        "id": "state_rapport",
+        "title": "Build Rapport",
+        "type": "goal",
+        "description": "Establish a warm connection and understand who the client is",
+        "goal": {
+          "objective": "Build genuine rapport and learn who the client is as a person",
+          "context": "This is a first coaching session. The client may be nervous or unsure what to expect.",
+          "depth_guidance": "Let the conversation breathe. Don't rush to collect information. If they share something personal, acknowledge it before moving on. Accept brief answers for name/role but probe gently on what brought them here.",
+          "boundaries": "Don't dive into problems or goals yet — this phase is about connection, not assessment.",
+          "success_description": "The client feels heard and comfortable. You know their name, what they do, and have a sense of what prompted them to seek coaching."
+        },
+        "tasks": [
+          {
+            "id": "task_identity",
+            "description": "Learn who they are",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "client_name",
+                "description": "Client's preferred name",
+                "type": "string",
+                "required": true,
+                "acceptance_criteria": "Their preferred first name or nickname."
+              },
+              {
+                "key": "client_role",
+                "description": "What they do professionally or how they spend their time",
+                "type": "string",
+                "required": true,
+                "acceptance_criteria": "A brief description of their work or life situation. E.g. 'marketing manager at a startup', 'retired teacher', 'stay-at-home parent'. One sentence is fine."
+              }
+            ]
+          },
+          {
+            "id": "task_motivation",
+            "description": "Understand what brought them to coaching",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "coaching_trigger",
+                "description": "What prompted them to seek coaching",
+                "type": "string",
+                "required": true,
+                "acceptance_criteria": "A genuine reason, not just 'I thought it would be good'. Should reveal some emotional or situational driver. E.g. 'I got promoted and feel overwhelmed', 'going through a divorce', 'feeling stuck in my career for 2 years'."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "state_exploration",
+        "title": "Explore Aspirations",
+        "type": "goal",
+        "description": "Understand what the client wants to change or achieve",
+        "goal": {
+          "objective": "Discover what the client truly wants — not just surface goals but underlying desires and values",
+          "context": "You've built initial rapport. The client is now more comfortable sharing.",
+          "depth_guidance": "Push past surface-level goals. If they say 'I want to be happier', ask what happiness looks like for them specifically. Use open questions. Reflect back what you hear to confirm understanding. Aim for 2-3 exchanges per deliverable, not one-shot extraction.",
+          "boundaries": "Don't offer solutions or advice yet. This is about understanding, not fixing. Don't diagnose or label their situation.",
+          "success_description": "You understand 1-2 concrete things they want to change, why those matter to them, and what's been getting in the way."
+        },
+        "tasks": [
+          {
+            "id": "task_desired_change",
+            "description": "What they want to be different",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "primary_goal",
+                "description": "The main thing they want to change or achieve",
+                "type": "string",
+                "required": true,
+                "acceptance_criteria": "A specific, personally meaningful goal. Must go beyond surface level. E.g. 'I want to set boundaries at work so I can be present with my kids' not just 'better work-life balance'."
+              },
+              {
+                "key": "underlying_value",
+                "description": "The value or need driving their goal",
+                "type": "string",
+                "required": false,
+                "acceptance_criteria": "A core value or emotional need. E.g. 'autonomy', 'being a good parent', 'feeling competent'. This may emerge naturally — don't force it."
+              }
+            ]
+          },
+          {
+            "id": "task_obstacles",
+            "description": "What's been getting in the way",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "main_obstacle",
+                "description": "The primary barrier to their goal",
+                "type": "string",
+                "required": true,
+                "acceptance_criteria": "A specific obstacle, not a vague complaint. E.g. 'My manager expects me to be available 24/7 and I can't say no' not just 'work is stressful'."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "state_closing",
+        "title": "Closing",
+        "type": "strict",
+        "description": "Summarize and close the session warmly",
+        "tasks": [
+          {
+            "id": "task_close",
+            "description": "Reflect back and close",
+            "instruction": "Summarize the key themes you heard, validate their courage in sharing, and close warmly",
+            "required": true,
+            "deliverables": []
+          }
+        ]
+      }
+    ],
+    "system_prompt": "You are a warm, experienced life coach conducting a discovery session. Listen more than you speak. Use reflective listening. Be genuinely curious about their experience. Never judge or prescribe — your role is to understand."
+  },
+  "suggestedName": "Life Coaching Discovery",
+  "suggestedDescription": "A natural coaching conversation to understand the client's situation, aspirations, and obstacles."
+}
+
 Guidelines:
 1. REQUIRED FIELDS: Always include id, title, description, and initial_state_id in content
-2. STATES = conversation phases (typically 2-4 states: greeting, main questions, farewell)
-3. TASKS = granular to-dos, usually ONE question per task
+2. STATES = conversation phases (typically 2-4 states)
+3. TASKS = granular to-dos, usually ONE question per task (in strict/loose) or grouped by theme (in goal)
 4. DELIVERABLES = individual variables (usually 1 per task, sometimes 0 for closing tasks)
-5. Use "strict" when order matters, "loose" when questions can be asked flexibly
+5. STATE TYPE selection:
+   - Use "strict" when order matters (games, tutorials, onboarding)
+   - Use "loose" when questions can be asked in any order (surveys, intake forms)
+   - Use "goal" when natural conversation matters most (coaching, interviews, therapy, discovery). ALWAYS include a "goal" object with at least "objective" for goal states.
 6. Keep plans SHORT and focused - this is for brief voice conversations
 7. Use appropriate types: string (open text), number (counts), boolean (yes/no), enum (choices)
 8. Generate snake_case keys for deliverables: user_name, workout_frequency, etc.
-9. ALWAYS include realistic examples for deliverables
+9. ALWAYS include acceptance_criteria for deliverables — describe what constitutes a valid answer, include concrete examples of good AND bad answers
 10. ALWAYS generate a system_prompt with:
     - Clear role (e.g., "You are a friendly fitness coach...")
     - Communication style (casual, professional, enthusiastic, etc.)
     - 2-3 sentences max
+11. For goal states, the "goal" object is critical — it tells the AI HOW to conduct the conversation, not just WHAT to collect
 
 Respond ONLY with valid JSON matching the schema above.`;
   }
@@ -356,6 +500,8 @@ Respond ONLY with valid JSON matching the schema above.`;
       id: stateIdMap.get(state.id || '') || uuidv4(),
       title: state.title || 'Untitled State',
       type: state.type || 'loose',
+      // Preserve goal object for goal-type states
+      goal: state.type === 'goal' ? state.goal : undefined,
       tasks: (state.tasks || []).map((task) => ({
         ...task,
         id: uuidv4(), // Always use UUID for task IDs

@@ -50,6 +50,15 @@ const ProcessingModeIcon = memo(({ type }: { type: StateType }) => {
     )
   }
 
+  if (type === StateType.GOAL) {
+    return (
+      <div className="flex items-center gap-1" title="Goal-Oriented">
+        <span className="text-[10px] text-neutral-600 dark:text-neutral-400">🎯</span>
+        <span className="text-[8px] text-neutral-500 dark:text-neutral-400 tracking-wider uppercase">Goal</span>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center gap-1" title="Flexible Processing">
       <span className="text-[10px] text-neutral-600 dark:text-neutral-400">🔄</span>

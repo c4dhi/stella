@@ -211,7 +211,8 @@ export interface Envelope<T> {
 // State Machine Architecture Types
 export enum StateType {
   STRICT = "strict",    // Sequential task processing
-  LOOSE = "loose"       // Flexible task processing
+  LOOSE = "loose",      // Flexible task processing
+  GOAL = "goal"         // Goal-oriented natural conversation
 }
 
 export enum TaskStatus {

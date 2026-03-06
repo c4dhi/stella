@@ -104,8 +104,8 @@ export const PLACEHOLDER_REGISTRY: PlaceholderDef[] = [
   {
     name: 'processing_mode',
     label: 'processing_mode',
-    description: 'Processing mode (sequential/flexible)',
-    preview: 'sequential',
+    description: 'Processing mode (sequential/flexible/goal)',
+    preview: 'goal',
     insertToken: '{{processing_mode}}',
     pattern: '{{processing_mode}}',
     dark: { text: 'text-zinc-300', bg: 'bg-zinc-600/30', chip: 'bg-zinc-700 text-zinc-400 border-zinc-600' },

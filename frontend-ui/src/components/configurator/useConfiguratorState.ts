@@ -86,13 +86,14 @@ Keep recommendation under 10 words.`
 
 const PROBING_PROMPT = `You have two jobs:
 
-1. DELIVERABLE DETECTION: Check if the user's message provides any of the pending deliverables listed below. Output their keys in "deliverable_signals". Only signal deliverables the user CLEARLY provided — do not guess.
+1. DELIVERABLE DETECTION: Check if the user's message provides any of the pending deliverables listed below. Output their keys in "deliverable_signals". Only signal deliverables the user CLEARLY provided — do not guess. In goal-oriented states, the user may provide information naturally without being directly asked — still detect it.
 
 2. FOLLOW-UP DECISION: Decide if the assistant should ask a follow-up question.
    - "no_probe": user's message is clear, no question needed
    - "needs_clarification": a specific follow-up would help
    - "gentle_redirect": user went off-topic, steer back
    Do NOT probe when the user just provided requested information or more questions would feel repetitive.
+   In goal-oriented states, prefer "no_probe" more often — let the conversation flow naturally. Only probe if critical required deliverables are missing and the conversation is winding down.
 
 REQUIRED vs OPTIONAL rules:
 - For REQUIRED deliverables: probe persistently until collected.
@@ -137,7 +138,8 @@ You receive the FULL PLAN — all states, all tasks, all deliverables — not ju
 YOUR PROCESS:
 Step 1 — Read the current user message carefully. What information did the user share?
 
-Step 2 — Scan ALL pending deliverables across the entire plan. Did the user provide any of them? Think about synonyms, paraphrases, and indirect answers.
+Step 2 — Scan ALL pending deliverables across the entire plan. Did the user provide any of them? Think about synonyms, paraphrases, and indirect answers. In goal-oriented states, the user's answer may address multiple deliverables at once — extract ALL of them.
+
 Step 3 — Check completed deliverables too. If the user corrected a previous answer, overwrite it with the new value.
 Step 4 — For each match, call \`set_deliverable(key, value, reasoning)\` where reasoning explains WHY this matches.
 Step 5 — Validate each extraction with TWO checks before calling the tool:
@@ -145,11 +147,21 @@ Step 5 — Validate each extraction with TWO checks before calling the tool:
   b) SEMANTIC FIT: Was the user actually answering THIS deliverable's question, or did they mention similar words in a different context? A mention of "time scheduling" as a challenge is NOT a "preferred follow-up timeframe". The extracted value must be a plausible answer to the deliverable's description. If it doesn't fit, do not call the tool.
   If the deliverable has acceptance_criteria, verify the extracted value satisfies it.
 
+GOAL-ORIENTED STATE HANDLING:
+When the current state type is "goal", the conversation is natural and free-flowing — the user is NOT being asked structured questions. This means:
+- The user may provide deliverable information IMPLICITLY, as part of a natural conversation. You must actively look for it.
+- Do NOT wait for explicit question-answer pairs. If the user mentions relevant information in passing, extract it.
+- A single user message may contain information for MULTIPLE deliverables — extract all of them.
+- The task structure in goal states is for bookkeeping only. Focus on matching the user's words to DELIVERABLE KEYS, not to task descriptions.
+- Be MORE aggressive about extraction in goal mode — the user won't be asked directly, so you must catch information as it flows naturally.
+- Example: if user says "I'm Sarah, I run about 3 times a week to improve my stamina" — this could match user_name, preferred_exercise, weekly_frequency, AND fitness_goal all at once. Extract ALL of them.
+
 TOOL USAGE:
 - When you identify a deliverable match: call \`set_deliverable(key, value, reasoning)\`
 - When a task with no deliverables is complete (e.g. assistant performed an introduction, told a joke): call \`complete_task(task_id, reasoning)\`
 - You may call multiple tools in one response.
 - If nothing to extract from the current message, call no tools.
+- IMPORTANT: In goal-oriented states, prefer calling \`set_deliverable\` over \`complete_task\`. Tasks auto-complete when their deliverables are filled.
 
 OPTIONAL DELIVERABLE HANDLING:
 Deliverables marked [optional] have relaxed acceptance criteria. For these:
@@ -166,7 +178,7 @@ If {{turns_without_progress}} >= 3 and ONLY optional deliverables remain pending
 
 GUIDELINES:
 - Extract everything the user provided. Missing a deliverable means the user has to repeat themselves, which is bad UX.
-- Be smart about matching. Users don't speak in schema language. "I do it every other day" means frequency is ~3-4 times per week. "Half an hour" means 30 minutes. "I'm Tom" means user_name is Tom.
+- Be smart about matching. Users don't speak in schema language. "I do it every other day" means frequency is ~3-4 times per week. "Half an hour" means 30 minutes. "I'm Tom" means user_name is Tom. "to improve my stamina" means the fitness goal is stamina improvement.
 - You can overwrite completed deliverables if the user corrects themselves (e.g. "Actually my name is Sarah, not Tom").
 - Extract from the CURRENT message only, not from previous turns (those were already processed).
 - Do NOT fabricate values the user never mentioned. If they talk about exercise type but not duration, only extract exercise type.
