@@ -77,12 +77,30 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
+<<<<<<< HEAD
 # Model download scripts (models are downloaded at runtime via init container)
 # Models are stored on PersistentVolume, not in the image.
 # This keeps the image slim (~400MB instead of ~1GB).
 # The init container runs these scripts to populate the PV on first startup.
 COPY download_kokoro_models.py .
 COPY download_piper_models.py .
+=======
+# Install PyTorch (GPU or CPU based on build arg, needed for ChatterBox)
+RUN if [ "$ENABLE_GPU" = "true" ]; then \
+        echo "[TTS] Installing PyTorch with CUDA..." && \
+        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+    else \
+        echo "[TTS] Installing PyTorch (CPU)..." && \
+        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+
+# Model download scripts (models are downloaded at runtime via init container)
+# Models are stored on PersistentVolume, not in the image.
+# This keeps the image slim. The init container runs these scripts
+# to populate the PV on first startup.
+COPY download_kokoro_models.py .
+COPY download_chatterbox_models.py .
+>>>>>>> worktree-adaptive-plotting-steele
 
 # Generate gRPC code from proto
 COPY proto/ ./proto/
@@ -100,7 +118,11 @@ ENV TTS_PROVIDER=piper
 ENV ONNX_PROVIDER=CPUExecutionProvider
 ENV GRPC_PORT=50052
 ENV KOKORO_CACHE_DIR=/root/.cache/kokoro
+<<<<<<< HEAD
 ENV PIPER_CACHE_DIR=/root/.cache/piper
+=======
+ENV CHATTERBOX_CACHE_DIR=/root/.cache/chatterbox
+>>>>>>> worktree-adaptive-plotting-steele
 ENV PYTHONUNBUFFERED=1
 
 # Health check

@@ -19,6 +19,7 @@ message SynthesizeRequest {
   string session_id = 2;        // Session identifier
   string voice = 3;             // Optional voice override
   float speed = 4;              // Speech rate (0.5-2.0, default 1.0)
+  string language = 5;          // Optional ISO 639-1 language code (e.g., "en", "de")
 }
 
 message SynthesizeResponse {

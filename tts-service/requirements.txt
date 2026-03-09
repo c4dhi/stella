@@ -5,7 +5,12 @@ grpcio-tools>=1.60.0
 # TTS Engines
 edge-tts>=7.2.7
 kokoro-onnx>=0.4.0
+<<<<<<< HEAD
 piper-tts>=1.2.0
+=======
+chatterbox-tts>=1.0.0
+huggingface_hub>=0.20.0
+>>>>>>> worktree-adaptive-plotting-steele
 
 # Audio Processing
 numpy>=1.24.0

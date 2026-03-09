@@ -17,7 +17,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
+<<<<<<< HEAD
 from providers import EdgeTTSProvider, KokoroProvider, PiperProvider, TTSProvider
+=======
+from providers import EdgeTTSProvider, KokoroProvider, ChatterBoxProvider, TTSProvider
+>>>>>>> worktree-adaptive-plotting-steele
 
 
 class TTSEngine:
@@ -38,6 +42,7 @@ class TTSEngine:
             # Create providers
             edge_provider = EdgeTTSProvider()
             kokoro_provider = KokoroProvider()
+<<<<<<< HEAD
             piper_provider = PiperProvider()
 
             # Determine priority based on TTS_PROVIDER
@@ -45,11 +50,25 @@ class TTSEngine:
                 primary_providers = [piper_provider, edge_provider, kokoro_provider]
             elif tts_provider == 'kokoro':
                 primary_providers = [kokoro_provider, piper_provider, edge_provider]
+=======
+            chatterbox_provider = ChatterBoxProvider()
+
+            # Determine priority based on TTS_PROVIDER
+            if tts_provider == 'chatterbox':
+                primary_providers = [chatterbox_provider, edge_provider, kokoro_provider]
+            elif tts_provider == 'kokoro':
+                primary_providers = [kokoro_provider, edge_provider]
+>>>>>>> worktree-adaptive-plotting-steele
             elif tts_provider == 'edge_tts':
                 primary_providers = [edge_provider, piper_provider, kokoro_provider]
             elif tts_provider == 'auto':
+<<<<<<< HEAD
                 # Auto: prefer Piper for speed on CPU, then Kokoro, then Edge
                 primary_providers = [piper_provider, kokoro_provider, edge_provider]
+=======
+                # Auto: prefer ChatterBox (multilingual), then Kokoro, then Edge
+                primary_providers = [chatterbox_provider, kokoro_provider, edge_provider]
+>>>>>>> worktree-adaptive-plotting-steele
             else:
                 # Default to Piper
                 primary_providers = [piper_provider, edge_provider, kokoro_provider]
@@ -91,6 +110,7 @@ class TTSEngine:
         text: str,
         voice: str = None,
         speed: float = 1.0,
+        language: str = None,
     ) -> tuple[bytes, int, int]:
         """Synthesize text to audio bytes.
 
@@ -101,12 +121,12 @@ class TTSEngine:
             raise RuntimeError("TTS Engine not initialized")
 
         # Try primary provider
-        result = await self.provider.synthesize(text, voice, speed)
+        result = await self.provider.synthesize(text, voice, speed, language=language)
 
         # Fallback if primary fails
         if result is None and self.fallback_provider:
             print(f"[TTS Engine] Primary provider failed, trying fallback...")
-            result = await self.fallback_provider.synthesize(text, voice, speed)
+            result = await self.fallback_provider.synthesize(text, voice, speed, language=language)
 
         if result is None:
             raise RuntimeError(f"All TTS providers failed for text: {text[:50]}...")
@@ -137,6 +157,7 @@ class TTSEngine:
         voice: str = None,
         speed: float = 1.0,
         chunk_size: int = 480,
+        language: str = None,
     ):
         """Synthesize text to streaming audio chunks.
 
@@ -147,7 +168,7 @@ class TTSEngine:
             raise RuntimeError("TTS Engine not initialized")
 
         chunk_index = 0
-        async for chunk, is_final in self.provider.synthesize_stream(text, voice, speed, chunk_size):
+        async for chunk, is_final in self.provider.synthesize_stream(text, voice, speed, chunk_size, language=language):
             yield chunk.tobytes(), is_final, chunk_index
             chunk_index += 1
 
@@ -180,12 +201,13 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Empty text")
                 return tts_pb2.SynthesizeResponse()
 
-            print(f"[TTS Service] Synthesize request: '{text[:50]}...' session={request.session_id}")
+            print(f"[TTS Service] Synthesize request: '{text[:50]}...' session={request.session_id} lang={request.language}")
 
             audio_bytes, sample_rate, duration_ms = await self.engine.synthesize(
                 text=text,
                 voice=request.voice if request.voice else None,
                 speed=request.speed if request.speed > 0 else 1.0,
+                language=request.language if request.language else None,
             )
 
             print(f"[TTS Service] Synthesized {len(audio_bytes)} bytes, {duration_ms}ms")
@@ -215,6 +237,7 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
                 text=text,
                 voice=request.voice if request.voice else None,
                 speed=request.speed if request.speed > 0 else 1.0,
+                language=request.language if request.language else None,
             ):
                 yield tts_pb2.AudioChunk(
                     audio_data=audio_bytes,

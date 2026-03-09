@@ -283,8 +283,11 @@ class KokoroProvider(TTSProvider):
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize text using Kokoro TTS.
+
+        Note: Kokoro is English-only. The language parameter is accepted but ignored.
 
         Handles long text (>300 chars) by:
         1. Splitting into sentences

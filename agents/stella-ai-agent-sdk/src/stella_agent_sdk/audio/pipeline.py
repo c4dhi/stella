@@ -752,6 +752,7 @@ class AudioPipeline:
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> None:
         """
         Send text to TTS for audio synthesis (independent of frontend display).
@@ -765,6 +766,8 @@ class AudioPipeline:
                   not individual chunks.
             voice: Optional voice override (provider-specific)
             speed: Speech rate (0.5-2.0, default 1.0)
+            language: Optional ISO 639-1 language code (e.g., "en", "de").
+                      If None, uses the TTS_LANGUAGE env var or provider default.
 
         Example:
             ```python
@@ -793,12 +796,16 @@ class AudioPipeline:
             logger.debug("TTS not available, skipping speak()")
             return
 
-        logger.info(f"[TTS] speak() called with text: {text[:50]}...")
+        # Resolve language: explicit param > env var > None (provider default)
+        if language is None:
+            language = os.getenv("TTS_LANGUAGE", None)
+
+        logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
         self._stop_speaking_event.clear()
 
         try:
-            await self._speak_sentence(text, voice, speed)
+            await self._speak_sentence(text, voice, speed, language)
         finally:
             self._is_speaking = False
 
@@ -812,6 +819,7 @@ class AudioPipeline:
         sentence: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> None:
         """
         Send a sentence to TTS and publish audio to LiveKit with retry logic.
@@ -820,6 +828,7 @@ class AudioPipeline:
             sentence: Complete sentence to speak
             voice: Optional voice override
             speed: Speech rate
+            language: Optional ISO 639-1 language code (e.g., "en", "de")
         """
         if not sentence.strip():
             return
@@ -836,6 +845,7 @@ class AudioPipeline:
                     session_id=self._session_id,
                     voice=voice,
                     speed=speed,
+                    language=language,
                 ):
                     if self._stop_speaking_event.is_set():
                         logger.info("TTS interrupted mid-sentence")

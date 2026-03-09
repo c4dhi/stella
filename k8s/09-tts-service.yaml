@@ -84,9 +84,22 @@ spec:
               echo "$KOKORO_VERSION" > "$KOKORO_VERSION_FILE"
               echo "[TTS Init] Kokoro model download complete"
             fi
-          fi
 
-          if [ "$TTS_PROVIDER" = "edge_tts" ] || [ "$TTS_PROVIDER" = "elevenlabs" ]; then
+          elif [ "$TTS_PROVIDER" = "chatterbox" ]; then
+            CHATTERBOX_VERSION_FILE="/models/chatterbox/.version"
+            CHATTERBOX_VERSION="multilingual-v1.0"
+
+            if [ -f "$CHATTERBOX_VERSION_FILE" ] && [ "$(cat $CHATTERBOX_VERSION_FILE)" = "$CHATTERBOX_VERSION" ]; then
+              echo "[TTS Init] ChatterBox model already downloaded (version: $CHATTERBOX_VERSION)"
+            else
+              echo "[TTS Init] Downloading ChatterBox multilingual model..."
+              mkdir -p /models/chatterbox
+              CHATTERBOX_CACHE_DIR=/models/chatterbox python download_chatterbox_models.py
+              echo "$CHATTERBOX_VERSION" > "$CHATTERBOX_VERSION_FILE"
+              echo "[TTS Init] ChatterBox model download complete"
+            fi
+
+          else
             echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
           fi
 
@@ -121,6 +134,9 @@ spec:
           mountPath: /root/.cache/kokoro
           subPath: kokoro
         - name: model-cache
+          mountPath: /root/.cache/chatterbox
+          subPath: chatterbox
+        - name: model-cache
           mountPath: /root/.cache/piper
           subPath: piper
         env:
@@ -140,6 +156,8 @@ spec:
               optional: true
         - name: KOKORO_CACHE_DIR
           value: "/root/.cache/kokoro"
+        - name: CHATTERBOX_CACHE_DIR
+          value: "/root/.cache/chatterbox"
         - name: PIPER_CACHE_DIR
           value: "/root/.cache/piper"
         resources:
