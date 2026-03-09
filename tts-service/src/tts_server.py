@@ -17,11 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-<<<<<<< HEAD
-from providers import EdgeTTSProvider, KokoroProvider, PiperProvider, TTSProvider
-=======
-from providers import EdgeTTSProvider, KokoroProvider, ChatterBoxProvider, TTSProvider
->>>>>>> worktree-adaptive-plotting-steele
+from providers import EdgeTTSProvider, KokoroProvider, PiperProvider, ChatterBoxProvider, TTSProvider
 
 
 class TTSEngine:
@@ -42,33 +38,21 @@ class TTSEngine:
             # Create providers
             edge_provider = EdgeTTSProvider()
             kokoro_provider = KokoroProvider()
-<<<<<<< HEAD
             piper_provider = PiperProvider()
+            chatterbox_provider = ChatterBoxProvider()
 
             # Determine priority based on TTS_PROVIDER
             if tts_provider == 'piper':
                 primary_providers = [piper_provider, edge_provider, kokoro_provider]
+            elif tts_provider == 'chatterbox':
+                primary_providers = [chatterbox_provider, piper_provider, edge_provider]
             elif tts_provider == 'kokoro':
                 primary_providers = [kokoro_provider, piper_provider, edge_provider]
-=======
-            chatterbox_provider = ChatterBoxProvider()
-
-            # Determine priority based on TTS_PROVIDER
-            if tts_provider == 'chatterbox':
-                primary_providers = [chatterbox_provider, edge_provider, kokoro_provider]
-            elif tts_provider == 'kokoro':
-                primary_providers = [kokoro_provider, edge_provider]
->>>>>>> worktree-adaptive-plotting-steele
             elif tts_provider == 'edge_tts':
                 primary_providers = [edge_provider, piper_provider, kokoro_provider]
             elif tts_provider == 'auto':
-<<<<<<< HEAD
-                # Auto: prefer Piper for speed on CPU, then Kokoro, then Edge
-                primary_providers = [piper_provider, kokoro_provider, edge_provider]
-=======
-                # Auto: prefer ChatterBox (multilingual), then Kokoro, then Edge
-                primary_providers = [chatterbox_provider, kokoro_provider, edge_provider]
->>>>>>> worktree-adaptive-plotting-steele
+                # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro, then Edge
+                primary_providers = [piper_provider, chatterbox_provider, kokoro_provider, edge_provider]
             else:
                 # Default to Piper
                 primary_providers = [piper_provider, edge_provider, kokoro_provider]
