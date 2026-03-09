@@ -4,6 +4,7 @@
 # Storage for TTS models to avoid baking into Docker images:
 # - Kokoro model: ~300MB (kokoro-v1.0.onnx)
 # - Kokoro voices: ~200MB (voices-v1.0.bin)
+# - ChatterBox multilingual: ~2GB (ve.pt, t3_mtl23ls_v2.safetensors, s3gen.pt, etc.)
 # =============================================================================
 
 apiVersion: v1
@@ -19,4 +20,4 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      storage: 5Gi

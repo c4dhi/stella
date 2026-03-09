@@ -65,6 +65,21 @@ spec:
               echo "$KOKORO_VERSION" > "$KOKORO_VERSION_FILE"
               echo "[TTS Init] Kokoro model download complete"
             fi
+
+          elif [ "$TTS_PROVIDER" = "chatterbox" ]; then
+            CHATTERBOX_VERSION_FILE="/models/chatterbox/.version"
+            CHATTERBOX_VERSION="multilingual-v1.0"
+
+            if [ -f "$CHATTERBOX_VERSION_FILE" ] && [ "$(cat $CHATTERBOX_VERSION_FILE)" = "$CHATTERBOX_VERSION" ]; then
+              echo "[TTS Init] ChatterBox model already downloaded (version: $CHATTERBOX_VERSION)"
+            else
+              echo "[TTS Init] Downloading ChatterBox multilingual model..."
+              mkdir -p /models/chatterbox
+              CHATTERBOX_CACHE_DIR=/models/chatterbox python download_chatterbox_models.py
+              echo "$CHATTERBOX_VERSION" > "$CHATTERBOX_VERSION_FILE"
+              echo "[TTS Init] ChatterBox model download complete"
+            fi
+
           else
             echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
           fi
@@ -94,11 +109,14 @@ spec:
         ports:
         - containerPort: 50052
           name: grpc
-        # Mount PV with models at cache directory
+        # Mount PV with models at cache directories
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/kokoro
           subPath: kokoro
+        - name: model-cache
+          mountPath: /root/.cache/chatterbox
+          subPath: chatterbox
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -116,6 +134,8 @@ spec:
               optional: true
         - name: KOKORO_CACHE_DIR
           value: "/root/.cache/kokoro"
+        - name: CHATTERBOX_CACHE_DIR
+          value: "/root/.cache/chatterbox"
         resources:
           requests:
             memory: "512Mi"

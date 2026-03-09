@@ -190,6 +190,7 @@ class TTSClient:
         session_id: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> AsyncIterator[AudioChunk]:
         """
         Stream audio chunks from TTS (non-blocking).
@@ -199,6 +200,7 @@ class TTSClient:
             session_id: Session identifier
             voice: Optional voice override
             speed: Speech rate (0.5-2.0, default 1.0)
+            language: Optional ISO 639-1 language code (e.g., "en", "de")
 
         Yields:
             AudioChunk with audio_data (24kHz, 16-bit PCM, mono)
@@ -212,6 +214,7 @@ class TTSClient:
                 session_id=session_id,
                 voice=voice or "",
                 speed=speed,
+                language=language or "",
             )
 
             # Stream response

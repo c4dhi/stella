@@ -41,13 +41,24 @@ class EdgeTTSProvider(TTSProvider):
     - Good fallback option
     """
 
-    # Default voices in order of preference
-    DEFAULT_VOICES = [
-        "en-US-AriaNeural",
-        "en-US-JennyNeural",
-        "en-US-GuyNeural",
-        "en-US-SaraNeural",
-    ]
+    # Default voices per language, in order of preference
+    VOICES_BY_LANGUAGE = {
+        "en": [
+            "en-US-AriaNeural",
+            "en-US-JennyNeural",
+            "en-US-GuyNeural",
+            "en-US-SaraNeural",
+        ],
+        "de": [
+            "de-DE-KatjaNeural",
+            "de-DE-ConradNeural",
+            "de-DE-AmalaNeural",
+            "de-DE-FlorianMultilingualNeural",
+        ],
+    }
+
+    # Default voices (English) for backwards compatibility
+    DEFAULT_VOICES = VOICES_BY_LANGUAGE["en"]
 
     def __init__(self):
         self._initialized = False
@@ -82,6 +93,7 @@ class EdgeTTSProvider(TTSProvider):
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize text using Edge TTS."""
         if not self._initialized:
@@ -92,11 +104,19 @@ class EdgeTTSProvider(TTSProvider):
             print("[EdgeTTS] Empty text provided")
             return None
 
+        # Select language-appropriate voice list
+        lang = (language or "en").lower()
+        lang_voices = self.VOICES_BY_LANGUAGE.get(lang, self.DEFAULT_VOICES)
+
         # Build voice list to try
         voices_to_try = []
         if voice:
             voices_to_try.append(voice)
-        voices_to_try.append(self._default_voice)
+        # Prefer language-specific voices
+        voices_to_try.extend([v for v in lang_voices if v not in voices_to_try])
+        # Fall back to default voice and other defaults
+        if self._default_voice not in voices_to_try:
+            voices_to_try.append(self._default_voice)
         voices_to_try.extend([v for v in self.DEFAULT_VOICES if v not in voices_to_try])
 
         for voice_id in voices_to_try:

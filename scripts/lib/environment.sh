@@ -252,9 +252,10 @@ display_config_table() {
     # Format TTS provider with type indicator
     local tts_display="${TTS_PROVIDER:-edge_tts}"
     case "${TTS_PROVIDER:-edge_tts}" in
-        edge_tts)   tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
-        kokoro)     tts_display="${tts_display} ${DIM}(local)${NC}" ;;
-        elevenlabs) tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+        edge_tts)    tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+        kokoro)      tts_display="${tts_display} ${DIM}(local)${NC}" ;;
+        chatterbox)  tts_display="${tts_display} ${DIM}(local, EN/DE)${NC}" ;;
+        elevenlabs)  tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
     esac
 
     # Format STT provider with device indicator

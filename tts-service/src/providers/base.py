@@ -39,6 +39,7 @@ class TTSProvider(ABC):
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize text to audio.
 
@@ -46,6 +47,7 @@ class TTSProvider(ABC):
             text: The text to synthesize.
             voice: Optional voice ID override.
             speed: Speech rate (0.5 to 2.0, default 1.0).
+            language: Optional ISO 639-1 language code (e.g., 'en', 'de').
 
         Returns:
             Tuple of (audio_data as float32 numpy array, sample_rate) or None on failure.
@@ -59,6 +61,7 @@ class TTSProvider(ABC):
         voice: Optional[str] = None,
         speed: float = 1.0,
         chunk_size: int = 480,
+        language: Optional[str] = None,
     ) -> AsyncGenerator[Tuple[np.ndarray, bool], None]:
         """Synthesize text to streaming audio chunks.
 
@@ -70,11 +73,12 @@ class TTSProvider(ABC):
             voice: Optional voice ID override.
             speed: Speech rate (0.5 to 2.0, default 1.0).
             chunk_size: Number of samples per chunk (default 480 = 30ms at 16kHz).
+            language: Optional ISO 639-1 language code (e.g., 'en', 'de').
 
         Yields:
             Tuple of (audio_chunk as int16 numpy array, is_final).
         """
-        result = await self.synthesize(text, voice, speed)
+        result = await self.synthesize(text, voice, speed, language=language)
         if result is None:
             return
 

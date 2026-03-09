@@ -6,6 +6,8 @@ grpcio-tools>=1.60.0
 # Pin to 7.2.1 - version 7.2.3 has NoAudioReceived bug (GitHub issue #443)
 edge-tts==7.2.1
 kokoro-onnx>=0.4.0
+chatterbox-tts>=1.0.0
+huggingface_hub>=0.20.0
 
 # Audio Processing
 numpy>=1.24.0
