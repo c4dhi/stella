@@ -250,9 +250,9 @@ display_config_table() {
     fi
 
     # Format TTS provider with type indicator
-    local tts_display="${TTS_PROVIDER:-edge_tts}"
-    case "${TTS_PROVIDER:-edge_tts}" in
-        edge_tts)   tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+    local tts_display="${TTS_PROVIDER:-piper}"
+    case "${TTS_PROVIDER:-piper}" in
+        piper)      tts_display="${tts_display} ${DIM}(local)${NC}" ;;
         kokoro)     tts_display="${tts_display} ${DIM}(local)${NC}" ;;
         elevenlabs) tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
     esac
@@ -322,7 +322,7 @@ set_defaults() {
     export WHISPER_INITIAL_PROMPT="${WHISPER_INITIAL_PROMPT:-}"
 
     # TTS Configuration (defaults - may be overridden by GPU auto-config)
-    export TTS_PROVIDER="${TTS_PROVIDER:-edge_tts}"
+    export TTS_PROVIDER="${TTS_PROVIDER:-piper}"
     export ELEVENLABS_STABILITY="${ELEVENLABS_STABILITY:-0.5}"
     export ELEVENLABS_SIMILARITY_BOOST="${ELEVENLABS_SIMILARITY_BOOST:-0.8}"
     export ELEVENLABS_STYLE="${ELEVENLABS_STYLE:-0.0}"

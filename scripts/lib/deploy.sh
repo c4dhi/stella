@@ -86,7 +86,7 @@ generate_configmap() {
         -e "s|\${PUBLIC_DB_HOST}|${PUBLIC_DB_HOST:-}|g" \
         -e "s|\${PUBLIC_DB_PORT}|${PUBLIC_DB_PORT:-}|g" \
         -e "s|\${STT_PROVIDER}|${STT_PROVIDER:-sherpa}|g" \
-        -e "s|\${TTS_PROVIDER}|${TTS_PROVIDER:-edge_tts}|g" \
+        -e "s|\${TTS_PROVIDER}|${TTS_PROVIDER:-piper}|g" \
         -e "s|\${WHISPER_MODEL}|${WHISPER_MODEL:-base.en}|g" \
         -e "s|\${WHISPER_DEVICE}|${WHISPER_DEVICE:-cpu}|g" \
         -e "s|\${WHISPER_COMPUTE_TYPE}|${WHISPER_COMPUTE_TYPE:-int8}|g" \
@@ -699,12 +699,8 @@ run_database_migrations() {
             sleep 0.1
         done
 
-        # Prevent set -e from aborting here so we can handle migration failures
-        # and print diagnostics below.
-        set +e
         wait $migration_pid
         migration_exit_code=$?
-        set -e
         migration_output=$(cat "$migration_log" 2>/dev/null)
 
         # Success - we're done
@@ -1021,6 +1017,7 @@ wait_for_services() {
 
     # Show what we're waiting for
     verbose "Waiting for services to be ready..."
+    local failed_services=""
 
     for deploy in $SERVICES_TO_WAIT; do
         local timeout
@@ -1051,15 +1048,24 @@ wait_for_services() {
             sleep 0.1
         done
 
+        # Don't let set -e abort here; report all service statuses first.
+        set +e
         wait $pid
         local exit_code=$?
+        set -e
 
         if [[ $exit_code -eq 0 ]]; then
             printf "\r   ${ARROW} ${display_name}... ${GREEN}${CHECK}${NC}    \n"
         else
             printf "\r   ${ARROW} ${display_name}... ${RED}${CROSS}${NC}    \n"
+            failed_services="${failed_services}${deploy} "
         fi
     done
+
+    if [[ -n "$failed_services" ]]; then
+        error "Some services failed readiness checks: $failed_services"
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -1186,8 +1192,8 @@ check_service_runtime_status() {
         if echo "$logs" | grep -iq "CUDAExecutionProvider"; then
             if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
                 status="CPU"
-                provider="edge_tts"
-                details="Kokoro CUDA failed, fell back to Edge TTS"
+                provider="piper"
+                details="Kokoro CUDA failed, fell back to Piper"
             else
                 status="CUDA"
                 provider="kokoro"
@@ -1197,10 +1203,10 @@ check_service_runtime_status() {
             status="CUDA"
             provider="kokoro"
             details="Kokoro ONNX"
-        elif echo "$logs" | grep -iq "Primary.provider.*edge_tts\|Provider.*edge_tts"; then
-            status="Cloud"
-            provider="edge_tts"
-            details="Microsoft Edge TTS (Cloud)"
+        elif echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
+            status="CPU"
+            provider="piper"
+            details="Piper TTS (Local CPU)"
         fi
     fi
 
