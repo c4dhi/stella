@@ -118,7 +118,7 @@ calculate_service_checksum() {
     fi
 
     # Add .env files to checksum (with error handling)
-    for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/.env.local" "$PROJECT_DIR/.env.production"; do
+    for env_file in "$PROJECT_DIR/.env.local" "$PROJECT_DIR/.env.production"; do
         if [[ -f "$env_file" ]]; then
             local env_hash
             env_hash=$(hash_file "$env_file" 2>/dev/null || echo "env")
@@ -742,15 +742,25 @@ wait_for_parallel_builds() {
         all_done[$i]="false"
     done
 
+    local spinner_idx=0
+
+    # Track per-build start times
+    declare -a all_start_times=()
+    for i in "${!all_names[@]}"; do
+        all_start_times[$i]=$SECONDS
+    done
+
+    # Get terminal width for line truncation — prevents wrapping which breaks
+    # the cursor-up approach in narrow/split terminal panes
+    local cols
+    cols=$(tput cols 2>/dev/null || echo 80)
+
     # Print initial status lines for all services
     for i in "${!all_names[@]}"; do
         echo -e "   ${ARROW} ${all_names[$i]}...$(printf '%*s' $((30 - ${#all_names[$i]})) '')${DIM}building...${NC} ${CYAN}⠋${NC}"
     done
 
-    local spinner_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    local spinner_idx=0
-
-    # Main monitoring loop - continue until ALL builds complete (even if some fail)
+    # Main monitoring loop — multi-line in-place update via cursor-up
     while [[ $completed -lt $total ]]; do
         for i in "${!all_pids[@]}"; do
             if [[ "${all_done[$i]}" == "true" ]]; then
@@ -767,55 +777,61 @@ wait_for_parallel_builds() {
             local still_running=$?
 
             if [[ $still_running -ne 0 ]]; then
-                # Build finished - get exit code
                 wait "$pid" 2>/dev/null
                 local exit_code=$?
+                local elapsed=$(( SECONDS - all_start_times[$i] ))
 
                 ((completed++))
                 all_done[$i]="true"
 
                 if [[ $exit_code -eq 0 ]]; then
-                    all_status[$i]="${GREEN}${CHECK} done${NC}"
+                    all_status[$i]="${CHECK} done  ${elapsed}s"
                     rm -f "$log" 2>/dev/null || true
                     REBUILT_SERVICES+=("$name")
 
-                    # Update checksum
                     local service_dir="${checksum_info%%:*}"
                     local dockerfile_path="${checksum_info#*:}"
                     update_service_checksum "$name" "$service_dir" "$dockerfile_path" 2>/dev/null || true
                 else
-                    all_status[$i]="${RED}${CROSS} FAILED${NC}"
+                    all_status[$i]="${CROSS} FAILED"
                     ((failed++))
                     failed_services+=("$name:$log")
                 fi
             else
-                # Still running - get current status from log
                 local new_status
                 new_status=$(get_build_status_from_log "$log" 2>/dev/null || echo "building...")
                 all_status[$i]="$new_status"
             fi
         done
 
-        # Move cursor up and redraw all status lines
+        # Move cursor up to redraw all status lines in place
         echo -ne "\033[${total}A"
+
+        # Re-check terminal width (user may resize)
+        cols=$(tput cols 2>/dev/null || echo 80)
+        # Fixed prefix width: "   → name..." + padding = 40 visible chars
+        # Remaining space for: status + spinner + margin
+        local max_status=$(( cols - 42 ))
+        [[ $max_status -lt 10 ]] && max_status=10
 
         for i in "${!all_names[@]}"; do
             local name="${all_names[$i]}"
             local status="${all_status[$i]}"
 
-            # Clear line and print status
             echo -ne "\r\033[K"
             if [[ "${all_done[$i]}" == "true" ]]; then
-                # Completed - status already has colors
-                echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${status}"
+                echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${GREEN}${status}${NC}"
             else
-                # Still running - show dim status with spinner
-                local spinner="${spinner_chars[$spinner_idx]}"
+                # Truncate status to prevent line wrapping
+                if [[ ${#status} -gt $max_status ]]; then
+                    status="${status:0:$((max_status - 1))}…"
+                fi
+                local spinner="${SPINNER_CHARS[$spinner_idx]}"
                 echo -e "   ${ARROW} ${name}...$(printf '%*s' $((30 - ${#name})) '')${DIM}${status}${NC} ${CYAN}${spinner}${NC}"
             fi
         done
 
-        spinner_idx=$(( (spinner_idx + 1) % ${#spinner_chars[@]} ))
+        spinner_idx=$(( (spinner_idx + 1) % ${#SPINNER_CHARS[@]} ))
         sleep 0.2
     done
 
@@ -965,10 +981,12 @@ build_images() {
     done
 
     # Wait for all parallel builds to complete
+    local build_start=$SECONDS
     set +e
     wait_for_parallel_builds
     local build_result=$?
     set -e
+    local build_elapsed=$(( SECONDS - build_start ))
 
     if [[ $build_result -ne 0 ]]; then
         exit 1
@@ -977,7 +995,7 @@ build_images() {
     # Summary
     echo ""
     if [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
-        success "Built ${#REBUILT_SERVICES[@]} image(s): ${REBUILT_SERVICES[*]}"
+        success "Built ${#REBUILT_SERVICES[@]} image(s) in ${build_elapsed}s"
     else
         success "All images up to date"
     fi
@@ -990,6 +1008,13 @@ build_images() {
     # Always sync images to K3s on Linux (ensure all images are available)
     if [[ "$OS_TYPE" == "linux" ]]; then
         sync_images_to_k3s
+    fi
+
+    # Prune build cache after rebuild to reclaim disk space
+    # Only on --rebuild since incremental builds benefit from the cache
+    if [[ "$REBUILD_MODE" == "true" && ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
+        docker builder prune -af >/dev/null 2>&1 || true
+        verbose "build_images: post-build cache pruned"
     fi
 }
 

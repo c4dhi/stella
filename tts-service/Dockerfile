@@ -67,6 +67,23 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install ChatterBox TTS dependencies explicitly, then ChatterBox itself with --no-deps
+# This avoids the numpy conflict (chatterbox pins numpy<1.26, kokoro needs numpy>=2.0)
+# ChatterBox works fine with newer numpy, the pin is overly conservative
+RUN pip install --no-cache-dir \
+    conformer \
+    diffusers \
+    librosa \
+    omegaconf \
+    pykakasi \
+    pyloudnorm \
+    resemble-perth \
+    s3tokenizer \
+    safetensors \
+    spacy-pkuseg \
+    transformers
+RUN pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6
+
 # Install ONNX Runtime (GPU or CPU based on build arg)
 ARG ENABLE_GPU
 RUN if [ "$ENABLE_GPU" = "true" ]; then \

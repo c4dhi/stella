@@ -16,17 +16,21 @@ echo -e "${BLUE}Update OpenAI API Key in Agent Secrets${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${RED}Error: .env file not found${NC}"
+# Determine which env file to use
+if [ -f .env.local ]; then
+    ENV_FILE=".env.local"
+elif [ -f .env.production ]; then
+    ENV_FILE=".env.production"
+else
+    echo -e "${RED}Error: No .env.local or .env.production file found${NC}"
     exit 1
 fi
 
-# Load OpenAI API key from .env
-export $(grep -v '^#' .env | grep OPENAI_API_KEY | xargs)
+# Load OpenAI API key
+export $(grep -v '^#' "$ENV_FILE" | grep OPENAI_API_KEY | xargs)
 
 if [ -z "$OPENAI_API_KEY" ]; then
-    echo -e "${RED}Error: OPENAI_API_KEY not found in .env file${NC}"
+    echo -e "${RED}Error: OPENAI_API_KEY not found in $ENV_FILE${NC}"
     exit 1
 fi
 
@@ -36,7 +40,7 @@ if [[ ! $OPENAI_API_KEY =~ ^sk- ]]; then
     exit 1
 fi
 
-echo -e "${GREEN}Found OpenAI API key in .env:${NC}"
+echo -e "${GREEN}Found OpenAI API key in ${ENV_FILE}:${NC}"
 echo -e "  ${OPENAI_API_KEY:0:7}...${OPENAI_API_KEY: -4} (${#OPENAI_API_KEY} characters)"
 echo ""
 

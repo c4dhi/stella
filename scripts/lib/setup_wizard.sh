@@ -127,9 +127,11 @@ run_setup_wizard() {
         env="$WIZARD_SELECTED_ENV"
     fi
 
-    # Load existing config if .env exists
-    if [[ -f "$project_dir/.env" ]]; then
-        load_existing_config "$project_dir/.env"
+    # Load existing config from environment-specific file
+    local env_file="$project_dir/.env.local"
+    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    if [[ -f "$env_file" ]]; then
+        load_existing_config "$env_file"
     fi
 
     # Select categories based on environment
@@ -195,7 +197,9 @@ run_setup_wizard() {
     # Confirm and save
     if wizard_confirm "Save this configuration?" "y"; then
         save_configuration "$project_dir" "$env"
-        wizard_success_screen "$project_dir/.env" "$env"
+        local target_file="$project_dir/.env.local"
+        [[ "$env" == "production" ]] && target_file="$project_dir/.env.production"
+        wizard_success_screen "$target_file" "$env"
         return 0
     else
         echo ""
@@ -663,19 +667,20 @@ apply_all_defaults() {
 save_configuration() {
     local project_dir="$1"
     local env="$2"
-    local env_file="$project_dir/.env"
+    local env_file="$project_dir/.env.local"
+    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
 
     # Apply defaults for all non-prompted variables
     apply_all_defaults "$env"
 
-    # Backup existing .env if it exists
+    # Backup existing file if it exists
     if [[ -f "$env_file" ]]; then
         local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
         cp "$env_file" "$backup_file"
-        verbose "Backed up existing .env to $backup_file"
+        verbose "Backed up existing $(basename "$env_file") to $backup_file"
     fi
 
-    # Generate .env file
+    # Generate env file
     {
         echo "# ============================================================================"
         echo "# STELLA - ENVIRONMENT CONFIGURATION"

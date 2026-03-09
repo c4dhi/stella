@@ -6,12 +6,14 @@ grpcio-tools>=1.60.0
 edge-tts>=7.2.7
 kokoro-onnx>=0.4.0
 piper-tts>=1.2.0
-chatterbox-tts>=1.0.0
 huggingface_hub>=0.20.0
 
 # Audio Processing
 numpy>=1.24.0
 soundfile>=0.12.0
 scipy>=1.11.0
+
+# Note: chatterbox-tts is installed separately in Dockerfile with --no-deps
+# because it pins numpy<1.26 which conflicts with kokoro-onnx's numpy>=2.0
 
 # Note: onnxruntime or onnxruntime-gpu is installed conditionally in Dockerfile

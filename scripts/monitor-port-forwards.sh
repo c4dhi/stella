@@ -79,10 +79,14 @@ restart_port_forwards() {
         done < "$PID_DIR/port-forwards.pid"
     fi
 
-    # Detect environment from .env
+    # Detect environment
     NODE_ENV="local"
-    if [ -f .env ]; then
-        NODE_ENV=$(grep "^NODE_ENV=" .env | cut -d'=' -f2)
+    if [ -f .env.production ]; then
+        PROD_NODE_ENV=$(grep "^NODE_ENV=" .env.production | cut -d'=' -f2)
+        # Use production if .env.local doesn't exist or if explicitly production
+        if [ ! -f .env.local ] && [ "$PROD_NODE_ENV" = "production" ]; then
+            NODE_ENV="production"
+        fi
     fi
 
     # Start new port-forwards
@@ -174,8 +178,8 @@ case "${1:-}" in
         # Show status
         # Detect environment
         NODE_ENV="local"
-        if [ -f .env ]; then
-            NODE_ENV=$(grep "^NODE_ENV=" .env | cut -d'=' -f2)
+        if [ -f .env.production ] && [ ! -f .env.local ]; then
+            NODE_ENV="production"
         fi
 
         echo "Port-Forward Status:"

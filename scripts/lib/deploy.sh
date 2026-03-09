@@ -111,6 +111,26 @@ generate_configmap() {
     sed "s/192.168.194.1/${host_gateway_ip}/g" \
         k8s/06-message-recorder.yaml > "${TEMP_DIR}/06-message-recorder-updated.yaml"
 
+    # Detect ConfigMap changes by comparing generated file to last deployed version
+    local configmap_checksum_file="${CHECKSUM_DIR}/configmap.sha"
+    local new_configmap_hash
+    new_configmap_hash=$(shasum "$output_file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+
+    local prev_configmap_hash=""
+    [[ -f "$configmap_checksum_file" ]] && prev_configmap_hash=$(cat "$configmap_checksum_file" 2>/dev/null || echo "")
+
+    if [[ "$new_configmap_hash" != "$prev_configmap_hash" ]]; then
+        export CONFIGMAP_CHANGED="true"
+        verbose "ConfigMap changed - services will be restarted"
+    else
+        export CONFIGMAP_CHANGED="false"
+        verbose "ConfigMap unchanged"
+    fi
+
+    # Save new checksum (after apply succeeds, but generate it now)
+    export CONFIGMAP_CHECKSUM_FILE="$configmap_checksum_file"
+    export CONFIGMAP_NEW_HASH="$new_configmap_hash"
+
     verbose "ConfigMap generated with host gateway: $host_gateway_ip"
 }
 
@@ -844,8 +864,9 @@ deploy_services() {
 
         echo -ne "   ${ARROW} ${label}... "
 
-        # Run command in background
-        "${cmd[@]}" >/dev/null 2>&1 &
+        # Run command in background, capture output to temp file
+        local cmd_log="${LOG_DIR:-/tmp}/apply-${label// /-}.log"
+        "${cmd[@]}" >"$cmd_log" 2>&1 &
         local pid=$!
 
         # Spinner animation
@@ -857,14 +878,26 @@ deploy_services() {
             sleep 0.1
         done
 
+        # Disable errexit so we can capture the exit code and report errors
+        set +e
         wait $pid
         local exit_code=$?
+        set -e
 
         if [[ $exit_code -eq 0 ]]; then
             printf "\r   ${ARROW} ${label}... ${GREEN}${CHECK}${NC}    \n"
+            rm -f "$cmd_log" 2>/dev/null
             return 0
         else
             printf "\r   ${ARROW} ${label}... ${RED}${CROSS}${NC}    \n"
+            error "${label} failed (exit code: $exit_code)"
+            if [[ -f "$cmd_log" && -s "$cmd_log" ]]; then
+                echo -e "   ${DIM}Command output:${NC}"
+                cat "$cmd_log" | while read -r line; do
+                    echo "     $line"
+                done
+            fi
+            rm -f "$cmd_log" 2>/dev/null
             return 1
         fi
     }
@@ -878,6 +911,11 @@ deploy_services() {
     printf "\r   ${ARROW} Secrets... ${GREEN}${CHECK}${NC}    \n"
 
     apply_with_spinner "ConfigMap" kubectl apply -f "${TEMP_DIR}/04-configmap-updated.yaml"
+
+    # Save ConfigMap checksum after successful apply
+    if [[ -n "${CONFIGMAP_NEW_HASH:-}" && -n "${CONFIGMAP_CHECKSUM_FILE:-}" ]]; then
+        echo "$CONFIGMAP_NEW_HASH" > "$CONFIGMAP_CHECKSUM_FILE"
+    fi
 
     # Phase 1.5: Model Storage PVCs (for STT/TTS models)
     apply_with_spinner "Model Storage PVCs" bash -c "kubectl apply -f k8s/02-stt-models-pvc.yaml && kubectl apply -f k8s/02-tts-models-pvc.yaml"
@@ -920,30 +958,34 @@ deploy_services() {
     echo -ne "   ${ARROW} Application services... "
 
     local apply_errors=""
+    local apply_output=""
     set +e  # Disable errexit to capture errors
 
-    kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}session-management-server "
+    local -a apply_manifests=(
+        "session-management-server:${TEMP_DIR}/06-session-management-server-updated.yaml"
+        "frontend-ui:${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}"
+        "stt-service:$STT_MANIFEST"
+        "tts-service:$TTS_MANIFEST"
+        "message-recorder:${TEMP_DIR}/06-message-recorder-updated.yaml"
+    )
 
-    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}frontend-ui "
-
-    kubectl apply -f "$STT_MANIFEST" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}stt-service "
-
-    kubectl apply -f "$TTS_MANIFEST" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}tts-service "
-
-    kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}message-recorder "
+    for entry in "${apply_manifests[@]}"; do
+        local svc_name="${entry%%:*}"
+        local manifest="${entry#*:}"
+        local output
+        output=$(kubectl apply -f "$manifest" 2>&1)
+        if [[ $? -ne 0 ]]; then
+            apply_errors="${apply_errors}${svc_name} "
+            apply_output="${apply_output}\n--- ${svc_name} (${manifest}) ---\n${output}\n"
+        fi
+    done
 
     set -e  # Re-enable errexit
 
     if [[ -n "$apply_errors" ]]; then
         printf "\r   ${ARROW} Application services... ${RED}${CROSS}${NC}    \n"
         error "Failed to apply manifests: $apply_errors"
-        echo "  Check manifest files exist in ${TEMP_DIR}/"
-        ls -la "${TEMP_DIR}/"*.yaml 2>/dev/null || echo "  No yaml files found in temp dir"
+        echo -e "$apply_output"
         return 1
     fi
     printf "\r   ${ARROW} Application services... ${GREEN}${CHECK}${NC}    \n"
@@ -1001,6 +1043,10 @@ restart_services() {
         # Restart all deployments
         services_to_restart="$ALL_DEPLOYMENTS"
         verbose "Restarting all services..."
+    elif [[ "${CONFIGMAP_CHANGED:-false}" == "true" ]]; then
+        # ConfigMap changed - restart all services to pick up new env values
+        services_to_restart="$ALL_DEPLOYMENTS"
+        verbose "ConfigMap changed - restarting all services..."
     elif [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         # Restart only rebuilt services
         for service in $ALL_SERVICES; do
@@ -1063,13 +1109,55 @@ wait_for_services() {
             sleep 0.1
         done
 
+        set +e
         wait $pid
         local exit_code=$?
 
         if [[ $exit_code -eq 0 ]]; then
+            set -e
             printf "\r   ${ARROW} ${display_name}... ${GREEN}${CHECK}${NC}    \n"
         else
+            # Keep set +e active — diagnostic kubectl commands may fail on broken pods
             printf "\r   ${ARROW} ${display_name}... ${RED}${CROSS}${NC}    \n"
+
+            # Show diagnostics for failed deployment
+            echo -e "   ${RED}--- ${display_name} failure diagnostics ---${NC}"
+
+            # Pod status
+            echo -e "   ${DIM}Pod status:${NC}"
+            kubectl get pods -n ai-agents -l "app=${deploy}" --no-headers 2>/dev/null | while read -r line; do
+                echo "     $line"
+            done
+
+            # Recent events (warnings/errors)
+            echo -e "   ${DIM}Recent events:${NC}"
+            kubectl get events -n ai-agents --field-selector "involvedObject.name=${deploy}" \
+                --sort-by='.lastTimestamp' 2>/dev/null | tail -5 | while read -r line; do
+                echo "     $line"
+            done
+
+            # Pod logs (last 20 lines from the most recent pod)
+            local pod_name
+            pod_name=$(kubectl get pods -n ai-agents -l "app=${deploy}" --sort-by='.metadata.creationTimestamp' \
+                -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+            if [[ -n "$pod_name" ]]; then
+                echo -e "   ${DIM}Logs (${pod_name}):${NC}"
+                kubectl logs "$pod_name" -n ai-agents --tail=20 2>/dev/null | while read -r line; do
+                    echo "     $line"
+                done
+                # Also check init container logs
+                local init_logs
+                init_logs=$(kubectl logs "$pod_name" -n ai-agents --all-containers --tail=10 2>/dev/null || true)
+                if [[ -n "$init_logs" ]]; then
+                    echo -e "   ${DIM}Init container logs:${NC}"
+                    echo "$init_logs" | tail -10 | while read -r line; do
+                        echo "     $line"
+                    done
+                fi
+            fi
+
+            echo -e "   ${RED}---${NC}"
+            set -e
         fi
     done
 }
@@ -1194,8 +1282,17 @@ check_service_runtime_status() {
         fi
 
     elif [[ "$service" == "tts-service" ]]; then
-        # Check for Piper (local CPU)
-        if echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
+        # Check primary provider (use "Primary provider" log line to avoid matching fallback)
+        if echo "$logs" | grep -iq "Primary provider.*chatterbox"; then
+            status="CPU"
+            provider="chatterbox"
+            details="ChatterBox Multilingual TTS (local)"
+            # Check if using CUDA
+            if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+                status="CUDA"
+                details="ChatterBox Multilingual TTS (CUDA)"
+            fi
+        elif echo "$logs" | grep -iq "Primary provider.*piper"; then
             status="CPU"
             provider="piper"
             details="Piper TTS (local CPU)"
@@ -1210,11 +1307,11 @@ check_service_runtime_status() {
                 provider="kokoro"
                 details="Kokoro ONNX (CUDA)"
             fi
-        elif echo "$logs" | grep -iq "Primary.provider.*kokoro\|Provider.*kokoro"; then
+        elif echo "$logs" | grep -iq "Primary provider.*kokoro"; then
             status="CUDA"
             provider="kokoro"
             details="Kokoro ONNX"
-        elif echo "$logs" | grep -iq "Primary.provider.*edge_tts\|Provider.*edge_tts"; then
+        elif echo "$logs" | grep -iq "Primary provider.*edge_tts"; then
             status="Cloud"
             provider="edge_tts"
             details="Microsoft Edge TTS (Cloud)"

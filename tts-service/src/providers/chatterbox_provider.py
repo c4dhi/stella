@@ -90,25 +90,52 @@ class ChatterBoxProvider(TTSProvider):
 
             cache_dir = os.getenv('CHATTERBOX_CACHE_DIR', '/root/.cache/chatterbox')
 
+            # Patch llama config to use eager attention instead of sdpa
+            # sdpa is incompatible with output_attentions=True used by ChatterBox's T3 model
+            try:
+                from chatterbox.models.t3 import llama_configs
+                for cfg in llama_configs.LLAMA_CONFIGS.values():
+                    if isinstance(cfg, dict) and 'attn_implementation' in cfg:
+                        cfg['attn_implementation'] = 'eager'
+                print("[ChatterBox] Patched attention implementation to 'eager'")
+            except Exception as e:
+                print(f"[ChatterBox] Warning: Could not patch attn_implementation: {e}")
+
+            # Patch torch.load to always map to the selected device
+            # This fixes loading CUDA-saved models on CPU-only machines
+            device = torch.device(self._device)
+            _original_torch_load = torch.load
+            def _patched_torch_load(*args, **kwargs):
+                kwargs.setdefault('map_location', device)
+                return _original_torch_load(*args, **kwargs)
+
             # Check if models are cached locally
             if os.path.exists(cache_dir) and os.path.exists(os.path.join(cache_dir, 's3gen.pt')):
                 print(f"[ChatterBox] Loading model from local cache: {cache_dir}")
                 loop = asyncio.get_event_loop()
-                self._model = await loop.run_in_executor(
-                    None,
-                    lambda: ChatterboxMultilingualTTS.from_local(
-                        Path(cache_dir), torch.device(self._device)
+                torch.load = _patched_torch_load
+                try:
+                    self._model = await loop.run_in_executor(
+                        None,
+                        lambda: ChatterboxMultilingualTTS.from_local(
+                            Path(cache_dir), device
+                        )
                     )
-                )
+                finally:
+                    torch.load = _original_torch_load
             else:
                 print(f"[ChatterBox] Cache not found at {cache_dir}, downloading via from_pretrained...")
                 loop = asyncio.get_event_loop()
-                self._model = await loop.run_in_executor(
-                    None,
-                    lambda: ChatterboxMultilingualTTS.from_pretrained(
-                        device=torch.device(self._device)
+                torch.load = _patched_torch_load
+                try:
+                    self._model = await loop.run_in_executor(
+                        None,
+                        lambda: ChatterboxMultilingualTTS.from_pretrained(
+                            device=device
+                        )
                     )
-                )
+                finally:
+                    torch.load = _original_torch_load
 
             self._initialized = True
             print(f"[ChatterBox] Initialized successfully (device={self._device}, "

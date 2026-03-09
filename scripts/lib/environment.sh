@@ -64,6 +64,16 @@ setup_directories() {
     ensure_dir "$LOG_DIR"
     ensure_dir "$CHECKSUM_DIR"
 
+    # Prune old logs (older than 1 day) to prevent storage buildup
+    find "$LOG_DIR" -type f -name "*.log" -mtime +1 -delete 2>/dev/null || true
+    # Also cap total log directory size: if over 100MB, remove oldest files
+    local log_size
+    log_size=$(du -sm "$LOG_DIR" 2>/dev/null | cut -f1 || echo 0)
+    if [[ "$log_size" -gt 100 ]]; then
+        verbose "Log directory ${log_size}MB > 100MB, pruning old logs..."
+        ls -t "$LOG_DIR"/*.log 2>/dev/null | tail -n +20 | xargs rm -f 2>/dev/null || true
+    fi
+
     verbose "Project: $PROJECT_DIR"
     verbose "Temp: $TEMP_DIR"
 }
@@ -97,19 +107,19 @@ load_environment() {
     # Set NODE_ENV from flag or default to local (needed for check_setup_status)
     export NODE_ENV="${ENV_FLAG:-local}"
 
-    # Load base .env if it exists (may not exist on fresh install)
-    # check_setup_status will handle missing config and offer the wizard
-    if [[ -f ".env" ]]; then
-        load_env_file ".env" "base" || true
-    else
-        verbose "No .env file found - setup wizard will be offered"
-    fi
-
-    # Load environment-specific overrides
+    # Load environment-specific config (self-contained, no base .env needed)
     if [[ "$NODE_ENV" == "production" ]]; then
-        load_env_file ".env.production" "production" || true
+        if [[ -f ".env.production" ]]; then
+            load_env_file ".env.production" "production" || true
+        else
+            warning "No .env.production file found - setup wizard will be offered"
+        fi
     else
-        load_env_file ".env.local" "local" || true
+        if [[ -f ".env.local" ]]; then
+            load_env_file ".env.local" "local" || true
+        else
+            warning "No .env.local file found - setup wizard will be offered"
+        fi
     fi
 
     # Update temp directory after loading env (may be set in .env)

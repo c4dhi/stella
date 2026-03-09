@@ -85,7 +85,12 @@ spec:
               echo "[TTS Init] Kokoro model download complete"
             fi
 
-          elif [ "$TTS_PROVIDER" = "chatterbox" ]; then
+          fi
+
+          # ================================================================
+          # ChatterBox Model (when TTS_PROVIDER=chatterbox or auto)
+          # ================================================================
+          if [ "$TTS_PROVIDER" = "chatterbox" ] || [ "$TTS_PROVIDER" = "auto" ]; then
             CHATTERBOX_VERSION_FILE="/models/chatterbox/.version"
             CHATTERBOX_VERSION="multilingual-v1.0"
 
@@ -99,7 +104,7 @@ spec:
               echo "[TTS Init] ChatterBox model download complete"
             fi
 
-          else
+          elif [ "$TTS_PROVIDER" != "piper" ] && [ "$TTS_PROVIDER" != "kokoro" ]; then
             echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
           fi
 
@@ -116,10 +121,10 @@ spec:
           mountPath: /models
         resources:
           requests:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "250m"
           limits:
-            memory: "1Gi"
+            memory: "4Gi"
             cpu: "1000m"
       containers:
       - name: tts-service
@@ -162,11 +167,11 @@ spec:
           value: "/root/.cache/piper"
         resources:
           requests:
-            memory: "512Mi"
+            memory: "2Gi"
             cpu: "250m"
             # GPU: nvidia.com/gpu: "1"
           limits:
-            memory: "2Gi"
+            memory: "6Gi"
             cpu: "2000m"
             # GPU: nvidia.com/gpu: "1"
         readinessProbe:

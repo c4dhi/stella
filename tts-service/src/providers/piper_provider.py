@@ -102,6 +102,7 @@ class PiperProvider(TTSProvider):
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize text using Piper TTS."""
         if not self._initialized or not self._voice:
