@@ -4,15 +4,15 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 export default [
   {
     path: '/STELLA_Documentation/docs',
-    component: ComponentCreator('/STELLA_Documentation/docs', '06a'),
+    component: ComponentCreator('/STELLA_Documentation/docs', '31d'),
     routes: [
       {
         path: '/STELLA_Documentation/docs',
-        component: ComponentCreator('/STELLA_Documentation/docs', 'eed'),
+        component: ComponentCreator('/STELLA_Documentation/docs', '093'),
         routes: [
           {
             path: '/STELLA_Documentation/docs',
-            component: ComponentCreator('/STELLA_Documentation/docs', 'ad4'),
+            component: ComponentCreator('/STELLA_Documentation/docs', 'b09'),
             routes: [
               {
                 path: '/STELLA_Documentation/docs',
@@ -246,26 +246,16 @@ export default [
                 sidebar: "docsSidebar"
               },
               {
-                path: '/STELLA_Documentation/docs/deployment/nginx-setup',
-                component: ComponentCreator('/STELLA_Documentation/docs/deployment/nginx-setup', '612'),
+                path: '/STELLA_Documentation/docs/deployment/production',
+                component: ComponentCreator('/STELLA_Documentation/docs/deployment/production', '158'),
                 exact: true,
                 sidebar: "docsSidebar"
-              },
-              {
-                path: '/STELLA_Documentation/docs/deployment/production',
-                component: ComponentCreator('/STELLA_Documentation/docs/deployment/production', 'e65'),
-                exact: true
               },
               {
                 path: '/STELLA_Documentation/docs/deployment/production-checklist',
                 component: ComponentCreator('/STELLA_Documentation/docs/deployment/production-checklist', 'e61'),
                 exact: true,
                 sidebar: "docsSidebar"
-              },
-              {
-                path: '/STELLA_Documentation/docs/deployment/reverse-proxy',
-                component: ComponentCreator('/STELLA_Documentation/docs/deployment/reverse-proxy', '784'),
-                exact: true
               },
               {
                 path: '/STELLA_Documentation/docs/getting-started/first-agent',
