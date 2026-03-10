@@ -1,353 +1,354 @@
 ---
 sidebar_position: 2
-title: "🏭 Production"
+title: "🏭 Production Deployment"
 ---
 
-# 🏭 Production Deployment
+# Production Deployment Guide
 
-Guide for deploying STELLA in production environments.
+This guide walks you through deploying STELLA on a production server with GPU support, Kubernetes (K3s), and LiveKit for real-time voice interactions.
 
-## Production Checklist
+:::warning
+STELLA uses Caddy as its sole reverse proxy. Do **not** install nginx. All TLS termination and routing is handled by Caddy via the [STELLA_livekit](https://github.com/c4dhi/STELLA_livekit) repository.
+:::
 
-Before deploying to production:
+## Prerequisites
 
-- [ ] DNS records configured and verified
-- [ ] SSL certificates installed and auto-renewing
-- [ ] Backend `.env` configured for production
-- [ ] Frontend built with production URLs
-- [ ] Nginx configuration tested
-- [ ] Firewall allows ports 80, 443
-- [ ] Services running with process manager (PM2/systemd)
-- [ ] CORS configured for specific domain
-- [ ] Internal APIs not publicly accessible
-- [ ] Monitoring and logging configured
-- [ ] Backup strategy in place
-- [ ] All default passwords changed
+- A Linux server (Ubuntu 24.04 recommended) with a supported NVIDIA GPU (L4 or T4)
+- NVIDIA drivers and CUDA toolkit installed
+- A domain name with DNS access
+- At least 100GB root disk + an external volume (400GB+ recommended)
 
-## Production Considerations
+## 1. External Volume Setup
 
-### Use a Real Kubernetes Cluster
-
-For production, use managed Kubernetes:
-- **GKE** (Google Kubernetes Engine)
-- **EKS** (Amazon Elastic Kubernetes Service)
-- **AKS** (Azure Kubernetes Service)
-
-### Use Managed PostgreSQL
-
-Replace the in-cluster PostgreSQL with a managed database:
-- Google Cloud SQL
-- Amazon RDS
-- Azure Database for PostgreSQL
-
-Update your connection string:
+The root disk is typically too small for container images and Kubernetes data. Mount an external volume first:
 
 ```bash
-DATABASE_URL=postgresql://user:password@your-managed-db.region.rds.amazonaws.com:5432/stella
+# Format the volume (only if fresh — this erases data)
+sudo mkfs.ext4 /dev/sdb
+
+# Mount it
+sudo mkdir -p /mnt/data
+sudo mount /dev/sdb /mnt/data
+
+# Persist across reboots
+echo '/dev/sdb /mnt/data ext4 defaults 0 2' | sudo tee -a /etc/fstab
+
+# Verify
+df -h /mnt/data
 ```
 
-### Secure Secrets
-
-Use a secrets management solution:
-- HashiCorp Vault
-- AWS Secrets Manager
-- Google Secret Manager
-- Azure Key Vault
-
-### Enable SSL/TLS
-
-All services should use TLS:
+Create directories for Docker and Kubernetes:
 
 ```bash
-# Backend
-PUBLIC_SERVER_URL=https://api.yourdomain.com
-PUBLIC_LIVEKIT_URL=wss://livekit.yourdomain.com
+sudo mkdir -p /mnt/data/docker /mnt/data/kubelet /mnt/data/containerd
 ```
 
-### Configure Monitoring
+## 2. Docker Installation
 
-Set up observability:
-- **Prometheus** for metrics
-- **Grafana** for dashboards
-- **Loki** or **ELK** for logs
-- **Jaeger** for tracing
-
-### Autoscaling
-
-Configure Horizontal Pod Autoscaler:
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: backend-hpa
-  namespace: ai-agents
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: session-management-server
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-```
-
-## Deployment Modes
-
-### Background Mode
-
-Run STELLA in daemon mode for production:
+Configure Docker to use the external volume **before** installation:
 
 ```bash
-./scripts/start-k8s.sh --production --daemon
-```
-
-This:
-- Runs in the background
-- Survives SSH logout
-- Automatically restarts on failure
-
-### Monitoring Daemon
-
-Check daemon status:
-
-```bash
-# View logs
-tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
-
-# Check port-forwards
-./scripts/monitor-port-forwards.sh --status
-```
-
-## Environment Configuration
-
-### Production `.env`
-
-```bash
-# Server
-NODE_ENV=production
-PORT=3000
-
-# Database
-DATABASE_URL=postgresql://user:password@managed-db:5432/stella
-
-# LiveKit (external service)
-LIVEKIT_URL=wss://livekit.yourdomain.com
-PUBLIC_LIVEKIT_URL=wss://livekit.yourdomain.com
-LIVEKIT_API_KEY=your-production-key
-LIVEKIT_API_SECRET=your-production-secret
-
-# CORS
-CORS_ORIGIN=https://yourdomain.com
-
-# Public URLs
-PUBLIC_SERVER_URL=https://api.yourdomain.com
-
-# Agent Configuration
-AGENT_IMAGE=your-registry.com/stella-agent:v1.0.0
-KUBERNETES_NAMESPACE=ai-agents
-```
-
-### Frontend Production Build
-
-```bash
-cd frontend-ui
-
-# Create production environment
-cat > .env.production << EOF
-VITE_API_URL=https://api.yourdomain.com
-VITE_LIVEKIT_URL=wss://livekit.yourdomain.com
+sudo mkdir -p /etc/docker
+cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "data-root": "/mnt/data/docker"
+}
 EOF
-
-# Build for production
-npm run build
 ```
 
-## Using PM2
-
-For non-Kubernetes deployments, use PM2:
-
-### Install PM2
+Install Docker:
 
 ```bash
-npm install -g pm2
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sh /tmp/get-docker.sh
+sudo systemctl enable docker
 ```
 
-### Start Services
+## 3. Kubernetes (K3s) Installation
+
+Install K3s with the kubelet data directory pointed at the external volume:
 
 ```bash
-# Backend
-cd session-management-server
-pm2 start npm --name "stella-backend" -- run start:prod
-
-# Frontend (serve built files)
-npm install -g serve
-pm2 start "serve -s dist -l 8080" --name "stella-frontend"
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--kubelet-arg=root-dir=/mnt/data/kubelet" sh -
 ```
 
-### PM2 Management
+Verify:
 
 ```bash
-# View status
-pm2 status
-
-# View logs
-pm2 logs stella-backend
-
-# Restart
-pm2 restart stella-backend
-
-# Save configuration
-pm2 save
-
-# Setup startup script
-pm2 startup
+kubectl get nodes
 ```
 
-## Using Systemd
+## 4. GPU Verification
 
-Alternative to PM2 for Linux servers:
-
-### Create Service File
-
-```ini
-# /etc/systemd/system/stella-backend.service
-[Unit]
-Description=STELLA Backend
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/stella/session-management-server
-Environment=NODE_ENV=production
-ExecStart=/usr/bin/node dist/main.js
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Enable and Start
+Confirm the GPU is detected and drivers are working:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable stella-backend
-sudo systemctl start stella-backend
-sudo systemctl status stella-backend
+nvidia-smi
 ```
 
-## Health Checks
+This should display the GPU model, VRAM, driver version, and CUDA version.
 
-### Backend Health Endpoint
+## 5. LiveKit & Caddy Deployment
+
+STELLA uses [STELLA_livekit](https://github.com/c4dhi/STELLA_livekit) to manage its LiveKit server, Caddy reverse proxy, and Redis. Caddy is the **only** reverse proxy — do not install nginx or any other web server.
+
+### 5.1 Clone the Repository
 
 ```bash
-curl https://api.yourdomain.com/health
+cd ~
+git clone https://github.com/c4dhi/STELLA_livekit.git
+cd STELLA_livekit
 ```
 
-### Kubernetes Probes
+### 5.2 Configuration
 
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 30
-  periodSeconds: 10
+The repository contains the following configuration files that need to be customized for your deployment:
 
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 3000
-  initialDelaySeconds: 5
-  periodSeconds: 5
-```
+**`caddy.yaml`** — Caddy reverse proxy configuration. Update all domain references to match your domain. Caddy handles automatic TLS certificate provisioning via Let's Encrypt and routes traffic to STELLA services using Layer 4 SNI-based routing on port 443.
 
-## Backup Strategy
+The Caddy config should include routes for:
 
-### Database Backups
+| Subdomain | Proxies To | Service |
+|-----------|------------|---------|
+| `frontend.yourdomain.com` | `localhost:8080` | STELLA Web UI |
+| `backend.yourdomain.com` | `localhost:3000` | STELLA API |
+| `livekit.yourdomain.com` | `localhost:7880` | LiveKit Server |
+| `livekit-v1.yourdomain.com` | `localhost:7880` | LiveKit Server (alt) |
+| `livekit-turn.yourdomain.com` | `localhost:5349` | TURN Server |
 
-Set up automated PostgreSQL backups:
+:::danger Security
+Do **not** add a database route to Caddy. PostgreSQL must never be exposed publicly. Access the database only via SSH tunnel or `kubectl port-forward`.
+:::
+
+**`livekit.yaml`** — LiveKit server configuration. Update the TURN domain and generate new API keys:
 
 ```bash
-# Daily backup script
-pg_dump -h localhost -U stella stella_db > backup_$(date +%Y%m%d).sql
-
-# Upload to cloud storage
-aws s3 cp backup_$(date +%Y%m%d).sql s3://your-backups/stella/
+# Generate new API keys
+docker run --rm livekit/generate
 ```
 
-### Configuration Backups
+:::warning
+Generate unique API keys for production. Never reuse development keys.
+:::
 
-Version control all configuration:
-- Kubernetes manifests
-- Nginx configuration
-- Environment templates (not secrets)
+**`redis.conf`** — Redis configuration. The default binds to localhost only, which is correct for production.
 
-## Rolling Updates
-
-Deploy new versions without downtime:
+### 5.3 Start the Stack
 
 ```bash
-# Update image
-kubectl set image deployment/session-management-server \
-  session-management-server=your-registry/stella-backend:v2.0.0 \
-  -n ai-agents
-
-# Monitor rollout
-kubectl rollout status deployment/session-management-server -n ai-agents
-
-# Rollback if needed
-kubectl rollout undo deployment/session-management-server -n ai-agents
+cd ~/STELLA_livekit
+docker compose -p livekit-prod up -d
 ```
 
-## Security Hardening
+Verify all three containers are running:
 
-### Network Policies
-
-Restrict pod communication:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: backend-policy
-  namespace: ai-agents
-spec:
-  podSelector:
-    matchLabels:
-      app: session-management-server
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: ingress-nginx
-      ports:
-        - port: 3000
+```bash
+docker ps
 ```
 
-### Pod Security
+You should see exactly three containers: Caddy, LiveKit, and Redis. All use `network_mode: host`, meaning they share the host's network namespace directly.
 
-```yaml
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: false
+:::tip
+Always use the `-p` (project name) flag with docker compose to avoid conflicts between environments. Use `livekit-prod` for production and `livekit-dev` for development.
+:::
+
+## 6. DNS Configuration
+
+Create A records pointing to your server's public IP:
+
+| Record | Type | Value |
+|--------|------|-------|
+| `frontend.yourdomain.com` | A | `<your-public-ip>` |
+| `backend.yourdomain.com` | A | `<your-public-ip>` |
+| `livekit.yourdomain.com` | A | `<your-public-ip>` |
+| `livekit-v1.yourdomain.com` | A | `<your-public-ip>` |
+| `livekit-turn.yourdomain.com` | A | `<your-public-ip>` |
+
+Caddy will automatically obtain TLS certificates once DNS propagates and ports 80/443 are reachable.
+
+## 7. Firewall / Security Group Rules
+
+Open the following inbound ports:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 22 | TCP | SSH |
+| 80 | TCP | HTTP (ACME/Let's Encrypt certificate challenges) |
+| 443 | TCP | HTTPS (all web traffic + WebSocket) |
+| 7881 | TCP | LiveKit WebRTC signaling |
+| 3478 | UDP | TURN NAT traversal |
+| 50000-60000 | UDP | WebRTC media streams |
+
+## 8. STELLA Application Deployment
+
+Once the infrastructure is running, deploy the STELLA application to K3s.
+
+### 8.1 Clone and Configure
+
+```bash
+git clone <your-repo-url> ~/stella_backend
+cd ~/stella_backend
 ```
+
+### 8.2 Run the Setup Wizard
+
+The setup wizard configures all required environment variables (database credentials, LiveKit keys, API keys, GPU settings, etc.):
+
+```bash
+./scripts/start-k8s.sh --setup --production
+```
+
+### 8.3 Deploy
+
+```bash
+./scripts/start-k8s.sh --production
+```
+
+This will:
+1. Build all Docker images (backend, frontend, STT, TTS, agents)
+2. Import images into K3s containerd
+3. Apply Kubernetes manifests to the `ai-agents` namespace
+4. Wait for all pods to become ready
+
+### 8.4 Useful Commands
+
+```bash
+# List all pods
+kubectl get pods -n ai-agents
+
+# Stream pod logs
+kubectl logs -f <pod-name> -n ai-agents
+
+# Pod details and events
+kubectl describe pod <pod-name> -n ai-agents
+
+# Restart a deployment
+kubectl rollout restart deployment/<name> -n ai-agents
+
+# Check service endpoints
+kubectl get svc -n ai-agents
+```
+
+## 9. Security Checklist
+
+- [ ] **No nginx installed** — Caddy is the only reverse proxy
+- [ ] PostgreSQL is **not** exposed via Caddy or any public route
+- [ ] Database access is only available via SSH tunnel or `kubectl port-forward`
+- [ ] Unique LiveKit API keys generated for production
+- [ ] SSH access restricted to known IPs (if possible)
+- [ ] TLS 1.2+ only (Caddy enforces this by default)
+- [ ] No unnecessary Docker containers running (`docker ps` shows only expected services)
+- [ ] Docker data stored on external volume, not root disk
+- [ ] Only one docker compose project running per server (no duplicate deployments)
+
+## 10. Troubleshooting
+
+### Containers won't start (port conflict)
+
+Check what's already using a port:
+
+```bash
+sudo ss -tlnp | grep :<port>
+```
+
+If an old deployment is running, stop it before starting the new one. Always use explicit project names with docker compose (`-p` flag) to avoid conflicts between environments.
+
+### Multiple deployments fighting over ports
+
+If you see duplicate containers (e.g., two Caddy or two Redis instances), you likely have more than one docker compose project running. Stop all livekit-related containers and start fresh:
+
+```bash
+docker stop $(docker ps -q --filter "name=livekit")
+docker rm $(docker ps -aq --filter "name=livekit")
+cd ~/STELLA_livekit
+docker compose -p livekit-prod up -d
+```
+
+### Ghost containers that won't delete
+
+If `docker rm` fails with "No such container":
+
+```bash
+sudo systemctl stop docker.socket docker
+sudo find /var/lib/docker/containers -name "<container-id>*" -exec rm -rf {} +
+sudo systemctl start docker
+```
+
+### Agent pods fail with "sudo: not found"
+
+The K3s binary and containerd socket must be mounted into the session-management-server pod. This is handled automatically by the K8s manifests. If you see this error, redeploy:
+
+```bash
+./scripts/start-k8s.sh --production --rebuild
+```
+
+### Redis or LiveKit restart-looping
+
+Usually a port conflict. With `network_mode: host`, all containers share the host's ports. Ensure only one instance of each service is running:
+
+```bash
+docker ps | grep -E "redis|livekit"
+```
+
+### TLS certificates not provisioning
+
+Caddy needs ports 80 and 443 reachable from the internet, and DNS records must resolve to your server's public IP. Verify:
+
+```bash
+# Check Caddy logs for ACME errors
+docker logs livekit-prod-caddy-1
+
+# Verify DNS resolution
+dig frontend.yourdomain.com
+```
+
+### GPU not detected
+
+Verify the NVIDIA drivers and container toolkit are installed:
+
+```bash
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+```
+
+### STT service shows "unknown" status
+
+The Whisper large-v3 model (~3GB) takes a few minutes to load into GPU memory on first startup. Check the logs:
+
+```bash
+kubectl logs -n ai-agents -l app=stt-service --tail=20
+```
+
+Wait for the `Model loaded successfully` message before expecting the service to respond.
+
+### PVC resize errors
+
+If you see `persistentvolumeclaims is forbidden: only dynamically provisioned pvc can be resized`, the PVC was created with a different storage size. Either match the manifest to the existing size, or delete and recreate:
+
+```bash
+kubectl delete pvc <pvc-name> -n ai-agents
+./scripts/start-k8s.sh --production
+```
+
+Note: Deleting a model PVC will trigger a re-download of the models on next startup.
+
+### Checking which process owns a port
+
+If something unexpected is running on a port, check if it's a host process or a container:
+
+```bash
+# Find the PID
+sudo ss -tlnp | grep :<port>
+
+# Check if it's a container process
+cat /proc/<PID>/cgroup
+```
+
+If the cgroup output contains a Docker container ID, the process is running inside a container, even though it appears as a host process (this is expected with `network_mode: host`).
 
 ## See Also
 
-- [Nginx Setup](/docs/deployment/nginx-setup)
-- [Reverse Proxy](/docs/deployment/reverse-proxy)
+- [Kubernetes Architecture](/docs/deployment/kubernetes)
+- [Production Checklist](/docs/deployment/production-checklist)
 - [LiveKit Production](/docs/integration/livekit-production)
+- [Monitoring](/docs/deployment/monitoring)
