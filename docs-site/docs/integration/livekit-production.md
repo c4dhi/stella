@@ -7,19 +7,23 @@ title: "LiveKit Production"
 
 Guide for configuring LiveKit for production with WebRTC and TURN support.
 
+:::info
+STELLA uses Caddy (not nginx) as its reverse proxy. The LiveKit stack is managed via the [STELLA_livekit](https://github.com/c4dhi/STELLA_livekit) repository, which includes Caddy, LiveKit, and Redis in a single Docker Compose setup.
+:::
+
 ## Overview
 
 For production deployments, LiveKit needs additional configuration to work reliably across different network conditions:
 
-- **UDP Multiplexing** (ports 7882-7892) for efficient RTC connections
-- **TURN over TLS** (port 443) for maximum compatibility through firewalls
-- **WebSocket signaling** (port 7880) via nginx
+- **UDP Multiplexing** (ports 50000-60000) for efficient RTC connections
+- **TURN over TLS** (port 5349) for maximum compatibility through firewalls
+- **WebSocket signaling** (port 7880) via Caddy reverse proxy
 
 ## Why TURN on Port 443?
 
 - Port 443 (HTTPS) is allowed through **all firewalls**
 - Mobile carrier firewalls block random UDP ports
-- Corporate firewalls allow only HTTP/HTTPS ](../443)
+- Corporate firewalls allow only HTTP/HTTPS
 - TURN over TLS on 443 works everywhere
 
 ## Firewall Configuration
@@ -27,68 +31,17 @@ For production deployments, LiveKit needs additional configuration to work relia
 Open the required ports:
 
 ```bash
-# TURN ports
-sudo ufw allow 30443/tcp   # TURN over TLS
-sudo ufw allow 30444/udp   # TURN over UDP
+# LiveKit WebRTC signaling
+sudo ufw allow 7881/tcp
 
-# UDP multiplexing range
-sudo ufw allow 30882:30892/udp
+# TURN
+sudo ufw allow 3478/udp
+
+# WebRTC media range
+sudo ufw allow 50000:60000/udp
 
 # Verify
 sudo ufw status
-```
-
-## Nginx Configuration
-
-### Add TURN Endpoint
-
-Update your LiveKit nginx server block:
-
-```nginx
-server {
-    server_name livekit.yourdomain.com;
-
-    # Existing WebSocket location (port 7880)
-    location / {
-        proxy_pass http://127.0.0.1:30880;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_connect_timeout 7d;
-        proxy_send_timeout 7d;
-        proxy_read_timeout 7d;
-    }
-
-    # TURN over TLS endpoint
-    location /turn {
-        proxy_pass http://127.0.0.1:30443;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-
-        proxy_connect_timeout 7d;
-        proxy_send_timeout 7d;
-        proxy_read_timeout 7d;
-    }
-
-    listen 443 ssl;
-    ssl_certificate /etc/letsencrypt/live/livekit.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/livekit.yourdomain.com/privkey.pem;
-}
-```
-
-### Apply Configuration
-
-```bash
-sudo ln -sf /etc/nginx/sites-available/livekit /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
 ```
 
 ## Connection Flow
@@ -97,13 +50,13 @@ sudo systemctl reload nginx
 1. Frontend → Backend /livekit/token (HTTPS)
    └── Get LiveKit access token
 
-2. Frontend → LiveKit wss://livekit.yourdomain.com (via nginx)
+2. Frontend → LiveKit wss://livekit.yourdomain.com (via Caddy TLS)
    └── WebSocket signaling connection
 
-3. Frontend ↔ LiveKit Direct UDP (30882-30892)
+3. Frontend ↔ LiveKit Direct UDP (50000-60000)
    └── Media streams (if network allows)
 
-4. Frontend → LiveKit TURN/TLS (port 443 via nginx)
+4. Frontend → LiveKit TURN/TLS (port 443 via Caddy)
    └── Fallback for networks blocking UDP
 ```
 
@@ -113,17 +66,17 @@ sudo systemctl reload nginx
 
 ```bash
 # From production server
-sudo netstat -tulnp | grep -E "(30443|30444|30882|30892)"
+sudo ss -tulnp | grep -E "(7880|7881|5349|3478)"
 ```
 
-### Test Nginx Proxy
+### Test Connectivity
 
 ```bash
 # Test WebSocket signaling
 curl -I https://livekit.yourdomain.com
 
 # Test TURN endpoint (should return 400, not 404)
-curl -I https://livekit.yourdomain.com/turn
+curl -I https://livekit-turn.yourdomain.com
 ```
 
 ### Test from Client
@@ -135,15 +88,14 @@ After deployment:
 3. Start a session
 4. Look for:
    ```
-   ✓ [TOKEN] Successfully obtained token from backend
-   🔗 Chat connecting to LiveKit room
+   [TOKEN] Successfully obtained token from backend
    [LiveKit] Connected to room
-   [RTC] Using TURN server: livekit.yourdomain.com:443
+   [RTC] Using TURN server: livekit-turn.yourdomain.com:443
    ```
 
 ## LiveKit Cloud vs Self-Hosted
 
-### LiveKit Cloud (Recommended)
+### LiveKit Cloud (Recommended for simplicity)
 
 If using [LiveKit Cloud](https://livekit.io/cloud):
 
@@ -160,21 +112,28 @@ LIVEKIT_API_SECRET=your-api-secret
 
 ### Self-Hosted LiveKit
 
-For self-hosted deployments, configure TURN in your LiveKit config:
+For self-hosted deployments, configure TURN in your `livekit.yaml`:
 
 ```yaml
-turn:
-  enabled: true
-  domain: livekit.yourdomain.com
-  tls_port: 443
-  udp_port: 443
-
+port: 7880
+bind_addresses:
+  - ""
 rtc:
+  tcp_port: 7881
   port_range_start: 50000
   port_range_end: 60000
-  tcp_port: 7881
-  use_external_ip: false
-  node_ip: livekit.yourdomain.com
+  use_external_ip: true
+  enable_loopback_candidate: false
+redis:
+  address: localhost:6379
+turn:
+  enabled: true
+  domain: livekit-turn.yourdomain.com
+  tls_port: 5349
+  udp_port: 3478
+  external_tls: true
+keys:
+  YOUR_API_KEY: YOUR_API_SECRET
 ```
 
 ## Troubleshooting
@@ -189,7 +148,7 @@ rtc:
 Check firewall ports:
 
 ```bash
-sudo ufw status | grep -E "(30443|30444|3088[0-9]|3089[0-9])"
+sudo ufw status | grep -E "(7881|3478|5000[0-9]|6000[0-9])"
 ```
 
 ### Works on WiFi but Not Mobile Data
@@ -200,24 +159,24 @@ sudo ufw status | grep -E "(30443|30444|3088[0-9]|3089[0-9])"
 
 **Solution:**
 Mobile carriers require TURN. Verify:
-1. Nginx TURN proxy is configured
-2. Ports 30443/30444 are open
-3. LiveKit config has TURN enabled
+1. TURN is enabled in `livekit.yaml`
+2. Caddy routes `livekit-turn.yourdomain.com` to port 5349
+3. DNS record for `livekit-turn.yourdomain.com` exists
 
-### Nginx Returns 502 Bad Gateway
+### Caddy Returns 502 Bad Gateway
 
 **Solution:**
-Check if LiveKit pod is running:
+Check if LiveKit is running:
 
 ```bash
-kubectl get pods -n ai-agents -l app=livekit
-kubectl logs -n ai-agents -l app=livekit --tail=50
+docker ps | grep livekit
+docker logs livekit-prod-livekit-1 --tail=50
 ```
 
 ### "could not resolve external IP"
 
 **Symptoms:**
-- LiveKit pod keeps restarting
+- LiveKit container keeps restarting
 - Logs show: `could not resolve external IP: context deadline exceeded`
 
 **Solution:**
@@ -232,7 +191,7 @@ rtc:
 ### "one of key-file or keys must be provided"
 
 **Symptoms:**
-- LiveKit pod crashes immediately
+- LiveKit container crashes immediately
 
 **Solution:**
 Ensure your LiveKit config includes API keys:
@@ -247,7 +206,7 @@ keys:
 Check LiveKit logs for TURN usage:
 
 ```bash
-kubectl logs -n ai-agents -l app=livekit -f | grep -i turn
+docker logs livekit-prod-livekit-1 -f 2>&1 | grep -i turn
 ```
 
 Expected logs:
@@ -262,9 +221,9 @@ Expected logs:
 
 ### Minimal Required Changes
 
-1. **Firewall**: Open `30443/tcp`, `30444/udp`, `30882-30892/udp`
-2. **Nginx**: Add `/turn` location proxy to port 30443
-3. **Deploy**: `./scripts/start-k8s.sh --production`
+1. **Firewall**: Open `7881/tcp`, `3478/udp`, `50000-60000/udp`
+2. **Caddy**: Ensure `livekit-turn.yourdomain.com` route exists in `caddy.yaml`
+3. **Deploy**: `docker compose -p livekit-prod up -d`
 
 ### Result
 
@@ -276,5 +235,4 @@ Expected logs:
 ## See Also
 
 - [LiveKit Integration](/docs/integration/livekit)
-- [Nginx Setup](/docs/deployment/nginx-setup)
 - [Production Deployment](/docs/deployment/production)
