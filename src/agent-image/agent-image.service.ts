@@ -213,9 +213,7 @@ export class AgentImageService {
    * Check if Docker image exists locally.
    *
    * On macOS: Checks Docker daemon
-   * On Linux (K3s): Checks Docker daemon only when running inside K8s pod
-   *                 (k3s ctr requires sudo which pods don't have)
-   *                 The deployment script's sync_images_to_k3s ensures containerd has the images.
+   * On Linux (K3s): Checks both Docker and K3s containerd
    */
   private async imageExists(imageName: string): Promise<boolean> {
     try {
@@ -223,14 +221,7 @@ export class AgentImageService {
       const { stdout } = await execAsync(`docker images -q ${imageName}`);
       const existsInDocker = stdout.trim().length > 0;
 
-      // When running inside K8s pod, we can't check K3s containerd (requires sudo)
-      // Trust that the deployment script has synced images to K3s containerd
-      if (this.isRunningInK8s) {
-        this.logger.debug(`Running in K8s pod - checking Docker only (k3s ctr requires sudo)`);
-        return existsInDocker;
-      }
-
-      // On Linux with K3s (running outside of K8s, e.g., direct CLI), check containerd too
+      // On Linux with K3s, also check containerd
       if (this.isProduction) {
         const existsInK3s = await this.imageExistsInK3s(imageName);
         // Return true only if image exists in BOTH Docker and K3s
@@ -322,11 +313,11 @@ export class AgentImageService {
       // The k3s ctr command wraps containerd's ctr with the right socket path
       this.logger.log(`Importing into K3s containerd...`);
       try {
-        // Try without sudo first (works if container has proper permissions)
+        // Use k3s ctr (works when k3s binary is mounted into the container)
         await execAsync(`k3s ctr images import ${tarPath}`, { timeout: 120000 });
       } catch {
-        // Fall back to sudo if needed
-        await execAsync(`sudo k3s ctr images import ${tarPath}`, { timeout: 120000 });
+        // Fall back to ctr directly with K3s containerd socket
+        await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import ${tarPath}`, { timeout: 120000 });
       }
 
       // Clean up tar file
@@ -349,7 +340,14 @@ export class AgentImageService {
       });
       return stdout.trim().length > 0;
     } catch {
-      return false;
+      try {
+        const { stdout } = await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images ls -q | grep -E "^docker.io/library/${imageName}$"`, {
+          timeout: 10000,
+        });
+        return stdout.trim().length > 0;
+      } catch {
+        return false;
+      }
     }
   }
 
@@ -378,7 +376,7 @@ export class AgentImageService {
         try {
           await execAsync(`k3s ctr images rm docker.io/library/${fullImageName}`);
         } catch {
-          await execAsync(`sudo k3s ctr images rm docker.io/library/${fullImageName}`);
+          await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images rm docker.io/library/${fullImageName}`);
         }
       }
       // Remove from Docker

@@ -160,6 +160,13 @@ spec:
         # Mount Docker socket for building images
         - name: docker-sock
           mountPath: /var/run/docker.sock
+        # Mount K3s containerd socket for importing images into K3s
+        - name: k3s-containerd-sock
+          mountPath: /run/k3s/containerd/containerd.sock
+        # Mount K3s binary so k3s ctr commands work inside the container
+        - name: k3s-binary
+          mountPath: /usr/local/bin/k3s
+          readOnly: true
         # Mount project directory for agent source code (path set dynamically by deploy script)
         - name: project-dir
           mountPath: /workspace/stella-backend
@@ -189,6 +196,16 @@ spec:
         hostPath:
           path: /var/run/docker.sock
           type: Socket
+      # K3s containerd socket (for importing images into K3s runtime)
+      - name: k3s-containerd-sock
+        hostPath:
+          path: /run/k3s/containerd/containerd.sock
+          type: Socket
+      # K3s binary (provides k3s ctr command for containerd image management)
+      - name: k3s-binary
+        hostPath:
+          path: /usr/local/bin/k3s
+          type: File
       # Project directory containing agent source code (path replaced dynamically by deploy script)
       - name: project-dir
         hostPath:
