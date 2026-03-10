@@ -149,7 +149,7 @@ const config: Config = {
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['bash', 'yaml', 'json', 'typescript', 'python', 'nginx'],
+      additionalLanguages: ['bash', 'yaml', 'json', 'typescript', 'python'],
     },
     tableOfContents: {
       minHeadingLevel: 2,

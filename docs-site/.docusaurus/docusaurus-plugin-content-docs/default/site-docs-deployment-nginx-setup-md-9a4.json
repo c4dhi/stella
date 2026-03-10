@@ -18,8 +18,8 @@
   },
   "sidebar": "docsSidebar",
   "previous": {
-    "title": "Kubernetes",
-    "permalink": "/STELLA_Documentation/docs/deployment/kubernetes"
+    "title": "🏭 Production Deployment",
+    "permalink": "/STELLA_Documentation/docs/deployment/production"
   },
   "next": {
     "title": "Message Recording",

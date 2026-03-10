@@ -348,8 +348,7 @@ export default {
         "yaml",
         "json",
         "typescript",
-        "python",
-        "nginx"
+        "python"
       ],
       "magicComments": [
         {

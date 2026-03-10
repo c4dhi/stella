@@ -197,22 +197,14 @@
               "sidebar": "docsSidebar"
             },
             {
-              "id": "deployment/nginx-setup",
-              "path": "/STELLA_Documentation/docs/deployment/nginx-setup",
-              "sidebar": "docsSidebar"
-            },
-            {
               "id": "deployment/production",
-              "path": "/STELLA_Documentation/docs/deployment/production"
+              "path": "/STELLA_Documentation/docs/deployment/production",
+              "sidebar": "docsSidebar"
             },
             {
               "id": "deployment/production-checklist",
               "path": "/STELLA_Documentation/docs/deployment/production-checklist",
               "sidebar": "docsSidebar"
-            },
-            {
-              "id": "deployment/reverse-proxy",
-              "path": "/STELLA_Documentation/docs/deployment/reverse-proxy"
             },
             {
               "id": "getting-started/first-agent",

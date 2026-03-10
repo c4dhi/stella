@@ -1,15 +1,15 @@
 {
-  "/STELLA_Documentation/docs-06a": {
+  "/STELLA_Documentation/docs-31d": {
     "__comp": "5e95c892",
     "__context": {
       "plugin": "aba21aa0"
     }
   },
-  "/STELLA_Documentation/docs-eed": {
+  "/STELLA_Documentation/docs-093": {
     "__comp": "a7bd4aaa",
     "__props": "f970e451"
   },
-  "/STELLA_Documentation/docs-ad4": {
+  "/STELLA_Documentation/docs-b09": {
     "__comp": "a94703ab"
   },
   "/STELLA_Documentation/docs-f07": {
@@ -172,21 +172,13 @@
     "__comp": "17896441",
     "content": "2fd99a78"
   },
-  "/STELLA_Documentation/docs/deployment/nginx-setup-612": {
-    "__comp": "17896441",
-    "content": "9a4df4ac"
-  },
-  "/STELLA_Documentation/docs/deployment/production-e65": {
+  "/STELLA_Documentation/docs/deployment/production-158": {
     "__comp": "17896441",
     "content": "1973956f"
   },
   "/STELLA_Documentation/docs/deployment/production-checklist-e61": {
     "__comp": "17896441",
     "content": "3b84e690"
-  },
-  "/STELLA_Documentation/docs/deployment/reverse-proxy-784": {
-    "__comp": "17896441",
-    "content": "d155309a"
   },
   "/STELLA_Documentation/docs/getting-started/first-agent-ba0": {
     "__comp": "17896441",
