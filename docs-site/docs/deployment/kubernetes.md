@@ -281,5 +281,4 @@ kubectl logs -f -n ai-agents -l app=session-management-server
 
 - [Database Schema](/docs/architecture/database) - PostgreSQL data model
 - [Production Deployment](/docs/deployment/production)
-- [Nginx Setup](/docs/deployment/nginx-setup)
 - [LiveKit Integration](/docs/integration/livekit)

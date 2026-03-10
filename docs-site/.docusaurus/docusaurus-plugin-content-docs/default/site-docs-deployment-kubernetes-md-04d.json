@@ -22,7 +22,7 @@
     "permalink": "/STELLA_Documentation/docs/sdk/typescript-types"
   },
   "next": {
-    "title": "Nginx Setup",
-    "permalink": "/STELLA_Documentation/docs/deployment/nginx-setup"
+    "title": "🏭 Production Deployment",
+    "permalink": "/STELLA_Documentation/docs/deployment/production"
   }
 }

@@ -80,7 +80,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Getting Started guides (Quick Start, Installation, First Agent)
 - Architecture documentation (Overview, Data Flow, Session Lifecycle, Kubernetes)
 - SDK Reference (Overview, Base Agent, Plans, Tools, Streaming, TypeScript Types)
-- Deployment guides (Kubernetes, Nginx, Production Checklist)
+- Deployment guides (Kubernetes, Production, Production Checklist)
 - LiveKit integration documentation
 - Contributing guidelines (Development Setup, Coding Standards, PR Process)
 - Plan Structure documentation with state machine details
