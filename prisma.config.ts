@@ -1,5 +1,8 @@
-import 'dotenv/config'
+import { config as loadDotenv } from 'dotenv'
 import { defineConfig } from 'prisma/config'
+
+const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local'
+loadDotenv({ path: envFilePath })
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',

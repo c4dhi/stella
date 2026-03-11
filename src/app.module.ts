@@ -29,11 +29,13 @@ import { AgentRegistryModule } from './agent-registry/agent-registry.module';
 import { StateMachineModule } from './state-machine/state-machine.module';
 import { AdminModule } from './admin/admin.module';
 
+const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath,
     }),
     PrismaModule,
     AuthModule,
