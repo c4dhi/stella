@@ -109,9 +109,12 @@ run_config_wizard() {
         env="$WIZARD_SELECTED_ENV"
     fi
 
-    # Load existing config if .env exists
-    if [[ -f "$project_dir/.env" ]]; then
-        load_config_file "$project_dir/.env"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Load existing config for the selected environment
+    if [[ -f "$env_file" ]]; then
+        load_config_file "$env_file"
     fi
 
     # Select categories based on environment
@@ -182,12 +185,23 @@ run_config_wizard() {
     # Confirm and save
     if wizard_confirm "Save this configuration?" "y"; then
         save_full_configuration "$project_dir" "$env"
-        wizard_success_screen "$project_dir/.env" "$env"
+        wizard_success_screen "$env_file" "$env"
         return 0
     else
         echo ""
         echo -e "  ${YELLOW}Configuration not saved.${NC}"
         return 1
+    fi
+}
+
+get_environment_file() {
+    local project_dir="$1"
+    local env="$2"
+
+    if [[ "$env" == "production" ]]; then
+        echo "$project_dir/.env.production"
+    else
+        echo "$project_dir/.env.local"
     fi
 }
 
@@ -435,16 +449,17 @@ load_config_file() {
 save_full_configuration() {
     local project_dir="$1"
     local env="$2"
-    local env_file="$project_dir/.env"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
 
-    # Backup existing .env if it exists
+    # Backup existing environment file if it exists
     if [[ -f "$env_file" ]]; then
         local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
         cp "$env_file" "$backup_file"
-        verbose "Backed up existing .env to $backup_file"
+        verbose "Backed up existing environment file to $backup_file"
     fi
 
-    # Generate .env file
+    # Generate environment file
     {
         echo "# ============================================================================"
         echo "# STELLA - ENVIRONMENT CONFIGURATION"
@@ -543,9 +558,12 @@ reconfigure_variable() {
     # Initialize config storage
     init_config_values
 
-    # Load existing config
-    if [[ -f "$project_dir/.env" ]]; then
-        load_config_file "$project_dir/.env"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Load existing config for current environment
+    if [[ -f "$env_file" ]]; then
+        load_config_file "$env_file"
     fi
 
     wizard_setup_traps
