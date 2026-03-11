@@ -1,6 +1,6 @@
 #!/bin/bash
 # Script to update OpenAI API key in all agent secrets
-# Run this after updating OPENAI_API_KEY in .env file
+# Run this after updating OPENAI_API_KEY in .env.local/.env.production
 
 set -e
 
@@ -16,17 +16,29 @@ echo -e "${BLUE}Update OpenAI API Key in Agent Secrets${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${RED}Error: .env file not found${NC}"
+TARGET_ENV="local"
+if [ "${1:-}" = "--production" ]; then
+    TARGET_ENV="production"
+elif [ "${1:-}" = "--local" ]; then
+    TARGET_ENV="local"
+fi
+
+ENV_FILE=".env.local"
+if [ "$TARGET_ENV" = "production" ]; then
+    ENV_FILE=".env.production"
+fi
+
+# Check if env file exists
+if [ ! -f "$ENV_FILE" ]; then
+    echo -e "${RED}Error: ${ENV_FILE} file not found${NC}"
     exit 1
 fi
 
-# Load OpenAI API key from .env
-export $(grep -v '^#' .env | grep OPENAI_API_KEY | xargs)
+# Load OpenAI API key from selected environment file
+export $(grep -v '^#' "$ENV_FILE" | grep OPENAI_API_KEY | xargs)
 
 if [ -z "$OPENAI_API_KEY" ]; then
-    echo -e "${RED}Error: OPENAI_API_KEY not found in .env file${NC}"
+    echo -e "${RED}Error: OPENAI_API_KEY not found in ${ENV_FILE}${NC}"
     exit 1
 fi
 
@@ -36,7 +48,7 @@ if [[ ! $OPENAI_API_KEY =~ ^sk- ]]; then
     exit 1
 fi
 
-echo -e "${GREEN}Found OpenAI API key in .env:${NC}"
+echo -e "${GREEN}Found OpenAI API key in ${ENV_FILE}:${NC}"
 echo -e "  ${OPENAI_API_KEY:0:7}...${OPENAI_API_KEY: -4} (${#OPENAI_API_KEY} characters)"
 echo ""
 
