@@ -53,7 +53,7 @@ setup_directories() {
     export PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
     export WORKSPACE_ROOT="$(dirname "$PROJECT_DIR")"
 
-    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in .env)
+    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files)
     export TEMP_DIR="${STELLA_AI_TEMP_DIR:-/tmp}"
     export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
     export LOG_DIR="${TEMP_DIR}/stella-ai-logs"
@@ -97,22 +97,21 @@ load_environment() {
     # Set NODE_ENV from flag or default to local (needed for check_setup_status)
     export NODE_ENV="${ENV_FLAG:-local}"
 
-    # Load base .env if it exists (may not exist on fresh install)
-    # check_setup_status will handle missing config and offer the wizard
-    if [[ -f ".env" ]]; then
-        load_env_file ".env" "base" || true
-    else
-        verbose "No .env file found - setup wizard will be offered"
-    fi
-
-    # Load environment-specific overrides
+    # Load only the environment-specific file
+    local env_file=""
     if [[ "$NODE_ENV" == "production" ]]; then
-        load_env_file ".env.production" "production" || true
+        env_file=".env.production"
     else
-        load_env_file ".env.local" "local" || true
+        env_file=".env.local"
     fi
 
-    # Update temp directory after loading env (may be set in .env)
+    if [[ -f "$env_file" ]]; then
+        load_env_file "$env_file" "$NODE_ENV" || true
+    else
+        verbose "No $env_file file found - setup wizard will be offered"
+    fi
+
+    # Update temp directory after loading env
     if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
         export TEMP_DIR="$STELLA_AI_TEMP_DIR"
         export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
@@ -366,7 +365,7 @@ set_defaults() {
 # Check if setup has been completed for current environment
 # Returns 0 if setup is complete, 1 if not
 #
-# Priority: If all required variables are present in .env, skip the wizard
+# Priority: If all required variables are present in the active env file, skip the wizard
 # even if the marker file is missing. The marker file is secondary.
 check_setup_status() {
     local marker_file="$PROJECT_DIR/.stella-setup-complete"
