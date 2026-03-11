@@ -112,6 +112,7 @@ wizard_clear_line() {
 # Also supports j/k for down/up (vim-style) as fallback
 # Compatible with bash 3.2 (macOS) - no decimal timeouts
 wizard_read_key() {
+    local enable_vim_nav="${1:-true}"
     local key=""
     local seq=""
 
@@ -141,9 +142,21 @@ wizard_read_key() {
         ""|$'\n'|$'\r'|$'\x0a'|$'\x0d')
             echo "ENTER"; return ;;
         $'\x7f'|$'\x08') echo "BACKSPACE"; return ;;
-        # Vim-style navigation
-        j|J)     echo "DOWN"; return ;;
-        k|K)     echo "UP"; return ;;
+        # Vim-style navigation (menu contexts only)
+        j|J)
+            if [[ "$enable_vim_nav" == "true" ]]; then
+                echo "DOWN"; return
+            else
+                echo "$key"; return
+            fi
+            ;;
+        k|K)
+            if [[ "$enable_vim_nav" == "true" ]]; then
+                echo "UP"; return
+            else
+                echo "$key"; return
+            fi
+            ;;
         # Pass through b/B for back handling by caller
         b|B)     echo "$key"; return ;;
         *)       echo "$key"; return ;;
@@ -283,7 +296,7 @@ wizard_text_input() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -375,7 +388,7 @@ wizard_password_input() {
         fi
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -472,7 +485,7 @@ wizard_generated_input() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -983,7 +996,7 @@ wizard_text_compact() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -1045,7 +1058,7 @@ wizard_password_compact() {
         fi
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -1102,7 +1115,7 @@ wizard_generated_compact() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
