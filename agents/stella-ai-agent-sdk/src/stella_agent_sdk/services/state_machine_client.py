@@ -202,6 +202,11 @@ class StateMachineClient:
                 "progress": response.progress,
                 "turns_without_progress": response.turns_without_progress,
                 "total_turns": response.total_turns,
+                "goal_objective": response.goal_objective or None,
+                "goal_context": response.goal_context or None,
+                "goal_depth_guidance": response.goal_depth_guidance or None,
+                "goal_boundaries": response.goal_boundaries or None,
+                "goal_success_description": response.goal_success_description or None,
             }
         except grpc.aio.AioRpcError as e:
             logger.error(f"gRPC error during get_current_state: {e.code()} - {e.details()}")

@@ -190,6 +190,14 @@ class ExpertRunner:
                             task_id = r.get("arguments", {}).get("task_id")
                             if task_id:
                                 tasks_completed.append(task_id)
+                        elif r["name"] == "batch_update":
+                            data = r.get("data", {})
+                            for d in data.get("deliverables_set", []):
+                                if d.get("key"):
+                                    deliverables_set.append(d["key"])
+                            for t in data.get("tasks_completed", []):
+                                if t.get("task_id"):
+                                    tasks_completed.append(t["task_id"])
 
             latency_ms = (time.time() - start_time) * 1000
             verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"

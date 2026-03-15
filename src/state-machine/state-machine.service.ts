@@ -335,7 +335,11 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
-      progress: await this.calculateProgress(sessionId),
+      progress: await this.calculateProgress(sessionId, {
+        ...state,
+        completedTasks: updatedCompletedTasks,
+        turnsWithoutProgress: 0,
+      } as SessionState),
     };
   }
 
@@ -427,7 +431,12 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
-      progress: await this.calculateProgress(sessionId),
+      progress: await this.calculateProgress(sessionId, {
+        ...state,
+        deliverables: deliverables as unknown as Prisma.JsonValue,
+        completedTasks: updatedCompletedTasks,
+        turnsWithoutProgress: 0,
+      } as SessionState),
     };
   }
 
@@ -447,7 +456,7 @@ export class StateMachineService {
       stateId: currentState.id,
       stateTitle: currentState.title || currentState.id,
       stateType: currentState.type || 'loose',
-      progress: await this.calculateProgress(sessionId),
+      progress: await this.calculateProgress(sessionId, state),
       turnsWithoutProgress: state.turnsWithoutProgress,
       totalTurns: state.totalTurns,
       goal: currentState.goal,
@@ -632,8 +641,11 @@ export class StateMachineService {
     return plan.states.find(s => s.id === stateId) || null;
   }
 
-  private async calculateProgress(sessionId: string): Promise<number> {
-    const state = await this.getState(sessionId);
+  private async calculateProgress(
+    sessionId: string,
+    preloadedState?: SessionState,
+  ): Promise<number> {
+    const state = preloadedState ?? await this.getState(sessionId);
     if (!state) return 0;
 
     const plan = state.planData as unknown as PlanData;
@@ -676,8 +688,10 @@ export class StateMachineService {
   ): boolean {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
+    const stateType = currentState.type || 'loose';
+
     this.logger.log(
-      `[isCurrentStateComplete] Checking state '${currentState.id}' with ${currentState.tasks.length} tasks`,
+      `[isCurrentStateComplete] Checking state '${currentState.id}' (type: ${stateType}) with ${currentState.tasks.length} tasks`,
     );
     this.logger.log(
       `[isCurrentStateComplete] Collected deliverables: ${JSON.stringify(Object.keys(deliverables))}`,
@@ -694,6 +708,14 @@ export class StateMachineService {
 
       const taskDeliverables = task.deliverables || [];
       if (taskDeliverables.length === 0) {
+        if (stateType === 'goal') {
+          // In goal mode, deliverable-less tasks are auto-considered complete.
+          // Goal mode focuses on information gathering (deliverables), not actions.
+          this.logger.log(
+            `[isCurrentStateComplete] Task '${task.id}' has no deliverables — auto-complete in goal mode`,
+          );
+          continue;
+        }
         // Task without deliverables - check if completed
         if (!state.completedTasks.includes(task.id)) {
           this.logger.log(
@@ -790,7 +812,11 @@ export class StateMachineService {
           const key = transition.condition_config?.key as string;
           const expected = transition.condition_config?.value;
           const actual = deliverables[key]?.value;
-          conditionMet = actual === expected;
+          if (typeof actual === 'string' && typeof expected === 'string') {
+            conditionMet = actual.trim().toLowerCase() === expected.trim().toLowerCase();
+          } else {
+            conditionMet = actual === expected;
+          }
           this.logger.log(
             `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
           );
@@ -944,7 +970,7 @@ export class StateMachineService {
       collectedDeliverablesMap[key] = data.value;
     }
 
-    const progress = await this.calculateProgress(sessionId);
+    const progress = await this.calculateProgress(sessionId, state);
 
     return {
       planId: plan.id,

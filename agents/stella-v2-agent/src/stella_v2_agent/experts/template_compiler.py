@@ -40,7 +40,7 @@ def _resolve_plan(ctx: Dict[str, Any]) -> str:
     if not full_plan:
         return _resolve_plan_legacy(ctx)
 
-    parts: List[str] = ["=== FULL PLAN (can extract/overwrite deliverables in any state) ==="]
+    parts: List[str] = ["=== FULL PLAN (extract deliverables from current state only) ==="]
     current_task_info = ctx.get("current_task")
 
     for state in full_plan:
@@ -107,7 +107,27 @@ def _resolve_current_focus(ctx: Dict[str, Any]) -> str:
     parts.append(f"State: {current_state_info.get('title', '?')}")
     if current_state_info.get("description"):
         parts.append(f"Goal: {current_state_info['description']}")
-    parts.append(f"Mode: {'sequential (one task at a time)' if mode == 'strict' else 'flexible (any order)'}")
+    if mode == 'goal':
+        parts.append("Mode: goal-oriented (natural conversation toward objective)")
+    elif mode == 'strict':
+        parts.append("Mode: sequential (one task at a time)")
+    else:
+        parts.append("Mode: flexible (any order)")
+
+    # Render goal context when in goal mode
+    if mode == 'goal':
+        goal_obj = current_state_info.get("goal_objective")
+        if goal_obj:
+            parts.append(f"Objective: {goal_obj}")
+        goal_ctx = current_state_info.get("goal_context")
+        if goal_ctx:
+            parts.append(f"Context: {goal_ctx}")
+        goal_bounds = current_state_info.get("goal_boundaries")
+        if goal_bounds:
+            parts.append(f"Boundaries: {goal_bounds}")
+        goal_success = current_state_info.get("goal_success_description")
+        if goal_success:
+            parts.append(f"Success looks like: {goal_success}")
 
     if current_task_info:
         parts.append(f"Active task: {current_task_info.get('description', '?')}")
@@ -181,7 +201,25 @@ def _resolve_current_state(ctx: Dict[str, Any]) -> str:
     parts = [f"Current state: {state.get('title', '?')}"]
     if state.get("description"):
         parts.append(f"Goal: {state['description']}")
-    parts.append(f"Mode: {'sequential' if mode == 'strict' else 'flexible'}")
+
+    if mode == 'goal':
+        parts.append("Mode: goal-oriented")
+        goal_obj = state.get("goal_objective")
+        if goal_obj:
+            parts.append(f"Objective: {goal_obj}")
+        goal_ctx = state.get("goal_context")
+        if goal_ctx:
+            parts.append(f"Context: {goal_ctx}")
+        goal_bounds = state.get("goal_boundaries")
+        if goal_bounds:
+            parts.append(f"Boundaries: {goal_bounds}")
+        goal_success = state.get("goal_success_description")
+        if goal_success:
+            parts.append(f"Success looks like: {goal_success}")
+    elif mode == 'strict':
+        parts.append("Mode: sequential")
+    else:
+        parts.append("Mode: flexible")
 
     return "\n".join(parts)
 
@@ -213,6 +251,7 @@ def _resolve_user_message(ctx: Dict[str, Any]) -> str:
     """The current user message."""
     user_input = ctx.get("_user_input", "")
     return f"CURRENT USER MESSAGE: {user_input}"
+
 
 
 # ---------------------------------------------------------------------------
