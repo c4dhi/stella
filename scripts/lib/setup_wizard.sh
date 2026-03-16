@@ -184,10 +184,8 @@ run_setup_wizard() {
         configure_optional_settings "$env"
     fi
 
-    # Optional initial admin bootstrap
-    if wizard_confirm "Do you want to provide initial admin credentials?" "n"; then
-        collect_initial_admin_credentials "$project_dir" "$env"
-    fi
+    # Required initial admin bootstrap credentials
+    collect_initial_admin_credentials "$project_dir" "$env"
 
     # Review screen
     wizard_clear_screen
