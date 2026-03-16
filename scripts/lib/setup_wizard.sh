@@ -19,6 +19,8 @@ source "$SETUP_LIB_DIR/wizard.sh"
 
 # Temp file for storing configuration key=value pairs
 WIZARD_CONFIG_FILE=""
+INITIAL_ADMIN_EMAIL_VALUE=""
+INITIAL_ADMIN_PASSWORD_VALUE=""
 
 # Initialize config storage
 init_wizard_config() {
@@ -231,6 +233,14 @@ get_admin_bootstrap_file() {
     echo "$project_dir/.stella-initial-admin.${env}.json"
 }
 
+escape_env_value() {
+    local value="$1"
+    # Escape backslashes and double quotes for safe .env quoted output
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    echo "$value"
+}
+
 collect_initial_admin_credentials() {
     local project_dir="$1"
     local env="$2"
@@ -257,6 +267,9 @@ collect_initial_admin_credentials() {
             sleep 1
         fi
     done
+
+    INITIAL_ADMIN_EMAIL_VALUE="$admin_email"
+    INITIAL_ADMIN_PASSWORD_VALUE="$admin_password"
 
     # Store as base64 to avoid quoting/escaping issues in shell parsing.
     local email_b64 password_b64
@@ -813,6 +826,20 @@ save_configuration() {
         echo "# Environment Mode"
         echo "# ============================================================================"
         echo "NODE_ENV=$env"
+        echo ""
+
+        # Add admin credentials used during setup
+        if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]] || [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+            echo "# ============================================================================"
+            echo "# Initial Admin Credentials (from setup wizard)"
+            echo "# ============================================================================"
+            if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]]; then
+                echo "INITIAL_ADMIN_EMAIL=\"$(escape_env_value "$INITIAL_ADMIN_EMAIL_VALUE")\""
+            fi
+            if [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+                echo "INITIAL_ADMIN_PASSWORD=\"$(escape_env_value "$INITIAL_ADMIN_PASSWORD_VALUE")\""
+            fi
+        fi
 
     } > "$env_file"
 
