@@ -801,6 +801,49 @@ run_database_migrations() {
 }
 
 # =============================================================================
+# Initial Admin Bootstrap
+# =============================================================================
+
+bootstrap_initial_admin() {
+    local bootstrap_file="$PROJECT_DIR/.stella-initial-admin.${NODE_ENV}.json"
+    local bootstrap_log="/tmp/stella-admin-bootstrap-$$.log"
+    local bootstrap_db_url=""
+
+    if [[ ! -f "$bootstrap_file" ]]; then
+        return 0
+    fi
+
+    echo -ne "   ${ARROW} Initial admin bootstrap... "
+
+    if ! setup_port_forward; then
+        printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+        error "Failed to open PostgreSQL port-forward for admin bootstrap"
+        echo "  Bootstrap file kept for retry: $bootstrap_file"
+        return 1
+    fi
+
+    bootstrap_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${PG_LOCAL_PORT}/${POSTGRES_DB}?schema=public"
+
+    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" >"$bootstrap_log" 2>&1); then
+        cleanup_port_forward
+        rm -f "$bootstrap_file"
+        rm -f "$bootstrap_log" 2>/dev/null || true
+        printf "\r   ${ARROW} Initial admin bootstrap... ${GREEN}${CHECK}${NC}    \n"
+        return 0
+    fi
+
+    cleanup_port_forward
+    printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+    error "Failed to create/update initial admin user"
+    if [[ -f "$bootstrap_log" ]]; then
+        echo "  Bootstrap error:"
+        tail -n 5 "$bootstrap_log"
+    fi
+    echo "  Bootstrap file kept for retry: $bootstrap_file"
+    return 1
+}
+
+# =============================================================================
 # Main Deployment Function
 # =============================================================================
 
@@ -896,6 +939,13 @@ deploy_services() {
     run_database_migrations
     if [[ $? -ne 0 ]]; then
         error "Database migration failed - stopping deployment"
+        return 1
+    fi
+
+    # Phase 2.6: Optional one-time initial admin bootstrap
+    bootstrap_initial_admin
+    if [[ $? -ne 0 ]]; then
+        error "Initial admin bootstrap failed - stopping deployment"
         return 1
     fi
 
