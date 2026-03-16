@@ -181,10 +181,14 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             else:
                 logger.warning(f"STT warmup failed: {warmup_result['message']}")
 
-        # 3. Connect to external TTS service (gRPC)
-        tts_client = TTSClient(tts_address)
-        await tts_client.connect()
-        logger.info(f"Connected to TTS service at {tts_address}")
+        # 3. Connect to external TTS service (gRPC) - conditional on TTS_ENABLED
+        tts_enabled = os.environ.get("TTS_ENABLED", "true").lower() != "false"
+        if tts_enabled:
+            tts_client = TTSClient(tts_address)
+            await tts_client.connect()
+            logger.info(f"Connected to TTS service at {tts_address}")
+        else:
+            logger.info("TTS disabled (TTS_ENABLED=false) - skipping TTS connection")
 
         # 4. Connect to LiveKit room (with agent display name)
         await room_manager.connect(room_name, identity, name=agent_name)

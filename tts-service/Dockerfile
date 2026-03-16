@@ -67,6 +67,23 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install ChatterBox TTS dependencies explicitly, then ChatterBox itself with --no-deps
+# This avoids the numpy conflict (chatterbox pins numpy<1.26, kokoro needs numpy>=2.0)
+# ChatterBox works fine with newer numpy, the pin is overly conservative
+RUN pip install --no-cache-dir \
+    conformer \
+    diffusers \
+    librosa \
+    omegaconf \
+    pykakasi \
+    pyloudnorm \
+    resemble-perth \
+    s3tokenizer \
+    safetensors \
+    spacy-pkuseg \
+    transformers
+RUN pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6
+
 # Install ONNX Runtime (GPU or CPU based on build arg)
 ARG ENABLE_GPU
 RUN if [ "$ENABLE_GPU" = "true" ]; then \
@@ -77,11 +94,22 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
-# Model download script (models are downloaded at runtime via init container)
+# Install PyTorch (GPU or CPU based on build arg, needed for ChatterBox)
+RUN if [ "$ENABLE_GPU" = "true" ]; then \
+        echo "[TTS] Installing PyTorch with CUDA..." && \
+        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+    else \
+        echo "[TTS] Installing PyTorch (CPU)..." && \
+        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+
+# Model download scripts (models are downloaded at runtime via init container)
 # Models are stored on PersistentVolume, not in the image.
-# This keeps the image slim (~400MB instead of ~1GB).
-# The init container runs this script to populate the PV on first startup.
+# This keeps the image slim. The init container runs these scripts
+# to populate the PV on first startup.
 COPY download_kokoro_models.py .
+COPY download_piper_models.py .
+COPY download_chatterbox_models.py .
 
 # Generate gRPC code from proto
 COPY proto/ ./proto/
@@ -95,11 +123,12 @@ RUN python -m grpc_tools.protoc \
 COPY src/ ./src/
 
 # Environment defaults
-# Use kokoro as default when GPU available for lowest latency
-ENV TTS_PROVIDER=edge_tts
+ENV TTS_PROVIDER=piper
 ENV ONNX_PROVIDER=CPUExecutionProvider
 ENV GRPC_PORT=50052
 ENV KOKORO_CACHE_DIR=/root/.cache/kokoro
+ENV PIPER_CACHE_DIR=/root/.cache/piper
+ENV CHATTERBOX_CACHE_DIR=/root/.cache/chatterbox
 ENV PYTHONUNBUFFERED=1
 
 # Health check

@@ -70,6 +70,9 @@ import type {
   AdminUsersResponse,
   AdminUserListItem,
   SessionStatusItem,
+  AgentConfiguration,
+  CreateAgentConfigurationDto,
+  UpdateAgentConfigurationDto,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -791,11 +794,12 @@ class SessionManagementClient {
    */
   async downloadTranscript(
     sessionId: string,
-    options?: { includeDebug?: boolean; includeMetadata?: boolean }
+    options?: { includeDebug?: boolean; includeMetadata?: boolean; includeDeliverables?: boolean }
   ): Promise<void> {
     const params = new URLSearchParams()
     if (options?.includeDebug) params.append('includeDebug', 'true')
     if (options?.includeMetadata) params.append('includeMetadata', 'true')
+    if (options?.includeDeliverables === false) params.append('includeDeliverables', 'false')
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/transcript${queryString ? `?${queryString}` : ''}`
@@ -1258,6 +1262,38 @@ class SessionManagementClient {
    */
   async duplicateEnvVarTemplate(id: string): Promise<EnvVarTemplate> {
     return this.post<EnvVarTemplate>(`/env-var-templates/${id}/duplicate`)
+  }
+
+  // ============================================================================
+  // Agent Configurations API
+  // ============================================================================
+
+  async listAgentConfigurations(agentTypeId?: string): Promise<AgentConfiguration[]> {
+    const query = agentTypeId ? `?agentTypeId=${encodeURIComponent(agentTypeId)}` : ''
+    return this.get<AgentConfiguration[]>(`/agent-configurations${query}`)
+  }
+
+  async getAgentConfiguration(id: string): Promise<AgentConfiguration> {
+    return this.get<AgentConfiguration>(`/agent-configurations/${id}`)
+  }
+
+  async createAgentConfiguration(data: CreateAgentConfigurationDto): Promise<AgentConfiguration> {
+    return this.post<AgentConfiguration>('/agent-configurations', data)
+  }
+
+  async updateAgentConfiguration(id: string, data: UpdateAgentConfigurationDto): Promise<AgentConfiguration> {
+    return this.request<AgentConfiguration>(`/agent-configurations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async deleteAgentConfiguration(id: string): Promise<{ message: string }> {
+    return this.delete<{ message: string }>(`/agent-configurations/${id}`)
+  }
+
+  async duplicateAgentConfiguration(id: string): Promise<AgentConfiguration> {
+    return this.post<AgentConfiguration>(`/agent-configurations/${id}/duplicate`)
   }
 
   // ============================================================================

@@ -52,6 +52,19 @@ const sidebars: SidebarsConfig = {
         'agents/overview',
         {
           type: 'category',
+          label: '🧠 stella-v2',
+          collapsed: true,
+          link: {
+            type: 'doc',
+            id: 'agents/stella-v2/index',
+          },
+          items: [
+            'agents/stella-v2/pipeline-configurator',
+            'agents/stella-v2/pipeline-schema',
+          ],
+        },
+        {
+          type: 'category',
           label: '🌟 stella-agent',
           collapsed: true,
           link: {

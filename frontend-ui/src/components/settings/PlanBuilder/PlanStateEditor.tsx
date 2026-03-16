@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
-import type { PlanState, PlanTask, PlanDeliverable, StateType } from '../../../lib/api-types'
+import type { PlanState, PlanTask, PlanDeliverable, StateType, StateGoal } from '../../../lib/api-types'
 import PlanTaskEditor from './PlanTaskEditor'
 
 interface PlanStateEditorProps {
@@ -90,17 +90,117 @@ export default function PlanStateEditor({
             <label className={`text-body-sm font-medium mb-2 block ${
               isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
             }`}>
-              Execution Mode
+              Conversation Mode
             </label>
             <select
               value={state.type}
-              onChange={(e) => onChange({ ...state, type: e.target.value as StateType })}
+              onChange={(e) => {
+                const newType = e.target.value as StateType
+                const updates: Partial<PlanState> = { type: newType }
+                if (newType === 'goal' && !state.goal) {
+                  updates.goal = { objective: '' }
+                }
+                if (newType !== 'goal') {
+                  updates.goal = undefined
+                }
+                onChange({ ...state, ...updates })
+              }}
               className="input-field w-full max-w-xs"
             >
               <option value="loose">Flexible (agent decides order)</option>
               <option value="strict">Sequential (tasks in order)</option>
+              <option value="goal">Goal-oriented (natural conversation)</option>
             </select>
+            <p className={`text-caption mt-1.5 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+              {state.type === 'strict' && 'Tasks are completed one at a time in order. Best for games, tutorials, guided flows.'}
+              {state.type === 'loose' && 'Agent decides which task to address next. Best for surveys and intake forms.'}
+              {state.type === 'goal' && 'Agent has a natural conversation toward the goal. Tasks are invisible — it sees information gaps instead.'}
+            </p>
           </div>
+
+          {/* Goal Editor (only for goal-type states) */}
+          {state.type === 'goal' && (
+            <div className={`rounded-xl border p-4 space-y-3 ${
+              isDark ? 'border-violet-500/30 bg-violet-500/5' : 'border-neutral-300 bg-neutral-50'
+            }`}>
+              <h4 className={`text-body-sm font-semibold flex items-center gap-2 ${
+                isDark ? 'text-violet-400' : 'text-neutral-800'
+              }`}>
+                <span className="text-sm">🎯</span>
+                Goal Context
+              </h4>
+              <div>
+                <label className={`text-caption font-medium mb-1 block ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
+                  Objective *
+                </label>
+                <textarea
+                  value={state.goal?.objective || ''}
+                  onChange={(e) => onChange({ ...state, goal: { ...state.goal, objective: e.target.value } as StateGoal })}
+                  placeholder="What should the conversation achieve? e.g., Understand the user's current exercise routine in enough detail to recommend a program"
+                  rows={2}
+                  className="input-field w-full resize-none"
+                />
+              </div>
+              <div>
+                <label className={`text-caption font-medium mb-1 block ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
+                  Context
+                </label>
+                <textarea
+                  value={state.goal?.context || ''}
+                  onChange={(e) => onChange({ ...state, goal: { ...state.goal!, context: e.target.value || undefined } })}
+                  placeholder="Background the AI needs. e.g., This is a first consultation. The user may be a beginner or experienced."
+                  rows={2}
+                  className="input-field w-full resize-none"
+                />
+              </div>
+              <div>
+                <label className={`text-caption font-medium mb-1 block ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
+                  Depth Guidance
+                </label>
+                <textarea
+                  value={state.goal?.depth_guidance || ''}
+                  onChange={(e) => onChange({ ...state, goal: { ...state.goal!, depth_guidance: e.target.value || undefined } })}
+                  placeholder="How deep should the AI probe? e.g., Don't accept vague answers. If they say 'I work out sometimes', pin down specifics."
+                  rows={2}
+                  className="input-field w-full resize-none"
+                />
+              </div>
+              <div>
+                <label className={`text-caption font-medium mb-1 block ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
+                  Boundaries
+                </label>
+                <input
+                  type="text"
+                  value={state.goal?.boundaries || ''}
+                  onChange={(e) => onChange({ ...state, goal: { ...state.goal!, boundaries: e.target.value || undefined } })}
+                  placeholder="What NOT to discuss. e.g., Don't discuss nutrition — that's covered in a later state."
+                  className="input-field w-full"
+                />
+              </div>
+              <div>
+                <label className={`text-caption font-medium mb-1 block ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}>
+                  Success Description
+                </label>
+                <textarea
+                  value={state.goal?.success_description || ''}
+                  onChange={(e) => onChange({ ...state, goal: { ...state.goal!, success_description: e.target.value || undefined } })}
+                  placeholder="What 'done well' looks like. e.g., You can picture their weekly routine: what they do, how often, how long."
+                  rows={2}
+                  className="input-field w-full resize-none"
+                />
+              </div>
+            </div>
+          )}
         </div>
         <button
           onClick={onDelete}

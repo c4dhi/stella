@@ -64,6 +64,16 @@ setup_directories() {
     ensure_dir "$LOG_DIR"
     ensure_dir "$CHECKSUM_DIR"
 
+    # Prune old logs (older than 1 day) to prevent storage buildup
+    find "$LOG_DIR" -type f -name "*.log" -mtime +1 -delete 2>/dev/null || true
+    # Also cap total log directory size: if over 100MB, remove oldest files
+    local log_size
+    log_size=$(du -sm "$LOG_DIR" 2>/dev/null | cut -f1 || echo 0)
+    if [[ "$log_size" -gt 100 ]]; then
+        verbose "Log directory ${log_size}MB > 100MB, pruning old logs..."
+        ls -t "$LOG_DIR"/*.log 2>/dev/null | tail -n +20 | xargs rm -f 2>/dev/null || true
+    fi
+
     verbose "Project: $PROJECT_DIR"
     verbose "Temp: $TEMP_DIR"
 }

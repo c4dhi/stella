@@ -435,7 +435,7 @@ class RoomManager:
 
                 # Create AudioFrame for APM processing (10ms)
                 aec_frame = rtc.AudioFrame(
-                    data=chunk_10ms,
+                    data=chunk_10ms.tobytes(),
                     sample_rate=sample_rate,
                     num_channels=1,
                     samples_per_channel=samples_10ms,
@@ -498,6 +498,22 @@ class RoomManager:
         if self._on_data_received:
             self._on_data_received(identity, packet.data)
 
+    def flush_audio_queue(self) -> None:
+        """Flush all buffered audio frames from the queue.
+
+        Called by AudioPipeline when opening the transcript gate to discard
+        any echo frames that were queued during the gate period.
+        """
+        flushed = 0
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+                flushed += 1
+            except asyncio.QueueEmpty:
+                break
+        if flushed > 0:
+            logger.info(f"[ROOM] Flushed {flushed} buffered audio frames")
+
     async def subscribe_to_audio(self) -> AsyncIterator[bytes]:
         """
         Yield audio chunks from subscribed remote tracks.
@@ -542,9 +558,9 @@ class RoomManager:
             if self._aec_enabled and self._apm:
                 self._process_reverse_stream_24k(audio_int16)
 
-            # Create AudioFrame
+            # Create AudioFrame (LiveKit requires bytes, not numpy array)
             frame = rtc.AudioFrame(
-                data=audio_int16,
+                data=audio_int16.tobytes(),
                 sample_rate=24000,
                 num_channels=1,
                 samples_per_channel=len(audio_int16),
@@ -581,7 +597,7 @@ class RoomManager:
 
                 # Create AudioFrame for APM (10ms at 24kHz)
                 frame = rtc.AudioFrame(
-                    data=chunk_10ms,
+                    data=chunk_10ms.tobytes(),
                     sample_rate=24000,
                     num_channels=1,
                     samples_per_channel=self._aec_10ms_samples_24k,

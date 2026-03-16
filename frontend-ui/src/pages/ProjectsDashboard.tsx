@@ -168,15 +168,24 @@ export default function ProjectsDashboard() {
 
         {/* Projects Grid */}
         {!isLoading && !error && projects.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((project, index) => (
+          <motion.div
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            initial="hidden"
+            animate="visible"
+            variants={{
+              hidden: {},
+              visible: { transition: { staggerChildren: 0.05 } }
+            }}
+          >
+            {projects.map((project) => (
               <motion.div
                 key={project.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
+                variants={{
+                  hidden: { opacity: 0, y: 20 },
+                  visible: { opacity: 1, y: 0, transition: { duration: 0.3 } }
+                }}
                 onClick={() => navigate(`/project/${project.id}`)}
-                className={`group cursor-pointer rounded-xl p-5 transition-all duration-200 ${
+                className={`group cursor-pointer rounded-xl p-5 transition-[color,background-color,border-color,box-shadow] duration-200 ${
                   isDark
                     ? 'bg-surface-dark-secondary border border-border-dark hover:border-border-dark-secondary'
                     : 'bg-white border border-border shadow-sm hover:shadow-md hover:border-border-secondary'
@@ -290,7 +299,7 @@ export default function ProjectsDashboard() {
                 </div>
               </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </main>
 

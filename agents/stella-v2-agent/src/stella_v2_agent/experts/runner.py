@@ -1,0 +1,338 @@
+"""Expert runner: executes a single expert LLM call and returns a structured verdict.
+
+Each expert gets:
+- Its own system prompt (compiled with {{placeholder}} resolution)
+- User input + conversation history
+- JSON mode OR tool calling depending on can_call_functions
+
+The runner handles timeouts, parsing, and error recovery.
+"""
+
+import asyncio
+import json
+import re
+import time
+from typing import Dict, Any, List, Optional
+
+from stella_agent_sdk.tools import BaseTool
+
+from stella_v2_agent.experts.base import ExpertConfig
+from stella_v2_agent.experts.template_compiler import (
+    compile_prompt,
+    has_user_message_placeholder,
+    HISTORY_PATTERN,
+)
+from stella_v2_agent.models.expert_verdict import ExpertVerdict
+from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class ExpertRunner:
+    """Runs a single expert and returns a structured ExpertVerdict.
+
+    Supports two execution modes:
+    - JSON mode (default): LLM returns structured JSON, parsed into verdict
+    - Tool mode (can_call_functions=True): LLM calls tools directly, results tracked in verdict
+
+    The runner:
+    1. Compiles the expert's system prompt (resolves {{placeholder}} tokens)
+    2. Builds the user message (conversation history + current message)
+    3. Calls the LLM (JSON mode or tool mode)
+    4. Parses/executes results into an ExpertVerdict
+    5. Handles timeouts and failures gracefully
+    """
+
+    def __init__(self, llm_service: LLMService):
+        self._llm_service = llm_service
+
+    async def run(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+        tools: Optional[List[BaseTool]] = None,
+    ) -> ExpertVerdict:
+        """Execute a single expert and return its verdict.
+
+        Args:
+            config: The expert's configuration.
+            user_input: Current user message.
+            conversation_history: Recent conversation messages.
+            sm_context: State machine context for {{placeholder}} resolution.
+            tools: Available tools (only used when config.can_call_functions=True).
+
+        Returns:
+            ExpertVerdict with the expert's structured response.
+        """
+        if config.can_call_functions and tools:
+            return await self._run_with_tools(config, user_input, conversation_history, sm_context, tools)
+        return await self._run_json_mode(config, user_input, conversation_history, sm_context)
+
+    async def _run_json_mode(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+    ) -> ExpertVerdict:
+        """Execute expert in JSON mode (structured JSON output)."""
+        start_time = time.time()
+
+        try:
+            messages = self._build_messages(config, user_input, conversation_history, sm_context)
+            llm_config = self._build_llm_config(config)
+
+            response = await self._llm_service.generate(
+                messages=messages,
+                config=llm_config,
+                component_name=f"expert:{config.name}",
+            )
+
+            latency_ms = (time.time() - start_time) * 1000
+
+            return self._parse_verdict(config, response.content, latency_ms)
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error(f"Expert '{config.name}' failed: {e}")
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict="error",
+                confidence=0.0,
+                recommendation=f"Expert failed: {str(e)[:100]}",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=False,
+                error_message=str(e),
+            )
+
+    async def _run_with_tools(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+        tools: List[BaseTool],
+    ) -> ExpertVerdict:
+        """Execute expert in tool-calling mode.
+
+        Single LLM call with tools enabled. The LLM calls tools (e.g.
+        set_deliverable, complete_task) which execute against the backend
+        state machine directly. No agentic loop — one call, execute tools, done.
+        """
+        start_time = time.time()
+
+        try:
+            # Build messages — same as JSON mode but without output_format
+            messages = self._build_messages(
+                config, user_input, conversation_history, sm_context,
+                append_output_format=False,
+            )
+
+            # Use OPENAI_DIRECT provider (supports tool calling, unlike LANGCHAIN)
+            tool_schemas = [t.to_openai_schema() for t in tools]
+            llm_config = LLMConfig(
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                provider=LLMProvider.OPENAI_DIRECT,
+                streaming=False,
+                json_mode=False,
+                tools=tool_schemas,
+                tool_choice="auto",
+            )
+
+            response = await self._llm_service.generate(
+                messages=messages,
+                config=llm_config,
+                component_name=f"expert:{config.name}",
+            )
+
+            # Execute tool calls in parallel
+            deliverables_set: List[str] = []
+            tasks_completed: List[str] = []
+            tool_calls_made: List[Dict[str, Any]] = []
+
+            if response.tool_calls:
+                tool_map = {t.name: t for t in tools}
+
+                async def _execute_single(tc):
+                    tool = tool_map.get(tc.name)
+                    if not tool:
+                        return {"name": tc.name, "error": f"Unknown tool: {tc.name}", "success": False}
+                    try:
+                        result = await tool.execute(**tc.arguments)
+                        entry = {
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                            "success": result.success,
+                            "data": result.data,
+                        }
+                        if not result.success and result.error:
+                            entry["error"] = result.error
+                        return entry
+                    except Exception as e:
+                        return {"name": tc.name, "arguments": tc.arguments, "error": str(e), "success": False}
+
+                results = await asyncio.gather(*[_execute_single(tc) for tc in response.tool_calls])
+
+                for r in results:
+                    tool_calls_made.append(r)
+                    if r.get("success"):
+                        if r["name"] == "set_deliverable":
+                            key = r.get("arguments", {}).get("key")
+                            if key:
+                                deliverables_set.append(key)
+                        elif r["name"] == "complete_task":
+                            task_id = r.get("arguments", {}).get("task_id")
+                            if task_id:
+                                tasks_completed.append(task_id)
+
+            latency_ms = (time.time() - start_time) * 1000
+            verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"
+
+            logger.info(
+                f"Expert '{config.name}' tool mode: "
+                f"{len(tool_calls_made)} calls, {len(deliverables_set)} deliverables, "
+                f"{len(tasks_completed)} tasks in {latency_ms:.0f}ms"
+            )
+
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict=verdict,
+                confidence=1.0,
+                recommendation=f"Set {len(deliverables_set)} deliverables" if deliverables_set else "No extractions",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=True,
+                raw_output={
+                    "tool_results": tool_calls_made,
+                    "deliverables_set": deliverables_set,
+                    "tasks_completed": tasks_completed,
+                    "text_content": response.content or "",
+                },
+            )
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            logger.error(f"Expert '{config.name}' tool mode failed: {e}")
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict="error",
+                confidence=0.0,
+                recommendation=f"Tool mode failed: {str(e)[:100]}",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=False,
+                error_message=str(e),
+            )
+
+    def _build_messages(
+        self,
+        config: ExpertConfig,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        sm_context: Dict[str, Any],
+        append_output_format: bool = True,
+    ) -> List[LLMMessage]:
+        """Build LLM messages for the expert call.
+
+        System prompt is compiled with {{placeholder}} resolution from sm_context.
+        If the template uses {{history_N}} / {{user_message}}, those are resolved
+        inline and NOT duplicated in the user message. Otherwise the legacy
+        behavior (history + user message in the API user role) is preserved.
+
+        Args:
+            append_output_format: If False, skip appending output_format
+                (used in tool mode where tools replace structured JSON output).
+        """
+        template = config.system_prompt or ""
+
+        # Detect placeholder usage before compilation
+        prompt_has_history = bool(HISTORY_PATTERN.search(template))
+        prompt_has_user_msg = has_user_message_placeholder(template)
+
+        # Shallow copy to avoid mutating the shared sm_context across concurrent experts
+        sm_context = {**sm_context}
+        sm_context["_user_input"] = user_input
+        sm_context["_conversation_history"] = conversation_history
+
+        # Compile system prompt — resolve all {{placeholders}}
+        compiled_prompt = compile_prompt(template, sm_context)
+
+        # Append output format instruction if configured (not in tool mode)
+        if append_output_format and config.output_format:
+            compiled_prompt += f"\n\nRespond with compact JSON: {config.output_format}"
+
+        messages = [LLMMessage(role="system", content=compiled_prompt)]
+
+        # Build user message — only include what wasn't resolved via placeholders
+        user_parts: List[str] = []
+
+        if not prompt_has_history and conversation_history:
+            default_limit = 8
+            limit = config.history_limit if config.history_limit > 0 else default_limit
+            recent = conversation_history[-limit:]
+            history_lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
+            user_parts.append("CONVERSATION:\n" + "\n".join(history_lines))
+
+        if not prompt_has_user_msg:
+            user_parts.append(f"CURRENT USER MESSAGE: {user_input}")
+        else:
+            # Still need a user message for API compliance
+            user_parts.append(user_input)
+
+        messages.append(LLMMessage(role="user", content="\n\n".join(user_parts)))
+        return messages
+
+    def _build_llm_config(self, config: ExpertConfig) -> LLMConfig:
+        """Build LLM config for JSON-mode expert call.
+
+        JSON-mode experts use OPENAI_LANGCHAIN with json_mode=True.
+        Tool-calling experts use OPENAI_DIRECT instead — see _run_with_tools().
+        """
+        return LLMConfig(
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            provider=LLMProvider.OPENAI_LANGCHAIN,
+            streaming=False,
+            json_mode=True,
+        )
+
+    def _parse_verdict(
+        self, config: ExpertConfig, raw_content: str, latency_ms: float
+    ) -> ExpertVerdict:
+        """Parse the expert's JSON response into an ExpertVerdict."""
+        try:
+            data = json.loads(raw_content)
+        except json.JSONDecodeError:
+            logger.error(f"Expert '{config.name}' returned invalid JSON: {raw_content[:200]}")
+            return ExpertVerdict(
+                expert_name=config.name,
+                verdict="parse_error",
+                confidence=0.0,
+                recommendation="Expert returned invalid JSON",
+                priority=config.priority,
+                latency_ms=latency_ms,
+                success=False,
+                error_message=f"Invalid JSON: {raw_content[:100]}",
+            )
+
+        return ExpertVerdict(
+            expert_name=config.name,
+            verdict=data.get("verdict", ""),
+            confidence=float(data.get("confidence", 0.0)),
+            recommendation=data.get("recommendation", ""),
+            flags={
+                k: v for k, v in data.items()
+                if k not in ("verdict", "confidence", "recommendation")
+            },
+            priority=config.priority,
+            latency_ms=latency_ms,
+            success=True,
+            raw_output=data,
+        )

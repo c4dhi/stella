@@ -5,7 +5,7 @@
       "versions": [
         {
           "name": "current",
-          "label": "0.2.0",
+          "label": "0.3.0",
           "isLast": true,
           "path": "/STELLA_Documentation/docs",
           "mainDocId": "index",
@@ -80,6 +80,21 @@
             {
               "id": "agents/stella-light-agent",
               "path": "/STELLA_Documentation/docs/agents/stella-light-agent",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-v2/index",
+              "path": "/STELLA_Documentation/docs/agents/stella-v2/",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-v2/pipeline-configurator",
+              "path": "/STELLA_Documentation/docs/agents/stella-v2/pipeline-configurator",
+              "sidebar": "docsSidebar"
+            },
+            {
+              "id": "agents/stella-v2/pipeline-schema",
+              "path": "/STELLA_Documentation/docs/agents/stella-v2/pipeline-schema",
               "sidebar": "docsSidebar"
             },
             {

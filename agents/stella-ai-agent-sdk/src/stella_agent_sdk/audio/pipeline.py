@@ -12,11 +12,13 @@ INPUT FLOW (user → agent):
 
 OUTPUT FLOW (agent → user) - DECOUPLED:
 1. publish_text() - Send text to frontend for display (independent of TTS)
-2. speak() - Send text to TTS for audio synthesis (independent of frontend)
+2. enqueue_sentence() - Dispatch sentences to TTS as they complete (independent of frontend)
+3. speak() - Send complete text to TTS (for non-streaming use cases)
 
 The SDK's run_audio_loop handles the coordination:
 - Stream text chunks to frontend immediately via publish_text()
-- Accumulate chunks and send final text to TTS via speak()
+- Detect sentence boundaries and dispatch each sentence to TTS immediately
+- TTS synthesis starts on the first complete sentence, not on is_final
 
 Usage:
     # In your agent's run_audio_loop:
@@ -128,6 +130,19 @@ class AudioPipeline:
         self._pending_transcript_time: float = 0
         self._debounce_task: Optional[asyncio.Task] = None
 
+        # Transcript gating (turn management)
+        self._transcript_gate_closed = False
+
+        # Interrupt mode: "none" = strict gating (default), "smart" = future barge-in
+        self._interrupt_mode = os.getenv("INTERRUPT_MODE", "none")
+
+        # TTS enabled flag
+        self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
+
+        # Sentence-level streaming TTS queue
+        self._speech_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self._speech_worker_task: Optional[asyncio.Task] = None
+
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
 
@@ -140,6 +155,40 @@ class AudioPipeline:
     def is_listening(self) -> bool:
         """Whether the pipeline is actively listening for user audio."""
         return self._is_listening
+
+    def close_transcript_gate(self) -> None:
+        """Close the transcript gate — suppresses transcripts until reopened."""
+        if not self._transcript_gate_closed:
+            logger.info("[GATE] Closing transcript gate")
+            self._transcript_gate_closed = True
+            # Cancel pending debounce to prevent stale emission
+            if self._debounce_task:
+                self._debounce_task.cancel()
+                self._debounce_task = None
+            self._pending_transcript = None
+
+    def open_transcript_gate(self) -> None:
+        """Re-open the transcript gate. Drains stale items and applies
+        a post-gate settling period to let echo from browser playback clear."""
+        if self._transcript_gate_closed:
+            drained = 0
+            while not self._transcript_queue.empty():
+                try:
+                    self._transcript_queue.get_nowait()
+                    drained += 1
+                except asyncio.QueueEmpty:
+                    break
+            if drained > 0:
+                logger.info(f"[GATE] Drained {drained} stale transcript(s)")
+
+            self._room.flush_audio_queue()
+
+            logger.info("[GATE] Opening transcript gate")
+            self._transcript_gate_closed = False
+
+    @property
+    def is_gate_closed(self) -> bool:
+        return self._transcript_gate_closed
 
     @property
     def session_id(self) -> str:
@@ -286,13 +335,16 @@ class AudioPipeline:
         chunk_count = 0
 
         async def audio_generator():
-            """Generate audio chunks from LiveKit room."""
+            """Generate audio chunks from LiveKit, muting during gate/settling."""
             nonlocal chunk_count
             logger.info("Audio generator started, subscribing to LiveKit audio...")
             async for audio_data in self._room.subscribe_to_audio():
                 if not self._is_listening:
                     logger.info("Pipeline stopped listening, ending audio generator")
                     break
+                # Mute audio to STT while gate is closed (with TTS enabled).
+                if self._transcript_gate_closed and self._tts_enabled:
+                    continue
                 chunk_count += 1
                 if chunk_count == 1:
                     logger.info(f"First audio chunk received ({len(audio_data)} bytes)")
@@ -312,6 +364,13 @@ class AudioPipeline:
             sample_rate=sample_rate,
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
+
+            # Suppress all transcript events while gate is closed (with TTS).
+            # When TTS disabled, only finals are discarded (step 3 below).
+            if self._transcript_gate_closed and self._tts_enabled:
+                if event.speech_started:
+                    self._current_utterance_speaker = self._room.current_audio_speaker
+                continue
 
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
@@ -354,8 +413,14 @@ class AudioPipeline:
                 await self._handle_speech_started()
 
             # 3. Queue ONLY final transcripts for agent (with optional debouncing)
+            # When TTS is disabled, gate still discards finals even though
+            # partials are allowed through (lighter turn management).
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
+
+                if self._transcript_gate_closed:
+                    logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
+                    continue
 
                 # Apply debouncing to aggregate rapid successive finals
                 if self._debounce_window_ms > 0:
@@ -372,6 +437,11 @@ class AudioPipeline:
         # 3. All subsequent partial/final transcripts for this utterance use this speaker
         self._current_utterance_speaker = self._room.current_audio_speaker
         logger.debug(f"Speech started detected - locked speaker: {self._current_utterance_speaker}")
+
+        # In "none" mode, ignore barge-in while gate is closed
+        if self._interrupt_mode == "none" and self._transcript_gate_closed:
+            logger.debug("[GATE] speech_started during closed gate (mode=none) - skipping callbacks")
+            return
 
         # Fire all registered callbacks
         for callback in self._speech_started_callbacks:
@@ -584,7 +654,18 @@ class AudioPipeline:
                     self._transcript_queue.get(),
                     timeout=1.0,
                 )
-                yield event
+
+                # Close gate before yielding — no more finals until consumer
+                # resumes the iterator (i.e., finishes processing this turn).
+                # This is SDK-level turn management: every agent using audio_in()
+                # gets gating automatically, even with custom run_audio_loop().
+                self.close_transcript_gate()
+                try:
+                    yield event
+                finally:
+                    # Re-open gate when consumer comes back for next event
+                    # (or if consumer breaks/errors out of the loop)
+                    self.open_transcript_gate()
 
             except asyncio.TimeoutError:
                 # No event available, continue waiting
@@ -671,6 +752,7 @@ class AudioPipeline:
         text: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> None:
         """
         Send text to TTS for audio synthesis (independent of frontend display).
@@ -684,6 +766,8 @@ class AudioPipeline:
                   not individual chunks.
             voice: Optional voice override (provider-specific)
             speed: Speech rate (0.5-2.0, default 1.0)
+            language: Optional ISO 639-1 language code (e.g., "en", "de").
+                      If None, uses the TTS_LANGUAGE env var or provider default.
 
         Example:
             ```python
@@ -704,29 +788,38 @@ class AudioPipeline:
         if not text.strip():
             return
 
+        if not self._tts_enabled:
+            logger.debug("TTS disabled (TTS_ENABLED=false), skipping speak()")
+            return
+
         if self._tts is None:
             logger.debug("TTS not available, skipping speak()")
             return
 
-        logger.info(f"[TTS] speak() called with text: {text[:50]}...")
+        # Resolve language: explicit param > env var > None (provider default)
+        if language is None:
+            language = os.getenv("TTS_LANGUAGE", None)
+
+        logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
         self._stop_speaking_event.clear()
 
         try:
-            await self._speak_sentence(text, voice, speed)
+            await self._speak_sentence(text, voice, speed, language)
         finally:
             self._is_speaking = False
 
     @property
     def has_tts(self) -> bool:
         """Whether TTS is available for audio synthesis."""
-        return self._tts is not None
+        return self._tts is not None and self._tts_enabled
 
     async def _speak_sentence(
         self,
         sentence: str,
         voice: Optional[str] = None,
         speed: float = 1.0,
+        language: Optional[str] = None,
     ) -> None:
         """
         Send a sentence to TTS and publish audio to LiveKit with retry logic.
@@ -735,6 +828,7 @@ class AudioPipeline:
             sentence: Complete sentence to speak
             voice: Optional voice override
             speed: Speech rate
+            language: Optional ISO 639-1 language code (e.g., "en", "de")
         """
         if not sentence.strip():
             return
@@ -751,6 +845,7 @@ class AudioPipeline:
                     session_id=self._session_id,
                     voice=voice,
                     speed=speed,
+                    language=language,
                 ):
                     if self._stop_speaking_event.is_set():
                         logger.info("TTS interrupted mid-sentence")
@@ -786,16 +881,104 @@ class AudioPipeline:
         Interrupt current TTS playback.
 
         Call this when user starts speaking (barge-in) to immediately
-        stop agent speech.
+        stop agent speech. Also drains any queued sentences.
         """
         if not self._is_speaking:
             return
 
         logger.info("Stopping TTS playback")
+
+        # Drain queued sentences so they don't play after interruption
+        while not self._speech_queue.empty():
+            try:
+                self._speech_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         self._stop_speaking_event.set()
 
         # Wait briefly for TTS to notice interruption
         await asyncio.sleep(0.05)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Sentence-level streaming TTS
+    # ─────────────────────────────────────────────────────────────────────
+
+    def enqueue_sentence(self, sentence: str) -> None:
+        """Enqueue a complete sentence for TTS synthesis.
+
+        Sentences are spoken sequentially by a background worker in the
+        order they are enqueued. This allows the agent to dispatch TTS
+        at sentence boundaries while streaming, without blocking the
+        output loop.
+
+        The worker is started lazily on the first enqueue and shut down
+        by flush_speech_queue().
+        """
+        if not sentence.strip():
+            return
+
+        # Start worker lazily
+        if self._speech_worker_task is None or self._speech_worker_task.done():
+            self._speech_worker_task = asyncio.create_task(self._speech_worker())
+
+        self._speech_queue.put_nowait(sentence)
+        logger.info(f"[TTS] Enqueued sentence ({len(sentence.split())} words): {sentence[:60]}...")
+
+    async def flush_speech_queue(self) -> None:
+        """Signal end-of-stream and wait for all queued sentences to finish.
+
+        Must be called after the last sentence is enqueued (typically in
+        the finally block of run_audio_loop). Blocks until the worker
+        has spoken every queued sentence or is interrupted.
+        """
+        if self._speech_worker_task is None or self._speech_worker_task.done():
+            return
+
+        # Send sentinel to tell worker there are no more sentences
+        await self._speech_queue.put(None)
+
+        try:
+            await self._speech_worker_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._speech_worker_task = None
+
+    async def _speech_worker(self) -> None:
+        """Background worker that speaks queued sentences sequentially.
+
+        Runs until it receives a None sentinel or is cancelled. Each
+        sentence uses the existing _speak_sentence() which has retry
+        and interruption logic built in.
+        """
+        logger.info("[TTS] Speech worker started")
+        self._is_speaking = True
+        self._stop_speaking_event.clear()
+
+        try:
+            while True:
+                sentence = await self._speech_queue.get()
+
+                # Sentinel: no more sentences
+                if sentence is None:
+                    break
+
+                # Skip if interrupted (barge-in drained the queue, but
+                # we may have dequeued just before the drain)
+                if self._stop_speaking_event.is_set():
+                    logger.info("[TTS] Speech worker: interrupted, skipping remaining")
+                    break
+
+                await self._speak_sentence(sentence)
+
+        except asyncio.CancelledError:
+            logger.info("[TTS] Speech worker cancelled")
+        except Exception as e:
+            logger.error(f"[TTS] Speech worker error: {e}")
+        finally:
+            self._is_speaking = False
+            logger.info("[TTS] Speech worker stopped")
 
     def on_speech_started(self, callback: Callable[[], Awaitable[None]]) -> None:
         """

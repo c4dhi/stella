@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ttts.proto\x12\x03tts\"\x07\n\x05\x45mpty\"S\n\x11SynthesizeRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05voice\x18\x03 \x01(\t\x12\r\n\x05speed\x18\x04 \x01(\x02\"R\n\x12SynthesizeResponse\x12\x12\n\naudio_data\x18\x01 \x01(\x0c\x12\x13\n\x0bsample_rate\x18\x02 \x01(\x05\x12\x13\n\x0b\x64uration_ms\x18\x03 \x01(\x05\"G\n\nAudioChunk\x12\x12\n\naudio_data\x18\x01 \x01(\x0c\x12\x10\n\x08is_final\x18\x02 \x01(\x08\x12\x13\n\x0b\x63hunk_index\x18\x03 \x01(\x05\"D\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x10\n\x08provider\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t2\xbc\x01\n\x0cTextToSpeech\x12=\n\nSynthesize\x12\x16.tts.SynthesizeRequest\x1a\x17.tts.SynthesizeResponse\x12=\n\x10SynthesizeStream\x12\x16.tts.SynthesizeRequest\x1a\x0f.tts.AudioChunk0\x01\x12.\n\x0bHealthCheck\x12\n.tts.Empty\x1a\x13.tts.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ttts.proto\x12\x03tts\"\x07\n\x05\x45mpty\"e\n\x11SynthesizeRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05voice\x18\x03 \x01(\t\x12\r\n\x05speed\x18\x04 \x01(\x02\x12\x10\n\x08language\x18\x05 \x01(\t\"R\n\x12SynthesizeResponse\x12\x12\n\naudio_data\x18\x01 \x01(\x0c\x12\x13\n\x0bsample_rate\x18\x02 \x01(\x05\x12\x13\n\x0b\x64uration_ms\x18\x03 \x01(\x05\"G\n\nAudioChunk\x12\x12\n\naudio_data\x18\x01 \x01(\x0c\x12\x10\n\x08is_final\x18\x02 \x01(\x08\x12\x13\n\x0b\x63hunk_index\x18\x03 \x01(\x05\"D\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\x12\x10\n\x08provider\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t2\xbc\x01\n\x0cTextToSpeech\x12=\n\nSynthesize\x12\x16.tts.SynthesizeRequest\x1a\x17.tts.SynthesizeResponse\x12=\n\x10SynthesizeStream\x12\x16.tts.SynthesizeRequest\x1a\x0f.tts.AudioChunk0\x01\x12.\n\x0bHealthCheck\x12\n.tts.Empty\x1a\x13.tts.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,13 +34,13 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_EMPTY']._serialized_start=18
   _globals['_EMPTY']._serialized_end=25
   _globals['_SYNTHESIZEREQUEST']._serialized_start=27
-  _globals['_SYNTHESIZEREQUEST']._serialized_end=110
-  _globals['_SYNTHESIZERESPONSE']._serialized_start=112
-  _globals['_SYNTHESIZERESPONSE']._serialized_end=194
-  _globals['_AUDIOCHUNK']._serialized_start=196
-  _globals['_AUDIOCHUNK']._serialized_end=267
-  _globals['_HEALTHRESPONSE']._serialized_start=269
-  _globals['_HEALTHRESPONSE']._serialized_end=337
-  _globals['_TEXTTOSPEECH']._serialized_start=340
-  _globals['_TEXTTOSPEECH']._serialized_end=528
+  _globals['_SYNTHESIZEREQUEST']._serialized_end=128
+  _globals['_SYNTHESIZERESPONSE']._serialized_start=130
+  _globals['_SYNTHESIZERESPONSE']._serialized_end=212
+  _globals['_AUDIOCHUNK']._serialized_start=214
+  _globals['_AUDIOCHUNK']._serialized_end=285
+  _globals['_HEALTHRESPONSE']._serialized_start=287
+  _globals['_HEALTHRESPONSE']._serialized_end=355
+  _globals['_TEXTTOSPEECH']._serialized_start=358
+  _globals['_TEXTTOSPEECH']._serialized_end=546
 # @@protoc_insertion_point(module_scope)

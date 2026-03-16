@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from stella_agent_sdk._grpc import tts_pb2 as tts__pb2
+from . import tts_pb2 as tts__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__

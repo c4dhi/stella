@@ -53,7 +53,7 @@ export default {
           "lastVersion": "current",
           "versions": {
             "current": {
-              "label": "0.2.0",
+              "label": "0.3.0",
               "path": ""
             }
           }

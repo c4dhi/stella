@@ -26,6 +26,7 @@ model User {
   customAgentTypes           AgentType[]         // Custom agents uploaded by this user
   planTemplates              PlanTemplate[]      // Plan templates created by this user
   envVarTemplates            EnvVarTemplate[]    // Environment variable templates created by this user
+  agentConfigurations        AgentConfiguration[] // Agent pipeline configurations created by this user
   messages                   UserMessage[]       // Inbox messages for this user
   sentProjectInvitations     ProjectInvitation[] @relation("SentInvitations")
   receivedProjectInvitations ProjectInvitation[] @relation("ReceivedInvitations")
@@ -225,6 +226,9 @@ model AgentType {
   authorEmail      String?             // Author contact email
   tags             Json?               // Array of tags for filtering
 
+  // Pipeline configuration schema (declares configurable nodes, edges, slots, thresholds)
+  pipelineSchema   Json?
+
   // SDK requirements
   sdkMinVersion    String?             // Minimum stella-ai-agent-sdk version
 
@@ -233,10 +237,11 @@ model AgentType {
   updatedAt        DateTime  @updatedAt
 
   // Relations
-  agents           AgentInstance[]
-  buildLogs        AgentBuildLog[]
-  envVarTemplates  EnvVarTemplate[]    // Env var templates scoped to this agent type
-  publicProjects   Project[]           @relation(name: "publicProjects")
+  agents              AgentInstance[]
+  buildLogs           AgentBuildLog[]
+  envVarTemplates     EnvVarTemplate[]      // Env var templates scoped to this agent type
+  publicProjects      Project[]             @relation(name: "publicProjects")
+  agentConfigurations AgentConfiguration[]  // Pipeline configurations for this agent type
 
   @@index([slug])
   @@index([isBuiltIn])
@@ -546,4 +551,23 @@ model ServerMetricsSnapshot {
   k8sMemoryUsed BigInt?  // Total memory used across pods
 
   @@index([timestamp])
+}
+
+// Agent pipeline configuration - user-created named configurations
+model AgentConfiguration {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?   @db.Text
+  agentTypeId   String
+  agentType     AgentType @relation(fields: [agentTypeId], references: [id])
+  configuration Json      // Sparse overrides: { nodes: {...}, thresholds: {...} }
+  agentVersion  String?   // Version of agent type at creation time
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([agentTypeId])
+  @@index([userId, agentTypeId])
 }

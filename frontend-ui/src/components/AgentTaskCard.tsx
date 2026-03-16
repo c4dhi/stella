@@ -26,7 +26,7 @@ const getAgentColor = (agentId: string): string => {
 }
 
 export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryMode = false }: AgentTaskCardProps) {
-  const removeAgentTaskList = useStore(s => s.removeAgentTaskList)
+  const hideAgentTaskList = useStore(s => s.hideAgentTaskList)
 
   const color = getAgentColor(agentId)
   const displayName = agentName || todoList.agentName || `Agent ${agentId.slice(0, 6)}`
@@ -55,19 +55,14 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 20, scale: 0.95 }}
       animate={{
-        opacity: 1,
-        x: 0,
-        scale: 1,
         filter: isHistoryMode ? 'grayscale(100%)' : 'grayscale(0%)'
       }}
-      exit={{ opacity: 0, x: 20, scale: 0.95 }}
       transition={{
         duration: 0.4,
         ease: [0.16, 1, 0.3, 1]
       }}
-      className={`w-96 h-full flex flex-col ${isHistoryMode ? 'opacity-75' : 'opacity-100'} transition-opacity duration-300`}
+      className={`w-96 h-full flex flex-col ${isHistoryMode ? 'opacity-75' : 'opacity-100'} transition-[opacity] duration-300`}
     >
       {/* Card Container */}
       <div className={`
@@ -87,24 +82,22 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
             <span>{displayName}</span>
           </h3>
 
-          {/* Close Button */}
+          {/* Hide Button */}
           <button
-            onClick={() => removeAgentTaskList(agentId)}
+            onClick={() => hideAgentTaskList(agentId)}
             className={`
               w-6 h-6 rounded-lg
               text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-${color}-50 dark:hover:bg-neutral-800
               transition-all duration-200
               flex items-center justify-center
             `}
-            title="Close task panel"
+            title="Hide task panel"
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <path
-                d="M1 1l8 8M9 1l-8 8"
-                stroke="currentColor"
-                strokeWidth="1"
-                strokeLinecap="round"
-              />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
             </svg>
           </button>
         </div>

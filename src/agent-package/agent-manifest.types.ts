@@ -2,6 +2,17 @@
  * Type definitions for agent.yaml manifest file
  */
 
+export interface AgentOptionalEnvVar {
+  name: string
+  description: string
+  default?: string
+}
+
+export interface ConfigSchemaExtensions {
+  'x-stella-env-vars'?: string[]
+  'x-stella-optional-env-vars'?: AgentOptionalEnvVar[]
+}
+
 export interface AgentManifest {
   version: string  // Schema version (e.g., "1.0")
 
@@ -38,10 +49,13 @@ export interface AgentManifest {
   }
 
   // JSON Schema for config options
-  configSchema?: Record<string, unknown>
+  configSchema?: Record<string, unknown> & ConfigSchemaExtensions
 
   // Default config values
   defaultConfig?: Record<string, unknown>
+
+  // Pipeline schema (topology + configurable slots for Agent Configurator)
+  pipelineSchema?: Record<string, unknown>
 
   sdk?: {
     minVersion?: string     // Minimum stella-ai-agent-sdk version

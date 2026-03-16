@@ -4,15 +4,15 @@ import ComponentCreator from '@docusaurus/ComponentCreator';
 export default [
   {
     path: '/STELLA_Documentation/docs',
-    component: ComponentCreator('/STELLA_Documentation/docs', '467'),
+    component: ComponentCreator('/STELLA_Documentation/docs', '06a'),
     routes: [
       {
         path: '/STELLA_Documentation/docs',
-        component: ComponentCreator('/STELLA_Documentation/docs', '7bb'),
+        component: ComponentCreator('/STELLA_Documentation/docs', 'eed'),
         routes: [
           {
             path: '/STELLA_Documentation/docs',
-            component: ComponentCreator('/STELLA_Documentation/docs', 'c16'),
+            component: ComponentCreator('/STELLA_Documentation/docs', 'ad4'),
             routes: [
               {
                 path: '/STELLA_Documentation/docs',
@@ -105,6 +105,24 @@ export default [
               {
                 path: '/STELLA_Documentation/docs/agents/stella-light-agent',
                 component: ComponentCreator('/STELLA_Documentation/docs/agents/stella-light-agent', 'a7f'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_Documentation/docs/agents/stella-v2',
+                component: ComponentCreator('/STELLA_Documentation/docs/agents/stella-v2', '965'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_Documentation/docs/agents/stella-v2/pipeline-configurator',
+                component: ComponentCreator('/STELLA_Documentation/docs/agents/stella-v2/pipeline-configurator', 'df0'),
+                exact: true,
+                sidebar: "docsSidebar"
+              },
+              {
+                path: '/STELLA_Documentation/docs/agents/stella-v2/pipeline-schema',
+                component: ComponentCreator('/STELLA_Documentation/docs/agents/stella-v2/pipeline-schema', '991'),
                 exact: true,
                 sidebar: "docsSidebar"
               },

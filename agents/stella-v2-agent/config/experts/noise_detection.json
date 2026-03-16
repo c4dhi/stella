@@ -1,0 +1,19 @@
+{
+  "name": "noise_detection",
+  "description": "Detects inaudible, garbled, or nonsensical transcription and triggers clarification",
+  "priority": 100,
+  "enabled": true,
+  "model": "gpt-4o-mini",
+  "temperature": 0.1,
+  "max_tokens": 200,
+  "can_call_functions": false,
+  "trigger_criteria": "The message seems garbled, inaudible, or contains transcription artifacts",
+  "always_triggered": false,
+  "system_prompt": "Determine if the user's message is clear enough to act on.\n\nUnclear: gibberish, random characters, transcription artifacts, nonsense syllables.\nClear: any message with discernible meaning, even brief (\"yes\", \"no\", \"ok\").\nBe lenient — if ANY meaning is discernible, mark clear.\n\n{{history_4}}\n\n{{user_message}}\n\nVerdicts: \"clear\", \"unclear\", \"partial\"\nKeep recommendation under 10 words.",
+  "output_format": "{\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
+  "output_schema": {
+    "verdict": "clear|unclear|partial",
+    "confidence": "0.0-1.0",
+    "recommendation": "string (short)"
+  }
+}

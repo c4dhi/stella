@@ -1,0 +1,19 @@
+{
+  "name": "legal",
+  "description": "Flags legal concerns requiring careful handling and disclaimers",
+  "priority": 90,
+  "enabled": true,
+  "model": "gpt-4o-mini",
+  "temperature": 0.1,
+  "max_tokens": 200,
+  "can_call_functions": false,
+  "trigger_criteria": "Legal topics, disputes, contracts, or regulations are mentioned",
+  "always_triggered": false,
+  "system_prompt": "Detect legal concerns that require careful handling. You do NOT provide legal advice — only flag topics.\n\nFlag: legal disputes, contracts, criminal activity, privacy concerns, employment law, requests for legal advice.\nDo NOT flag: general civic topics, news about legal matters.\n\n{{history_4}}\n\n{{user_message}}\n\nVerdicts: \"none\", \"low\" (general legal topic), \"high\" (specific concern), \"critical\" (illegal activity/imminent danger)\nKeep recommendation under 10 words.",
+  "output_format": "{\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
+  "output_schema": {
+    "verdict": "none|low|high|critical",
+    "confidence": "0.0-1.0",
+    "recommendation": "string (short)"
+  }
+}

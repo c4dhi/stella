@@ -24,6 +24,7 @@ Jump to a specific category:
 | [GPU Acceleration](#gpu-acceleration) | GPU/CUDA settings |
 | [Kubernetes](#kubernetes) | K8s namespace, DNS configuration |
 | [Agent Configuration](#agent-configuration) | Agent images and directories |
+| [Agent SDK (Pod-Level)](#agent-sdk-pod-level) | TTS, turn management, debouncing inside agent pods |
 | [Public URLs](#public-urls) | Frontend URLs and API endpoints |
 | [Storage](#storage) | Temporary directories and paths |
 
@@ -277,6 +278,55 @@ For production with limited root filesystem space:
 
 ```bash
 STELLA_AI_TEMP_DIR=/mnt/stella-ai-temp
+```
+
+---
+
+## Agent SDK (Pod-Level)
+
+These environment variables are read by the STELLA Agent SDK inside each agent pod. They control audio pipeline behavior, turn management, and TTS. Agents declare them in their `agent.yaml` manifest under `x-stella-optional-env-vars` so the frontend deploy modal can expose them.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TTS_ENABLED` | No | `true` | Enable text-to-speech audio output. Set to `false` for text-only mode (skips TTS connection entirely) |
+| `INTERRUPT_MODE` | No | `none` | Transcript interrupt behavior. `none` = strict turn-based gating (user speech suppressed while agent processes/narrates). `smart` = reserved for future barge-in with re-prompting |
+| `TRANSCRIPT_DEBOUNCE_MS` | No | `300` | Debounce window in milliseconds for aggregating rapid successive final transcripts. Set to `0` to disable debouncing |
+| `DISABLE_AEC` | No | `false` | Disable Acoustic Echo Cancellation (AEC) for debugging audio feedback issues |
+| `STT_WARMUP_ENABLED` | No | `true` | Warm up the STT model on agent start and when participants join. Set to `false` to skip warmup |
+
+### Turn Management
+
+When `TTS_ENABLED=true` (the default), the SDK enforces strict turn-based flow:
+
+```
+User speaks → Final transcript → Gate CLOSES → Agent processes → TTS narrates → Gate OPENS
+```
+
+While the gate is closed:
+- **No partials** published to LiveKit (user speech invisible in frontend)
+- **No finals** queued for the agent (prevents stale/fragmented input)
+- **No barge-in** callbacks fired (when `INTERRUPT_MODE=none`)
+- **STT stream stays alive** (no reconnection cost when gate re-opens)
+
+When `TTS_ENABLED=false`, the gate still discards finals during processing but allows partials through to LiveKit (lighter turn management since processing completes quickly without narration).
+
+### Manifest Declaration
+
+Agents declare these in `agent.yaml` so the frontend deploy modal can display them:
+
+```yaml
+configSchema:
+  # ...
+  x-stella-optional-env-vars:
+    - name: TTS_ENABLED
+      description: "Enable text-to-speech audio output. Set to 'false' for text-only mode."
+      default: "true"
+    - name: INTERRUPT_MODE
+      description: "Transcript interrupt behavior: 'none' (turn-based gating) or 'smart' (barge-in)"
+      default: "none"
+    - name: TRANSCRIPT_DEBOUNCE_MS
+      description: "Debounce window (ms) for aggregating rapid successive final transcripts."
+      default: "300"
 ```
 
 ---

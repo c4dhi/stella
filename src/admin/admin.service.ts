@@ -185,7 +185,7 @@ export class AdminService {
     this.dashboardSubscriberCount++;
     this.logger.log(`Dashboard SSE subscriber added (total: ${this.dashboardSubscriberCount})`);
 
-    const periodicUpdates = interval(3000);
+    const periodicUpdates = interval(10000);
     const combined = merge(
       periodicUpdates.pipe(map(() => 'periodic')),
       this.dashboardRefreshTrigger.pipe(map(() => 'refresh')),
@@ -414,6 +414,11 @@ export class AdminService {
             memoryFree: metrics.memoryFree.toString(),
             gpuMemoryUsed: metrics.gpuMemoryUsed?.toString() || null,
             gpuMemoryTotal: metrics.gpuMemoryTotal?.toString() || null,
+            gpus: metrics.gpus.map((gpu) => ({
+              ...gpu,
+              memoryUsed: gpu.memoryUsed.toString(),
+              memoryTotal: gpu.memoryTotal.toString(),
+            })),
             k8sMemoryUsed: metrics.k8sMemoryUsed?.toString() || null,
           };
           return {

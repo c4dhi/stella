@@ -6,6 +6,7 @@
     "dist",
     "**/*spec.ts",
     "frontend-ui",
-    "conversational-ai-server-python"
+    "conversational-ai-server-python",
+    "docs-site"
   ]
 }

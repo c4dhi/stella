@@ -5,7 +5,7 @@ import { SessionState, Prisma } from '@prisma/client';
 /**
  * Plan data structure (matches SDK Plan type)
  */
-interface PlanData {
+export interface PlanData {
   id: string;
   title?: string;
   initial_state_id?: string;
@@ -13,16 +13,29 @@ interface PlanData {
   system_prompt?: string;
 }
 
-interface PlanState {
+/**
+ * Goal-mode context for natural, goal-oriented conversation states.
+ * Only used when state type is 'goal'.
+ */
+export interface StateGoal {
+  objective: string;
+  context?: string;
+  depth_guidance?: string;
+  boundaries?: string;
+  success_description?: string;
+}
+
+export interface PlanState {
   id: string;
   title?: string;
   description?: string;
-  type?: 'strict' | 'loose';
+  type?: 'strict' | 'loose' | 'goal';
   tasks: PlanTask[];
   transitions?: StateTransition[];
+  goal?: StateGoal;
 }
 
-interface PlanTask {
+export interface PlanTask {
   id: string;
   description: string;
   instruction?: string;
@@ -30,16 +43,16 @@ interface PlanTask {
   deliverables?: PlanDeliverable[];
 }
 
-interface PlanDeliverable {
+export interface PlanDeliverable {
   key: string;
   description: string;
   type?: string;
   required?: boolean;
   acceptance_criteria?: string;
-  examples?: string[];
+  enum_values?: string[];
 }
 
-interface StateTransition {
+export interface StateTransition {
   target_state_id: string;
   condition_type: 'all_tasks_complete' | 'deliverable_value' | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
@@ -49,7 +62,7 @@ interface StateTransition {
 /**
  * Deliverable value stored in state
  */
-interface DeliverableValue {
+export interface DeliverableValue {
   value: unknown;
   reasoning: string;
   collectedAt: string;
@@ -74,10 +87,11 @@ export interface StateMachineResult {
 export interface CurrentStateInfo {
   stateId: string;
   stateTitle: string;
-  stateType: 'strict' | 'loose';
+  stateType: 'strict' | 'loose' | 'goal';
   progress: number;
   turnsWithoutProgress: number;
   totalTurns: number;
+  goal?: StateGoal;
 }
 
 /**
@@ -91,6 +105,7 @@ export interface PendingTaskInfo {
   hasDeliverables: boolean;
   deliverableKeys: string[];
   isPreview?: boolean;  // True for "next task" preview in strict mode
+  isGoal?: boolean;     // True when state type is "goal"
 }
 
 /**
@@ -102,7 +117,6 @@ export interface PendingDeliverableInfo {
   type: string;
   required: boolean;
   acceptanceCriteria?: string;
-  examples: string[];
   taskId: string;
 }
 
@@ -139,9 +153,10 @@ export interface FullStateTaskInfo {
 export interface FullStateStateInfo {
   id: string;
   title: string;
-  type: 'strict' | 'loose';
+  type: 'strict' | 'loose' | 'goal';
   status: 'pending' | 'active' | 'completed';
   tasks: FullStateTaskInfo[];
+  goal?: StateGoal;
 }
 
 /**
@@ -435,6 +450,7 @@ export class StateMachineService {
       progress: await this.calculateProgress(sessionId),
       turnsWithoutProgress: state.turnsWithoutProgress,
       totalTurns: state.totalTurns,
+      goal: currentState.goal,
     };
   }
 
@@ -483,8 +499,27 @@ export class StateMachineService {
       });
     }
 
-    // Filter based on state type (strict vs loose)
+    // Filter based on state type (strict vs loose vs goal)
     const stateType = currentState.type || 'loose';
+
+    if (stateType === 'goal') {
+      // GOAL mode: Return a single synthetic task representing the goal.
+      // The agent sees information gaps (deliverables), not individual tasks.
+      // Tasks auto-complete when their deliverables are set.
+      const allDeliverableKeys = pendingTasks.flatMap(t => t.deliverableKeys);
+
+      if (pendingTasks.length === 0) return [];
+
+      return [{
+        id: '__goal__',
+        description: currentState.goal?.objective || currentState.description || currentState.title || 'Complete this phase',
+        instruction: currentState.goal?.depth_guidance,
+        required: true,
+        hasDeliverables: true,
+        deliverableKeys: allDeliverableKeys,
+        isGoal: true,
+      }];
+    }
 
     if (stateType === 'strict') {
       // STRICT mode: Return only current task + next task as preview
@@ -534,7 +569,6 @@ export class StateMachineService {
           type: deliverable.type || 'string',
           required: deliverable.required !== false,
           acceptanceCriteria: deliverable.acceptance_criteria,
-          examples: deliverable.examples || [],
           taskId: task.id,
         });
       }
@@ -900,6 +934,7 @@ export class StateMachineService {
         type: planState.type || 'loose',
         status: stateStatus,
         tasks,
+        goal: planState.goal,
       };
     });
 

@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { useThemeStore } from '../../../store/themeStore'
-import { parseMemoryValue, formatBytes, getUsageColor } from '../../../hooks/useServerMetrics'
+import { parseMemoryValue, formatBytes } from '../../../hooks/useServerMetrics'
 import type { ServerMetrics } from '../../../lib/api-types'
 
 interface ServerPerformanceMonitorProps {
@@ -88,23 +88,16 @@ export default function ServerPerformanceMonitor({
   const memoryTotal = parseMemoryValue(currentMetrics?.memoryTotal ?? '0')
   const memoryPercentage = memoryTotal > 0 ? (memoryUsed / memoryTotal) * 100 : 0
 
-  const gpuAvailable = currentMetrics?.gpuAvailable ?? false
-  const gpuUsage = currentMetrics?.gpuUsage ?? 0
-  const gpuMemoryUsed = parseMemoryValue(currentMetrics?.gpuMemoryUsed ?? '0')
-  const gpuMemoryTotal = parseMemoryValue(currentMetrics?.gpuMemoryTotal ?? '0')
-
   const chartData = useMemo(() => {
     return metricsHistory.map((m, i) => ({
       index: i,
       cpu: m.cpuUsage,
       memory: parseMemoryValue(m.memoryUsed) / parseMemoryValue(m.memoryTotal) * 100,
-      gpu: m.gpuUsage ?? 0,
     }))
   }, [metricsHistory])
 
   const cpuColor = cpuUsage >= 90 ? '#EF4444' : cpuUsage >= 70 ? '#EAB308' : '#22C55E'
   const memoryColor = memoryPercentage >= 90 ? '#EF4444' : memoryPercentage >= 70 ? '#EAB308' : '#22C55E'
-  const gpuColor = gpuUsage >= 90 ? '#EF4444' : gpuUsage >= 70 ? '#EAB308' : '#A855F7'
 
   if (!currentMetrics) {
     return (
@@ -167,14 +160,6 @@ export default function ServerPerformanceMonitor({
             sublabel={`${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)}`}
             color={memoryColor}
           />
-          {gpuAvailable && (
-            <Gauge
-              value={gpuUsage}
-              label="GPU"
-              sublabel={`${formatBytes(gpuMemoryUsed)} / ${formatBytes(gpuMemoryTotal)}`}
-              color={gpuColor}
-            />
-          )}
         </div>
 
         {/* Chart Section */}
@@ -193,7 +178,7 @@ export default function ServerPerformanceMonitor({
                   }}
                   formatter={(value, name) => [
                     `${(value as number ?? 0).toFixed(1)}%`,
-                    name === 'cpu' ? 'CPU' : name === 'memory' ? 'Memory' : 'GPU',
+                    name === 'cpu' ? 'CPU' : 'Memory',
                   ]}
                   labelFormatter={() => ''}
                 />
@@ -213,16 +198,6 @@ export default function ServerPerformanceMonitor({
                   dot={false}
                   isAnimationActive={false}
                 />
-                {gpuAvailable && (
-                  <Line
-                    type="monotone"
-                    dataKey="gpu"
-                    stroke="#A855F7"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -241,14 +216,6 @@ export default function ServerPerformanceMonitor({
                 Memory
               </span>
             </div>
-            {gpuAvailable && (
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-purple-500" />
-                <span className={`text-caption ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                  GPU
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>

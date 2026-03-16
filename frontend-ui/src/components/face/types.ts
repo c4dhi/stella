@@ -3,6 +3,8 @@
  * Port from mobile client with web-specific adaptations
  */
 
+import type { MotionValue } from 'framer-motion';
+
 export type EyeEmotion =
   | 'neutral'
   | 'happy'
@@ -72,10 +74,14 @@ export interface FaceRendererProps {
   leftEye: EyeState;
   rightEye: EyeState;
   mouthOpenness: number; // 0.0 to 1.0
+  mouthSpread?: number; // 0.0 (narrow/rounded) to 1.0 (wide), default 0.5
   mouthEmotion: MouthEmotion;
   eyeEmotion: EyeEmotion;
   headRotation: number; // -15 to 15 degrees
   eyebrowHeight: number; // -5 to 5 pixels
+  pupilDilation?: number; // Pupil scale multiplier (default 1.0)
+  leftEyeScaleY?: MotionValue<number>; // Smooth blink MotionValue
+  rightEyeScaleY?: MotionValue<number>; // Smooth blink MotionValue
 }
 
 export interface UseFaceTrackingOptions {

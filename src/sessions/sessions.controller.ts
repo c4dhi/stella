@@ -226,11 +226,13 @@ export class SessionsController {
     @Res() res: Response,
     @Query('includeDebug') includeDebug?: string,
     @Query('includeMetadata') includeMetadata?: string,
+    @Query('includeDeliverables') includeDeliverables?: string,
   ) {
     try {
       const transcript = await this.sessionsService.exportTranscript(sessionId, {
         includeDebug: includeDebug === 'true',
         includeMetadata: includeMetadata === 'true',
+        includeDeliverables: includeDeliverables !== 'false',
       });
 
       // Generate filename with session name or ID

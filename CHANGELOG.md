@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**stella-v2 Agent**
+- stella-v2 agent with streamlined 5-stage pipeline: Input Gate, Expert Pool, Deterministic Arbitration, Response Generator, Bridge Generator
+- Visual Pipeline Configurator for creating and managing pipeline configurations
+- Pipeline configuration management (create, edit, duplicate, delete) with sparse override pattern
+- Mandatory pipeline configuration selection for stella-v2 deployment
+- Bridge Generator for reduced perceived latency in voice conversations
+- gRPC State Machine integration for decoupled conversation flow management
+- Documentation for stella-v2 architecture, pipeline configurator, and schema reference
+
 ---
 
 ## [0.3.0] - 2025-01-29

@@ -102,10 +102,16 @@ message GetCurrentStateResponse {
   string error = 2;
   string state_id = 3;
   string state_title = 4;
-  string state_type = 5;  // "strict" or "loose"
+  string state_type = 5;  // "strict", "loose", or "goal"
   int32 progress = 6;
   int32 turns_without_progress = 7;
   int32 total_turns = 8;
+  // Goal context (only populated when state_type == "goal")
+  string goal_objective = 9;
+  string goal_context = 10;
+  string goal_depth_guidance = 11;
+  string goal_boundaries = 12;
+  string goal_success_description = 13;
 }
 
 // ============================================================================
@@ -124,6 +130,7 @@ message PendingTask {
   bool has_deliverables = 5;
   repeated string deliverable_keys = 6;
   bool is_preview = 7;  // True for "next task" preview in strict mode
+  bool is_goal = 8;     // True when state type is "goal"
 }
 
 message GetPendingTasksResponse {
@@ -146,7 +153,6 @@ message PendingDeliverable {
   string type = 3;
   bool required = 4;
   string acceptance_criteria = 5;
-  repeated string examples = 6;
   string task_id = 7;
 }
 
@@ -221,9 +227,15 @@ message FullStateTask {
 message FullStateState {
   string id = 1;
   string title = 2;
-  string type = 3;  // "strict" or "loose"
+  string type = 3;  // "strict", "loose", or "goal"
   string status = 4;  // "pending", "active", "completed"
   repeated FullStateTask tasks = 5;
+  // Goal context (only populated when type == "goal")
+  string goal_objective = 6;
+  string goal_context = 7;
+  string goal_depth_guidance = 8;
+  string goal_boundaries = 9;
+  string goal_success_description = 10;
 }
 
 message GetFullStateResponse {

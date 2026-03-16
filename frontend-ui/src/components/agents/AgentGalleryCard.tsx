@@ -22,7 +22,7 @@ export default function AgentGalleryCard({
       onClick={onClick}
       whileTap={{ scale: 0.99 }}
       className={`
-        relative w-full h-[160px] p-3 rounded-xl text-left transition-all duration-200 border-2
+        relative w-full h-[160px] p-3 rounded-xl text-left transition-[color,background-color,border-color,box-shadow] duration-200 border-2
         ${isSelected
           ? isDark
             ? 'bg-primary-500/20 border-primary-500 shadow-lg shadow-primary-500/20'

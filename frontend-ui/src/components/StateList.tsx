@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion'
 import React, { useState, memo, useCallback } from 'react'
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 
@@ -47,6 +46,15 @@ const ProcessingModeIcon = memo(({ type }: { type: StateType }) => {
       <div className="flex items-center gap-1" title="Sequential Processing">
         <span className="text-[10px] text-neutral-600 dark:text-neutral-400">⚡</span>
         <span className="text-[8px] text-neutral-500 dark:text-neutral-400 tracking-wider uppercase">Sequential</span>
+      </div>
+    )
+  }
+
+  if (type === StateType.GOAL) {
+    return (
+      <div className="flex items-center gap-1" title="Goal-Oriented">
+        <span className="text-[10px] text-neutral-600 dark:text-neutral-400">🎯</span>
+        <span className="text-[8px] text-neutral-500 dark:text-neutral-400 tracking-wider uppercase">Goal</span>
       </div>
     )
   }
@@ -282,10 +290,7 @@ const StateCard = memo(({ state, index, isCurrentState }: { state: StateItem; in
   const handleClick = useCallback(() => setIsExpanded(prev => !prev), [])
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: index * 0.03 }}
+    <div
       className={`rounded-lg border transition-colors ${
         isCurrentState
           ? 'border-blue-400/70 dark:border-violet-500/70 bg-gradient-to-br from-blue-50/80 to-blue-100/40 dark:from-violet-900/30 dark:to-violet-800/20 shadow-md ring-1 ring-blue-200/50 dark:ring-violet-600/50'
@@ -360,7 +365,7 @@ const StateCard = memo(({ state, index, isCurrentState }: { state: StateItem; in
           ))}
         </div>
       </Collapsible>
-    </motion.div>
+    </div>
   )
 })
 

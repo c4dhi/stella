@@ -146,6 +146,11 @@ export class StateMachineGrpcController {
     progress?: number;
     turnsWithoutProgress?: number;
     totalTurns?: number;
+    goalObjective?: string;
+    goalContext?: string;
+    goalDepthGuidance?: string;
+    goalBoundaries?: string;
+    goalSuccessDescription?: string;
   }> {
     this.logger.debug(`GetCurrentState called for session: ${request.sessionId}`);
 
@@ -166,6 +171,11 @@ export class StateMachineGrpcController {
       progress: state.progress,
       turnsWithoutProgress: state.turnsWithoutProgress,
       totalTurns: state.totalTurns,
+      goalObjective: state.goal?.objective,
+      goalContext: state.goal?.context,
+      goalDepthGuidance: state.goal?.depth_guidance,
+      goalBoundaries: state.goal?.boundaries,
+      goalSuccessDescription: state.goal?.success_description,
     };
   }
 
@@ -189,6 +199,7 @@ export class StateMachineGrpcController {
       hasDeliverables: boolean;
       deliverableKeys: string[];
       isPreview?: boolean;
+      isGoal?: boolean;
     }>;
   }> {
     this.logger.debug(`GetPendingTasks called for session: ${request.sessionId}`);
@@ -206,6 +217,7 @@ export class StateMachineGrpcController {
           hasDeliverables: t.hasDeliverables,
           deliverableKeys: t.deliverableKeys,
           isPreview: t.isPreview,
+          isGoal: t.isGoal,
         })),
       };
     } catch (error) {
@@ -231,7 +243,6 @@ export class StateMachineGrpcController {
       type: string;
       required: boolean;
       acceptanceCriteria?: string;
-      examples: string[];
       taskId: string;
     }>;
   }> {
@@ -250,7 +261,6 @@ export class StateMachineGrpcController {
           type: d.type,
           required: d.required,
           acceptanceCriteria: d.acceptanceCriteria,
-          examples: d.examples,
           taskId: d.taskId,
         })),
       };
@@ -387,6 +397,11 @@ export class StateMachineGrpcController {
         title: state.title,
         type: state.type,
         status: state.status,
+        goalObjective: state.goal?.objective,
+        goalContext: state.goal?.context,
+        goalDepthGuidance: state.goal?.depth_guidance,
+        goalBoundaries: state.goal?.boundaries,
+        goalSuccessDescription: state.goal?.success_description,
         tasks: state.tasks.map(task => ({
           id: task.id,
           description: task.description,

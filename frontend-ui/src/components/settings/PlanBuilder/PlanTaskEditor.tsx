@@ -20,20 +20,19 @@ export default function PlanTaskEditor({
   const [localInputs, setLocalInputs] = useState<{ [key: string]: string }>({})
 
   // Helper functions for managing local input state (allows typing commas)
-  // Uses deliverable.key instead of index to handle reordering/deletion correctly
-  const getInputKey = (deliverableKey: string, field: 'examples' | 'enum_values') =>
+  const getInputKey = (deliverableKey: string, field: 'enum_values') =>
     `${deliverableKey}-${field}`
 
-  const getLocalValue = (deliverableKey: string, field: 'examples' | 'enum_values', arrayValue: string[] | undefined) => {
+  const getLocalValue = (deliverableKey: string, field: 'enum_values', arrayValue: string[] | undefined) => {
     const key = getInputKey(deliverableKey, field)
     return localInputs[key] ?? arrayValue?.join(', ') ?? ''
   }
 
-  const setLocalValue = (deliverableKey: string, field: 'examples' | 'enum_values', value: string) => {
+  const setLocalValue = (deliverableKey: string, field: 'enum_values', value: string) => {
     setLocalInputs(prev => ({ ...prev, [getInputKey(deliverableKey, field)]: value }))
   }
 
-  const clearLocalValue = (deliverableKey: string, field: 'examples' | 'enum_values') => {
+  const clearLocalValue = (deliverableKey: string, field: 'enum_values') => {
     setLocalInputs(prev => {
       const { [getInputKey(deliverableKey, field)]: _, ...rest } = prev
       return rest
@@ -206,18 +205,21 @@ export default function PlanTaskEditor({
                         <label className={`text-caption font-medium mb-1 block ${
                           isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                         }`}>
-                          Acceptance Criteria (optional)
+                          Acceptance Criteria
                         </label>
-                        <input
-                          type="text"
+                        <textarea
                           value={deliverable.acceptance_criteria || ''}
                           onChange={(e) => handleUpdateDeliverable(index, {
                             ...deliverable,
                             acceptance_criteria: e.target.value || undefined,
                           })}
-                          placeholder="Validation rules or additional context"
-                          className="input-field w-full text-body-sm"
+                          placeholder="What constitutes a valid answer? Include examples of good and bad answers. e.g., A specific name or nickname. Accept 'Sarah', 'Dr. Johnson'. Reject 'nobody' or 'doesn't matter'."
+                          rows={3}
+                          className="input-field w-full text-body-sm resize-none"
                         />
+                        <p className={`text-caption mt-1 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                          Describe what a valid answer looks like, with concrete examples
+                        </p>
                       </div>
 
                       {deliverable.type === 'enum' && (
@@ -241,29 +243,6 @@ export default function PlanTaskEditor({
                           />
                         </div>
                       )}
-
-                      <div>
-                        <label className={`text-caption font-medium mb-1 block ${
-                          isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-                        }`}>
-                          Examples (comma-separated, optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={getLocalValue(deliverable.key, 'examples', deliverable.examples)}
-                          onChange={(e) => setLocalValue(deliverable.key, 'examples', e.target.value)}
-                          onBlur={(e) => {
-                            const parsed = e.target.value ? e.target.value.split(',').map(s => s.trim()).filter(Boolean) : undefined
-                            handleUpdateDeliverable(index, { ...deliverable, examples: parsed })
-                            clearLocalValue(deliverable.key, 'examples')
-                          }}
-                          placeholder="e.g., Sarah, John, Alex"
-                          className="input-field w-full text-body-sm"
-                        />
-                        <p className={`text-caption mt-1 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
-                          Example values to help users understand expected input
-                        </p>
-                      </div>
 
                       <div className="flex items-center justify-end">
                         <div className="flex gap-1">
@@ -335,8 +314,8 @@ export default function PlanTaskEditor({
                           {deliverable.type === 'enum' && deliverable.enum_values?.length
                             ? ` (${deliverable.enum_values.length} options)`
                             : ''}
-                          {deliverable.examples?.length
-                            ? ` · e.g., ${deliverable.examples.slice(0, 2).join(', ')}${deliverable.examples.length > 2 ? '...' : ''}`
+                          {deliverable.acceptance_criteria
+                            ? ` · ${deliverable.acceptance_criteria.slice(0, 60)}${deliverable.acceptance_criteria.length > 60 ? '...' : ''}`
                             : ''}
                         </div>
                       </div>

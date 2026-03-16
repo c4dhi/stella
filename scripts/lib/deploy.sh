@@ -111,6 +111,26 @@ generate_configmap() {
     sed "s/192.168.194.1/${host_gateway_ip}/g" \
         k8s/06-message-recorder.yaml > "${TEMP_DIR}/06-message-recorder-updated.yaml"
 
+    # Detect ConfigMap changes by comparing generated file to last deployed version
+    local configmap_checksum_file="${CHECKSUM_DIR}/configmap.sha"
+    local new_configmap_hash
+    new_configmap_hash=$(shasum "$output_file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+
+    local prev_configmap_hash=""
+    [[ -f "$configmap_checksum_file" ]] && prev_configmap_hash=$(cat "$configmap_checksum_file" 2>/dev/null || echo "")
+
+    if [[ "$new_configmap_hash" != "$prev_configmap_hash" ]]; then
+        export CONFIGMAP_CHANGED="true"
+        verbose "ConfigMap changed - services will be restarted"
+    else
+        export CONFIGMAP_CHANGED="false"
+        verbose "ConfigMap unchanged"
+    fi
+
+    # Save new checksum (after apply succeeds, but generate it now)
+    export CONFIGMAP_CHECKSUM_FILE="$configmap_checksum_file"
+    export CONFIGMAP_NEW_HASH="$new_configmap_hash"
+
     verbose "ConfigMap generated with host gateway: $host_gateway_ip"
 }
 
@@ -190,19 +210,35 @@ generate_gpu_manifests() {
     # If nvidia.com/gpu: 1 is requested, Kubernetes reserves the GPU exclusively for that pod
     if [[ "$ENABLE_GPU" == "true" ]]; then
         verbose "Enabling GPU runtime class (shared GPU mode)..."
-        # macOS sed requires '' for in-place edit, Linux doesn't
+        # Enable runtimeClassName: nvidia on STT, TTS, and session-management-server
+        # Also enable NVIDIA_VISIBLE_DEVICES on session-management-server (node:20-slim
+        # doesn't set it like the nvidia/cuda base images do, so nvidia runtime won't
+        # inject nvidia-smi without it)
+        # NOTE: We do NOT uncomment nvidia.com/gpu resource requests — that would
+        # reserve GPUs exclusively and prevent sharing between pods
+        local sms_manifest="${TEMP_DIR}/06-session-management-server-updated.yaml"
         if [[ "$OS_TYPE" == "macos" ]]; then
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "$sms_manifest"
+            # Enable NVIDIA_VISIBLE_DEVICES env var for GPU monitoring
+            sed -i '' '/# GPU: - name: NVIDIA_VISIBLE_DEVICES/{s/# GPU: //;}' "$sms_manifest"
+            sed -i '' '/# GPU:   value: "all"/{s/# GPU: //;}' "$sms_manifest"
         else
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/08-stt-service.yaml"
             sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
                 "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's/# GPU: runtimeClassName: nvidia/runtimeClassName: nvidia/' \
+                "$sms_manifest"
+            # Enable NVIDIA_VISIBLE_DEVICES env var for GPU monitoring
+            sed -i '/# GPU: - name: NVIDIA_VISIBLE_DEVICES/{s/# GPU: //;}' "$sms_manifest"
+            sed -i '/# GPU:   value: "all"/{s/# GPU: //;}' "$sms_manifest"
         fi
-        verbose "GPU manifests: runtimeClassName=nvidia (shared GPU mode)"
+        verbose "GPU manifests: runtimeClassName=nvidia + NVIDIA_VISIBLE_DEVICES=all (shared GPU mode)"
     fi
 
     # NOTE: Custom DNS is now applied globally via apply_dns_to_all_manifests()
@@ -871,8 +907,9 @@ deploy_services() {
 
         echo -ne "   ${ARROW} ${label}... "
 
-        # Run command in background
-        "${cmd[@]}" >/dev/null 2>&1 &
+        # Run command in background, capture output to temp file
+        local cmd_log="${LOG_DIR:-/tmp}/apply-${label// /-}.log"
+        "${cmd[@]}" >"$cmd_log" 2>&1 &
         local pid=$!
 
         # Spinner animation
@@ -884,14 +921,26 @@ deploy_services() {
             sleep 0.1
         done
 
+        # Disable errexit so we can capture the exit code and report errors
+        set +e
         wait $pid
         local exit_code=$?
+        set -e
 
         if [[ $exit_code -eq 0 ]]; then
             printf "\r   ${ARROW} ${label}... ${GREEN}${CHECK}${NC}    \n"
+            rm -f "$cmd_log" 2>/dev/null
             return 0
         else
             printf "\r   ${ARROW} ${label}... ${RED}${CROSS}${NC}    \n"
+            error "${label} failed (exit code: $exit_code)"
+            if [[ -f "$cmd_log" && -s "$cmd_log" ]]; then
+                echo -e "   ${DIM}Command output:${NC}"
+                cat "$cmd_log" | while read -r line; do
+                    echo "     $line"
+                done
+            fi
+            rm -f "$cmd_log" 2>/dev/null
             return 1
         fi
     }
@@ -905,6 +954,11 @@ deploy_services() {
     printf "\r   ${ARROW} Secrets... ${GREEN}${CHECK}${NC}    \n"
 
     apply_with_spinner "ConfigMap" kubectl apply -f "${TEMP_DIR}/04-configmap-updated.yaml"
+
+    # Save ConfigMap checksum after successful apply
+    if [[ -n "${CONFIGMAP_NEW_HASH:-}" && -n "${CONFIGMAP_CHECKSUM_FILE:-}" ]]; then
+        echo "$CONFIGMAP_NEW_HASH" > "$CONFIGMAP_CHECKSUM_FILE"
+    fi
 
     # Phase 1.5: Model Storage PVCs (for STT/TTS models)
     apply_with_spinner "Model Storage PVCs" bash -c "kubectl apply -f k8s/02-stt-models-pvc.yaml && kubectl apply -f k8s/02-tts-models-pvc.yaml"
@@ -954,30 +1008,34 @@ deploy_services() {
     echo -ne "   ${ARROW} Application services... "
 
     local apply_errors=""
+    local apply_output=""
     set +e  # Disable errexit to capture errors
 
-    kubectl apply -f "${TEMP_DIR}/06-session-management-server-updated.yaml" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}session-management-server "
+    local -a apply_manifests=(
+        "session-management-server:${TEMP_DIR}/06-session-management-server-updated.yaml"
+        "frontend-ui:${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}"
+        "stt-service:$STT_MANIFEST"
+        "tts-service:$TTS_MANIFEST"
+        "message-recorder:${TEMP_DIR}/06-message-recorder-updated.yaml"
+    )
 
-    kubectl apply -f "${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}frontend-ui "
-
-    kubectl apply -f "$STT_MANIFEST" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}stt-service "
-
-    kubectl apply -f "$TTS_MANIFEST" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}tts-service "
-
-    kubectl apply -f "${TEMP_DIR}/06-message-recorder-updated.yaml" >/dev/null 2>&1
-    [[ $? -ne 0 ]] && apply_errors="${apply_errors}message-recorder "
+    for entry in "${apply_manifests[@]}"; do
+        local svc_name="${entry%%:*}"
+        local manifest="${entry#*:}"
+        local output
+        output=$(kubectl apply -f "$manifest" 2>&1)
+        if [[ $? -ne 0 ]]; then
+            apply_errors="${apply_errors}${svc_name} "
+            apply_output="${apply_output}\n--- ${svc_name} (${manifest}) ---\n${output}\n"
+        fi
+    done
 
     set -e  # Re-enable errexit
 
     if [[ -n "$apply_errors" ]]; then
         printf "\r   ${ARROW} Application services... ${RED}${CROSS}${NC}    \n"
         error "Failed to apply manifests: $apply_errors"
-        echo "  Check manifest files exist in ${TEMP_DIR}/"
-        ls -la "${TEMP_DIR}/"*.yaml 2>/dev/null || echo "  No yaml files found in temp dir"
+        echo -e "$apply_output"
         return 1
     fi
     printf "\r   ${ARROW} Application services... ${GREEN}${CHECK}${NC}    \n"
@@ -1035,6 +1093,10 @@ restart_services() {
         # Restart all deployments
         services_to_restart="$ALL_DEPLOYMENTS"
         verbose "Restarting all services..."
+    elif [[ "${CONFIGMAP_CHANGED:-false}" == "true" ]]; then
+        # ConfigMap changed - restart all services to pick up new env values
+        services_to_restart="$ALL_DEPLOYMENTS"
+        verbose "ConfigMap changed - restarting all services..."
     elif [[ ${#REBUILT_SERVICES[@]} -gt 0 ]]; then
         # Restart only rebuilt services
         for service in $ALL_SERVICES; do
@@ -1238,8 +1300,22 @@ check_service_runtime_status() {
         fi
 
     elif [[ "$service" == "tts-service" ]]; then
+        # Check primary provider (use "Primary provider" log line to avoid matching fallback)
+        if echo "$logs" | grep -iq "Primary provider.*chatterbox"; then
+            status="CPU"
+            provider="chatterbox"
+            details="ChatterBox Multilingual TTS (local)"
+            # Check if using CUDA
+            if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+                status="CUDA"
+                details="ChatterBox Multilingual TTS (CUDA)"
+            fi
+        elif echo "$logs" | grep -iq "Primary provider.*piper"; then
+            status="CPU"
+            provider="piper"
+            details="Piper TTS (local CPU)"
         # Check for Kokoro CUDA success
-        if echo "$logs" | grep -iq "CUDAExecutionProvider"; then
+        elif echo "$logs" | grep -iq "CUDAExecutionProvider"; then
             if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
                 status="CPU"
                 provider="piper"
@@ -1249,7 +1325,7 @@ check_service_runtime_status() {
                 provider="kokoro"
                 details="Kokoro ONNX (CUDA)"
             fi
-        elif echo "$logs" | grep -iq "Primary.provider.*kokoro\|Provider.*kokoro"; then
+        elif echo "$logs" | grep -iq "Primary provider.*kokoro"; then
             status="CUDA"
             provider="kokoro"
             details="Kokoro ONNX"

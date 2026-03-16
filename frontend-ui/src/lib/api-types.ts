@@ -241,6 +241,7 @@ export interface AgentType {
   defaultConfig: Record<string, unknown>  // Default config for this agent type
   validationStatus?: AgentValidationStatus
   configSchema?: Record<string, unknown>  // JSON Schema for config options
+  pipelineSchema?: PipelineSchema | null  // Pipeline topology + configurable slots
   resourceGpu?: boolean
   authorName?: string | null
   authorEmail?: string | null
@@ -604,8 +605,9 @@ export function isAgentRunning(agent: AgentInstance): boolean {
  * State execution mode (matches SDK StateType enum)
  * - strict: Sequential task processing - one task at a time
  * - loose: Flexible/parallel task processing - any order
+ * - goal: Goal-oriented natural conversation - agent sees information gaps, not tasks
  */
-export type StateType = 'strict' | 'loose'
+export type StateType = 'strict' | 'loose' | 'goal'
 
 /**
  * @deprecated Use StateType instead. Kept for backward compatibility.
@@ -623,9 +625,8 @@ export interface PlanDeliverable {
   type: DeliverableType
   description: string              // What to collect (was: label)
   required: boolean
-  acceptance_criteria?: string     // Validation rules (was: description)
+  acceptance_criteria?: string     // What constitutes a valid answer, with examples
   enum_values?: string[]           // For enum type (was: enumValues)
-  examples?: string[]
 }
 
 /**
@@ -650,6 +651,17 @@ export interface StateTransition {
 }
 
 /**
+ * Goal-mode context for natural, goal-oriented conversation states.
+ */
+export interface StateGoal {
+  objective: string
+  context?: string
+  depth_guidance?: string
+  boundaries?: string
+  success_description?: string
+}
+
+/**
  * A state in the plan, containing tasks.
  */
 export interface PlanState {
@@ -659,6 +671,7 @@ export interface PlanState {
   description?: string
   tasks: PlanTask[]
   transitions?: StateTransition[]
+  goal?: StateGoal                 // Only used when type === 'goal'
 }
 
 // Session context field for collecting participant information
@@ -768,6 +781,7 @@ export interface UpdateEnvVarTemplateDto {
 export interface AgentRequirements {
   requiresPlan: boolean
   requiredEnvVars: string[]
+  supportsConfigurator: boolean
 }
 
 /**
@@ -780,7 +794,7 @@ export function parseAgentRequirements(
   configSchema: Record<string, unknown> | null | undefined
 ): AgentRequirements {
   if (!configSchema) {
-    return { requiresPlan: false, requiredEnvVars: [] }
+    return { requiresPlan: false, requiredEnvVars: [], supportsConfigurator: false }
   }
 
   const properties = (configSchema.properties as Record<string, any>) || {}
@@ -789,8 +803,9 @@ export function parseAgentRequirements(
   )
 
   const requiredEnvVars = (configSchema['x-stella-env-vars'] as string[]) || []
+  const supportsConfigurator = configSchema['x-stella-supports-configurator'] === true
 
-  return { requiresPlan, requiredEnvVars }
+  return { requiresPlan, requiredEnvVars, supportsConfigurator }
 }
 
 // ============================================================================
@@ -1008,6 +1023,7 @@ export interface TranscriptExportMeta {
   closedAt: string | null
   messageCount: number
   participantCount: number
+  deliverableCount?: number
 }
 
 export interface TranscriptExportParticipant {
@@ -1025,6 +1041,13 @@ export interface TranscriptExportAgent {
   status: string
 }
 
+export interface TranscriptExportMessageDeliverable {
+  key: string
+  value: string
+  confidence?: number
+  reasoning?: string
+}
+
 export interface TranscriptExportMessage {
   id: string
   timestamp: string
@@ -1033,12 +1056,22 @@ export interface TranscriptExportMessage {
   content: string
   speakerName: string | null
   speakerId: string | null
+  collectedDeliverables?: TranscriptExportMessageDeliverable[]
+}
+
+export interface TranscriptExportDeliverable {
+  value: string
+  reasoning?: string
+  collectedAt?: string
+  description?: string
+  required?: boolean
 }
 
 export interface TranscriptExport {
   meta: TranscriptExportMeta
   participants: TranscriptExportParticipant[]
   agents: TranscriptExportAgent[]
+  deliverables?: Record<string, TranscriptExportDeliverable>
   messages: TranscriptExportMessage[]
 }
 
@@ -1077,6 +1110,15 @@ export interface HistoricalUsageData {
   peakParticipants: number
 }
 
+export interface GpuDeviceMetrics {
+  index: number
+  name: string
+  usage: number // Percentage 0-100
+  memoryUsed: string // BigInt as string
+  memoryTotal: string // BigInt as string
+  temperature: number | null // Celsius
+}
+
 export interface ServerMetrics {
   timestamp: string
   cpuUsage: number
@@ -1088,6 +1130,7 @@ export interface ServerMetrics {
   gpuMemoryUsed: string | null
   gpuMemoryTotal: string | null
   gpuAvailable: boolean
+  gpus: GpuDeviceMetrics[] // Per-GPU metrics for all detected GPUs
   k8sNodeCount: number | null
   k8sPodCount: number | null
   k8sCpuRequests: number | null
@@ -1135,4 +1178,94 @@ export interface SessionStatusItem {
   errors: SessionAgentError[]
   projectId: string
   createdAt: string
+}
+
+// ============================================================================
+// Agent Configurator Types
+// ============================================================================
+
+export interface ConfigurableSlot {
+  id: string
+  label: string
+  type: 'text' | 'number' | 'select' | 'string_list' | 'key_value' | 'expert_list'
+  description?: string
+  default?: unknown
+  options?: string[]  // for select type
+  min?: number        // for number type
+  max?: number        // for number type
+  step?: number       // for number type
+  maxLength?: number  // for text type
+  isCustom?: boolean  // for expert_list type (custom experts)
+}
+
+export interface PipelineNode {
+  id: string
+  label: string
+  description?: string
+  icon?: string
+  position: { row: number; col: number }
+  slots: ConfigurableSlot[]
+}
+
+export interface PipelineEdge {
+  source: string
+  target: string
+  label?: string
+  style?: 'solid' | 'dashed'
+}
+
+export interface PipelineThreshold {
+  id: string
+  label: string
+  description?: string
+  type: 'number'
+  min?: number
+  max?: number
+  step?: number
+  default?: number
+}
+
+export interface PipelineSchema {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
+  thresholds: PipelineThreshold[]
+}
+
+export interface AgentConfigurationPayload {
+  nodes?: Record<string, Record<string, unknown>>
+  thresholds?: Record<string, unknown>
+}
+
+export interface AgentConfiguration {
+  id: string
+  userId: string
+  name: string
+  description: string | null
+  agentTypeId: string
+  agentType?: {
+    id: string
+    slug: string
+    name: string
+    icon: string | null
+    pipelineSchema?: PipelineSchema | null
+  }
+  configuration: AgentConfigurationPayload
+  agentVersion: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateAgentConfigurationDto {
+  name: string
+  description?: string
+  agentTypeId: string
+  configuration: AgentConfigurationPayload
+  agentVersion?: string
+}
+
+export interface UpdateAgentConfigurationDto {
+  name?: string
+  description?: string
+  configuration?: AgentConfigurationPayload
+  agentVersion?: string
 }

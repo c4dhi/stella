@@ -1,7 +1,9 @@
 """BaseAgent abstract class - the interface agents must implement."""
 
 from abc import ABC, abstractmethod
+import asyncio
 import logging
+import re
 import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
@@ -72,6 +74,8 @@ class BaseAgent(ABC):
         self._history_client: Optional["HistoryClient"] = None
         # Last progress payload (for re-sending to new participants)
         self._last_progress_payload: Optional[Dict[str, Any]] = None
+        # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
+        self._sentence_buffer: str = ""
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
@@ -530,7 +534,7 @@ class BaseAgent(ABC):
 
                 try:
                     current_transcript_id = None
-                    last_text = ""  # Track final text for TTS
+                    tts_buffer = ""  # Tracks last accumulated text for diffing
 
                     async for output in self.process(input_msg):
                         logger.info(f"[AGENT OUTPUT] type={output.type}, content={output.content[:50] if output.content else 'None'}...")
@@ -546,14 +550,41 @@ class BaseAgent(ABC):
                                 transcript_id=current_transcript_id
                             )
 
-                            # Track text for TTS on final
-                            last_text = output.content
+                            # Sentence-level TTS: extract new text from accumulated content.
+                            # output.content is the full accumulated text so far.
+                            # Safety: if content doesn't extend tts_buffer (e.g. new
+                            # transcript), reset and treat full content as new.
+                            if output.content.startswith(tts_buffer):
+                                new_text = output.content[len(tts_buffer):]
+                            else:
+                                new_text = output.content
+                                self._sentence_buffer = ""
+                            tts_buffer = output.content
 
-                            # On final chunk, send to TTS
+                            # Check for sentence boundaries in the new text and dispatch
+                            self._dispatch_sentences(new_text)
+
+                            # If the buffer is a complete sentence (ends with
+                            # punctuation) and this is NOT the final chunk,
+                            # dispatch immediately. This handles the bridge:
+                            # "Good question." is a complete sentence that
+                            # should be synthesized right away, without
+                            # waiting for the next output event.
+                            if (
+                                not output.is_final
+                                and self._sentence_buffer
+                                and self._sentence_buffer.rstrip()[-1:] in ".!?"
+                            ):
+                                remaining = self._flush_sentence_buffer()
+                                if remaining:
+                                    self.audio.enqueue_sentence(remaining)
+
                             if output.is_final:
-                                if last_text.strip():
-                                    await self.audio.speak(last_text)
-                                last_text = ""
+                                # Flush any remaining partial sentence to TTS
+                                remaining = self._flush_sentence_buffer()
+                                if remaining:
+                                    self.audio.enqueue_sentence(remaining)
+                                tts_buffer = ""
                                 current_transcript_id = None
 
                         elif output.type == OutputType.TEXT_FINAL:
@@ -568,8 +599,8 @@ class BaseAgent(ABC):
                                     transcript_id=transcript_id
                                 )
 
-                                # Send to TTS
-                                await self.audio.speak(output.content)
+                                # Send to TTS via sentence queue
+                                self.audio.enqueue_sentence(output.content)
 
                         elif output.type == OutputType.DEBUG:
                             # Forward debug messages to frontend via LiveKit
@@ -669,4 +700,47 @@ class BaseAgent(ABC):
                             await self.audio._room.publish_data(progress_payload)
 
                 finally:
+                    # Ensure all queued TTS sentences finish before accepting next input
+                    await self.audio.flush_speech_queue()
+                    self._sentence_buffer = ""
                     self._is_processing = False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Sentence-level TTS dispatch helpers
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Sentence-ending pattern: ". " or "! " or "? " or "..." followed by
+    # whitespace. We split on these boundaries so each TTS call gets a
+    # natural sentence.
+    _SENTENCE_END = re.compile(r'(?<=[.!?])\s+|(?<=\.\.\.)\s+')
+
+    def _dispatch_sentences(self, new_text: str) -> None:
+        """Detect sentence boundaries in new_text and enqueue complete sentences.
+
+        Accumulates text in self._sentence_buffer. When a sentence boundary
+        is found (punctuation followed by whitespace), the complete sentence
+        is dispatched to the TTS queue immediately.
+        """
+        self._sentence_buffer += new_text
+
+        # Split on sentence boundaries
+        parts = self._SENTENCE_END.split(self._sentence_buffer)
+
+        if len(parts) <= 1:
+            # No complete sentence yet — keep buffering
+            return
+
+        # All parts except the last are complete sentences
+        for sentence in parts[:-1]:
+            sentence = sentence.strip()
+            if sentence:
+                self.audio.enqueue_sentence(sentence)
+
+        # Keep the last (incomplete) part in the buffer
+        self._sentence_buffer = parts[-1]
+
+    def _flush_sentence_buffer(self) -> str:
+        """Flush and return any remaining text in the sentence buffer."""
+        remaining = self._sentence_buffer.strip()
+        self._sentence_buffer = ""
+        return remaining

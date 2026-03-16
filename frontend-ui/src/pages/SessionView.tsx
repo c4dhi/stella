@@ -470,7 +470,7 @@ export default function SessionView() {
               id: task.id,
               description: task.description,
               instruction: task.instruction,
-              required: true,
+              required: task.deliverables.some(d => d.required),
               status: taskStatus,
               deliverables: task.deliverables.map(item => ({
                 key: item.id,

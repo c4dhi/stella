@@ -188,20 +188,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   return (
-    <motion.div
+    <div
       className="h-full flex flex-col"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.3 }}
     >
       {/* Header */}
-      <motion.div
+      <div
         className={`px-8 py-5 border-b flex items-center justify-between ${
           isDark ? 'border-border-dark bg-surface-dark' : 'border-border bg-white'
         }`}
-        initial={{ y: -20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.1 }}
       >
         <div className="flex items-center gap-4">
           {/* Back to Generator button (only when coming from AI generator) */}
@@ -316,13 +310,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
             )}
           </motion.button>
         </div>
-      </motion.div>
+      </div>
 
       {/* AI-Generated Banner */}
       {isFromGenerator && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
+        <div
           className={`mx-8 mt-4 px-4 py-2.5 rounded-xl flex items-center gap-3 ${
             isDark
               ? 'bg-violet-500/10 border border-violet-500/20'
@@ -337,19 +329,16 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <span className={`text-body-sm ${isDark ? 'text-violet-400' : 'text-neutral-700'}`}>
             AI-generated plan — review and customize as needed
           </span>
-        </motion.div>
+        </div>
       )}
 
       {/* Main Content */}
       <div className={`flex-1 flex overflow-hidden ${isFromGenerator ? 'mt-4' : ''}`}>
         {/* Left Panel - State List */}
-        <motion.div
+        <div
           className={`w-80 border-r flex flex-col ${
             isDark ? 'border-border-dark bg-surface-dark' : 'border-border bg-surface'
           }`}
-          initial={{ x: -20, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.15 }}
         >
           {/* Plan Metadata */}
           <div className={`p-5 border-b ${isDark ? 'border-border-dark' : 'border-border'}`}>
@@ -459,11 +448,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                     <motion.div
                       key={state.id}
                       layout
-                      initial={{ opacity: 0, x: -20 }}
+                      initial={false}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20, scale: 0.9 }}
-                      transition={{ delay: index * 0.03 }}
-                      className={`group relative flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all ${
+                      className={`group relative flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-[color,background-color,border-color,box-shadow] ${
                         selectedStateIndex === index
                           ? isDark
                             ? 'bg-primary/20 ring-2 ring-primary/30'
@@ -599,16 +587,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               </motion.button>
             </div>
           </div>
-        </motion.div>
+        </div>
 
         {/* Right Panel - Editor or X-ray */}
-        <motion.div
+        <div
           className={`flex-1 overflow-hidden ${
             isDark ? 'bg-surface-dark' : 'bg-surface'
           }`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
         >
           <AnimatePresence mode="wait">
             {xRayMode ? (
@@ -672,8 +657,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.div>
+        </div>
       </div>
-    </motion.div>
+    </div>
   )
 }
