@@ -93,7 +93,7 @@ get_var_metadata() {
 
         # --- LIVEKIT ---
         LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||" ;;
-        LIVEKIT_API_SECRET)    echo "livekit|password|both|secret||LiveKit API secret||" ;;
+        LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||" ;;
         LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL (for K8s pods)||" ;;
         PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL (for browsers)||" ;;
         LIVEKIT_TURN_ENABLED)  echo "livekit|boolean|optional|false|true|Enable TURN server for NAT traversal||" ;;
