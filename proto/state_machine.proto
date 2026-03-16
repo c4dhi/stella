@@ -213,6 +213,7 @@ message FullStateDeliverable {
   string collected_at = 7;
   string acceptance_criteria = 8;
   string reasoning = 9;
+  bool discovered = 10;
 }
 
 message FullStateTask {

@@ -39,6 +39,7 @@ interface StateGoal {
   depth_guidance?: string;
   boundaries?: string;
   success_description?: string;
+  deliverables?: PlanDeliverable[];
 }
 
 interface PlanState {
@@ -150,14 +151,23 @@ STATE TYPES — choose carefully based on the conversational intent:
 - "loose": Tasks can be completed in any order, agent chooses. Use for: surveys, intake forms, structured data collection.
 - "goal": Agent has a NATURAL CONVERSATION toward an objective. Tasks are invisible to the agent — it sees information gaps instead. Use for: coaching, interviews, therapy, discovery conversations, any state where natural dialogue matters more than task execution. REQUIRES a "goal" object.
 
-When using type "goal", you MUST include a "goal" object on the state:
+When using type "goal", you MUST include a "goal" object on the state. Deliverables go DIRECTLY on the goal object (NOT inside tasks). The "tasks" array should be empty for goal states. The agent will also automatically discover and capture relevant insights that weren't pre-defined.
 {
   "goal": {
     "objective": "What the conversation should achieve",
     "context": "Background the AI needs to understand the domain",
     "depth_guidance": "How deep to probe — when to accept answers vs push further",
     "boundaries": "What topics to avoid (covered elsewhere or out of scope)",
-    "success_description": "What a well-conducted version of this phase looks like"
+    "success_description": "What a well-conducted version of this phase looks like",
+    "deliverables": [
+      {
+        "key": "variable_name",
+        "description": "What this captures",
+        "type": "string",
+        "required": true,
+        "acceptance_criteria": "What constitutes a valid answer"
+      }
+    ]
   }
 }
 
@@ -178,8 +188,8 @@ The structure must follow this exact schema:
         "tasks": [
           {
             "id": "task_<unique_id>",
-            "description": "What to ask/do",
-            "instruction": "How to ask it (optional, not used in goal mode)",
+            "description": "What to ask/do (for strict/loose states only — goal states use goal.deliverables instead)",
+            "instruction": "How to ask it (optional)",
             "required": true | false,
             "deliverables": [
               {
@@ -327,45 +337,32 @@ EXAMPLE 2 — Goal-oriented plan for natural conversation:
           "context": "This is a first coaching session. The client may be nervous or unsure what to expect.",
           "depth_guidance": "Let the conversation breathe. Don't rush to collect information. If they share something personal, acknowledge it before moving on. Accept brief answers for name/role but probe gently on what brought them here.",
           "boundaries": "Don't dive into problems or goals yet — this phase is about connection, not assessment.",
-          "success_description": "The client feels heard and comfortable. You know their name, what they do, and have a sense of what prompted them to seek coaching."
+          "success_description": "The client feels heard and comfortable. You know their name, what they do, and have a sense of what prompted them to seek coaching.",
+          "deliverables": [
+            {
+              "key": "client_name",
+              "description": "Client's preferred name",
+              "type": "string",
+              "required": true,
+              "acceptance_criteria": "Their preferred first name or nickname."
+            },
+            {
+              "key": "client_role",
+              "description": "What they do professionally or how they spend their time",
+              "type": "string",
+              "required": true,
+              "acceptance_criteria": "A brief description of their work or life situation. E.g. 'marketing manager at a startup', 'retired teacher', 'stay-at-home parent'. One sentence is fine."
+            },
+            {
+              "key": "coaching_trigger",
+              "description": "What prompted them to seek coaching",
+              "type": "string",
+              "required": true,
+              "acceptance_criteria": "A genuine reason, not just 'I thought it would be good'. Should reveal some emotional or situational driver. E.g. 'I got promoted and feel overwhelmed', 'going through a divorce', 'feeling stuck in my career for 2 years'."
+            }
+          ]
         },
-        "tasks": [
-          {
-            "id": "task_identity",
-            "description": "Learn who they are",
-            "required": true,
-            "deliverables": [
-              {
-                "key": "client_name",
-                "description": "Client's preferred name",
-                "type": "string",
-                "required": true,
-                "acceptance_criteria": "Their preferred first name or nickname."
-              },
-              {
-                "key": "client_role",
-                "description": "What they do professionally or how they spend their time",
-                "type": "string",
-                "required": true,
-                "acceptance_criteria": "A brief description of their work or life situation. E.g. 'marketing manager at a startup', 'retired teacher', 'stay-at-home parent'. One sentence is fine."
-              }
-            ]
-          },
-          {
-            "id": "task_motivation",
-            "description": "Understand what brought them to coaching",
-            "required": true,
-            "deliverables": [
-              {
-                "key": "coaching_trigger",
-                "description": "What prompted them to seek coaching",
-                "type": "string",
-                "required": true,
-                "acceptance_criteria": "A genuine reason, not just 'I thought it would be good'. Should reveal some emotional or situational driver. E.g. 'I got promoted and feel overwhelmed', 'going through a divorce', 'feeling stuck in my career for 2 years'."
-              }
-            ]
-          }
-        ]
+        "tasks": []
       },
       {
         "id": "state_exploration",
@@ -377,45 +374,32 @@ EXAMPLE 2 — Goal-oriented plan for natural conversation:
           "context": "You've built initial rapport. The client is now more comfortable sharing.",
           "depth_guidance": "Push past surface-level goals. If they say 'I want to be happier', ask what happiness looks like for them specifically. Use open questions. Reflect back what you hear to confirm understanding. Aim for 2-3 exchanges per deliverable, not one-shot extraction.",
           "boundaries": "Don't offer solutions or advice yet. This is about understanding, not fixing. Don't diagnose or label their situation.",
-          "success_description": "You understand 1-2 concrete things they want to change, why those matter to them, and what's been getting in the way."
+          "success_description": "You understand 1-2 concrete things they want to change, why those matter to them, and what's been getting in the way.",
+          "deliverables": [
+            {
+              "key": "primary_goal",
+              "description": "The main thing they want to change or achieve",
+              "type": "string",
+              "required": true,
+              "acceptance_criteria": "A specific, personally meaningful goal. Must go beyond surface level. E.g. 'I want to set boundaries at work so I can be present with my kids' not just 'better work-life balance'."
+            },
+            {
+              "key": "underlying_value",
+              "description": "The value or need driving their goal",
+              "type": "string",
+              "required": false,
+              "acceptance_criteria": "A core value or emotional need. E.g. 'autonomy', 'being a good parent', 'feeling competent'. This may emerge naturally — don't force it."
+            },
+            {
+              "key": "main_obstacle",
+              "description": "The primary barrier to their goal",
+              "type": "string",
+              "required": true,
+              "acceptance_criteria": "A specific obstacle, not a vague complaint. E.g. 'My manager expects me to be available 24/7 and I can't say no' not just 'work is stressful'."
+            }
+          ]
         },
-        "tasks": [
-          {
-            "id": "task_desired_change",
-            "description": "What they want to be different",
-            "required": true,
-            "deliverables": [
-              {
-                "key": "primary_goal",
-                "description": "The main thing they want to change or achieve",
-                "type": "string",
-                "required": true,
-                "acceptance_criteria": "A specific, personally meaningful goal. Must go beyond surface level. E.g. 'I want to set boundaries at work so I can be present with my kids' not just 'better work-life balance'."
-              },
-              {
-                "key": "underlying_value",
-                "description": "The value or need driving their goal",
-                "type": "string",
-                "required": false,
-                "acceptance_criteria": "A core value or emotional need. E.g. 'autonomy', 'being a good parent', 'feeling competent'. This may emerge naturally — don't force it."
-              }
-            ]
-          },
-          {
-            "id": "task_obstacles",
-            "description": "What's been getting in the way",
-            "required": true,
-            "deliverables": [
-              {
-                "key": "main_obstacle",
-                "description": "The primary barrier to their goal",
-                "type": "string",
-                "required": true,
-                "acceptance_criteria": "A specific obstacle, not a vague complaint. E.g. 'My manager expects me to be available 24/7 and I can't say no' not just 'work is stressful'."
-              }
-            ]
-          }
-        ]
+        "tasks": []
       },
       {
         "id": "state_closing",
@@ -442,12 +426,12 @@ EXAMPLE 2 — Goal-oriented plan for natural conversation:
 Guidelines:
 1. REQUIRED FIELDS: Always include id, title, description, and initial_state_id in content
 2. STATES = conversation phases (typically 2-4 states)
-3. TASKS = granular to-dos, usually ONE question per task (in strict/loose) or grouped by theme (in goal)
-4. DELIVERABLES = individual variables (usually 1 per task, sometimes 0 for closing tasks)
+3. TASKS = granular to-dos, usually ONE question per task. Only used in strict/loose states. Goal states use goal.deliverables instead.
+4. DELIVERABLES = individual variables. In strict/loose states: nested inside tasks (usually 1 per task). In goal states: placed directly on the goal object.
 5. STATE TYPE selection:
-   - Use "strict" when order matters (games, tutorials, onboarding)
-   - Use "loose" when questions can be asked in any order (surveys, intake forms)
-   - Use "goal" when natural conversation matters most (coaching, interviews, therapy, discovery). ALWAYS include a "goal" object with at least "objective" for goal states.
+   - Use "strict" when order matters (games, tutorials, onboarding). Deliverables go inside tasks.
+   - Use "loose" when questions can be asked in any order (surveys, intake forms). Deliverables go inside tasks.
+   - Use "goal" when natural conversation matters most (coaching, interviews, therapy, discovery). Deliverables go on the goal object. Tasks array should be empty. The agent will also discover additional insights beyond the defined deliverables.
 6. Keep plans SHORT and focused - this is for brief voice conversations
 7. Use appropriate types: string (open text), number (counts), boolean (yes/no), enum (choices)
 8. Generate snake_case keys for deliverables: user_name, workout_frequency, etc.
@@ -500,8 +484,21 @@ Respond ONLY with valid JSON matching the schema above.`;
       id: stateIdMap.get(state.id || '') || uuidv4(),
       title: state.title || 'Untitled State',
       type: state.type || 'loose',
-      // Preserve goal object for goal-type states
-      goal: state.type === 'goal' ? state.goal : undefined,
+      // Preserve and normalize goal object for goal-type states
+      goal: state.type === 'goal' && state.goal ? {
+        objective: state.goal.objective || '',
+        context: state.goal.context,
+        depth_guidance: state.goal.depth_guidance,
+        boundaries: state.goal.boundaries,
+        success_description: state.goal.success_description,
+        deliverables: (state.goal.deliverables || []).map((del) => ({
+          ...del,
+          key: del.key || `deliverable_${uuidv4().slice(0, 8)}`,
+          description: del.description || 'Unnamed deliverable',
+          type: del.type || 'string',
+          required: del.required ?? true,
+        })),
+      } : undefined,
       tasks: (state.tasks || []).map((task) => ({
         ...task,
         id: uuidv4(), // Always use UUID for task IDs

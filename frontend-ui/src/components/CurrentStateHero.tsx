@@ -44,6 +44,28 @@ const ProcessingModeIndicator = ({ type }: { type: StateType }) => {
     )
   }
 
+  if (type === StateType.GOAL) {
+    return (
+      <motion.div
+        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-100 border border-violet-200"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <motion.span
+          className="text-sm text-violet-600"
+          animate={{ scale: [1, 1.15, 1] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          🎯
+        </motion.span>
+        <span className="text-xs font-medium text-violet-700 tracking-wider uppercase">
+          Goal-Oriented
+        </span>
+      </motion.div>
+    )
+  }
+
   return (
     <motion.div
       className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-100 border border-green-200"
@@ -183,7 +205,7 @@ export default function CurrentStateHero({ currentState, currentTask, processing
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-[10px] text-neutral-500 tracking-wider uppercase font-medium">
-                      {processingMode === StateType.STRICT ? 'Current Task' : 'Active Task'}
+                      {processingMode === StateType.STRICT ? 'Current Task' : processingMode === StateType.GOAL ? 'Objective' : 'Active Task'}
                     </span>
                     {currentTask.required && (
                       <span className="text-[9px] text-red-500 font-medium">REQUIRED</span>

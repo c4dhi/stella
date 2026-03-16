@@ -275,7 +275,7 @@ class StateMachineClient:
                     "type": d.type,
                     "required": d.required,
                     "acceptance_criteria": d.acceptance_criteria or None,
-                    "examples": list(d.examples),
+                    "examples": list(getattr(d, 'examples', [])),
                     "task_id": d.task_id,
                 }
                 for d in response.deliverables
@@ -378,6 +378,8 @@ class StateMachineClient:
                             deliverable["acceptance_criteria"] = d.acceptance_criteria
                         if d.reasoning:
                             deliverable["reasoning"] = d.reasoning
+                        if getattr(d, 'discovered', False):
+                            deliverable["discovered"] = True
                         deliverables.append(deliverable)
 
                     task = {

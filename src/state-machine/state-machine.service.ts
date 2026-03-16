@@ -23,6 +23,7 @@ export interface StateGoal {
   depth_guidance?: string;
   boundaries?: string;
   success_description?: string;
+  deliverables?: PlanDeliverable[];
 }
 
 export interface PlanState {
@@ -66,6 +67,7 @@ export interface DeliverableValue {
   value: unknown;
   reasoning: string;
   collectedAt: string;
+  discovered?: boolean;
 }
 
 /**
@@ -133,6 +135,7 @@ export interface FullStateDeliverableInfo {
   collectedAt?: string;
   acceptanceCriteria?: string;
   reasoning?: string;
+  discovered?: boolean;
 }
 
 /**
@@ -364,10 +367,12 @@ export class StateMachineService {
       return { success: false, error: `Current state ${state.currentStateId} not found in plan` };
     }
 
-    // Find the deliverable
+    // Find the deliverable — search tasks first, then goal.deliverables
     let foundTask: PlanTask | null = null;
     let foundDeliverable: PlanDeliverable | null = null;
+    let isGoalDeliverable = false;
 
+    // 1. Search task-level deliverables (works for all state types)
     for (const task of currentState.tasks) {
       for (const deliverable of task.deliverables || []) {
         if (deliverable.key === key) {
@@ -379,7 +384,50 @@ export class StateMachineService {
       if (foundDeliverable) break;
     }
 
-    if (!foundDeliverable || !foundTask) {
+    // 2. For goal states, also search goal-level deliverables
+    if (!foundDeliverable && currentState.type === 'goal' && currentState.goal?.deliverables) {
+      for (const deliverable of currentState.goal.deliverables) {
+        if (deliverable.key === key) {
+          foundDeliverable = deliverable;
+          isGoalDeliverable = true;
+          break;
+        }
+      }
+    }
+
+    // 3. Handle not-found cases
+    const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
+
+    if (!foundDeliverable && currentState.type === 'goal') {
+      // Goal mode: accept as discovered insight
+      this.logger.log(`[setDeliverable] Discovered insight '${key}' in goal state for session ${sessionId}`);
+      deliverables[key] = {
+        value,
+        reasoning,
+        collectedAt: new Date().toISOString(),
+        discovered: true,
+      };
+
+      await this.prisma.sessionState.update({
+        where: { sessionId },
+        data: {
+          deliverables: deliverables as unknown as Prisma.InputJsonValue,
+          turnsWithoutProgress: 0,
+        },
+      });
+
+      return {
+        success: true,
+        progress: await this.calculateProgress(sessionId, {
+          ...state,
+          deliverables: deliverables as unknown as Prisma.JsonValue,
+          turnsWithoutProgress: 0,
+        } as SessionState),
+      };
+    }
+
+    if (!foundDeliverable) {
+      // Strict/loose mode: reject unknown keys
       const availableKeys = currentState.tasks
         .flatMap(t => t.deliverables || [])
         .map(d => d.key);
@@ -390,22 +438,36 @@ export class StateMachineService {
     }
 
     // Update deliverables
-    const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
     deliverables[key] = {
       value,
       reasoning,
       collectedAt: new Date().toISOString(),
     };
 
-    // Check if this completes the task
-    const taskDeliverableKeys = (foundTask.deliverables || [])
-      .filter(d => d.required !== false)
-      .map(d => d.key);
-    const taskComplete = taskDeliverableKeys.every(k => k in deliverables);
-
+    // Check if this completes the task (or goal deliverables)
     let updatedCompletedTasks = state.completedTasks;
-    if (taskComplete && !state.completedTasks.includes(foundTask.id)) {
-      updatedCompletedTasks = [...state.completedTasks, foundTask.id];
+
+    if (isGoalDeliverable) {
+      // For goal-level deliverables, check if all required goal deliverables are collected
+      const goalDelKeys = (currentState.goal?.deliverables || [])
+        .filter(d => d.required !== false)
+        .map(d => d.key);
+      const goalComplete = goalDelKeys.every(k => k in deliverables);
+
+      if (goalComplete && !state.completedTasks.includes('__goal__')) {
+        updatedCompletedTasks = [...state.completedTasks, '__goal__'];
+        this.logger.log(`[setDeliverable] All goal deliverables collected for session ${sessionId}`);
+      }
+    } else if (foundTask) {
+      // For task-level deliverables, check task completion
+      const taskDeliverableKeys = (foundTask.deliverables || [])
+        .filter(d => d.required !== false)
+        .map(d => d.key);
+      const taskComplete = taskDeliverableKeys.every(k => k in deliverables);
+
+      if (taskComplete && !state.completedTasks.includes(foundTask.id)) {
+        updatedCompletedTasks = [...state.completedTasks, foundTask.id];
+      }
     }
 
     await this.prisma.sessionState.update({
@@ -417,8 +479,13 @@ export class StateMachineService {
       },
     });
 
+    const taskId = isGoalDeliverable ? '__goal__' : foundTask?.id;
+    const taskComplete = isGoalDeliverable
+      ? updatedCompletedTasks.includes('__goal__')
+      : foundTask ? updatedCompletedTasks.includes(foundTask.id) : false;
+
     this.logger.log(`[setDeliverable] Deliverable '${key}' set for session ${sessionId}, value: ${JSON.stringify(value)}`);
-    this.logger.log(`[setDeliverable] Task '${foundTask.id}' complete: ${taskComplete}, completedTasks: ${JSON.stringify(updatedCompletedTasks)}`);
+    this.logger.log(`[setDeliverable] Task '${taskId}' complete: ${taskComplete}, completedTasks: ${JSON.stringify(updatedCompletedTasks)}`);
 
     // Check for state transitions
     this.logger.log(`[setDeliverable] Calling evaluateAndTransition...`);
@@ -427,7 +494,7 @@ export class StateMachineService {
 
     return {
       success: true,
-      taskCompleted: taskComplete ? foundTask.id : undefined,
+      taskCompleted: taskComplete ? taskId : undefined,
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
@@ -515,9 +582,16 @@ export class StateMachineService {
       // GOAL mode: Return a single synthetic task representing the goal.
       // The agent sees information gaps (deliverables), not individual tasks.
       // Tasks auto-complete when their deliverables are set.
-      const allDeliverableKeys = pendingTasks.flatMap(t => t.deliverableKeys);
+      const taskDeliverableKeys = pendingTasks.flatMap(t => t.deliverableKeys);
 
-      if (pendingTasks.length === 0) return [];
+      // Also include goal-level deliverables
+      const goalDeliverableKeys = (currentState.goal?.deliverables || [])
+        .filter(d => !(d.key in deliverables))
+        .map(d => d.key);
+
+      const allDeliverableKeys = [...new Set([...taskDeliverableKeys, ...goalDeliverableKeys])];
+
+      if (allDeliverableKeys.length === 0 && pendingTasks.length === 0) return [];
 
       return [{
         id: '__goal__',
@@ -579,6 +653,23 @@ export class StateMachineService {
           required: deliverable.required !== false,
           acceptanceCriteria: deliverable.acceptance_criteria,
           taskId: task.id,
+        });
+      }
+    }
+
+    // For goal states, also include goal-level deliverables
+    if (currentState.type === 'goal' && currentState.goal?.deliverables) {
+      const seenKeys = new Set(pendingDeliverables.map(p => p.key));
+      for (const deliverable of currentState.goal.deliverables) {
+        if (deliverable.key in deliverables) continue; // Already collected
+        if (seenKeys.has(deliverable.key)) continue; // Already added from tasks
+        pendingDeliverables.push({
+          key: deliverable.key,
+          description: deliverable.description,
+          type: deliverable.type || 'string',
+          required: deliverable.required !== false,
+          acceptanceCriteria: deliverable.acceptance_criteria,
+          taskId: '__goal__',
         });
       }
     }
@@ -655,6 +746,20 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
     for (const planState of plan.states) {
+      const countedKeys = new Set<string>();
+
+      // Count goal-level deliverables first (for goal states)
+      if (planState.type === 'goal' && planState.goal?.deliverables) {
+        for (const d of planState.goal.deliverables) {
+          if (d.required === false) continue;
+          countedKeys.add(d.key);
+          totalRequired++;
+          if (d.key in deliverables && !deliverables[d.key]?.discovered) {
+            completedRequired++;
+          }
+        }
+      }
+
       for (const task of planState.tasks) {
         if (task.required === false) continue;
 
@@ -666,11 +771,13 @@ export class StateMachineService {
             completedRequired++;
           }
         } else {
-          // Count required deliverables
+          // Count required deliverables (skip if already counted from goal.deliverables)
           for (const d of taskDeliverables) {
             if (d.required === false) continue;
+            if (countedKeys.has(d.key)) continue; // Deduplicate
+            countedKeys.add(d.key);
             totalRequired++;
-            if (d.key in deliverables) {
+            if (d.key in deliverables && !deliverables[d.key]?.discovered) {
               completedRequired++;
             }
           }
@@ -744,6 +851,19 @@ export class StateMachineService {
           this.logger.log(
             `[isCurrentStateComplete] Required deliverable '${d.key}' found with value: ${JSON.stringify(deliverables[d.key]?.value)}`,
           );
+        }
+      }
+    }
+
+    // For goal states, also check goal-level deliverables
+    if (currentState.type === 'goal' && currentState.goal?.deliverables) {
+      for (const d of currentState.goal.deliverables) {
+        if (d.required === false) continue;
+        if (!(d.key in deliverables)) {
+          this.logger.log(
+            `[isCurrentStateComplete] Required goal deliverable '${d.key}' NOT found - state NOT complete`,
+          );
+          return false;
         }
       }
     }
@@ -953,6 +1073,69 @@ export class StateMachineService {
           deliverables: deliverableInfos,
         };
       });
+
+      // For goal states, prepend a synthetic task for goal-level deliverables
+      if (planState.type === 'goal' && planState.goal?.deliverables?.length) {
+        const taskKeys = new Set(
+          planState.tasks.flatMap(t => (t.deliverables || []).map(d => d.key)),
+        );
+
+        const goalDeliverableInfos: FullStateDeliverableInfo[] = planState.goal.deliverables
+          .filter(d => !taskKeys.has(d.key)) // Deduplicate with task deliverables
+          .map(d => {
+            const collected = deliverables[d.key];
+            return {
+              key: d.key,
+              description: d.description,
+              type: d.type || 'string',
+              required: d.required !== false,
+              status: (collected ? 'completed' : 'pending') as 'pending' | 'completed',
+              value: collected?.value,
+              collectedAt: collected?.collectedAt,
+              acceptanceCriteria: d.acceptance_criteria,
+              reasoning: collected?.reasoning,
+              discovered: false,
+            };
+          });
+
+        // Add discovered insights (only for active state)
+        if (planState.id === state.currentStateId) {
+          const knownKeys = new Set([
+            ...taskKeys,
+            ...planState.goal.deliverables.map(d => d.key),
+          ]);
+          for (const [key, val] of Object.entries(deliverables)) {
+            if (!knownKeys.has(key) && val.discovered) {
+              goalDeliverableInfos.push({
+                key,
+                description: key.replace(/_/g, ' '),
+                type: 'string',
+                required: false,
+                status: 'completed',
+                value: val.value,
+                collectedAt: val.collectedAt,
+                reasoning: val.reasoning,
+                discovered: true,
+              });
+            }
+          }
+        }
+
+        if (goalDeliverableInfos.length > 0) {
+          const allRequired = goalDeliverableInfos.filter(d => d.required && !d.discovered);
+          const goalTaskStatus: 'pending' | 'in_progress' | 'completed' =
+            allRequired.every(d => d.status === 'completed') ? 'completed' :
+            allRequired.some(d => d.status === 'completed') ? 'in_progress' : 'pending';
+
+          tasks.unshift({
+            id: '__goal_deliverables__',
+            description: planState.goal.objective || 'Goal Deliverables',
+            required: true,
+            status: goalTaskStatus,
+            deliverables: goalDeliverableInfos,
+          });
+        }
+      }
 
       return {
         id: planState.id,

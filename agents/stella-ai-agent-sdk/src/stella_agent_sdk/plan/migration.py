@@ -108,12 +108,13 @@ def _migrate_state(s: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Map execution_mode to type
     execution_mode = s.get("execution_mode", s.get("type", "loose"))
-    state_type = "strict" if execution_mode == "sequential" else "loose"
+    type_map = {"sequential": "strict", "flexible": "loose", "goal": "goal"}
+    state_type = type_map.get(execution_mode, execution_mode if execution_mode in ("strict", "loose", "goal") else "loose")
 
     tasks = s.get("tasks", [])
     transitions = s.get("transitions", [])
 
-    return {
+    result = {
         "id": s.get("id", ""),
         "title": s.get("label", s.get("title", "")),
         "type": state_type,
@@ -121,6 +122,12 @@ def _migrate_state(s: Dict[str, Any]) -> Dict[str, Any]:
         "tasks": [_migrate_task(t) for t in tasks],
         "transitions": transitions,  # Transitions format is unchanged
     }
+
+    # Preserve goal context for goal-type states
+    if s.get("goal"):
+        result["goal"] = s["goal"]
+
+    return result
 
 
 def migrate_frontend_to_agent(plan_data: Dict[str, Any]) -> Dict[str, Any]:

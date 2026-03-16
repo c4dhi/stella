@@ -199,6 +199,130 @@ export default function PlanStateEditor({
                   className="input-field w-full resize-none"
                 />
               </div>
+
+              {/* Goal Deliverables */}
+              <div className="pt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <label className={`text-caption font-medium ${
+                    isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                  }`}>
+                    Deliverables
+                  </label>
+                  <button
+                    onClick={() => {
+                      const newDel = createEmptyDeliverable()
+                      onChange({
+                        ...state,
+                        goal: {
+                          ...state.goal!,
+                          deliverables: [...(state.goal?.deliverables || []), newDel],
+                        },
+                      })
+                    }}
+                    className={`text-caption flex items-center gap-1 transition-colors ${
+                      isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-800'
+                    }`}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    Add
+                  </button>
+                </div>
+                {(state.goal?.deliverables || []).length === 0 ? (
+                  <p className={`text-caption italic ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                    No deliverables yet. These define what information the agent should gather.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {(state.goal?.deliverables || []).map((del, i) => (
+                      <div key={del.key} className={`rounded-lg border p-3 space-y-2 ${
+                        isDark ? 'border-neutral-700 bg-neutral-800/50' : 'border-neutral-200 bg-white'
+                      }`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 space-y-2">
+                            <input
+                              type="text"
+                              value={del.description}
+                              onChange={(e) => {
+                                const updated = [...(state.goal?.deliverables || [])]
+                                updated[i] = { ...updated[i], description: e.target.value }
+                                onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                              }}
+                              placeholder="What to collect (e.g., User's primary fitness goal)"
+                              className="input-field w-full text-body-sm"
+                            />
+                            <div className="flex gap-2 items-center">
+                              <input
+                                type="text"
+                                value={del.key}
+                                onChange={(e) => {
+                                  const updated = [...(state.goal?.deliverables || [])]
+                                  updated[i] = { ...updated[i], key: e.target.value }
+                                  onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                                }}
+                                placeholder="key_name"
+                                className="input-field w-32 text-caption font-mono"
+                              />
+                              <select
+                                value={del.type}
+                                onChange={(e) => {
+                                  const updated = [...(state.goal?.deliverables || [])]
+                                  updated[i] = { ...updated[i], type: e.target.value as any }
+                                  onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                                }}
+                                className="input-field text-caption w-24"
+                              >
+                                <option value="string">String</option>
+                                <option value="number">Number</option>
+                                <option value="boolean">Boolean</option>
+                                <option value="enum">Enum</option>
+                              </select>
+                              <label className="flex items-center gap-1 text-caption">
+                                <input
+                                  type="checkbox"
+                                  checked={del.required}
+                                  onChange={(e) => {
+                                    const updated = [...(state.goal?.deliverables || [])]
+                                    updated[i] = { ...updated[i], required: e.target.checked }
+                                    onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                                  }}
+                                  className="rounded"
+                                />
+                                Required
+                              </label>
+                            </div>
+                            {del.acceptance_criteria !== undefined && (
+                              <input
+                                type="text"
+                                value={del.acceptance_criteria || ''}
+                                onChange={(e) => {
+                                  const updated = [...(state.goal?.deliverables || [])]
+                                  updated[i] = { ...updated[i], acceptance_criteria: e.target.value || undefined }
+                                  onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                                }}
+                                placeholder="Acceptance criteria"
+                                className="input-field w-full text-caption"
+                              />
+                            )}
+                          </div>
+                          <button
+                            onClick={() => {
+                              const updated = (state.goal?.deliverables || []).filter((_, idx) => idx !== i)
+                              onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
+                            }}
+                            className={`p-1 rounded ${isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M18 6L6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -217,8 +341,8 @@ export default function PlanStateEditor({
         </button>
       </div>
 
-      {/* Tasks Section */}
-      <div className={`rounded-xl border ${
+      {/* Tasks Section — hidden for goal states (deliverables are on the goal) */}
+      {state.type !== 'goal' && <div className={`rounded-xl border ${
         isDark ? 'border-border-dark bg-surface-dark-secondary' : 'border-border bg-white'
       }`}>
         <div className={`p-4 border-b flex items-center justify-between ${
@@ -367,7 +491,7 @@ export default function PlanStateEditor({
             </AnimatePresence>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

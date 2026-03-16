@@ -659,6 +659,7 @@ export interface StateGoal {
   depth_guidance?: string
   boundaries?: string
   success_description?: string
+  deliverables?: PlanDeliverable[]
 }
 
 /**

@@ -30,6 +30,15 @@ const ProcessingModeIndicator = ({ mode }: { mode: StateType }) => {
     )
   }
 
+  if (mode === StateType.GOAL) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700/50" title="Goal-Oriented Mode">
+        <span className="text-xs text-violet-600 dark:text-violet-400">🎯</span>
+        <span className="text-[10px] text-violet-700 dark:text-violet-300 tracking-wide uppercase font-medium">Goal</span>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700/50" title="Flexible Processing Mode">
       <span className="text-xs text-green-600 dark:text-green-400">🔄</span>
@@ -72,6 +81,8 @@ export default function TaskProgressBar({
           className={`h-full rounded-full ${
             processingMode === StateType.STRICT
               ? 'bg-blue-600'
+              : processingMode === StateType.GOAL
+              ? 'bg-violet-600'
               : processingMode === StateType.LOOSE
               ? 'bg-green-600'
               : 'bg-neutral-600'

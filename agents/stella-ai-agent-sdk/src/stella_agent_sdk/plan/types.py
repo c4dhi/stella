@@ -20,9 +20,11 @@ class StateType(str, Enum):
 
     STRICT: Sequential task processing - one task at a time
     LOOSE: Flexible/parallel task processing - any order
+    GOAL: Goal-oriented natural conversation - agent sees information gaps, not tasks
     """
     STRICT = "strict"
     LOOSE = "loose"
+    GOAL = "goal"
 
 
 class DeliverableType(str, Enum):
@@ -81,6 +83,30 @@ class PlanTask(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class StateGoal(BaseModel):
+    """Goal-mode context for natural, goal-oriented conversation states.
+
+    Only used when PlanState.type is GOAL. Defines the conversation objective
+    and the information to gather, without the rigid task structure.
+
+    Attributes:
+        objective: What the conversation should achieve
+        context: Background information for the agent
+        depth_guidance: How deep to probe for information
+        boundaries: What NOT to discuss
+        success_description: What "done well" looks like
+        deliverables: Information to gather during the goal conversation
+    """
+    objective: str = Field(..., description="What the conversation should achieve")
+    context: str = Field(default="", description="Background information")
+    depth_guidance: str = Field(default="", description="How deep to probe")
+    boundaries: str = Field(default="", description="What NOT to discuss")
+    success_description: str = Field(default="", description="What done well looks like")
+    deliverables: List[PlanDeliverable] = Field(default_factory=list, description="Information to gather")
+
+    model_config = {"extra": "allow"}
+
+
 class StateTransition(BaseModel):
     """Transition definition between states.
 
@@ -123,6 +149,7 @@ class PlanState(BaseModel):
     description: str = Field(default="", description="State description")
     tasks: List[PlanTask] = Field(default_factory=list)
     transitions: List[StateTransition] = Field(default_factory=list)
+    goal: Optional[StateGoal] = Field(default=None, description="Goal context (only for goal-type states)")
 
     model_config = {"extra": "allow"}
 

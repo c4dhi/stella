@@ -483,9 +483,19 @@ export default function SessionView() {
                 confidence: item.confidence,
                 reasoning: item.metadata?.reasoning,
                 acceptance_criteria: item.metadata?.acceptance_criteria,
+                discovered: item.metadata?.discovered || false,
               }))
             }
           })
+        }
+
+        // Resolve state type from metadata (preserves 'goal') with execution_mode fallback
+        const resolveStateType = (group: any): StateType => {
+          const metaType = group.metadata?.state_type
+          if (metaType === 'goal' || metaType === 'strict' || metaType === 'loose') {
+            return metaType as StateType
+          }
+          return group.execution_mode === 'sequential' ? 'strict' as StateType : 'loose' as StateType
         }
 
         // Convert generic SDK ProgressState to TodoList format
@@ -504,7 +514,7 @@ export default function SessionView() {
             return {
               id: group.id,
               title: group.label,
-              type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
+              type: resolveStateType(group),
               description: group.description || '',
               status: group.status as StateStatus,
               state_number: data.groups?.findIndex(g => g.id === data.current_group_id) + 1 || 1,
@@ -517,7 +527,7 @@ export default function SessionView() {
             return {
               id: group.id,
               title: group.label,
-              type: (group.execution_mode === 'sequential' ? 'strict' : 'loose') as StateType,
+              type: resolveStateType(group),
               description: group.description || '',
               status: group.status as StateStatus,
               is_current: group.is_current,
@@ -559,7 +569,7 @@ export default function SessionView() {
         // Set processing mode based on current group's execution mode
         const currentGroup = data.groups?.find(g => g.id === data.current_group_id)
         if (currentGroup) {
-          setProcessingMode(currentGroup.execution_mode === 'sequential' ? 'strict' as StateType : 'loose' as StateType)
+          setProcessingMode(resolveStateType(currentGroup))
         }
       } catch (error) {
         console.error('Error handling progress update:', error)

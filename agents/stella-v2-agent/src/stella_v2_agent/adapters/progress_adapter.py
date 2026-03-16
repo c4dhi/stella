@@ -56,12 +56,13 @@ class ProgressAdapter:
             for task in state.get("tasks", []):
                 for d in task.get("deliverables", []):
                     status_str = d.get("status", "pending")
+                    is_discovered = d.get("discovered", False)
                     item = ProgressItem(
                         id=d.get("key"),
                         label=d.get("description"),
                         status=cls.deliverable_status_to_item_status(status_str),
                         description=f"Task: {task.get('description', '')}",
-                        required=d.get("required", True),
+                        required=False if is_discovered else d.get("required", True),
                         value=d.get("value"),
                         confidence=d.get("confidence"),
                         collected_at=d.get("collected_at"),
@@ -71,6 +72,7 @@ class ProgressAdapter:
                             "deliverable_type": d.get("type", "string"),
                             "acceptance_criteria": d.get("acceptance_criteria"),
                             "reasoning": d.get("reasoning"),
+                            "discovered": is_discovered,
                         },
                     )
                     items.append(item)
@@ -97,6 +99,13 @@ class ProgressAdapter:
                 else ExecutionMode.FLEXIBLE
             )
 
+            group_metadata: Dict[str, Any] = {"state_type": state_type}
+            if state_type == "goal":
+                group_metadata["goal_objective"] = state.get("goal_objective", "")
+                group_metadata["goal_context"] = state.get("goal_context", "")
+                group_metadata["goal_boundaries"] = state.get("goal_boundaries", "")
+                group_metadata["goal_success_description"] = state.get("goal_success_description", "")
+
             group = ProgressGroup(
                 id=state.get("id"),
                 label=state.get("title"),
@@ -105,7 +114,7 @@ class ProgressAdapter:
                 items=items,
                 is_current=is_active,
                 description=state.get("description"),
-                metadata={},
+                metadata=group_metadata,
             )
             groups.append(group)
 
