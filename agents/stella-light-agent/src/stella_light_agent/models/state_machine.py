@@ -29,6 +29,43 @@ except ImportError:
 ProcessingMode = StateType
 
 
+def _downgrade_goal_state(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a goal-type state dict into a loose state with synthetic tasks.
+
+    Legacy compatibility: Goal-oriented states (introduced in STELLA v2) use a
+    ``goal`` object with deliverables instead of the traditional task list.
+    Legacy agents don't understand goal semantics, so we reshape the data into
+    a single loose task whose deliverables mirror the goal's, preserving the
+    ability to collect information without native goal-mode support.
+
+    The original ``data`` dict is not mutated; a shallow copy is returned.
+    """
+    goal = data.get("goal", {})
+    goal_deliverables = goal.get("deliverables", [])
+
+    objective = goal.get("objective", data.get("title", "Goal"))
+    context_parts = [objective]
+    if goal.get("context"):
+        context_parts.append(goal["context"])
+    if goal.get("depth_guidance"):
+        context_parts.append(f"Depth guidance: {goal['depth_guidance']}")
+    if goal.get("boundaries"):
+        context_parts.append(f"Boundaries: {goal['boundaries']}")
+
+    synthetic_task = {
+        "id": "__goal__",
+        "description": objective,
+        "instruction": "\n".join(context_parts),
+        "required": True,
+        "deliverables": list(goal_deliverables),
+    }
+
+    result = dict(data)
+    result["type"] = "loose"
+    result["tasks"] = [synthetic_task] + list(data.get("tasks", []))
+    return result
+
+
 class DeliverableStatus(str, Enum):
     """Status of a deliverable."""
     PENDING = "pending"
@@ -188,13 +225,24 @@ class State:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "State":
-        """Create a State from a dictionary."""
+        """Create a State from a dictionary.
+
+        Goal-type states are not natively supported by legacy agents.
+        They are downgraded to loose states with synthetic tasks derived
+        from the goal's deliverables, so the agent can still collect the
+        required information without crashing.
+        """
+        state_type_raw = data.get("type", "loose")
+        if state_type_raw == "goal":
+            data = _downgrade_goal_state(data)
+            state_type_raw = "loose"
+
         tasks = [Task.from_dict(t) for t in data.get("tasks", [])]
         transitions = [StateTransition.from_dict(t) for t in data.get("transitions", [])]
         return cls(
             id=data["id"],
             title=data.get("title", data["id"]),
-            type=StateType(data.get("type", "loose")),
+            type=StateType(state_type_raw),
             description=data.get("description", ""),
             tasks=tasks,
             transitions=transitions
