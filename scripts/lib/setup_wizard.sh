@@ -184,6 +184,11 @@ run_setup_wizard() {
         configure_optional_settings "$env"
     fi
 
+    # Optional initial admin bootstrap
+    if wizard_confirm "Do you want to provide initial admin credentials?" "n"; then
+        collect_initial_admin_credentials "$project_dir" "$env"
+    fi
+
     # Review screen
     wizard_clear_screen
 
@@ -202,6 +207,9 @@ run_setup_wizard() {
         wizard_success_screen "$env_file" "$env"
         return 0
     else
+        local bootstrap_file
+        bootstrap_file=$(get_admin_bootstrap_file "$project_dir" "$env")
+        rm -f "$bootstrap_file" 2>/dev/null || true
         echo ""
         echo -e "  ${YELLOW}Configuration not saved.${NC}"
         return 1
@@ -217,6 +225,51 @@ get_environment_file() {
     else
         echo "$project_dir/.env.local"
     fi
+}
+
+get_admin_bootstrap_file() {
+    local project_dir="$1"
+    local env="$2"
+    echo "$project_dir/.stella-initial-admin.${env}.json"
+}
+
+collect_initial_admin_credentials() {
+    local project_dir="$1"
+    local env="$2"
+    local bootstrap_file
+    bootstrap_file=$(get_admin_bootstrap_file "$project_dir" "$env")
+
+    local admin_email=""
+    local admin_password=""
+
+    # Ask until non-empty email, or allow cancel with Ctrl+C.
+    while [[ -z "$admin_email" ]]; do
+        admin_email=$(wizard_text_input "Admin email" "Initial admin login email" "" "")
+        if [[ -z "$admin_email" ]]; then
+            warning "Admin email cannot be empty."
+            sleep 1
+        fi
+    done
+
+    # Ask until non-empty password, or allow cancel with Ctrl+C.
+    while [[ -z "$admin_password" ]]; do
+        admin_password=$(wizard_password_input "Admin password" "Initial admin login password" "")
+        if [[ -z "$admin_password" ]]; then
+            warning "Admin password cannot be empty."
+            sleep 1
+        fi
+    done
+
+    # Store as base64 to avoid quoting/escaping issues in shell parsing.
+    local email_b64 password_b64
+    email_b64=$(printf '%s' "$admin_email" | base64 | tr -d '\n')
+    password_b64=$(printf '%s' "$admin_password" | base64 | tr -d '\n')
+
+    umask 077
+    cat > "$bootstrap_file" <<EOF
+{"email_b64":"$email_b64","password_b64":"$password_b64"}
+EOF
+    chmod 600 "$bootstrap_file" 2>/dev/null || true
 }
 
 # =============================================================================
