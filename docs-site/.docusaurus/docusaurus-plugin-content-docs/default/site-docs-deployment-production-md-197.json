@@ -1,7 +1,7 @@
 {
   "id": "deployment/production",
-  "title": "🏭 Production",
-  "description": "Guide for deploying STELLA in production environments.",
+  "title": "🏭 Production Deployment",
+  "description": "This guide walks you through deploying STELLA on a production server with GPU support, Kubernetes (K3s), and LiveKit for real-time voice interactions.",
   "source": "@site/docs/deployment/production.md",
   "sourceDirName": "deployment",
   "slug": "/deployment/production",
@@ -14,6 +14,15 @@
   "sidebarPosition": 2,
   "frontMatter": {
     "sidebar_position": 2,
-    "title": "🏭 Production"
+    "title": "🏭 Production Deployment"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Kubernetes",
+    "permalink": "/STELLA_Documentation/docs/deployment/kubernetes"
+  },
+  "next": {
+    "title": "Message Recording",
+    "permalink": "/STELLA_Documentation/docs/deployment/message-recording"
   }
 }

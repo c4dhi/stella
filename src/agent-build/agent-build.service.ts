@@ -239,7 +239,8 @@ export class AgentBuildService {
       try {
         await execAsync(`k3s ctr images import ${tarPath}`, { timeout: 120000 })
       } catch {
-        await execAsync(`sudo k3s ctr images import ${tarPath}`, { timeout: 120000 })
+        // Fall back to ctr directly with K3s containerd socket
+        await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import ${tarPath}`, { timeout: 120000 })
       }
 
       // Cleanup

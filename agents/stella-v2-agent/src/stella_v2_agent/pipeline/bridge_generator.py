@@ -173,9 +173,9 @@ class BridgeGenerator:
     def _validate_bridge(raw: str) -> str:
         """Validate the bridge phrase. Returns "" if invalid.
 
-        The bridge must be a complete sentence ending with . ! or ?
-        so it triggers the sentence-boundary detector in the SDK and
-        gets dispatched to TTS as a self-contained unit.
+        The bridge must be a short acknowledgment ending with . ! or ?
+        as a single sentence. Multi-sentence bridges (e.g. "Hello there!
+        How can I assist you today?") are rejected.
         """
         if not isinstance(raw, str) or not raw.strip():
             return ""
@@ -189,13 +189,25 @@ class BridgeGenerator:
         if not bridge:
             return ""
 
-        # Max 8 words (prompt asks for 1-6, small buffer)
-        if len(bridge.split()) > 8:
+        # Reject multi-sentence bridges that contain a question mark.
+        # A bridge with two sentences where one is a question means the LLM
+        # is trying to ask the user something, which bridges must not do.
+        # "Hello there! How can I help?" → rejected (multi-sentence + question)
+        # "Huh?" → allowed (single sentence question)
+        # "Good question." → allowed (no question mark)
+        # "Great! Let me think." → allowed (multi-sentence but no question)
+        interior = bridge[:-1]
+        has_multiple_sentences = any(marker in interior for marker in ".!?")
+        has_question = "?" in bridge
+        if has_multiple_sentences and has_question:
+            return ""
+
+        # Max 7 words (prompt asks for 1-6, small buffer)
+        if len(bridge.split()) > 7:
             return ""
 
         # Must end with sentence-ending punctuation
         if bridge[-1] not in ".!?":
-            # Try to salvage by appending a period
             bridge += "."
 
         return bridge

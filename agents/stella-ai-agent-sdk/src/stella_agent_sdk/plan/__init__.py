@@ -18,6 +18,7 @@ from stella_agent_sdk.plan.types import (
     PlanDeliverable,
     PlanTask,
     StateTransition,
+    StateGoal,
     PlanState,
     Plan,
     # Session context types
@@ -39,6 +40,7 @@ __all__ = [
     "PlanDeliverable",
     "PlanTask",
     "StateTransition",
+    "StateGoal",
     "PlanState",
     "Plan",
     # Session context types

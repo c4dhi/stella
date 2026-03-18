@@ -10,6 +10,7 @@ the response pipeline. Their results are collected via await after
 response streaming has already started.
 
 Timeout per expert: configurable via EXPERT_TIMEOUT_MS env var (default: 5000ms).
+Background expert timeout: BACKGROUND_EXPERT_TIMEOUT_MS env var (default: 15000ms).
 On timeout: returns a failure verdict for that expert.
 """
 
@@ -50,9 +51,10 @@ class ExpertPool:
         self._registry = expert_registry
         self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "5000"))
+        self._bg_timeout_ms = int(os.environ.get("BACKGROUND_EXPERT_TIMEOUT_MS", "15000"))
 
         # Configurable sets (overridable via apply_config)
-        self._always_run: set = {"task_extraction"}
+        self._always_run: set = set(self._registry.get_always_triggered_names())
         self._background_experts: set = {"task_extraction"}
 
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
@@ -93,23 +95,25 @@ class ExpertPool:
         if not expert_names:
             return [], None
 
-        timeout_seconds = self._timeout_ms / 1000.0
+        fg_timeout_seconds = self._timeout_ms / 1000.0
+        bg_timeout_seconds = self._bg_timeout_ms / 1000.0
 
         # Split into foreground and background
         fg_names = [n for n in expert_names if n not in self._background_experts]
         bg_names = [n for n in expert_names if n in self._background_experts]
 
         # Launch background experts immediately (don't await yet)
+        # Background experts get a longer timeout since they don't block the response
         bg_task: Optional[asyncio.Task] = None
         if bg_names:
             bg_task = asyncio.create_task(
-                self._run_experts(bg_names, user_input, conversation_history, sm_context, timeout_seconds)
+                self._run_experts(bg_names, user_input, conversation_history, sm_context, bg_timeout_seconds)
             )
 
         # Run foreground experts and wait for them
         start_time = time.time()
         fg_verdicts = await self._run_experts(
-            fg_names, user_input, conversation_history, sm_context, timeout_seconds
+            fg_names, user_input, conversation_history, sm_context, fg_timeout_seconds
         )
 
         total_ms = (time.time() - start_time) * 1000
@@ -178,14 +182,15 @@ class ExpertPool:
                 timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
-            logger.warning(f"Expert '{config.name}' timed out after {self._timeout_ms}ms")
+            timeout_ms = timeout_seconds * 1000
+            logger.warning(f"Expert '{config.name}' timed out after {timeout_ms:.0f}ms")
             return ExpertVerdict(
                 expert_name=config.name,
                 verdict="timeout",
                 confidence=0.0,
                 recommendation="Expert timed out",
                 priority=config.priority,
-                latency_ms=float(self._timeout_ms),
+                latency_ms=timeout_ms,
                 success=False,
-                error_message=f"Timed out after {self._timeout_ms}ms",
+                error_message=f"Timed out after {timeout_ms:.0f}ms",
             )

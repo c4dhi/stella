@@ -752,6 +752,11 @@ class StellaV2Agent(BaseAgent):
                 "description": state_descriptions.get(
                     current_state.get("state_id", ""), ""
                 ),
+                "goal_objective": current_state.get("goal_objective"),
+                "goal_context": current_state.get("goal_context"),
+                "goal_depth_guidance": current_state.get("goal_depth_guidance"),
+                "goal_boundaries": current_state.get("goal_boundaries"),
+                "goal_success_description": current_state.get("goal_success_description"),
             },
             "processing_mode": state_type,
             "available_tasks": current_tasks,

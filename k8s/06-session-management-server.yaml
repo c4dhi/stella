@@ -160,6 +160,11 @@ spec:
         # Mount Docker socket for building images
         - name: docker-sock
           mountPath: /var/run/docker.sock
+        # K3S: - name: k3s-containerd-sock
+        # K3S:   mountPath: /run/k3s/containerd/containerd.sock
+        # K3S: - name: k3s-binary
+        # K3S:   mountPath: /usr/local/bin/k3s
+        # K3S:   readOnly: true
         # Mount project directory for agent source code (path set dynamically by deploy script)
         - name: project-dir
           mountPath: /workspace/stella-backend
@@ -189,6 +194,14 @@ spec:
         hostPath:
           path: /var/run/docker.sock
           type: Socket
+      # K3S: - name: k3s-containerd-sock
+      # K3S:   hostPath:
+      # K3S:     path: /run/k3s/containerd/containerd.sock
+      # K3S:     type: Socket
+      # K3S: - name: k3s-binary
+      # K3S:   hostPath:
+      # K3S:     path: /usr/local/bin/k3s
+      # K3S:     type: File
       # Project directory containing agent source code (path replaced dynamically by deploy script)
       - name: project-dir
         hostPath:

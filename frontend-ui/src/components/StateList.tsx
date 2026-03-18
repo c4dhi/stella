@@ -12,6 +12,7 @@ interface StateDeliverable {
   confidence?: number
   reasoning?: string
   acceptance_criteria?: string
+  discovered?: boolean
 }
 
 interface StateTask {
@@ -178,7 +179,8 @@ const DeliverableRow = memo(({ deliverable }: { deliverable: StateDeliverable })
           <DeliverableStatusIcon status={deliverable.status} />
           <span className={`text-[10px] text-neutral-700 dark:text-neutral-300 truncate ${isSkipped ? 'line-through text-neutral-400 dark:text-neutral-500' : ''}`}>
             {deliverable.description}
-            {deliverable.required && !isSkipped && <span className="text-red-500 dark:text-red-400 ml-1">*</span>}
+            {deliverable.required && !isSkipped && !deliverable.discovered && <span className="text-red-500 dark:text-red-400 ml-1">*</span>}
+            {deliverable.discovered && <span className="text-[8px] text-violet-500 dark:text-violet-400 ml-1.5 bg-violet-100 dark:bg-violet-900/30 px-1 py-0.5 rounded uppercase font-medium">Discovered</span>}
             {isSkipped && <span className="text-[8px] text-neutral-400 dark:text-neutral-500 ml-1.5 bg-neutral-200 dark:bg-neutral-700 px-1 py-0.5 rounded uppercase font-medium">Skipped</span>}
           </span>
         </div>
@@ -360,9 +362,37 @@ const StateCard = memo(({ state, index, isCurrentState }: { state: StateItem; in
 
       <Collapsible isOpen={isExpanded && state.tasks.length > 0}>
         <div className="border-t border-neutral-200/50 dark:border-neutral-700/50 p-4 pt-3 space-y-3">
-          {state.tasks.map((task) => (
-            <TaskRow key={task.id} task={task} />
-          ))}
+          {state.type === StateType.GOAL ? (
+            // Goal states: render goal deliverables flat (no task wrapper)
+            <>
+              {state.tasks.filter(t => t.id === '__goal_deliverables__').flatMap(t => {
+                const defined = t.deliverables.filter(d => !d.discovered)
+                const discovered = t.deliverables.filter(d => d.discovered)
+                return (
+                  <div key="goal-deliverables" className="space-y-1">
+                    {defined.map(d => <DeliverableRow key={d.key} deliverable={d} />)}
+                    {discovered.length > 0 && (
+                      <div className="mt-3 pt-2 border-t border-violet-200/50 dark:border-violet-700/50">
+                        <div className="text-[9px] text-violet-500 dark:text-violet-400 tracking-wider uppercase font-medium mb-1 pl-6">
+                          Additional Findings
+                        </div>
+                        {discovered.map(d => <DeliverableRow key={d.key} deliverable={d} />)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              {/* Backward compat: render non-synthetic tasks normally */}
+              {state.tasks.filter(t => t.id !== '__goal_deliverables__').map(task => (
+                <TaskRow key={task.id} task={task} />
+              ))}
+            </>
+          ) : (
+            // Strict/loose: render tasks normally
+            state.tasks.map((task) => (
+              <TaskRow key={task.id} task={task} />
+            ))
+          )}
         </div>
       </Collapsible>
     </div>

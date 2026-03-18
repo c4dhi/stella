@@ -418,6 +418,7 @@ export class StateMachineGrpcController {
             collectedAt: d.collectedAt,
             acceptanceCriteria: d.acceptanceCriteria,
             reasoning: d.reasoning,
+            discovered: d.discovered || false,
           })),
         })),
       }));

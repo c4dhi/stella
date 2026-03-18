@@ -14,6 +14,7 @@ from typing import List
 from stella_agent_sdk.tools.base import BaseTool
 from stella_agent_sdk.tools.state_machine.complete_task import CompleteTaskTool
 from stella_agent_sdk.tools.state_machine.set_deliverable import SetDeliverableTool
+from stella_agent_sdk.tools.state_machine.batch_update import BatchUpdateTool
 from stella_agent_sdk.tools.state_machine.get_state import GetCurrentStateTool
 from stella_agent_sdk.tools.state_machine.get_tasks import GetPendingTasksTool
 from stella_agent_sdk.tools.state_machine.get_deliverables import GetPendingDeliverablesTool
@@ -32,6 +33,7 @@ def create_state_machine_tools(client) -> List[BaseTool]:
     return [
         CompleteTaskTool(client),
         SetDeliverableTool(client),
+        BatchUpdateTool(client),
         GetCurrentStateTool(client),
         GetPendingTasksTool(client),
         GetPendingDeliverablesTool(client),
@@ -41,6 +43,7 @@ def create_state_machine_tools(client) -> List[BaseTool]:
 __all__ = [
     "CompleteTaskTool",
     "SetDeliverableTool",
+    "BatchUpdateTool",
     "GetCurrentStateTool",
     "GetPendingTasksTool",
     "GetPendingDeliverablesTool",

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from . import state_machine_pb2 as state__machine__pb2
+from stella_agent_sdk._grpc import state_machine_pb2 as state__machine__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__

@@ -151,6 +151,19 @@ generate_session_server_manifest() {
     sed "s|__PROJECT_DIR_PLACEHOLDER__|${PROJECT_DIR}|g" \
         k8s/06-session-management-server.yaml > "$output_file"
 
+    # K3s volume mounts: enabled on Linux (K3s runtime), removed on macOS (OrbStack/Docker Desktop)
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        sed -i 's|# K3S: ||g' "$output_file"
+        verbose "K3s volume mounts enabled (Linux)"
+    else
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            sed -i '' '/# K3S:/d' "$output_file"
+        else
+            sed -i '/# K3S:/d' "$output_file"
+        fi
+        verbose "K3s volume mounts skipped (macOS)"
+    fi
+
     verbose "Project directory mounted: ${PROJECT_DIR}"
 }
 

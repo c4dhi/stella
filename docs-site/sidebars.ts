@@ -125,7 +125,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'deployment/kubernetes',
-        'deployment/nginx-setup',
+        'deployment/production',
         'deployment/message-recording',
         'deployment/production-checklist',
         'deployment/monitoring',
