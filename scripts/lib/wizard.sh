@@ -828,13 +828,9 @@ wizard_review_screen() {
         local var_name="${line%%=*}"
         local var_value="${line#*=}"
 
-        # Mask sensitive values
-        local var_type
-        var_type=$(get_var_meta "$var_name" "type")
-        if [[ "$var_type" == "password" ]] || [[ "$var_type" == "generated" ]]; then
-            if [[ -n "$var_value" ]]; then
-                var_value="••••••••"
-            fi
+        # Mask only OpenAI API key in review output. The key is too long to be displayed in the review screen.
+        if [[ "$var_name" == "OPENAI_API_KEY" ]] && [[ -n "$var_value" ]]; then
+            var_value="••••••••"
         fi
 
         printf "  %-30s = %s\n" "$var_name" "$var_value"

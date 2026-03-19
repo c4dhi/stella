@@ -198,6 +198,8 @@ run_setup_wizard() {
         value=$(get_wizard_config "$var_name")
         config_lines+=("${var_name}=${value}")
     done
+    config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}") # add admin email to the config
+    config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}") # add admin password to the config
 
     wizard_review_screen "${config_lines[@]}"
 
