@@ -252,6 +252,7 @@ collect_initial_admin_credentials() {
 
     # Ask until non-empty email, or allow cancel with Ctrl+C.
     while [[ -z "$admin_email" ]]; do
+        wizard_clear_screen
         admin_email=$(wizard_text_input "Admin email" "Initial admin login email" "" "")
         if [[ -z "$admin_email" ]]; then
             warning "Admin email cannot be empty."
@@ -261,6 +262,9 @@ collect_initial_admin_credentials() {
 
     # Ask until non-empty password, or allow cancel with Ctrl+C.
     while [[ -z "$admin_password" ]]; do
+        wizard_clear_screen
+        echo -e "  ${DIM}Admin email:${NC} ${DIM}${admin_email}${NC}" >&2
+        echo "" >&2
         admin_password=$(wizard_password_input "Admin password" "Initial admin login password" "")
         if [[ -z "$admin_password" ]]; then
             warning "Admin password cannot be empty."
