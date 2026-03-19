@@ -260,16 +260,41 @@ collect_initial_admin_credentials() {
         fi
     done
 
-    # Ask until non-empty password, or allow cancel with Ctrl+C.
+    # Ask until non-empty password and confirmation match, or allow cancel with Ctrl+C.
     while [[ -z "$admin_password" ]]; do
+        local password_candidate=""
+        local confirm_password=""
+
         wizard_clear_screen
         echo -e "  ${DIM}Admin email:${NC} ${DIM}${admin_email}${NC}" >&2
         echo "" >&2
-        admin_password=$(wizard_password_input "Admin password" "Initial admin login password" "")
-        if [[ -z "$admin_password" ]]; then
+        password_candidate=$(wizard_password_input "Admin password" "Initial admin login password" "")
+        if [[ -z "$password_candidate" ]]; then
             warning "Admin password cannot be empty."
             sleep 1
+            continue
         fi
+
+        wizard_clear_screen
+        echo -e "  ${DIM}Admin email:${NC} ${DIM}${admin_email}${NC}" >&2
+        echo "" >&2
+        echo -e "  ${DIM}Please confirm your password to prevent typos.${NC}" >&2
+        echo "" >&2
+        confirm_password=$(wizard_password_input "Confirm password" "Re-enter admin password" "")
+
+        if [[ -z "$confirm_password" ]]; then
+            warning "Confirm password cannot be empty."
+            sleep 1
+            continue
+        fi
+
+        if [[ "$password_candidate" != "$confirm_password" ]]; then
+            warning "Passwords do not match. Please try again."
+            sleep 1
+            continue
+        fi
+
+        admin_password="$password_candidate"
     done
 
     INITIAL_ADMIN_EMAIL_VALUE="$admin_email"
