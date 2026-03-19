@@ -79,15 +79,7 @@ restart_port_forwards() {
         done < "$PID_DIR/port-forwards.pid"
     fi
 
-    # Detect environment
-    NODE_ENV="local"
-    if [ -f .env.production ]; then
-        PROD_NODE_ENV=$(grep "^NODE_ENV=" .env.production | cut -d'=' -f2)
-        # Use production if .env.local doesn't exist or if explicitly production
-        if [ ! -f .env.local ] && [ "$PROD_NODE_ENV" = "production" ]; then
-            NODE_ENV="production"
-        fi
-    fi
+    NODE_ENV=$(get_cluster_node_env)
 
     # Start new port-forwards
     PF_FRONTEND=$(start_port_forward "frontend-ui" "8080")
@@ -118,6 +110,16 @@ restart_port_forwards() {
 
     log "All port-forwards restarted successfully"
     log "================================================"
+}
+
+get_cluster_node_env() {
+    local env_value
+    env_value=$(kubectl get configmap stella-ai-config -n ai-agents -o jsonpath='{.data.NODE_ENV}' 2>/dev/null || true)
+
+    if [ -z "$env_value" ]; then
+        env_value="local"
+    fi
+    echo "$env_value"
 }
 
 # Function to check and restart if needed
@@ -176,11 +178,7 @@ case "${1:-}" in
         ;;
     --status)
         # Show status
-        # Detect environment
-        NODE_ENV="local"
-        if [ -f .env.production ] && [ ! -f .env.local ]; then
-            NODE_ENV="production"
-        fi
+        NODE_ENV=$(get_cluster_node_env)
 
         echo "Port-Forward Status:"
         echo "===================="

@@ -850,6 +850,49 @@ run_database_migrations() {
 }
 
 # =============================================================================
+# Initial Admin Bootstrap
+# =============================================================================
+
+bootstrap_initial_admin() {
+    local bootstrap_file="$PROJECT_DIR/.stella-initial-admin.${NODE_ENV}.json"
+    local bootstrap_log="/tmp/stella-admin-bootstrap-$$.log"
+    local bootstrap_db_url=""
+
+    if [[ ! -f "$bootstrap_file" ]]; then
+        return 0
+    fi
+
+    echo -ne "   ${ARROW} Initial admin bootstrap... "
+
+    if ! setup_port_forward; then
+        printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+        error "Failed to open PostgreSQL port-forward for admin bootstrap"
+        echo "  Bootstrap file kept for retry: $bootstrap_file"
+        return 1
+    fi
+
+    bootstrap_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${PG_LOCAL_PORT}/${POSTGRES_DB}?schema=public"
+
+    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" >"$bootstrap_log" 2>&1); then
+        cleanup_port_forward
+        rm -f "$bootstrap_file"
+        rm -f "$bootstrap_log" 2>/dev/null || true
+        printf "\r   ${ARROW} Initial admin bootstrap... ${GREEN}${CHECK}${NC}    \n"
+        return 0
+    fi
+
+    cleanup_port_forward
+    printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+    error "Failed to create/update initial admin user"
+    if [[ -f "$bootstrap_log" ]]; then
+        echo "  Bootstrap error:"
+        tail -n 5 "$bootstrap_log"
+    fi
+    echo "  Bootstrap file kept for retry: $bootstrap_file"
+    return 1
+}
+
+# =============================================================================
 # Main Deployment Function
 # =============================================================================
 
@@ -963,6 +1006,13 @@ deploy_services() {
     run_database_migrations
     if [[ $? -ne 0 ]]; then
         error "Database migration failed - stopping deployment"
+        return 1
+    fi
+
+    # Phase 2.6: Optional one-time initial admin bootstrap
+    bootstrap_initial_admin
+    if [[ $? -ne 0 ]]; then
+        error "Initial admin bootstrap failed - stopping deployment"
         return 1
     fi
 
@@ -1092,6 +1142,7 @@ wait_for_services() {
 
     # Show what we're waiting for
     verbose "Waiting for services to be ready..."
+    local failed_services=""
 
     for deploy in $SERVICES_TO_WAIT; do
         local timeout
@@ -1122,57 +1173,24 @@ wait_for_services() {
             sleep 0.1
         done
 
+        # Don't let set -e abort here; report all service statuses first.
         set +e
         wait $pid
         local exit_code=$?
+        set -e
 
         if [[ $exit_code -eq 0 ]]; then
-            set -e
             printf "\r   ${ARROW} ${display_name}... ${GREEN}${CHECK}${NC}    \n"
         else
-            # Keep set +e active — diagnostic kubectl commands may fail on broken pods
             printf "\r   ${ARROW} ${display_name}... ${RED}${CROSS}${NC}    \n"
-
-            # Show diagnostics for failed deployment
-            echo -e "   ${RED}--- ${display_name} failure diagnostics ---${NC}"
-
-            # Pod status
-            echo -e "   ${DIM}Pod status:${NC}"
-            kubectl get pods -n ai-agents -l "app=${deploy}" --no-headers 2>/dev/null | while read -r line; do
-                echo "     $line"
-            done
-
-            # Recent events (warnings/errors)
-            echo -e "   ${DIM}Recent events:${NC}"
-            kubectl get events -n ai-agents --field-selector "involvedObject.name=${deploy}" \
-                --sort-by='.lastTimestamp' 2>/dev/null | tail -5 | while read -r line; do
-                echo "     $line"
-            done
-
-            # Pod logs (last 20 lines from the most recent pod)
-            local pod_name
-            pod_name=$(kubectl get pods -n ai-agents -l "app=${deploy}" --sort-by='.metadata.creationTimestamp' \
-                -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
-            if [[ -n "$pod_name" ]]; then
-                echo -e "   ${DIM}Logs (${pod_name}):${NC}"
-                kubectl logs "$pod_name" -n ai-agents --tail=20 2>/dev/null | while read -r line; do
-                    echo "     $line"
-                done
-                # Also check init container logs
-                local init_logs
-                init_logs=$(kubectl logs "$pod_name" -n ai-agents --all-containers --tail=10 2>/dev/null || true)
-                if [[ -n "$init_logs" ]]; then
-                    echo -e "   ${DIM}Init container logs:${NC}"
-                    echo "$init_logs" | tail -10 | while read -r line; do
-                        echo "     $line"
-                    done
-                fi
-            fi
-
-            echo -e "   ${RED}---${NC}"
-            set -e
+            failed_services="${failed_services}${deploy} "
         fi
     done
+
+    if [[ -n "$failed_services" ]]; then
+        error "Some services failed readiness checks: $failed_services"
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -1313,8 +1331,8 @@ check_service_runtime_status() {
         elif echo "$logs" | grep -iq "CUDAExecutionProvider"; then
             if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
                 status="CPU"
-                provider="edge_tts"
-                details="Kokoro CUDA failed, fell back to Edge TTS"
+                provider="piper"
+                details="Kokoro CUDA failed, fell back to Piper"
             else
                 status="CUDA"
                 provider="kokoro"
@@ -1324,10 +1342,10 @@ check_service_runtime_status() {
             status="CUDA"
             provider="kokoro"
             details="Kokoro ONNX"
-        elif echo "$logs" | grep -iq "Primary provider.*edge_tts"; then
-            status="Cloud"
-            provider="edge_tts"
-            details="Microsoft Edge TTS (Cloud)"
+        elif echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
+            status="CPU"
+            provider="piper"
+            details="Piper TTS (Local CPU)"
         fi
     fi
 

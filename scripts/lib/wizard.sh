@@ -79,29 +79,29 @@ wizard_setup_traps() {
 
 # Clear screen and position cursor
 wizard_clear_screen() {
-    printf '\033[2J\033[H'
+    printf '\033[2J\033[H' >&2
 }
 
 # Move cursor to position
 wizard_move_cursor() {
     local row="$1"
     local col="$2"
-    printf '\033[%d;%dH' "$row" "$col"
+    printf '\033[%d;%dH' "$row" "$col" >&2
 }
 
 # Hide cursor
 wizard_hide_cursor() {
-    printf '\033[?25l'
+    printf '\033[?25l' >&2
 }
 
 # Show cursor
 wizard_show_cursor() {
-    printf '\033[?25h'
+    printf '\033[?25h' >&2
 }
 
 # Clear line from cursor
 wizard_clear_line() {
-    printf '\033[K'
+    printf '\033[K' >&2
 }
 
 # =============================================================================
@@ -112,6 +112,7 @@ wizard_clear_line() {
 # Also supports j/k for down/up (vim-style) as fallback
 # Compatible with bash 3.2 (macOS) - no decimal timeouts
 wizard_read_key() {
+    local enable_vim_nav="${1:-true}"
     local key=""
     local seq=""
 
@@ -141,9 +142,21 @@ wizard_read_key() {
         ""|$'\n'|$'\r'|$'\x0a'|$'\x0d')
             echo "ENTER"; return ;;
         $'\x7f'|$'\x08') echo "BACKSPACE"; return ;;
-        # Vim-style navigation
-        j|J)     echo "DOWN"; return ;;
-        k|K)     echo "UP"; return ;;
+        # Vim-style navigation (menu contexts only)
+        j|J)
+            if [[ "$enable_vim_nav" == "true" ]]; then
+                echo "DOWN"; return
+            else
+                echo "$key"; return
+            fi
+            ;;
+        k|K)
+            if [[ "$enable_vim_nav" == "true" ]]; then
+                echo "UP"; return
+            else
+                echo "$key"; return
+            fi
+            ;;
         # Pass through b/B for back handling by caller
         b|B)     echo "$key"; return ;;
         *)       echo "$key"; return ;;
@@ -283,7 +296,7 @@ wizard_text_input() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -375,7 +388,7 @@ wizard_password_input() {
         fi
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -472,7 +485,7 @@ wizard_generated_input() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -815,13 +828,9 @@ wizard_review_screen() {
         local var_name="${line%%=*}"
         local var_value="${line#*=}"
 
-        # Mask sensitive values
-        local var_type
-        var_type=$(get_var_meta "$var_name" "type")
-        if [[ "$var_type" == "password" ]] || [[ "$var_type" == "generated" ]]; then
-            if [[ -n "$var_value" ]]; then
-                var_value="••••••••"
-            fi
+        # Mask only OpenAI API key in review output. The key is too long to be displayed in the review screen.
+        if [[ "$var_name" == "OPENAI_API_KEY" ]] && [[ -n "$var_value" ]]; then
+            var_value="••••••••"
         fi
 
         printf "  %-30s = %s\n" "$var_name" "$var_value"
@@ -983,7 +992,7 @@ wizard_text_compact() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -1045,7 +1054,7 @@ wizard_password_compact() {
         fi
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)
@@ -1102,7 +1111,7 @@ wizard_generated_compact() {
         wizard_clear_line >&2
 
         local key
-        key=$(wizard_read_key)
+        key=$(wizard_read_key "false")
 
         case "$key" in
             ENTER)

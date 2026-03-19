@@ -19,6 +19,8 @@ source "$SETUP_LIB_DIR/wizard.sh"
 
 # Temp file for storing configuration key=value pairs
 WIZARD_CONFIG_FILE=""
+INITIAL_ADMIN_EMAIL_VALUE=""
+INITIAL_ADMIN_PASSWORD_VALUE=""
 
 # Initialize config storage
 init_wizard_config() {
@@ -31,7 +33,8 @@ init_wizard_config() {
 get_wizard_config() {
     local key="$1"
     if [[ -f "$WIZARD_CONFIG_FILE" ]]; then
-        grep "^${key}=" "$WIZARD_CONFIG_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+        # Missing keys are expected for optional vars; do not fail under pipefail.
+        grep "^${key}=" "$WIZARD_CONFIG_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 
@@ -127,9 +130,10 @@ run_setup_wizard() {
         env="$WIZARD_SELECTED_ENV"
     fi
 
-    # Load existing config from environment-specific file
-    local env_file="$project_dir/.env.local"
-    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Load existing config for the selected environment
     if [[ -f "$env_file" ]]; then
         load_existing_config "$env_file"
     fi
@@ -182,6 +186,9 @@ run_setup_wizard() {
         configure_optional_settings "$env"
     fi
 
+    # Required initial admin bootstrap credentials
+    collect_initial_admin_credentials "$project_dir" "$env"
+
     # Review screen
     wizard_clear_screen
 
@@ -191,21 +198,120 @@ run_setup_wizard() {
         value=$(get_wizard_config "$var_name")
         config_lines+=("${var_name}=${value}")
     done
+    config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}") # add admin email to the config
+    config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}") # add admin password to the config
 
     wizard_review_screen "${config_lines[@]}"
 
     # Confirm and save
     if wizard_confirm "Save this configuration?" "y"; then
         save_configuration "$project_dir" "$env"
-        local target_file="$project_dir/.env.local"
-        [[ "$env" == "production" ]] && target_file="$project_dir/.env.production"
-        wizard_success_screen "$target_file" "$env"
+        wizard_success_screen "$env_file" "$env"
         return 0
     else
+        local bootstrap_file
+        bootstrap_file=$(get_admin_bootstrap_file "$project_dir" "$env")
+        rm -f "$bootstrap_file" 2>/dev/null || true
         echo ""
         echo -e "  ${YELLOW}Configuration not saved.${NC}"
         return 1
     fi
+}
+
+get_environment_file() {
+    local project_dir="$1"
+    local env="$2"
+
+    if [[ "$env" == "production" ]]; then
+        echo "$project_dir/.env.production"
+    else
+        echo "$project_dir/.env.local"
+    fi
+}
+
+get_admin_bootstrap_file() {
+    local project_dir="$1"
+    local env="$2"
+    echo "$project_dir/.stella-initial-admin.${env}.json"
+}
+
+escape_env_value() {
+    local value="$1"
+    # Escape backslashes and double quotes for safe .env quoted output
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    echo "$value"
+}
+
+collect_initial_admin_credentials() {
+    local project_dir="$1"
+    local env="$2"
+    local bootstrap_file
+    bootstrap_file=$(get_admin_bootstrap_file "$project_dir" "$env")
+
+    local admin_email=""
+    local admin_password=""
+
+    # Ask until non-empty email, or allow cancel with Ctrl+C.
+    while [[ -z "$admin_email" ]]; do
+        wizard_clear_screen
+        admin_email=$(wizard_text_input "Admin email" "Initial admin login email" "" "")
+        if [[ -z "$admin_email" ]]; then
+            warning "Admin email cannot be empty."
+            sleep 1
+        fi
+    done
+
+    # Ask until non-empty password and confirmation match, or allow cancel with Ctrl+C.
+    while [[ -z "$admin_password" ]]; do
+        local password_candidate=""
+        local confirm_password=""
+
+        wizard_clear_screen
+        echo -e "  ${DIM}Admin email:${NC} ${DIM}${admin_email}${NC}" >&2
+        echo "" >&2
+        password_candidate=$(wizard_password_input "Admin password" "Initial admin login password" "")
+        if [[ -z "$password_candidate" ]]; then
+            warning "Admin password cannot be empty."
+            sleep 1
+            continue
+        fi
+
+        wizard_clear_screen
+        echo -e "  ${DIM}Admin email:${NC} ${DIM}${admin_email}${NC}" >&2
+        echo "" >&2
+        echo -e "  ${DIM}Please confirm your password to prevent typos.${NC}" >&2
+        echo "" >&2
+        confirm_password=$(wizard_password_input "Confirm password" "Re-enter admin password" "")
+
+        if [[ -z "$confirm_password" ]]; then
+            warning "Confirm password cannot be empty."
+            sleep 1
+            continue
+        fi
+
+        if [[ "$password_candidate" != "$confirm_password" ]]; then
+            warning "Passwords do not match. Please try again."
+            sleep 1
+            continue
+        fi
+
+        admin_password="$password_candidate"
+    done
+
+    INITIAL_ADMIN_EMAIL_VALUE="$admin_email"
+    INITIAL_ADMIN_PASSWORD_VALUE="$admin_password"
+
+    # Store as base64 to avoid quoting/escaping issues in shell parsing.
+    local email_b64 password_b64
+    email_b64=$(printf '%s' "$admin_email" | base64 | tr -d '\n')
+    password_b64=$(printf '%s' "$admin_password" | base64 | tr -d '\n')
+
+    umask 077
+    cat > "$bootstrap_file" <<EOF
+{"email_b64":"$email_b64","password_b64":"$password_b64"}
+EOF
+    chmod 600 "$bootstrap_file" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -354,6 +460,14 @@ setup_configure_section() {
                 return 1
             fi
         else
+            # Enforce non-empty required values
+            if is_var_required "$var_name" "$env" && [[ -z "$value" ]]; then
+                echo ""
+                warning "${var_name} is required and cannot be empty."
+                echo -e "  ${DIM}Please enter a value to continue.${NC}"
+                sleep 1.2
+                continue
+            fi
             set_wizard_config "$var_name" "$value"
             ((var_idx++))
         fi
@@ -603,7 +717,7 @@ load_existing_config() {
         return 1
     fi
 
-    # Read existing .env file
+    # Read existing environment file
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Skip comments and empty lines
         [[ -z "$line" ]] && continue
@@ -667,20 +781,20 @@ apply_all_defaults() {
 save_configuration() {
     local project_dir="$1"
     local env="$2"
-    local env_file="$project_dir/.env.local"
-    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
 
     # Apply defaults for all non-prompted variables
     apply_all_defaults "$env"
 
-    # Backup existing file if it exists
+    # Backup existing environment file if it exists
     if [[ -f "$env_file" ]]; then
         local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
         cp "$env_file" "$backup_file"
-        verbose "Backed up existing $(basename "$env_file") to $backup_file"
+        verbose "Backed up existing environment file to $backup_file"
     fi
 
-    # Generate env file
+    # Generate environment file
     {
         echo "# ============================================================================"
         echo "# STELLA - ENVIRONMENT CONFIGURATION"
@@ -743,6 +857,20 @@ save_configuration() {
         echo "# Environment Mode"
         echo "# ============================================================================"
         echo "NODE_ENV=$env"
+        echo ""
+
+        # Add admin credentials used during setup
+        if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]] || [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+            echo "# ============================================================================"
+            echo "# Initial Admin Credentials (from setup wizard)"
+            echo "# ============================================================================"
+            if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]]; then
+                echo "INITIAL_ADMIN_EMAIL=\"$(escape_env_value "$INITIAL_ADMIN_EMAIL_VALUE")\""
+            fi
+            if [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+                echo "INITIAL_ADMIN_PASSWORD=\"$(escape_env_value "$INITIAL_ADMIN_PASSWORD_VALUE")\""
+            fi
+        fi
 
     } > "$env_file"
 

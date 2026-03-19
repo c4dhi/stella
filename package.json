@@ -26,6 +26,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "fix-room-urls": "ts-node scripts/fix-room-urls.ts",
+    "bootstrap:admin": "ts-node scripts/bootstrap-initial-admin.ts",
     "db:seed": "npx tsc prisma/seed.ts --outDir prisma --esModuleInterop --resolveJsonModule --module nodenext --moduleResolution nodenext --target ES2023 --skipLibCheck && node prisma/seed.js",
     "db:seed:run": "node prisma/seed.js"
   },

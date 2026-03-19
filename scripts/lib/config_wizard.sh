@@ -31,7 +31,8 @@ init_config_values() {
 get_config_value() {
     local key="$1"
     if [[ -f "$CONFIG_VALUES_FILE" ]]; then
-        grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2-
+        # Missing keys are expected for optional vars; do not fail under pipefail.
+        grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 
@@ -108,9 +109,10 @@ run_config_wizard() {
         env="$WIZARD_SELECTED_ENV"
     fi
 
-    # Load existing config from environment-specific file
-    local env_file="$project_dir/.env.local"
-    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Load existing config for the selected environment
     if [[ -f "$env_file" ]]; then
         load_config_file "$env_file"
     fi
@@ -189,6 +191,17 @@ run_config_wizard() {
         echo ""
         echo -e "  ${YELLOW}Configuration not saved.${NC}"
         return 1
+    fi
+}
+
+get_environment_file() {
+    local project_dir="$1"
+    local env="$2"
+
+    if [[ "$env" == "production" ]]; then
+        echo "$project_dir/.env.production"
+    else
+        echo "$project_dir/.env.local"
     fi
 }
 
@@ -348,6 +361,14 @@ configure_section() {
                 return 1
             fi
         else
+            # Enforce non-empty required values
+            if is_var_required "$var_name" "$env" && [[ -z "$value" ]]; then
+                echo "" >&2
+                warning "${var_name} is required and cannot be empty."
+                echo -e "  ${DIM}Please enter a value to continue.${NC}" >&2
+                sleep 1.2
+                continue
+            fi
             set_config_value "$var_name" "$value"
             ((var_idx++))
         fi
@@ -428,17 +449,17 @@ load_config_file() {
 save_full_configuration() {
     local project_dir="$1"
     local env="$2"
-    local env_file="$project_dir/.env.local"
-    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
 
-    # Backup existing file if it exists
+    # Backup existing environment file if it exists
     if [[ -f "$env_file" ]]; then
         local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
         cp "$env_file" "$backup_file"
-        verbose "Backed up existing $(basename "$env_file") to $backup_file"
+        verbose "Backed up existing environment file to $backup_file"
     fi
 
-    # Generate env file
+    # Generate environment file
     {
         echo "# ============================================================================"
         echo "# STELLA - ENVIRONMENT CONFIGURATION"
@@ -537,9 +558,10 @@ reconfigure_variable() {
     # Initialize config storage
     init_config_values
 
-    # Load existing config from environment-specific file
-    local env_file="$project_dir/.env.local"
-    [[ "$env" == "production" ]] && env_file="$project_dir/.env.production"
+    local env_file
+    env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Load existing config for current environment
     if [[ -f "$env_file" ]]; then
         load_config_file "$env_file"
     fi
