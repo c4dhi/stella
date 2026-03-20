@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { exec, ExecException } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
+import * as fs from 'fs/promises';
+import { createHash, Hash } from 'crypto';
 import { AgentTypeService, AgentTypeInfo as DbAgentTypeInfo } from '../agent-type/agent-type.service';
 
 const execAsync = promisify(exec);
@@ -170,13 +172,19 @@ export class AgentImageService {
       throw new Error(`Unknown agent type: ${agentType}. Available types: ${this.getRegisteredAgentTypes().join(', ')}`);
     }
 
-    const fullImageName = `${config.imageName}:${config.tag}`;
+    // Legacy/static tag for environments where we cannot build locally.
+    // (e.g., no Docker socket mounted and images are expected to be pre-built externally)
+    const legacyImageName = `${config.imageName}:${config.tag}`;
 
     // If no Docker socket available, we can't build - assume images are pre-built
     if (!this.hasDockerSocket) {
-      this.logger.log(`No Docker socket available - assuming image ${fullImageName} is pre-built`);
-      return fullImageName;
+      this.logger.log(`No Docker socket available - assuming image ${legacyImageName} is pre-built`);
+      return legacyImageName;
     }
+
+    const fingerprint = await this.computeBuildFingerprint(agentType, config);
+    const fullImageName = `${config.imageName}:cfg-${fingerprint.slice(0, 12)}`;
+    this.logger.debug(`Resolved image for ${agentType}: ${fullImageName}`);
 
     // If force rebuild, skip cache check
     if (!forceRebuild) {
@@ -196,7 +204,7 @@ export class AgentImageService {
 
     // Build the image and return the image name when done
     const buildPromise = (async (): Promise<string> => {
-      await this.buildAndImportImage(config, forceRebuild);
+      await this.buildAndImportImage(config, fullImageName, forceRebuild);
       return fullImageName;
     })();
 
@@ -244,8 +252,11 @@ export class AgentImageService {
    *   available to the Kubernetes cluster (no import needed)
    * - Linux (K3s): Images must be imported into K3s containerd after building
    */
-  private async buildAndImportImage(config: AgentImageConfig, forceRebuild: boolean): Promise<void> {
-    const fullImageName = `${config.imageName}:${config.tag}`;
+  private async buildAndImportImage(
+    config: AgentImageConfig,
+    fullImageName: string,
+    forceRebuild: boolean,
+  ): Promise<void> {
     const dockerfilePath = path.join(this.workspaceRoot, config.dockerfilePath);
     const contextPath = path.join(this.workspaceRoot, config.contextPath);
     const noCacheFlag = forceRebuild ? '--no-cache' : '';
@@ -367,23 +378,144 @@ export class AgentImageService {
       throw new Error(`Unknown agent type: ${agentType}`);
     }
 
-    const fullImageName = `${config.imageName}:${config.tag}`;
-    this.logger.log(`Removing image ${fullImageName}...`);
+    const imagesToRemove = new Set<string>([`${config.imageName}:${config.tag}`]);
+    if (this.hasDockerSocket) {
+      const fingerprint = await this.computeBuildFingerprint(agentType, config);
+      imagesToRemove.add(`${config.imageName}:cfg-${fingerprint.slice(0, 12)}`);
+    }
 
-    try {
-      if (this.isProduction) {
-        // Remove from K3s containerd
-        try {
-          await execAsync(`k3s ctr images rm docker.io/library/${fullImageName}`);
-        } catch {
-          await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images rm docker.io/library/${fullImageName}`);
+    for (const imageName of imagesToRemove) {
+      this.logger.log(`Removing image ${imageName}...`);
+      try {
+        if (this.isProduction) {
+          // Remove from K3s containerd
+          try {
+            await execAsync(`k3s ctr images rm docker.io/library/${imageName}`);
+          } catch {
+            await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images rm docker.io/library/${imageName}`);
+          }
         }
+        // Remove from Docker
+        await execAsync(`docker rmi ${imageName}`);
+        this.logger.log(`Removed image ${imageName}`);
+      } catch (error) {
+        this.logger.warn(`Error removing image ${imageName}: ${error.message}`);
       }
-      // Remove from Docker
-      await execAsync(`docker rmi ${fullImageName}`);
-      this.logger.log(`Removed image ${fullImageName}`);
-    } catch (error) {
-      this.logger.warn(`Error removing image: ${error.message}`);
+    }
+  }
+
+  /**
+   * Compute deterministic fingerprint for container-relevant build inputs.
+   * Any Dockerfile/COPY source change creates a new image tag automatically.
+   */
+  private async computeBuildFingerprint(agentType: string, config: AgentImageConfig): Promise<string> {
+    const dockerfilePath = path.join(this.workspaceRoot, config.dockerfilePath);
+    const hash = createHash('sha256');
+    hash.update('agent-image-fingerprint:v1\n');
+    hash.update(`agentType:${agentType}\n`);
+    hash.update(`dockerfile:${config.dockerfilePath}\n`);
+    hash.update(`context:${config.contextPath}\n`);
+
+    const dockerfileContent = await fs.readFile(dockerfilePath, 'utf-8');
+    hash.update(dockerfileContent);
+
+    const sourcePaths = new Set<string>([
+      `agents/${agentType}`,
+      'agents/stella-ai-agent-sdk',
+      ...this.extractCopySources(dockerfileContent),
+    ]);
+
+    const sortedPaths = Array.from(sourcePaths).sort();
+    for (const relPath of sortedPaths) {
+      if (!relPath || relPath.includes('$')) continue;
+      const normalizedRelPath = relPath.replace(/\\/g, '/');
+      const absPath = path.resolve(this.workspaceRoot, normalizedRelPath);
+      if (!absPath.startsWith(this.workspaceRoot)) continue;
+      await this.hashPathRecursive(hash, absPath, normalizedRelPath);
+    }
+
+    return hash.digest('hex');
+  }
+
+  /**
+   * Extract local source paths from Dockerfile COPY statements.
+   * Supports:
+   * - COPY a b /dest
+   * - COPY --chown=1000:1000 a b /dest
+   * - COPY ["a", "b", "/dest"]
+   */
+  private extractCopySources(dockerfileContent: string): string[] {
+    const sources: string[] = [];
+    const logicalLines: string[] = [];
+    let current = '';
+
+    for (const rawLine of dockerfileContent.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      if (line.endsWith('\\')) {
+        current += `${line.slice(0, -1).trim()} `;
+      } else {
+        current += line;
+        logicalLines.push(current.trim());
+        current = '';
+      }
+    }
+    if (current.trim()) {
+      logicalLines.push(current.trim());
+    }
+
+    for (const line of logicalLines) {
+      if (!line.toUpperCase().startsWith('COPY ')) continue;
+      const args = line.slice(5).trim();
+
+      if (args.startsWith('[')) {
+        try {
+          const values = JSON.parse(args) as string[];
+          if (Array.isArray(values) && values.length >= 2) {
+            sources.push(...values.slice(0, -1));
+          }
+        } catch {
+          // Ignore malformed JSON array syntax and fall back to defaults.
+        }
+        continue;
+      }
+
+      const parts = args.split(/\s+/).filter(Boolean);
+      while (parts.length > 0 && parts[0].startsWith('--')) {
+        parts.shift();
+      }
+      if (parts.length >= 2) {
+        sources.push(...parts.slice(0, -1));
+      }
+    }
+
+    return sources;
+  }
+
+  /**
+   * Recursively hash file tree so config/content changes invalidate build cache key.
+   */
+  private async hashPathRecursive(hash: Hash, absPath: string, logicalPath: string): Promise<void> {
+    try {
+      const stat = await fs.stat(absPath);
+      if (stat.isDirectory()) {
+        hash.update(`dir:${logicalPath}\n`);
+        const entries = await fs.readdir(absPath, { withFileTypes: true });
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of entries) {
+          const childAbs = path.join(absPath, entry.name);
+          const childLogical = `${logicalPath}/${entry.name}`;
+          await this.hashPathRecursive(hash, childAbs, childLogical);
+        }
+        return;
+      }
+
+      if (stat.isFile()) {
+        hash.update(`file:${logicalPath}:${stat.size}\n`);
+        hash.update(await fs.readFile(absPath));
+      }
+    } catch {
+      hash.update(`missing:${logicalPath}\n`);
     }
   }
 }
