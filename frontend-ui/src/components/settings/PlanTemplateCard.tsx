@@ -25,13 +25,6 @@ export default function PlanTemplateCard({
     (acc, state) => acc + (state.tasks?.length || 0),
     0
   ) || 0
-  const deliverableCount = template.content.states?.reduce(
-    (acc, state) => acc + state.tasks?.reduce(
-      (acc2, task) => acc2 + (task.deliverables?.length || 0),
-      0
-    ) || 0,
-    0
-  ) || 0
 
   const updatedAt = new Date(template.updatedAt).toLocaleDateString('en-US', {
     month: 'short',
@@ -138,18 +131,6 @@ export default function PlanTemplateCard({
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
             {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
-          </motion.div>
-          <motion.div
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-medium ${isDark
-              ? 'bg-surface-dark-tertiary text-content-inverse-secondary'
-              : 'bg-surface-secondary text-content-secondary'
-              }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-            {deliverableCount} {deliverableCount === 1 ? 'deliverable' : 'deliverables'}
           </motion.div>
         </div>
 
