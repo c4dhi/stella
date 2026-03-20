@@ -964,6 +964,7 @@ deploy_services() {
         local stt_manifest="k8s/02-stt-models-pvc.yaml"
         local tts_manifest="k8s/02-tts-models-pvc.yaml"
 
+        # Print actionable guidance specifically for storage expansion policy failures.
         print_pvc_resize_remediation() {
             echo ""
             warning "Detected PVC resize restriction from cluster storage policy."
@@ -985,6 +986,8 @@ deploy_services() {
             echo ""
         }
 
+        # Heuristic matcher for common Kubernetes/storage-class resize-denied messages.
+        # We intentionally keep this broad because providers format these errors differently.
         is_pvc_resize_forbidden_error() {
             local output="$1"
             local lower
@@ -1003,9 +1006,12 @@ deploy_services() {
         local stt_exit=0
         local tts_exit=0
 
+        # Apply PVCs sequentially so output and failure source are unambiguous.
+        # We disable errexit temporarily to capture command output and exit codes.
         set +e
         stt_output=$(kubectl apply -f "$stt_manifest" 2>&1)
         stt_exit=$?
+        # Only apply TTS PVC if STT apply succeeded; this keeps logs easier to reason about.
         if [[ $stt_exit -eq 0 ]]; then
             tts_output=$(kubectl apply -f "$tts_manifest" 2>&1)
             tts_exit=$?
@@ -1035,10 +1041,12 @@ deploy_services() {
             done
         fi
 
+        # For resize-forbidden scenarios, print cluster-specific remediation steps.
         if is_pvc_resize_forbidden_error "$combined_output"; then
             print_pvc_resize_remediation
         fi
 
+        # Fail fast: deployment should stop here because downstream services depend on model PVCs.
         return 1
     }
 
