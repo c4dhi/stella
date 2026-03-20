@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
 import { useThemeStore } from '../../store/themeStore'
+import { AlertTriangle } from 'lucide-react'
 
 interface DeleteSessionModalProps {
   isOpen: boolean
@@ -16,7 +17,7 @@ export default function DeleteSessionModal({
   onCancel,
 }: DeleteSessionModalProps) {
   const [inputValue, setInputValue] = useState('')
-  const isValid = inputValue === sessionName
+  const isValid = inputValue === 'DELETE'
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
@@ -61,19 +62,49 @@ export default function DeleteSessionModal({
             </h2>
 
             {/* Warning Message */}
-            <div className={`mb-4 p-3 rounded-lg text-body-sm ${
-              isDark
-                ? 'bg-red-500/10 border border-red-500/20 text-red-400'
-                : 'bg-red-50 border border-red-200 text-red-700'
-            }`}>
-              <div className="flex items-start gap-2">
-                <span className="text-base">Warning</span>
-                <div className="flex-1">
-                  <div className="font-medium mb-1">This will permanently delete:</div>
-                  <ul className="mt-2 space-y-1 ml-4 list-disc">
-                    <li>All messages and conversation history</li>
-                    <li>All participants</li>
-                    <li>All agents and their containers</li>
+            <p className={`text-body-sm mb-4 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+              You are deleting <span className="font-semibold">{sessionName}</span>
+            </p>
+
+            <div
+              className={`mb-4 rounded-xl border p-4 ${
+                isDark
+                  ? 'border-red-500/20 bg-red-500/5'
+                  : 'border-red-200 bg-red-50/70'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle
+                  className={`mt-0.5 h-5 w-5 shrink-0 ${
+                    isDark ? 'text-red-400' : 'text-red-600'
+                  }`}
+                />
+
+                <div>
+                  <p
+                    className={`text-sm font-semibold ${
+                      isDark ? 'text-red-400' : 'text-red-700'
+                    }`}
+                  >
+                    Permanent deletion
+                  </p>
+
+                  <p
+                    className={`mt-1 text-sm ${
+                      isDark ? 'text-red-300/90' : 'text-red-700/90'
+                    }`}
+                  >
+                    Deleting this session will permanently remove:
+                  </p>
+
+                  <ul
+                    className={`mt-3 space-y-1 text-sm ${
+                      isDark ? 'text-red-300/85' : 'text-red-700/85'
+                    }`}
+                  >
+                    <li>• All messages and conversation history</li>
+                    <li>• All participants</li>
+                    <li>• All agents and their containers</li>
                   </ul>
                 </div>
               </div>
@@ -84,13 +115,13 @@ export default function DeleteSessionModal({
               <label className={`block text-body mb-2 ${
                 isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
               }`}>
-                Type <span className={`font-mono font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>{sessionName}</span> to confirm:
+                Type <span className={`font-mono font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>"DELETE"</span> to confirm:
               </label>
               <input
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder={sessionName}
+                placeholder="DELETE"
                 className={`input-field ${
                   isDark
                     ? 'focus:border-red-400 focus:ring-red-400/20'
