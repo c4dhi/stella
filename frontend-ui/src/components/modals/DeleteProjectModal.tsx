@@ -1,35 +1,40 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useThemeStore } from '../../store/themeStore'
 import { AlertTriangle } from 'lucide-react'
 
-interface DeleteSessionModalProps {
+interface DeleteProjectModalProps {
   isOpen: boolean
-  sessionName: string
+  projectName: string
   onConfirm: () => void
   onCancel: () => void
 }
 
-export default function DeleteSessionModal({
+export default function DeleteProjectModal({
   isOpen,
-  sessionName,
+  projectName,
   onConfirm,
   onCancel,
-}: DeleteSessionModalProps) {
+}: DeleteProjectModalProps) {
   const [inputValue, setInputValue] = useState('')
   const isValid = inputValue === 'DELETE'
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
-  const handleConfirm = () => {
-    if (isValid) {
-      onConfirm()
-      setInputValue('') // Reset for next time
+  useEffect(() => {
+    if (!isOpen) {
+      setInputValue('')
     }
+  }, [isOpen])
+
+  const handleConfirm = () => {
+    if (!isValid) return
+    onConfirm()
+    setInputValue('')
   }
 
   const handleCancel = () => {
-    setInputValue('') // Reset input
+    setInputValue('')
     onCancel()
   }
 
@@ -56,14 +61,13 @@ export default function DeleteSessionModal({
             }`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <h2 className={`text-heading-lg mb-2 ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-              Delete Session
+              Delete Project
             </h2>
-
+            
             {/* Warning Message */}
             <p className={`text-body-sm mb-4 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-              You are deleting <span className="font-semibold">{sessionName}</span>
+              You are deleting <span className="font-semibold">{projectName}</span>
             </p>
 
             <div
@@ -94,7 +98,7 @@ export default function DeleteSessionModal({
                       isDark ? 'text-red-300/90' : 'text-red-700/90'
                     }`}
                   >
-                    Deleting this session will permanently remove:
+                    Deleting this project will permanently remove:
                   </p>
 
                   <ul
@@ -102,6 +106,8 @@ export default function DeleteSessionModal({
                       isDark ? 'text-red-300/85' : 'text-red-700/85'
                     }`}
                   >
+                    <li>• The project and its configuration</li>
+                    <li>• All sessions in the project</li>
                     <li>• All messages and conversation history</li>
                     <li>• All participants</li>
                     <li>• All agents and their containers</li>
@@ -109,29 +115,30 @@ export default function DeleteSessionModal({
                 </div>
               </div>
             </div>
-
+            
             {/* Confirmation Input */}
             <div className="mb-6">
-              <label className={`block text-body mb-2 ${
-                isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
-              }`}>
-                Type <span className={`font-mono font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>"DELETE"</span> to confirm:
+              <label
+                className={`block text-body mb-2 ${
+                  isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+                }`}
+              >
+                Type{' '}
+                <span className={`font-mono font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                  "DELETE"
+                </span>{' '}
+                to confirm:
               </label>
               <input
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="DELETE"
-                className={`input-field ${
-                  isDark
-                    ? 'focus:border-red-400 focus:ring-red-400/20'
-                    : 'focus:border-red-400 focus:ring-red-400/20'
-                }`}
+                className="input-field focus:border-red-400 focus:ring-red-400/20"
                 autoFocus
               />
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3">
               <button
                 type="button"
@@ -152,7 +159,7 @@ export default function DeleteSessionModal({
                       : 'bg-red-100 text-red-300 cursor-not-allowed'
                 }`}
               >
-                Delete Session
+                Delete Project
               </button>
             </div>
           </motion.div>

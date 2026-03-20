@@ -7,7 +7,7 @@ import { useThemeStore } from '../store/themeStore'
 import { useToastStore } from '../store/toastStore'
 import ProjectModal from '../components/modals/ProjectModal'
 import ShareProjectModal from '../components/modals/ShareProjectModal'
-import ConfirmDialog from '../components/modals/ConfirmDialog'
+import DeleteProjectModal from '../components/modals/DeleteProjectModal'
 import AppHeader from '../components/layout/AppHeader'
 import type { ProjectWithCounts, Project } from '../lib/api-types'
 
@@ -23,7 +23,7 @@ export default function ProjectsDashboard() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithCounts | null>(null)
   const [sharingProject, setSharingProject] = useState<ProjectWithCounts | null>(null)
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteModalOpen, setdeleteModalOpen] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export default function ProjectsDashboard() {
 
   const handleDeleteProject = (projectId: string, projectName: string) => {
     setProjectToDelete({ id: projectId, name: projectName })
-    setDeleteConfirmOpen(true)
+    setdeleteModalOpen(true)
   }
 
   const confirmDeleteProject = async () => {
@@ -77,7 +77,7 @@ export default function ProjectsDashboard() {
         type: 'error'
       })
     } finally {
-      setDeleteConfirmOpen(false)
+      setdeleteModalOpen(false)
       setProjectToDelete(null)
     }
   }
@@ -319,15 +319,14 @@ export default function ProjectsDashboard() {
         />
       )}
 
-      <ConfirmDialog
-        isOpen={deleteConfirmOpen}
-        title="Delete Project"
-        message={`Delete "${projectToDelete?.name}"? This will permanently remove the project and all its sessions. This cannot be undone.`}
-        confirmText="Delete"
-        cancelText="Cancel"
-        confirmVariant="danger"
+      <DeleteProjectModal
+        isOpen={deleteModalOpen}
+        projectName={projectToDelete?.name || ''}
         onConfirm={confirmDeleteProject}
-        onCancel={() => { setDeleteConfirmOpen(false); setProjectToDelete(null) }}
+        onCancel={() => {
+          setdeleteModalOpen(false)
+          setProjectToDelete(null)
+        }}
       />
 
       {sharingProject && (
