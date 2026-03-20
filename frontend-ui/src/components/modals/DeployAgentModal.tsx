@@ -472,7 +472,7 @@ export default function DeployAgentModal({
                       <div className={`
                         w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
                         ${getCurrentStepNumber() >= num
-                          ? 'bg-primary-500 text-white'
+                          ? isDark ? 'bg-primary-500 text-white' : 'bg-primary-500 text-neutral-900'
                           : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
                         }
                       `}>
