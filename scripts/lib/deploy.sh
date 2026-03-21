@@ -958,6 +958,98 @@ deploy_services() {
         fi
     }
 
+    # Apply model PVCs with targeted guardrails for storage resize restrictions.
+    apply_model_storage_pvcs() {
+        local namespace="ai-agents"
+        local stt_manifest="k8s/02-stt-models-pvc.yaml"
+        local tts_manifest="k8s/02-tts-models-pvc.yaml"
+
+        # Print actionable guidance specifically for storage expansion policy failures.
+        print_pvc_resize_remediation() {
+            echo ""
+            warning "Detected PVC resize restriction from cluster storage policy."
+            echo "  This usually happens when StorageClass does not support expansion"
+            echo "  or the PVC is not dynamically provisioned."
+            echo ""
+            echo "  Check current PVC and StorageClass:"
+            echo "    kubectl get pvc -n ${namespace} stt-models-pvc tts-models-pvc"
+            echo "    kubectl get pvc -n ${namespace} tts-models-pvc -o jsonpath='{.spec.storageClassName}'; echo"
+            echo "    kubectl get sc <storage-class> -o yaml | rg allowVolumeExpansion"
+            echo ""
+            echo "  If expansion is supported, patch PVC size and redeploy:"
+            echo "    kubectl patch pvc tts-models-pvc -n ${namespace} -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"5Gi\"}}}}'"
+            echo "    kubectl patch pvc stt-models-pvc -n ${namespace} -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"5Gi\"}}}}'"
+            echo ""
+            echo "  If expansion is NOT supported, recreate PVCs (data will be lost unless migrated), then redeploy:"
+            echo "    kubectl delete pvc -n ${namespace} tts-models-pvc stt-models-pvc"
+            echo "    ./scripts/deploy.sh"
+            echo ""
+        }
+
+        # Heuristic matcher for common Kubernetes/storage-class resize-denied messages.
+        # We intentionally keep this broad because providers format these errors differently.
+        is_pvc_resize_forbidden_error() {
+            local output="$1"
+            local lower
+            lower=$(echo "$output" | tr '[:upper:]' '[:lower:]')
+
+            [[ "$lower" == *"only dynamically provisioned pvc can be resized"* ]] \
+                || [[ "$lower" == *"allowvolumeexpansion"* ]] \
+                || [[ "$lower" == *"forbidden"* && "$lower" == *"persistentvolumeclaim"* && "$lower" == *"storage"* ]]
+        }
+
+        echo -ne "   ${ARROW} Model Storage PVCs... "
+
+        local combined_output=""
+        local stt_output=""
+        local tts_output=""
+        local stt_exit=0
+        local tts_exit=0
+
+        # Apply PVCs sequentially so output and failure source are unambiguous.
+        # We disable errexit temporarily to capture command output and exit codes.
+        set +e
+        stt_output=$(kubectl apply -f "$stt_manifest" 2>&1)
+        stt_exit=$?
+        # Only apply TTS PVC if STT apply succeeded; this keeps logs easier to reason about.
+        if [[ $stt_exit -eq 0 ]]; then
+            tts_output=$(kubectl apply -f "$tts_manifest" 2>&1)
+            tts_exit=$?
+        fi
+        set -e
+
+        combined_output="${stt_output}\n${tts_output}"
+
+        if [[ $stt_exit -eq 0 && $tts_exit -eq 0 ]]; then
+            printf "\r   ${ARROW} Model Storage PVCs... ${GREEN}${CHECK}${NC}    \n"
+            return 0
+        fi
+
+        printf "\r   ${ARROW} Model Storage PVCs... ${RED}${CROSS}${NC}    \n"
+        error "Model Storage PVCs failed"
+
+        if [[ -n "$stt_output" ]]; then
+            echo -e "   ${DIM}STT PVC output:${NC}"
+            echo "$stt_output" | while read -r line; do
+                echo "     $line"
+            done
+        fi
+        if [[ -n "$tts_output" ]]; then
+            echo -e "   ${DIM}TTS PVC output:${NC}"
+            echo "$tts_output" | while read -r line; do
+                echo "     $line"
+            done
+        fi
+
+        # For resize-forbidden scenarios, print cluster-specific remediation steps.
+        if is_pvc_resize_forbidden_error "$combined_output"; then
+            print_pvc_resize_remediation
+        fi
+
+        # Fail fast: deployment should stop here because downstream services depend on model PVCs.
+        return 1
+    }
+
     # Phase 1: Namespace, RBAC, and Secrets
     apply_with_spinner "Namespace & RBAC" bash -c "kubectl apply -f k8s/00-namespace.yaml && kubectl apply -f k8s/03-secrets.yaml && kubectl apply -f k8s/05-rbac.yaml"
 
@@ -974,7 +1066,7 @@ deploy_services() {
     fi
 
     # Phase 1.5: Model Storage PVCs (for STT/TTS models)
-    apply_with_spinner "Model Storage PVCs" bash -c "kubectl apply -f k8s/02-stt-models-pvc.yaml && kubectl apply -f k8s/02-tts-models-pvc.yaml"
+    apply_model_storage_pvcs
 
     # Phase 2: PostgreSQL
     echo -ne "   ${ARROW} PostgreSQL... "
