@@ -22,6 +22,16 @@ interface ProgressState {
   updatedAt: Date;
 }
 
+interface PublicAgentConfig {
+  name?: string;
+  icon?: string;
+  plan?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  pipelineConfig?: Record<string, unknown>;
+  envVarTemplateId?: string;
+  envVars?: Record<string, string>;
+}
+
 @Injectable()
 export class PublicProjectsService {
   private readonly logger = new Logger(PublicProjectsService.name);
@@ -57,6 +67,50 @@ export class PublicProjectsService {
       updatedAt: new Date(),
       ...extra,
     });
+  }
+
+  /**
+   * Build the runtime agent config from persisted public project settings.
+   * Backward compatibility:
+   * - `plan` (legacy) is still supported.
+   * - `config` (full runtime payload) is supported.
+   * - `pipelineConfig` maps to SDK key `pipeline_config`.
+   */
+  private buildRuntimeAgentConfig(agentConfig: PublicAgentConfig | null): Record<string, unknown> {
+    const runtimeConfig: Record<string, unknown> = {};
+
+    if (agentConfig?.config && typeof agentConfig.config === 'object' && !Array.isArray(agentConfig.config)) {
+      Object.assign(runtimeConfig, JSON.parse(JSON.stringify(agentConfig.config)));
+    }
+
+    if (agentConfig?.plan && typeof agentConfig.plan === 'object') {
+      runtimeConfig.plan = agentConfig.plan;
+    }
+
+    if (agentConfig?.pipelineConfig && typeof agentConfig.pipelineConfig === 'object') {
+      runtimeConfig.pipeline_config = agentConfig.pipelineConfig;
+    }
+
+    return runtimeConfig;
+  }
+
+  /**
+   * Validate required runtime config for specific agent types before deployment.
+   */
+  private validateRuntimeConfigForAgentType(
+    agentTypeSlug: string | null | undefined,
+    runtimeConfig: Record<string, unknown>,
+  ): void {
+    if (agentTypeSlug !== 'stella-v2-agent') {
+      return;
+    }
+
+    const pipelineConfig = runtimeConfig.pipeline_config;
+    if (!pipelineConfig || typeof pipelineConfig !== 'object' || Array.isArray(pipelineConfig)) {
+      throw new BadRequestException(
+        'Public STELLA V2 sessions require a pipeline configuration. Please set agentConfig.pipelineConfig before starting the session.',
+      );
+    }
   }
 
   /**
@@ -154,12 +208,9 @@ export class PublicProjectsService {
     }
 
     // Get agent config from JSON
-    const agentConfig = project.publicAgentConfig as {
-      name?: string;
-      icon?: string;
-      plan?: Record<string, unknown>;
-      envVarTemplateId?: string;
-    } | null;
+    const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
+    const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
+    this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
 
     // 2. Create a new session
     const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
@@ -176,8 +227,9 @@ export class PublicProjectsService {
         name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
         icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
         agentType: project.publicAgentType?.slug || 'stella-agent',
-        config: agentConfig?.plan ? { plan: agentConfig.plan } : {},
+        config: runtimeConfig,
         envVarTemplateId: agentConfig?.envVarTemplateId,
+        envVars: agentConfig?.envVars,
       },
       ownerId,
     );
@@ -225,12 +277,9 @@ export class PublicProjectsService {
     }
 
     // Get agent config for storing
-    const agentConfig = project.publicAgentConfig as {
-      name?: string;
-      icon?: string;
-      plan?: Record<string, unknown>;
-      envVarTemplateId?: string;
-    } | null;
+    const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
+    const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
+    this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
 
     // Prepare lastAgentConfig for on_demand spawning
     // Cast to Prisma InputJsonValue for JSON field storage
@@ -238,8 +287,10 @@ export class PublicProjectsService {
       name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
       icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
       agentType: project.publicAgentType?.slug || 'stella-agent',
-      agentConfig: agentConfig?.plan ? JSON.parse(JSON.stringify({ plan: agentConfig.plan })) : {},
+      // Persist a plain JSON object for webhook-driven on_demand spawning.
+      agentConfig: JSON.parse(JSON.stringify(runtimeConfig)),
       envVarTemplateId: agentConfig?.envVarTemplateId || null,
+      envVars: agentConfig?.envVars || {},
     };
 
     // Create session with on_demand mode - agent will be spawned when human joins
@@ -332,12 +383,9 @@ export class PublicProjectsService {
 
       } else {
         // Immediate mode: Deploy agent now (legacy behavior)
-        const agentConfig = project.publicAgentConfig as {
-          name?: string;
-          icon?: string;
-          plan?: Record<string, unknown>;
-          envVarTemplateId?: string;
-        } | null;
+        const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
+        const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
+        this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
 
         // Step 2: Deploy agent
         this.updateProgress(sessionId, 2, 'in_progress', 'Deploying agent...');
@@ -347,8 +395,9 @@ export class PublicProjectsService {
             name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
             icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
             agentType: project.publicAgentType?.slug || 'stella-agent',
-            config: agentConfig?.plan ? { plan: agentConfig.plan } : {},
+            config: runtimeConfig,
             envVarTemplateId: agentConfig?.envVarTemplateId,
+            envVars: agentConfig?.envVars,
           },
           ownerId,
         );

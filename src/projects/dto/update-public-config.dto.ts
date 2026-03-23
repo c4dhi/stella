@@ -28,8 +28,20 @@ export class PublicAgentConfigDto {
   plan?: Record<string, unknown>;
 
   @IsOptional()
+  @IsObject()
+  config?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsObject()
+  pipelineConfig?: Record<string, unknown>;
+
+  @IsOptional()
   @IsUUID()
   envVarTemplateId?: string;
+
+  @IsOptional()
+  @IsObject()
+  envVars?: Record<string, string>;
 }
 
 /**
