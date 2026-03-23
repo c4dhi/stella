@@ -8,6 +8,7 @@ const BLOCKED_KEYS = new Set([
   'DATABASE_URL', 'JWT_SECRET', 'password', 'secret', 'token', 'credential',
   '__proto__', 'constructor', 'prototype',
 ]);
+const BLOCKED_KEYS_NORMALIZED = new Set(Array.from(BLOCKED_KEYS).map((key) => key.toLowerCase()));
 
 const MAX_DEPTH = 5;
 const MAX_STRING_LENGTH = 10000;
@@ -36,8 +37,8 @@ export function sanitizeAgentConfig(config: Record<string, unknown>): Record<str
     for (const [key, value] of Object.entries(obj)) {
       if (keyCount >= MAX_KEYS) break;
 
-      // Skip blocked keys (case-insensitive)
-      if (BLOCKED_KEYS.has(key) || BLOCKED_KEYS.has(key.toLowerCase())) {
+      // Skip blocked keys (case-insensitive) to prevent secret leakage via key casing tricks.
+      if (BLOCKED_KEYS_NORMALIZED.has(key.toLowerCase())) {
         logger.warn(`Blocked key in agent config: ${key}`);
         continue;
       }
