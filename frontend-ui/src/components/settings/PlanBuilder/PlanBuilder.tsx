@@ -16,12 +16,30 @@ interface PlanBuilderProps {
   onContentChange?: () => void  // Called when content is modified
 }
 
+type PlanStateWithLegacyType = Omit<PlanState, 'type'> & {
+  type?: PlanState['type'] | 'loose'
+}
+
 const createEmptyState = (): PlanState => ({
   id: crypto.randomUUID(),
   title: '',
-  type: 'loose',
+  // Migration: UI now stores "flexible" instead of legacy "loose"
+  type: 'flexible',
   tasks: [],
 })
+
+const normalizeStateType = (type: unknown): PlanState['type'] => {
+  if (type === 'strict' || type === 'goal' || type === 'flexible') return type
+  if (type === 'loose') return 'flexible' // Backward compatibility for legacy plans
+  return 'flexible'
+}
+
+// Migration: normalize persisted/imported legacy state types for editor safety.
+const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[] =>
+  inputStates.map((state) => ({
+    ...state,
+    type: normalizeStateType(state.type),
+  }))
 
 const createEmptyTask = (): PlanTask => ({
   id: crypto.randomUUID(),
@@ -46,7 +64,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
-  const [states, setStates] = useState<PlanState[]>(template?.content.states || [])
+  const [states, setStates] = useState<PlanState[]>(
+    normalizePlanStates(template?.content.states || [])
+  )
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
   )
@@ -110,7 +130,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         if (!content.states || !Array.isArray(content.states)) {
           throw new Error('Invalid plan structure')
         }
-        setStates(content.states)
+        setStates(normalizePlanStates(content.states as PlanStateWithLegacyType[]))
         setSelectedStateIndex(content.states.length > 0 ? 0 : null)
         // Also import system_prompt if present
         if (content.system_prompt) {

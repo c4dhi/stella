@@ -388,7 +388,8 @@ const StateCard = memo(({ state, index, isCurrentState }: { state: StateItem; in
               ))}
             </>
           ) : (
-            // Strict/loose: render tasks normally
+            // Migration note: "loose" mode was renamed to "flexible"
+            // Strict/flexible: render tasks normally
             state.tasks.map((task) => (
               <TaskRow key={task.id} task={task} />
             ))

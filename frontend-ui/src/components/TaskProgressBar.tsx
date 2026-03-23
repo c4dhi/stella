@@ -83,7 +83,8 @@ export default function TaskProgressBar({
               ? 'bg-blue-600'
               : processingMode === StateType.GOAL
               ? 'bg-violet-600'
-              : processingMode === StateType.LOOSE
+              // Migration: renamed enum from StateType.LOOSE -> StateType.FLEXIBLE
+              : processingMode === StateType.FLEXIBLE
               ? 'bg-green-600'
               : 'bg-neutral-600'
           }`}
