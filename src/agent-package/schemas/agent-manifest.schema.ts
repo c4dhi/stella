@@ -1,5 +1,5 @@
 import * as yaml from 'js-yaml'
-import Ajv, { type ErrorObject } from 'ajv'
+import Ajv from 'ajv'
 import { z } from 'zod'
 import {
   MANIFEST_SCHEMA_VERSION,
@@ -16,8 +16,8 @@ const EXPERTS_CAPABILITY = 'experts'
 const EXPERT_CONFIG_PROPERTY_KEYS = ['experts', 'expert_overrides', 'experts_dir', 'custom_experts'] as const
 
 // Ajv validates that configSchema itself is a syntactically valid JSON Schema document.
-// `strictSchema: false` allows our custom x-stella-* keywords without registering each keyword.
-const ajv = new Ajv({ strictSchema: false, allErrors: true, validateSchema: true })
+// Cast to `any` keeps this compatible with mixed Ajv major versions in local dependency trees.
+const ajv = new Ajv({ allErrors: true, validateSchema: true } as any)
 
 const jsonPrimitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()])
 type JsonPrimitive = z.infer<typeof jsonPrimitiveSchema>
@@ -512,14 +512,18 @@ function parseCpuToMillicores(size: string): number {
 }
 
 function validateJsonSchemaObject(schema: unknown): string[] {
-  const valid = ajv.validateSchema(schema)
-  if (valid || !ajv.errors) return []
-  return ajv.errors.map(formatAjvSchemaError)
+  const valid = (ajv as any).validateSchema(schema as object)
+  const errors = ((ajv as any).errors ?? []) as unknown[]
+  if (valid || errors.length === 0) return []
+  return errors.map(formatAjvSchemaError)
 }
 
-function formatAjvSchemaError(error: ErrorObject): string {
-  const at = error.instancePath ? ` at ${error.instancePath}` : ''
-  return `${error.message || 'invalid JSON Schema'}${at}`
+function formatAjvSchemaError(error: unknown): string {
+  const issue = error as { message?: string; instancePath?: string; dataPath?: string }
+  // Ajv v8 uses instancePath while older versions use dataPath.
+  const path = issue.instancePath || issue.dataPath || ''
+  const at = path ? ` at ${path}` : ''
+  return `${issue.message || 'invalid JSON Schema'}${at}`
 }
 
 function configSchemaRequiresPlan(configSchema: Record<string, unknown>): boolean {

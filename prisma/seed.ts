@@ -163,6 +163,115 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
   }
 }
 
+function normalizeJsonForCompare(value: unknown): unknown {
+  if (value === null || value === undefined) return null
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonForCompare)
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => [k, normalizeJsonForCompare(v)])
+    return Object.fromEntries(entries)
+  }
+  return value
+}
+
+function normalizedString(value: unknown): string {
+  return JSON.stringify(normalizeJsonForCompare(value))
+}
+
+/**
+ * Post-seed round-trip verification:
+ * Re-read persisted AgentType rows and assert key mapped fields still match source manifests.
+ * This protects against silent drift in mapping logic or Prisma null/JSON serialization behavior.
+ */
+async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
+  const mismatches: string[] = []
+
+  for (const { manifest } of agents) {
+    const expected = mapManifestToDbFields(manifest)
+    const actual = await prisma.agentType.findUnique({
+      where: { slug: manifest.metadata.slug },
+      select: {
+        slug: true,
+        name: true,
+        description: true,
+        icon: true,
+        version: true,
+        authorName: true,
+        authorEmail: true,
+        tags: true,
+        capabilities: true,
+        dockerfilePath: true,
+        imageUrl: true,
+        resourceMemory: true,
+        resourceCpu: true,
+        resourceGpu: true,
+        configSchema: true,
+        defaultConfig: true,
+        pipelineSchema: true,
+        sdkMinVersion: true,
+      },
+    })
+
+    if (!actual) {
+      mismatches.push(`[${manifest.metadata.slug}] missing persisted AgentType record`)
+      continue
+    }
+
+    // Compare deterministic scalar and array fields.
+    const scalarChecks: Array<[field: string, expectedValue: unknown, actualValue: unknown]> = [
+      ['slug', expected.slug, actual.slug],
+      ['name', expected.name, actual.name],
+      ['description', expected.description, actual.description],
+      ['icon', expected.icon, actual.icon],
+      ['version', expected.version, actual.version],
+      ['authorName', expected.authorName, actual.authorName],
+      ['authorEmail', expected.authorEmail, actual.authorEmail],
+      ['dockerfilePath', expected.dockerfilePath, actual.dockerfilePath],
+      ['imageUrl', expected.imageUrl, actual.imageUrl],
+      ['resourceMemory', expected.resourceMemory, actual.resourceMemory],
+      ['resourceCpu', expected.resourceCpu, actual.resourceCpu],
+      ['resourceGpu', expected.resourceGpu, actual.resourceGpu],
+      ['sdkMinVersion', expected.sdkMinVersion, actual.sdkMinVersion],
+      ['capabilities', expected.capabilities, actual.capabilities],
+    ]
+
+    for (const [field, expectedValue, actualValue] of scalarChecks) {
+      if (normalizedString(expectedValue) !== normalizedString(actualValue)) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} mismatch (expected=${normalizedString(expectedValue)}, actual=${normalizedString(actualValue)})`,
+        )
+      }
+    }
+
+    // Compare JSON fields with null-safe canonicalization to avoid ordering/shape noise.
+    const jsonChecks: Array<[field: string, expectedValue: unknown, actualValue: unknown]> = [
+      ['tags', expected.tags, actual.tags],
+      ['configSchema', expected.configSchema, actual.configSchema],
+      ['defaultConfig', expected.defaultConfig, actual.defaultConfig],
+      ['pipelineSchema', expected.pipelineSchema, actual.pipelineSchema],
+    ]
+
+    for (const [field, expectedValue, actualValue] of jsonChecks) {
+      if (normalizedString(expectedValue) !== normalizedString(actualValue)) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} JSON mismatch (expected=${normalizedString(expectedValue)}, actual=${normalizedString(actualValue)})`,
+        )
+      }
+    }
+  }
+
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Post-seed round-trip verification failed:\n  - ${mismatches.join('\n  - ')}`,
+    )
+  }
+
+  console.log(`Round-trip verification passed for ${agents.length} agent types`)
+}
+
 async function main() {
   console.log('Seeding agent types from manifests...')
 
@@ -209,6 +318,8 @@ async function main() {
 
     console.log(`  - ${result.name} (${result.slug}) [${result.id}]`)
   }
+
+  await verifySeedRoundTrip(agents)
 
   console.log('Seeding complete!')
 }
