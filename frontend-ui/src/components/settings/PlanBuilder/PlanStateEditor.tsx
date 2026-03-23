@@ -107,13 +107,15 @@ export default function PlanStateEditor({
               }}
               className="input-field w-full max-w-xs"
             >
-              <option value="loose">Flexible (agent decides order)</option>
-              <option value="strict">Sequential (tasks in order)</option>
+              {/* Migration: value renamed from "loose" to "flexible" */}
+              <option value="flexible">Flexible (agent decides order)</option>
+              {/* Migration: value renamed from "strict" to "sequential" */}
+              <option value="sequential">Sequential (tasks in order)</option>
               <option value="goal">Goal-oriented (natural conversation)</option>
             </select>
             <p className={`text-caption mt-1.5 ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
-              {state.type === 'strict' && 'Tasks are completed one at a time in order. Best for games, tutorials, guided flows.'}
-              {state.type === 'loose' && 'Agent decides which task to address next. Best for surveys and intake forms.'}
+              {state.type === 'sequential' && 'Tasks are completed one at a time in order. Best for games, tutorials, guided flows.'}
+              {state.type === 'flexible' && 'Agent decides which task to address next. Best for surveys and intake forms.'}
               {state.type === 'goal' && 'Agent has a natural conversation toward the goal. Tasks are invisible — it sees information gaps instead.'}
             </p>
           </div>

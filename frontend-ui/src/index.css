@@ -183,6 +183,15 @@
            focus:border-primary-400 focus:ring-primary-400/20;
   }
 
+  /* Native checkbox accent override (avoid OS default accent colors) */
+  input[type="checkbox"] {
+    accent-color: #171717; /* neutral-900 for light mode */
+  }
+
+  body.dark input[type="checkbox"] {
+    accent-color: #6d28d9; /* primary-500 purple for dark mode */
+  }
+
   /* Card */
   .card {
     @apply bg-white rounded-xl border border-border shadow-sm;

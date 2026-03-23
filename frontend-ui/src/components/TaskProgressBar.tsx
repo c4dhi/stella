@@ -21,7 +21,8 @@ interface TaskProgressBarProps {
 }
 
 const ProcessingModeIndicator = ({ mode }: { mode: StateType }) => {
-  if (mode === StateType.STRICT) {
+  // Migration: renamed enum from StateType.STRICT -> StateType.SEQUENTIAL
+  if (mode === StateType.SEQUENTIAL) {
     return (
       <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700/50" title="Sequential Processing Mode">
         <span className="text-xs text-blue-600 dark:text-blue-400">⚡</span>
@@ -79,11 +80,12 @@ export default function TaskProgressBar({
         {/* Progress Fill */}
         <motion.div
           className={`h-full rounded-full ${
-            processingMode === StateType.STRICT
+            processingMode === StateType.SEQUENTIAL
               ? 'bg-blue-600'
               : processingMode === StateType.GOAL
               ? 'bg-violet-600'
-              : processingMode === StateType.LOOSE
+              // Migration: renamed enum from StateType.LOOSE -> StateType.FLEXIBLE
+              : processingMode === StateType.FLEXIBLE
               ? 'bg-green-600'
               : 'bg-neutral-600'
           }`}
