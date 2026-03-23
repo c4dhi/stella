@@ -42,7 +42,8 @@ interface StateListProps {
 }
 
 const ProcessingModeIcon = memo(({ type }: { type: StateType }) => {
-  if (type === StateType.STRICT) {
+  // Migration: renamed enum from StateType.STRICT -> StateType.SEQUENTIAL
+  if (type === StateType.SEQUENTIAL) {
     return (
       <div className="flex items-center gap-1" title="Sequential Processing">
         <span className="text-[10px] text-neutral-600 dark:text-neutral-400">⚡</span>

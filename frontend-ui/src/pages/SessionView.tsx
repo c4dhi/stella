@@ -492,14 +492,18 @@ export default function SessionView() {
         // Resolve state type from metadata (preserves 'goal') with execution_mode fallback
         const resolveStateType = (group: any): StateType => {
           const metaType = group.metadata?.state_type
+          // Migration compatibility: backend may still emit legacy "strict"
+          if (metaType === 'strict') {
+            return 'sequential' as StateType
+          }
           // Migration compatibility: backend may still emit legacy "loose"
           if (metaType === 'loose') {
             return 'flexible' as StateType
           }
-          if (metaType === 'goal' || metaType === 'strict' || metaType === 'flexible') {
+          if (metaType === 'goal' || metaType === 'sequential' || metaType === 'flexible') {
             return metaType as StateType
           }
-          return group.execution_mode === 'sequential' ? 'strict' as StateType : 'flexible' as StateType
+          return group.execution_mode === 'sequential' ? 'sequential' as StateType : 'flexible' as StateType
         }
 
         // Convert generic SDK ProgressState to TodoList format

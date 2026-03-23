@@ -603,12 +603,13 @@ export function isAgentRunning(agent: AgentInstance): boolean {
 
 /**
  * State execution mode (matches SDK StateType enum)
- * - strict: Sequential task processing - one task at a time
+ * - sequential: Sequential task processing - one task at a time
+ * - NOTE: Renamed from "strict" to "sequential" in UI/types (legacy "strict" still normalized at runtime)
  * - NOTE: Renamed from "loose" to "flexible" in UI/types (legacy "loose" still normalized at runtime)
  * - flexible: Flexible/parallel task processing - any order
  * - goal: Goal-oriented natural conversation - agent sees information gaps, not tasks
  */
-export type StateType = 'strict' | 'flexible' | 'goal'
+export type StateType = 'sequential' | 'flexible' | 'goal'
 
 /**
  * @deprecated Use StateType instead. Kept for backward compatibility.

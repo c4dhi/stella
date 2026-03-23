@@ -17,7 +17,7 @@ interface PlanBuilderProps {
 }
 
 type PlanStateWithLegacyType = Omit<PlanState, 'type'> & {
-  type?: PlanState['type'] | 'loose'
+  type?: PlanState['type'] | 'strict' | 'loose'
 }
 
 const createEmptyState = (): PlanState => ({
@@ -29,7 +29,8 @@ const createEmptyState = (): PlanState => ({
 })
 
 const normalizeStateType = (type: unknown): PlanState['type'] => {
-  if (type === 'strict' || type === 'goal' || type === 'flexible') return type
+  if (type === 'sequential' || type === 'goal' || type === 'flexible') return type
+  if (type === 'strict') return 'sequential' // Backward compatibility for legacy plans
   if (type === 'loose') return 'flexible' // Backward compatibility for legacy plans
   return 'flexible'
 }

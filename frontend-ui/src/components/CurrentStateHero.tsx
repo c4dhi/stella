@@ -22,7 +22,8 @@ interface CurrentStateHeroProps {
 }
 
 const ProcessingModeIndicator = ({ type }: { type: StateType }) => {
-  if (type === StateType.STRICT) {
+  // Migration: renamed enum from StateType.STRICT -> StateType.SEQUENTIAL
+  if (type === StateType.SEQUENTIAL) {
     return (
       <motion.div
         className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100 border border-blue-200"
@@ -205,7 +206,7 @@ export default function CurrentStateHero({ currentState, currentTask, processing
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-[10px] text-neutral-500 tracking-wider uppercase font-medium">
-                      {processingMode === StateType.STRICT ? 'Current Task' : processingMode === StateType.GOAL ? 'Objective' : 'Active Task'}
+                      {processingMode === StateType.SEQUENTIAL ? 'Current Task' : processingMode === StateType.GOAL ? 'Objective' : 'Active Task'}
                     </span>
                     {currentTask.required && (
                       <span className="text-[9px] text-red-500 font-medium">REQUIRED</span>
