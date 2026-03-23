@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as k8s from '@kubernetes/client-node';
 import { AgentImageService } from '../agent-image/agent-image.service';
 import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
+import { buildPodEnvVars, buildSecretStringData } from './utils/agent-config-injection.util';
 
 export interface AgentPodConfig {
   agentId: string;
@@ -248,61 +249,19 @@ export class KubernetesService {
                 },
               },
             ],
-            env: [
-              // Agent identity for gRPC registration
-              {
-                name: 'AGENT_ID',
-                value: config.agentId,
-              },
-              {
-                name: 'SESSION_ID',
-                value: config.sessionId,
-              },
-              {
-                name: 'AGENT_NAME',
-                value: config.agentName,
-              },
-              {
-                name: 'AGENT_ICON',
-                value: config.agentIcon,
-              },
-              {
-                name: 'AGENT_TYPE',
-                value: agentType,
-              },
-              // gRPC server address (configurable via GRPC_SERVER_ADDRESS env var)
-              {
-                name: 'GRPC_SERVER',
-                value: this.grpcServerAddress,
-              },
-              // Agent identity for LiveKit room joining
-              {
-                name: 'AGENT_IDENTITY',
-                value: `agent-${config.agentId}`,
-              },
-              // STT/TTS service addresses for direct agent communication
-              {
-                name: 'STT_SERVICE_ADDRESS',
-                value: this.configService.get<string>('STT_SERVICE_ADDRESS', 'stt-service:50051'),
-              },
-              {
-                name: 'TTS_SERVICE_ADDRESS',
-                value: this.configService.get<string>('TTS_SERVICE_ADDRESS', 'tts-service:50052'),
-              },
-              // State machine service address for tool-based state management
-              // Shares the same gRPC port as agent registration (both on 50051)
-              {
-                name: 'STATE_MACHINE_ADDRESS',
-                value: this.configService.get<string>('STATE_MACHINE_ADDRESS', 'session-management-server:50051'),
-              },
-              // Environment mode (for conditional gateway IP setup)
-              {
-                name: 'NODE_ENV',
-                value: process.env.NODE_ENV || 'local',
-              },
-              // API keys (OPENAI_API_KEY, ELEVENLABS_API_KEY, etc.) must be provided
-              // via user's env var template - no default fallback
-            ],
+            // Build deterministic env injection payload via shared utility (also used by tests).
+            env: buildPodEnvVars({
+              agentId: config.agentId,
+              sessionId: config.sessionId,
+              agentName: config.agentName,
+              agentIcon: config.agentIcon,
+              agentType,
+              grpcServerAddress: this.grpcServerAddress,
+              sttServiceAddress: this.configService.get<string>('STT_SERVICE_ADDRESS', 'stt-service:50051'),
+              ttsServiceAddress: this.configService.get<string>('TTS_SERVICE_ADDRESS', 'tts-service:50052'),
+              stateMachineAddress: this.configService.get<string>('STATE_MACHINE_ADDRESS', 'session-management-server:50051'),
+              nodeEnv: process.env.NODE_ENV || 'local',
+            }),
             resources: {
               requests: {
                 memory: '512Mi',
@@ -366,21 +325,17 @@ export class KubernetesService {
         },
       },
       type: 'Opaque',
-      stringData: {
-        // Agent-specific configuration
-        LIVEKIT_URL: config.livekitUrl,
-        LIVEKIT_API_KEY: config.livekitApiKey,
-        LIVEKIT_API_SECRET: config.livekitApiSecret,
-        ROOM_NAME: config.roomName,
-        IDENTITY: `agent-${config.agentId}`,
-        TTS_PROVIDER: config.ttsProvider,
-        // API keys (OPENAI_API_KEY, ELEVENLABS_API_KEY, etc.) come from customEnvVars below
-        // Agent-specific config as JSON string (each agent interprets as needed)
-        // Frontend and agents now use canonical SDK format (no transformation needed)
-        AGENT_CONFIG: JSON.stringify(config.agentConfig || {}),
-        // Custom environment variables from user's env var template (decrypted)
-        ...customEnvVars,
-      },
+      // Shared utility ensures test and runtime payload generation stay aligned.
+      stringData: buildSecretStringData({
+        agentId: config.agentId,
+        livekitUrl: config.livekitUrl,
+        livekitApiKey: config.livekitApiKey,
+        livekitApiSecret: config.livekitApiSecret,
+        roomName: config.roomName,
+        ttsProvider: config.ttsProvider,
+        agentConfig: config.agentConfig || {},
+        customEnvVars,
+      }),
     };
 
     try {
