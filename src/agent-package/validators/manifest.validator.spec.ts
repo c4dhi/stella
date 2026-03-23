@@ -298,6 +298,73 @@ configSchema:
     expect(result.valid).toBe(true)
   })
 
+  it('rejects experts capability when configSchema does not expose expert config', () => {
+    // Cross-field rule: experts capability must be backed by explicit expert-related config inputs.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Experts Missing Config Agent"
+  slug: "experts-missing-config-agent"
+  version: "1.0.0"
+  description: "Experts capability but no expert config"
+capabilities: ["voice", "experts"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    llm:
+      type: object
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('capabilities includes "experts"')
+  })
+
+  it('accepts experts capability when configSchema exposes expert config', () => {
+    // Positive case: known expert-related config key is present.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Experts Config Agent"
+  slug: "experts-config-agent"
+  version: "1.0.0"
+  description: "Experts capability with expert config"
+capabilities: ["experts", "voice"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    expert_overrides:
+      type: object
+`)
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('does not require expert config when experts capability is absent', () => {
+    // Rule should only trigger for expert-capable manifests.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "No Experts Capability Agent"
+  slug: "no-experts-capability-agent"
+  version: "1.0.0"
+  description: "No experts capability"
+capabilities: ["voice"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    llm:
+      type: object
+`)
+
+    expect(result.valid).toBe(true)
+  })
+
   it('keeps compatibility warnings as warnings', () => {
     // Compatibility/deprecation scenarios should not block parsing when structure is valid.
     const result = validator.validate(`

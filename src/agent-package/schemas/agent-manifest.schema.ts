@@ -12,6 +12,8 @@ const VALID_CAPABILITIES = ['voice', 'text', 'progress', 'plans', 'experts'] as 
 const VALID_SLOT_TYPES = ['text', 'number', 'select', 'string_list', 'key_value', 'expert_list'] as const
 const ENV_VAR_NAME_REGEX = /^[A-Z][A-Z0-9_]*$/
 const PLAN_CAPABILITY = 'plans'
+const EXPERTS_CAPABILITY = 'experts'
+const EXPERT_CONFIG_PROPERTY_KEYS = ['experts', 'expert_overrides', 'experts_dir', 'custom_experts'] as const
 
 // Ajv validates that configSchema itself is a syntactically valid JSON Schema document.
 // `strictSchema: false` allows our custom x-stella-* keywords without registering each keyword.
@@ -440,6 +442,20 @@ export function parseAgentManifestYaml(content: string): ManifestSchemaParseResu
     }
   }
 
+  // Cross-field constraint: expert-capable agents must expose at least one expert config input.
+  if (
+    hasCapability(manifest.capabilities, EXPERTS_CAPABILITY) &&
+    !configSchemaSupportsExperts(manifest.configSchema)
+  ) {
+    return {
+      valid: false,
+      errors: [
+        'capabilities includes "experts" but configSchema does not expose expert configuration',
+      ],
+      warnings: [],
+    }
+  }
+
   // Non-fatal compatibility warnings are intentionally separate from structural validation.
   if (manifest.version !== MANIFEST_SCHEMA_VERSION) {
     warnings.push(`Manifest version ${manifest.version} may not be fully supported`)
@@ -550,4 +566,32 @@ function configSchemaRequiresPlan(configSchema: Record<string, unknown>): boolea
   }
 
   return false
+}
+
+function hasCapability(capabilities: string[] | undefined, capability: string): boolean {
+  return (capabilities ?? []).includes(capability)
+}
+
+function configSchemaSupportsExperts(configSchema: Record<string, unknown> | undefined): boolean {
+  if (!configSchema) {
+    return false
+  }
+
+  const properties = configSchema.properties
+  if (!properties || typeof properties !== 'object') {
+    return false
+  }
+
+  const propertyMap = properties as Record<string, unknown>
+
+  // Explicit well-known expert config keys.
+  if (EXPERT_CONFIG_PROPERTY_KEYS.some((key) => key in propertyMap)) {
+    return true
+  }
+
+  // Extension-based marker for future schemas.
+  return Object.values(propertyMap).some((value) => {
+    if (!value || typeof value !== 'object') return false
+    return (value as Record<string, unknown>)['x-stella-expert-config'] === true
+  })
 }
