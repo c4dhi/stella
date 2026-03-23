@@ -822,7 +822,10 @@ export interface PublicAgentConfig {
   name: string
   icon?: string
   plan?: Record<string, unknown>
+  config?: Record<string, unknown>
+  pipelineConfig?: Record<string, unknown>
   envVarTemplateId?: string
+  envVars?: Record<string, string>
 }
 
 /**
