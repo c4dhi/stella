@@ -101,6 +101,49 @@ const pipelineSlotSchema = z
         path: ['options'],
       })
     }
+
+    // Keep numeric constraints coherent for number slots.
+    if (slot.min !== undefined && slot.max !== undefined && slot.min > slot.max) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'number slots must satisfy min <= max',
+        path: ['min'],
+      })
+    }
+
+    if (slot.step !== undefined && slot.step <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'step must be > 0',
+        path: ['step'],
+      })
+    }
+
+    // Enforce type-aware numeric defaults so runtime can safely cast/compare values.
+    if (slot.type === 'number' && slot.default !== undefined) {
+      if (typeof slot.default !== 'number') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'number slot default must be a number',
+          path: ['default'],
+        })
+      } else {
+        if (slot.min !== undefined && slot.default < slot.min) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'number slot default must be >= min',
+            path: ['default'],
+          })
+        }
+        if (slot.max !== undefined && slot.default > slot.max) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'number slot default must be <= max',
+            path: ['default'],
+          })
+        }
+      }
+    }
   })
   .passthrough()
 
@@ -137,11 +180,93 @@ const pipelineThresholdSchema = z
   })
   .passthrough()
 
-const pipelineSchemaSchema = z.object({
-  nodes: z.array(pipelineNodeSchema),
-  edges: z.array(pipelineEdgeSchema),
-  thresholds: z.array(pipelineThresholdSchema),
-})
+const pipelineSchemaSchema = z
+  .object({
+    nodes: z.array(pipelineNodeSchema),
+    edges: z.array(pipelineEdgeSchema),
+    thresholds: z.array(pipelineThresholdSchema),
+  })
+  .superRefine((pipelineSchema, ctx) => {
+    const nodeIdSet = new Set<string>()
+    const thresholdIdSet = new Set<string>()
+
+    // Node IDs must be unique for deterministic edge/config resolution.
+    for (const [index, node] of pipelineSchema.nodes.entries()) {
+      if (nodeIdSet.has(node.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nodes', index, 'id'],
+          message: `duplicate node id: ${node.id}`,
+        })
+      } else {
+        nodeIdSet.add(node.id)
+      }
+    }
+
+    // Every edge must point to known nodes so topology is always valid.
+    for (const [index, edge] of pipelineSchema.edges.entries()) {
+      if (!nodeIdSet.has(edge.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['edges', index, 'source'],
+          message: `edge source references unknown node id: ${edge.source}`,
+        })
+      }
+      if (!nodeIdSet.has(edge.target)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['edges', index, 'target'],
+          message: `edge target references unknown node id: ${edge.target}`,
+        })
+      }
+    }
+
+    // Threshold IDs and numeric ranges must be coherent.
+    for (const [index, threshold] of pipelineSchema.thresholds.entries()) {
+      if (thresholdIdSet.has(threshold.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['thresholds', index, 'id'],
+          message: `duplicate threshold id: ${threshold.id}`,
+        })
+      } else {
+        thresholdIdSet.add(threshold.id)
+      }
+
+      if (threshold.min !== undefined && threshold.max !== undefined && threshold.min > threshold.max) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['thresholds', index, 'min'],
+          message: 'threshold must satisfy min <= max',
+        })
+      }
+
+      if (threshold.step !== undefined && threshold.step <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['thresholds', index, 'step'],
+          message: 'threshold step must be > 0',
+        })
+      }
+
+      if (threshold.default !== undefined) {
+        if (threshold.min !== undefined && threshold.default < threshold.min) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['thresholds', index, 'default'],
+            message: 'threshold default must be >= min',
+          })
+        }
+        if (threshold.max !== undefined && threshold.default > threshold.max) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['thresholds', index, 'default'],
+            message: 'threshold default must be <= max',
+          })
+        }
+      }
+    }
+  })
 
 const resourcesSchema = z.object({
   memory: z

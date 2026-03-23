@@ -8,6 +8,7 @@ describe('ManifestValidator', () => {
   })
 
   it('validates a manifest with config schema extensions and pipeline schema', () => {
+    // Happy path: manifest includes required core fields plus x-stella extensions and pipeline schema.
     const result = validator.validate(`
 version: "1.0"
 metadata:
@@ -68,6 +69,7 @@ sdk:
   })
 
   it('rejects invalid x-stella optional env var names', () => {
+    // Env var names are intentionally strict (UPPER_SNAKE_CASE) to match deployment conventions.
     const result = validator.validate(`
 version: "1.0"
 metadata:
@@ -88,6 +90,7 @@ configSchema:
   })
 
   it('rejects select slots without options in pipeline schema', () => {
+    // Select slots must be self-contained; missing options would break frontend/runtime rendering.
     const result = validator.validate(`
 version: "1.0"
 metadata:
@@ -114,7 +117,119 @@ pipelineSchema:
     expect(result.errors.join('\n')).toContain('select slots must define a non-empty options array')
   })
 
+  it('rejects edges that reference unknown node IDs', () => {
+    // Topology integrity: every edge endpoint must refer to a declared node id.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Edge Agent"
+  slug: "bad-edge-agent"
+  version: "1.0.0"
+  description: "Bad edge"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes:
+    - id: input_gate
+      label: "Input Gate"
+      position: { row: 0, col: 0 }
+      slots: []
+  edges:
+    - source: input_gate
+      target: missing_node
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('edge target references unknown node id: missing_node')
+  })
+
+  it('rejects duplicate node IDs in pipeline schema', () => {
+    // Node IDs are map keys at runtime, so duplicates must be rejected early.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Duplicate Node Agent"
+  slug: "duplicate-node-agent"
+  version: "1.0.0"
+  description: "Duplicate node ids"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes:
+    - id: shared_node
+      label: "Node A"
+      position: { row: 0, col: 0 }
+      slots: []
+    - id: shared_node
+      label: "Node B"
+      position: { row: 0, col: 1 }
+      slots: []
+  edges: []
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('duplicate node id: shared_node')
+  })
+
+  it('rejects thresholds with invalid min/max', () => {
+    // Numeric threshold ranges must be coherent before they are exposed in configurators.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Threshold Agent"
+  slug: "bad-threshold-agent"
+  version: "1.0.0"
+  description: "Bad threshold bounds"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes: []
+  edges: []
+  thresholds:
+    - id: confidence
+      label: "Confidence"
+      type: number
+      min: 10
+      max: 1
+      step: 0.1
+      default: 0.5
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('threshold must satisfy min <= max')
+  })
+
+  it('rejects threshold defaults outside range', () => {
+    // Default values are validated against declared bounds to avoid invalid initial UI state.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Threshold Default Agent"
+  slug: "bad-threshold-default-agent"
+  version: "1.0.0"
+  description: "Bad threshold default"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes: []
+  edges: []
+  thresholds:
+    - id: confidence
+      label: "Confidence"
+      type: number
+      min: 0
+      max: 1
+      default: 2
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('threshold default must be <= max')
+  })
+
   it('keeps compatibility warnings as warnings', () => {
+    // Compatibility/deprecation scenarios should not block parsing when structure is valid.
     const result = validator.validate(`
 version: "2.0"
 metadata:
