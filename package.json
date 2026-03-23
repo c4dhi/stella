@@ -27,11 +27,11 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "fix-room-urls": "ts-node scripts/fix-room-urls.ts",
     "bootstrap:admin": "ts-node scripts/bootstrap-initial-admin.ts",
-    "db:seed": "npx tsc prisma/seed.ts --outDir prisma --esModuleInterop --resolveJsonModule --module nodenext --moduleResolution nodenext --target ES2023 --skipLibCheck && node prisma/seed.js",
-    "db:seed:run": "node prisma/seed.js"
+    "db:seed": "npx tsc prisma/seed.ts --outDir prisma --esModuleInterop --resolveJsonModule --module nodenext --moduleResolution nodenext --target ES2023 --skipLibCheck && node prisma/prisma/seed.js",
+    "db:seed:run": "node prisma/prisma/seed.js"
   },
   "prisma": {
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/prisma/seed.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",
@@ -66,13 +66,14 @@
     "socket.io": "^4.8.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
     "@nestjs/cli": "^11.0.16",
-    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/schematics": "^11.0.9",
     "@nestjs/testing": "^11.0.1",
     "@types/adm-zip": "^0.5.7",
     "@types/bcrypt": "^6.0.0",

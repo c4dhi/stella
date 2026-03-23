@@ -1,141 +1,58 @@
-import { PrismaClient, AgentValidationStatus, Prisma } from '@prisma/client'
+import { PrismaClient, Prisma } from '@prisma/client'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
+import * as dotenv from 'dotenv'
+import { parseAgentManifestYaml, type CanonicalAgentManifest } from '../src/agent-package/schemas/agent-manifest.schema'
+
+function resolveWorkspaceRoot(): string {
+  if (process.env.AGENT_WORKSPACE_ROOT) {
+    return process.env.AGENT_WORKSPACE_ROOT
+  }
+
+  // Support both compile layouts:
+  // - prisma/seed.js            -> __dirname ends with /prisma
+  // - prisma/prisma/seed.js     -> __dirname ends with /prisma/prisma
+  const candidates = [
+    path.resolve(__dirname, '..'),
+    path.resolve(__dirname, '..', '..'),
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'agents'))) {
+      return candidate
+    }
+  }
+
+  // Fall back to previous behavior for consistent error messaging downstream.
+  return path.resolve(__dirname, '..')
+}
+
+function loadSeedEnv(): void {
+  const workspaceRoot = resolveWorkspaceRoot()
+  const envPath = path.join(workspaceRoot, '.env')
+  const envLocalPath = path.join(workspaceRoot, '.env.local')
+
+  // Load .env first, then .env.local to allow local overrides.
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath })
+  }
+  if (fs.existsSync(envLocalPath)) {
+    dotenv.config({ path: envLocalPath, override: true })
+  }
+}
+
+loadSeedEnv()
 
 const prisma = new PrismaClient()
 
 // Directories to skip when scanning for agents
 const SKIP_DIRS = ['stella-ai-agent-sdk']
 
-// Validation constants (matching src/agent-package/agent-manifest.types.ts)
-const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/
-const VERSION_REGEX = /^\d+\.\d+\.\d+$/
-
-interface AgentManifest {
-  version: string
-  metadata: {
-    name: string
-    slug: string
-    version: string
-    description: string
-    author?: { name: string; email?: string }
-    icon?: string
-    tags?: string[]
-  }
-  capabilities?: string[]
-  image: {
-    dockerfile?: string
-    imageUrl?: string
-  }
-  resources?: {
-    memory?: { request?: string; limit?: string }
-    cpu?: { request?: string; limit?: string }
-    gpu?: boolean
-  }
-  configSchema?: Record<string, unknown>
-  defaultConfig?: Record<string, unknown>
-  pipelineSchema?: Record<string, unknown>
-  sdk?: { minVersion?: string }
-}
-
-interface ManifestValidationResult {
-  valid: boolean
-  errors: string[]
-  warnings: string[]
-  manifest?: AgentManifest
-}
+type AgentManifest = CanonicalAgentManifest
 
 interface BuiltinAgentInfo {
   manifest: AgentManifest
   directoryPath: string
-}
-
-/**
- * Validate an agent.yaml manifest.
- * Simplified version of ManifestValidator for standalone use.
- */
-function validateManifest(content: string): ManifestValidationResult {
-  const errors: string[] = []
-  const warnings: string[] = []
-
-  let manifest: AgentManifest
-  try {
-    manifest = yaml.load(content) as AgentManifest
-  } catch (error) {
-    return {
-      valid: false,
-      errors: [`Invalid YAML: ${(error as Error).message}`],
-      warnings: [],
-    }
-  }
-
-  if (!manifest || typeof manifest !== 'object') {
-    return {
-      valid: false,
-      errors: ['Manifest must be a valid YAML object'],
-      warnings: [],
-    }
-  }
-
-  // Validate version
-  if (!manifest.version) {
-    errors.push('Missing required field: version')
-  } else if (manifest.version !== '1.0') {
-    warnings.push(`Manifest version ${manifest.version} may not be fully supported`)
-  }
-
-  // Validate metadata
-  if (!manifest.metadata) {
-    errors.push('Missing required field: metadata')
-  } else {
-    if (!manifest.metadata.name) {
-      errors.push('Missing required field: metadata.name')
-    }
-    if (!manifest.metadata.slug) {
-      errors.push('Missing required field: metadata.slug')
-    } else if (!SLUG_REGEX.test(manifest.metadata.slug)) {
-      errors.push('Invalid slug: must start with a letter, contain only lowercase letters, numbers, and hyphens')
-    }
-    if (!manifest.metadata.version) {
-      errors.push('Missing required field: metadata.version')
-    } else if (!VERSION_REGEX.test(manifest.metadata.version)) {
-      errors.push('Invalid version format: must be semantic version (e.g., 1.0.0)')
-    }
-    if (!manifest.metadata.description) {
-      errors.push('Missing required field: metadata.description')
-    }
-  }
-
-  // Validate image configuration
-  if (!manifest.image) {
-    errors.push('Missing required field: image')
-  } else {
-    if (!manifest.image.dockerfile && !manifest.image.imageUrl) {
-      errors.push('Must specify either image.dockerfile or image.imageUrl')
-    }
-  }
-
-  // Validate capabilities
-  if (manifest.capabilities) {
-    if (!Array.isArray(manifest.capabilities)) {
-      errors.push('capabilities must be an array')
-    } else {
-      const validCapabilities = ['voice', 'text', 'progress', 'plans', 'experts']
-      for (const cap of manifest.capabilities) {
-        if (!validCapabilities.includes(cap)) {
-          warnings.push(`Unknown capability: ${cap}`)
-        }
-      }
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-    manifest: errors.length === 0 ? manifest : undefined,
-  }
 }
 
 /**
@@ -146,9 +63,7 @@ function validateManifest(content: string): ManifestValidationResult {
  * - Local dev: Uses relative path from prisma/ to agents/
  */
 function discoverBuiltinAgents(): BuiltinAgentInfo[] {
-  // In K8s, the project is mounted at AGENT_WORKSPACE_ROOT
-  // Locally, resolve relative to this file
-  const workspaceRoot = process.env.AGENT_WORKSPACE_ROOT || path.resolve(__dirname, '..')
+  const workspaceRoot = resolveWorkspaceRoot()
   const agentsDir = path.join(workspaceRoot, 'agents')
 
   if (!fs.existsSync(agentsDir)) {
@@ -178,9 +93,9 @@ function discoverBuiltinAgents(): BuiltinAgentInfo[] {
       )
     }
 
-    // Read and validate manifest
+    // Seed uses the same parser as package upload/runtime validation to avoid drift.
     const content = fs.readFileSync(manifestPath, 'utf-8')
-    const validation = validateManifest(content)
+    const validation = parseAgentManifestYaml(content)
 
     if (!validation.valid) {
       throw new Error(
@@ -240,6 +155,7 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
     resourceMemory: manifest.resources?.memory?.limit || '512Mi',
     resourceCpu: manifest.resources?.cpu?.limit || '250m',
     resourceGpu: manifest.resources?.gpu || false,
+    // Preserve null semantics expected by existing DB readers.
     configSchema: manifest.configSchema ? (manifest.configSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     defaultConfig: manifest.defaultConfig ? (manifest.defaultConfig as Prisma.InputJsonValue) : Prisma.JsonNull,
     pipelineSchema: manifest.pipelineSchema ? (manifest.pipelineSchema as Prisma.InputJsonValue) : Prisma.DbNull,
@@ -286,7 +202,8 @@ async function main() {
       create: {
         ...dbFields,
         isBuiltIn: true,
-        validationStatus: AgentValidationStatus.APPROVED,
+        // Use literal to avoid hard dependency on generated enum export names.
+        validationStatus: 'APPROVED',
       },
     })
 
