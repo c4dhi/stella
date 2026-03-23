@@ -1,4 +1,5 @@
 import * as yaml from 'js-yaml'
+import Ajv, { type ErrorObject } from 'ajv'
 import { z } from 'zod'
 import {
   MANIFEST_SCHEMA_VERSION,
@@ -10,6 +11,11 @@ import {
 const VALID_CAPABILITIES = ['voice', 'text', 'progress', 'plans', 'experts'] as const
 const VALID_SLOT_TYPES = ['text', 'number', 'select', 'string_list', 'key_value', 'expert_list'] as const
 const ENV_VAR_NAME_REGEX = /^[A-Z][A-Z0-9_]*$/
+const PLAN_CAPABILITY = 'plans'
+
+// Ajv validates that configSchema itself is a syntactically valid JSON Schema document.
+// `strictSchema: false` allows our custom x-stella-* keywords without registering each keyword.
+const ajv = new Ajv({ strictSchema: false, allErrors: true, validateSchema: true })
 
 const jsonPrimitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()])
 type JsonPrimitive = z.infer<typeof jsonPrimitiveSchema>
@@ -405,6 +411,35 @@ export function parseAgentManifestYaml(content: string): ManifestSchemaParseResu
   const warnings: string[] = []
   const manifest = parsed.data
 
+  // Validate that configSchema is itself a valid JSON Schema document.
+  // This catches keyword-level mistakes that are outside our Zod manifest shape checks.
+  if (manifest.configSchema) {
+    const schemaErrors = validateJsonSchemaObject(manifest.configSchema)
+    if (schemaErrors.length > 0) {
+      return {
+        valid: false,
+        errors: schemaErrors.map((error) => `configSchema: ${error}`),
+        warnings: [],
+      }
+    }
+  }
+
+  // Enforce feature consistency: if config schema marks any field as requiring a plan,
+  // the agent must advertise the `plans` capability.
+  if (
+    manifest.configSchema &&
+    configSchemaRequiresPlan(manifest.configSchema) &&
+    !(manifest.capabilities ?? []).includes(PLAN_CAPABILITY)
+  ) {
+    return {
+      valid: false,
+      errors: [
+        'configSchema sets x-stella-requires-plan=true but capabilities does not include "plans"',
+      ],
+      warnings: [],
+    }
+  }
+
   // Non-fatal compatibility warnings are intentionally separate from structural validation.
   if (manifest.version !== MANIFEST_SCHEMA_VERSION) {
     warnings.push(`Manifest version ${manifest.version} may not be fully supported`)
@@ -458,4 +493,61 @@ function parseCpuToMillicores(size: string): number {
     return parseInt(size.slice(0, -1), 10)
   }
   return parseInt(size, 10) * 1000
+}
+
+function validateJsonSchemaObject(schema: unknown): string[] {
+  const valid = ajv.validateSchema(schema)
+  if (valid || !ajv.errors) return []
+  return ajv.errors.map(formatAjvSchemaError)
+}
+
+function formatAjvSchemaError(error: ErrorObject): string {
+  const at = error.instancePath ? ` at ${error.instancePath}` : ''
+  return `${error.message || 'invalid JSON Schema'}${at}`
+}
+
+function configSchemaRequiresPlan(configSchema: Record<string, unknown>): boolean {
+  const queue: unknown[] = [configSchema]
+
+  // Breadth-first walk through schema objects to find any x-stella-requires-plan markers.
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || typeof current !== 'object') {
+      continue
+    }
+
+    const node = current as Record<string, unknown>
+    if (node['x-stella-requires-plan'] === true) {
+      return true
+    }
+
+    if (node.properties && typeof node.properties === 'object') {
+      queue.push(...Object.values(node.properties as Record<string, unknown>))
+    }
+
+    if (node.items) {
+      queue.push(node.items)
+    }
+
+    if (Array.isArray(node.allOf)) {
+      queue.push(...node.allOf)
+    }
+    if (Array.isArray(node.anyOf)) {
+      queue.push(...node.anyOf)
+    }
+    if (Array.isArray(node.oneOf)) {
+      queue.push(...node.oneOf)
+    }
+    if (node.not) {
+      queue.push(node.not)
+    }
+    if (node.then) {
+      queue.push(node.then)
+    }
+    if (node.else) {
+      queue.push(node.else)
+    }
+  }
+
+  return false
 }

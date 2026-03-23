@@ -20,7 +20,7 @@ metadata:
     name: "Tester"
     email: "tester@example.com"
   tags: ["voice", "test"]
-capabilities: ["voice", "text"]
+capabilities: ["voice", "text", "plans"]
 image:
   dockerfile: "Dockerfile"
 resources:
@@ -226,6 +226,76 @@ pipelineSchema:
 
     expect(result.valid).toBe(false)
     expect(result.errors.join('\n')).toContain('threshold default must be <= max')
+  })
+
+  it('rejects configSchema when it is not valid JSON Schema', () => {
+    // Ajv-level check: keyword values must follow JSON Schema spec types.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Config Schema Agent"
+  slug: "bad-config-schema-agent"
+  version: "1.0.0"
+  description: "Invalid JSON Schema keyword value"
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    confidence:
+      type: number
+      exclusiveMinimum: "high"
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('configSchema:')
+  })
+
+  it('rejects x-stella-requires-plan when plans capability is missing', () => {
+    // Capability consistency: requires-plan metadata must match advertised capabilities.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Missing Plans Capability Agent"
+  slug: "missing-plans-capability-agent"
+  version: "1.0.0"
+  description: "Plan required but capability missing"
+capabilities: ["voice", "text"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    plan:
+      type: object
+      x-stella-requires-plan: true
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('capabilities does not include "plans"')
+  })
+
+  it('accepts x-stella-requires-plan when plans capability is present', () => {
+    // Positive case for plan requirement consistency.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Plans Capability Agent"
+  slug: "plans-capability-agent"
+  version: "1.0.0"
+  description: "Plan requirement and capability aligned"
+capabilities: ["voice", "plans"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  properties:
+    plan:
+      type: object
+      x-stella-requires-plan: true
+`)
+
+    expect(result.valid).toBe(true)
   })
 
   it('keeps compatibility warnings as warnings', () => {
