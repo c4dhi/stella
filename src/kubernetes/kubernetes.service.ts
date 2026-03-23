@@ -4,6 +4,12 @@ import * as k8s from '@kubernetes/client-node';
 import { AgentImageService } from '../agent-image/agent-image.service';
 import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 import { buildPodEnvVars, buildSecretStringData } from './utils/agent-config-injection.util';
+import {
+  clampCpuLimit,
+  clampMemoryLimit,
+  DEFAULT_CPU_LIMIT,
+  DEFAULT_MEMORY_LIMIT,
+} from './utils/resource-clamping.util';
 
 export interface AgentPodConfig {
   agentId: string;
@@ -113,79 +119,29 @@ export class KubernetesService {
     };
   }
 
-  /**
-   * Parse a K8s CPU resource string (e.g., "250m", "2000m") to millicores.
-   * Returns null if the format is invalid.
-   */
-  private parseCpuMillicores(value: string): number | null {
-    const match = value.match(/^(\d+)(m?)$/);
-    if (!match) return null;
-    const num = parseInt(match[1], 10);
-    return match[2] === 'm' ? num : num * 1000;
-  }
-
-  /**
-   * Parse a K8s memory resource string (e.g., "512Mi", "2Gi") to bytes.
-   * Returns null if the format is invalid.
-   */
-  private parseMemoryBytes(value: string): number | null {
-    const match = value.match(/^(\d+)(Ki|Mi|Gi)?$/);
-    if (!match) return null;
-    const num = parseInt(match[1], 10);
-    switch (match[2]) {
-      case 'Gi': return num * 1024 * 1024 * 1024;
-      case 'Mi': return num * 1024 * 1024;
-      case 'Ki': return num * 1024;
-      default:   return num;
-    }
-  }
-
-  // Maximum resource limits per agent pod (security guardrails)
-  private static readonly MAX_CPU_MILLICORES = 2000;   // 2 cores
-  private static readonly MAX_MEMORY_BYTES = 4 * 1024 * 1024 * 1024; // 4Gi
-  private static readonly DEFAULT_CPU_LIMIT = '2000m';
-  private static readonly DEFAULT_MEMORY_LIMIT = '2Gi';
-
-  /**
-   * Validate and clamp a resource limit to ensure it doesn't exceed maximums.
-   * Returns the clamped value or a safe default if the input is invalid.
-   */
-  private clampResourceLimit(
-    value: string | undefined,
-    defaultValue: string,
-    maxValue: number,
-    parser: (v: string) => number | null,
-  ): string {
-    if (!value) return defaultValue;
-    const parsed = parser(value);
-    if (parsed === null) {
-      this.logger.warn(`Invalid resource limit "${value}", using default "${defaultValue}"`);
-      return defaultValue;
-    }
-    if (parsed > maxValue) {
-      this.logger.warn(`Resource limit "${value}" exceeds maximum, clamping to default "${defaultValue}"`);
-      return defaultValue;
-    }
-    return value;
-  }
-
   async createAgentPod(config: AgentPodConfig): Promise<{ podName: string; secretName: string }> {
     const podName = `agent-${config.agentId}`;
     const secretName = `agent-secret-${config.agentId}`;
 
     // Validate and clamp resource limits (security guardrails)
-    const cpuLimit = this.clampResourceLimit(
-      config.resourceCpuLimit,
-      KubernetesService.DEFAULT_CPU_LIMIT,
-      KubernetesService.MAX_CPU_MILLICORES,
-      this.parseCpuMillicores,
-    );
-    const memoryLimit = this.clampResourceLimit(
-      config.resourceMemoryLimit,
-      KubernetesService.DEFAULT_MEMORY_LIMIT,
-      KubernetesService.MAX_MEMORY_BYTES,
-      this.parseMemoryBytes,
-    );
+    const clampedCpu = clampCpuLimit(config.resourceCpuLimit);
+    const clampedMemory = clampMemoryLimit(config.resourceMemoryLimit);
+
+    // Keep logs explicit about why a caller-provided limit was not used.
+    if (clampedCpu.reason === 'invalid') {
+      this.logger.warn(`Invalid resource limit "${config.resourceCpuLimit}", using default "${DEFAULT_CPU_LIMIT}"`);
+    } else if (clampedCpu.reason === 'exceeds_max') {
+      this.logger.warn(`Resource limit "${config.resourceCpuLimit}" exceeds maximum, clamping to default "${DEFAULT_CPU_LIMIT}"`);
+    }
+
+    if (clampedMemory.reason === 'invalid') {
+      this.logger.warn(`Invalid resource limit "${config.resourceMemoryLimit}", using default "${DEFAULT_MEMORY_LIMIT}"`);
+    } else if (clampedMemory.reason === 'exceeds_max') {
+      this.logger.warn(`Resource limit "${config.resourceMemoryLimit}" exceeds maximum, clamping to default "${DEFAULT_MEMORY_LIMIT}"`);
+    }
+
+    const cpuLimit = clampedCpu.value;
+    const memoryLimit = clampedMemory.value;
 
     // Determine agent type (default to stella-agent)
     const agentType = config.agentType || this.defaultAgentType;
