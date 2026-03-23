@@ -181,6 +181,16 @@ function normalizedString(value: unknown): string {
   return JSON.stringify(normalizeJsonForCompare(value))
 }
 
+function preview(value: unknown, max = 240): string {
+  const serialized = normalizedString(value)
+  if (serialized.length <= max) return serialized
+  return `${serialized.slice(0, max)}...<truncated ${serialized.length - max} chars>`
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 /**
  * Post-seed round-trip verification:
  * Re-read persisted AgentType rows and assert key mapped fields still match source manifests.
@@ -220,7 +230,7 @@ async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
       continue
     }
 
-    // Compare deterministic scalar and array fields.
+    // Compare deterministic scalar and array fields (including resource limits and capabilities).
     const scalarChecks: Array<[field: string, expectedValue: unknown, actualValue: unknown]> = [
       ['slug', expected.slug, actual.slug],
       ['name', expected.name, actual.name],
@@ -241,8 +251,38 @@ async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
     for (const [field, expectedValue, actualValue] of scalarChecks) {
       if (normalizedString(expectedValue) !== normalizedString(actualValue)) {
         mismatches.push(
-          `[${manifest.metadata.slug}] ${field} mismatch (expected=${normalizedString(expectedValue)}, actual=${normalizedString(actualValue)})`,
+          `[${manifest.metadata.slug}] ${field} mismatch (expected=${preview(expectedValue)}, actual=${preview(actualValue)})`,
         )
+      }
+    }
+
+    // Explicit shape checks catch malformed JSON writes before deep comparison.
+    if (manifest.configSchema && !isPlainObject(actual.configSchema)) {
+      mismatches.push(
+        `[${manifest.metadata.slug}] configSchema malformed in DB (expected object, got ${typeof actual.configSchema})`,
+      )
+    }
+
+    if (manifest.defaultConfig && !isPlainObject(actual.defaultConfig)) {
+      mismatches.push(
+        `[${manifest.metadata.slug}] defaultConfig malformed in DB (expected object, got ${typeof actual.defaultConfig})`,
+      )
+    }
+
+    if (manifest.pipelineSchema) {
+      if (!isPlainObject(actual.pipelineSchema)) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] pipelineSchema malformed in DB (expected object, got ${typeof actual.pipelineSchema})`,
+        )
+      } else {
+        const nodes = (actual.pipelineSchema as Record<string, unknown>).nodes
+        const edges = (actual.pipelineSchema as Record<string, unknown>).edges
+        const thresholds = (actual.pipelineSchema as Record<string, unknown>).thresholds
+        if (!Array.isArray(nodes) || !Array.isArray(edges) || !Array.isArray(thresholds)) {
+          mismatches.push(
+            `[${manifest.metadata.slug}] pipelineSchema malformed in DB (nodes/edges/thresholds must be arrays)`,
+          )
+        }
       }
     }
 
@@ -255,9 +295,19 @@ async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
     ]
 
     for (const [field, expectedValue, actualValue] of jsonChecks) {
-      if (normalizedString(expectedValue) !== normalizedString(actualValue)) {
+      const expectedNormalized = normalizedString(expectedValue)
+      const actualNormalized = normalizedString(actualValue)
+
+      // Length comparison is a simple guardrail for silent truncation.
+      if (expectedNormalized.length !== actualNormalized.length) {
         mismatches.push(
-          `[${manifest.metadata.slug}] ${field} JSON mismatch (expected=${normalizedString(expectedValue)}, actual=${normalizedString(actualValue)})`,
+          `[${manifest.metadata.slug}] ${field} possible truncation (expected length=${expectedNormalized.length}, actual length=${actualNormalized.length})`,
+        )
+      }
+
+      if (expectedNormalized !== actualNormalized) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} JSON mismatch (expected=${preview(expectedValue)}, actual=${preview(actualValue)})`,
         )
       }
     }

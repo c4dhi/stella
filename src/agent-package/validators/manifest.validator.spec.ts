@@ -1,4 +1,6 @@
 import { ManifestValidator } from './manifest.validator'
+import * as fs from 'fs'
+import * as path from 'path'
 
 describe('ManifestValidator', () => {
   let validator: ManifestValidator
@@ -299,7 +301,7 @@ configSchema:
   })
 
   it('rejects experts capability when configSchema does not expose expert config', () => {
-    // Cross-field rule: experts capability must be backed by explicit expert-related config inputs.
+    // Cross-field rule applies when configurator support is enabled for expert-capable agents.
     const result = validator.validate(`
 version: "1.0"
 metadata:
@@ -312,13 +314,14 @@ image:
   dockerfile: "Dockerfile"
 configSchema:
   type: object
+  x-stella-supports-configurator: true
   properties:
     llm:
       type: object
 `)
 
     expect(result.valid).toBe(false)
-    expect(result.errors.join('\n')).toContain('capabilities includes "experts"')
+    expect(result.errors.join('\n')).toContain('x-stella-supports-configurator=true')
   })
 
   it('accepts experts capability when configSchema exposes expert config', () => {
@@ -335,9 +338,34 @@ image:
   dockerfile: "Dockerfile"
 configSchema:
   type: object
+  x-stella-supports-configurator: true
   properties:
     expert_overrides:
       type: object
+`)
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('accepts experts capability when expert config is marked with x-stella-expert-config', () => {
+    // Extension marker allows expert config discovery even when property key is custom.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Experts Marker Agent"
+  slug: "experts-marker-agent"
+  version: "1.0.0"
+  description: "Experts capability with extension marker"
+capabilities: ["experts", "voice"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  x-stella-supports-configurator: true
+  properties:
+    specialist_settings:
+      type: object
+      x-stella-expert-config: true
 `)
 
     expect(result.valid).toBe(true)
@@ -363,6 +391,112 @@ configSchema:
 `)
 
     expect(result.valid).toBe(true)
+  })
+
+  it('rejects number slots with non-numeric default', () => {
+    // Number slots must keep numeric defaults to avoid runtime type mismatches.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Number Slot Agent"
+  slug: "bad-number-slot-agent"
+  version: "1.0.0"
+  description: "Bad number default"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes:
+    - id: input_gate
+      label: "Input Gate"
+      position: { row: 0, col: 0 }
+      slots:
+        - id: temperature
+          label: "Temperature"
+          type: number
+          min: 0
+          max: 1
+          default: "high"
+  edges: []
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('number slot default must be a number')
+  })
+
+  it('rejects number slots with non-positive step', () => {
+    // Step must be strictly positive for numeric controls.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Number Step Agent"
+  slug: "bad-number-step-agent"
+  version: "1.0.0"
+  description: "Bad number step"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes:
+    - id: input_gate
+      label: "Input Gate"
+      position: { row: 0, col: 0 }
+      slots:
+        - id: temperature
+          label: "Temperature"
+          type: number
+          step: 0
+  edges: []
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('step must be > 0')
+  })
+
+  it('rejects duplicate threshold IDs in pipeline schema', () => {
+    // Threshold IDs are used as keys in persisted overrides and must stay unique.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Duplicate Threshold Agent"
+  slug: "duplicate-threshold-agent"
+  version: "1.0.0"
+  description: "Duplicate threshold IDs"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes: []
+  edges: []
+  thresholds:
+    - id: confidence
+      label: "Confidence A"
+      type: number
+    - id: confidence
+      label: "Confidence B"
+      type: number
+`)
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.join('\n')).toContain('duplicate threshold id: confidence')
+  })
+
+  it('validates all built-in agent manifests in agents directory', () => {
+    // Fixture-level guardrail: all checked-in built-in manifests must satisfy the canonical validator.
+    const projectRoot = path.resolve(__dirname, '../../..')
+    const agentsDir = path.join(projectRoot, 'agents')
+    const entries = fs.readdirSync(agentsDir, { withFileTypes: true })
+    const agentDirs = entries
+      .filter((entry) => entry.isDirectory() && entry.name !== 'stella-ai-agent-sdk')
+      .map((entry) => entry.name)
+
+    expect(agentDirs.length).toBeGreaterThan(0)
+
+    for (const dirName of agentDirs) {
+      const manifestPath = path.join(agentsDir, dirName, 'agent.yaml')
+      const content = fs.readFileSync(manifestPath, 'utf-8')
+      const result = validator.validate(content)
+      expect(result.valid).toBe(true)
+    }
   })
 
   it('keeps compatibility warnings as warnings', () => {

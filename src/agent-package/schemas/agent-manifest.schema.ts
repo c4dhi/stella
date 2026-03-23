@@ -445,12 +445,13 @@ export function parseAgentManifestYaml(content: string): ManifestSchemaParseResu
   // Cross-field constraint: expert-capable agents must expose at least one expert config input.
   if (
     hasCapability(manifest.capabilities, EXPERTS_CAPABILITY) &&
+    configSchemaSupportsConfigurator(manifest.configSchema) &&
     !configSchemaSupportsExperts(manifest.configSchema)
   ) {
     return {
       valid: false,
       errors: [
-        'capabilities includes "experts" but configSchema does not expose expert configuration',
+        'capabilities includes "experts" with x-stella-supports-configurator=true but configSchema does not expose expert configuration',
       ],
       warnings: [],
     }
@@ -598,4 +599,8 @@ function configSchemaSupportsExperts(configSchema: Record<string, unknown> | und
     if (!value || typeof value !== 'object') return false
     return (value as Record<string, unknown>)['x-stella-expert-config'] === true
   })
+}
+
+function configSchemaSupportsConfigurator(configSchema: Record<string, unknown> | undefined): boolean {
+  return configSchema?.['x-stella-supports-configurator'] === true
 }
