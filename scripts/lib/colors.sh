@@ -148,7 +148,11 @@ summary_box() {
     echo ""
     echo -e "   Frontend:  ${CYAN}${frontend_url}${NC}"
     echo -e "   Backend:   ${CYAN}${backend_url}${NC}"
-    echo -e "   LiveKit:   ${CYAN}${livekit_url}${NC}"
+    # Production mode hides internal LiveKit endpoint from final user-facing output.
+    # Local mode still prints it to support local debugging and connectivity checks.
+    if [[ "${NODE_ENV:-local}" != "production" ]]; then
+        echo -e "   LiveKit:   ${CYAN}${livekit_url}${NC}"
+    fi
     echo ""
     echo -e "   ${DIM}Press Ctrl+C to stop${NC}"
     echo ""
