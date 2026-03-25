@@ -699,6 +699,19 @@ class BaseAgent(ABC):
                             logger.info(f"[PROGRESS UPDATE] Publishing: {progress_payload}")
                             await self.audio._room.publish_data(progress_payload)
 
+                        elif output.type == OutputType.ANALYTICS:
+                            # Forward analytics timing measurements for storage
+                            analytics_payload = {
+                                "type": "analytics",
+                                "data": {
+                                    "stage": output.metadata.get("stage", "unknown"),
+                                    "timing_ms": output.metadata.get("timing_ms", 0),
+                                    **{k: v for k, v in (output.metadata or {}).items()
+                                       if k not in ("stage", "timing_ms")},
+                                }
+                            }
+                            await self.audio._room.publish_data(analytics_payload)
+
                 finally:
                     # Ensure all queued TTS sentences finish before accepting next input
                     await self.audio.flush_speech_queue()

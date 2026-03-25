@@ -336,6 +336,38 @@ class AgentOutput:
             },
         )
 
+    # --- Factory methods for ANALYTICS outputs ---
+
+    @classmethod
+    def analytics(
+        cls,
+        session_id: str,
+        stage: str,
+        timing_ms: float,
+        **extra_metadata: Any,
+    ) -> "AgentOutput":
+        """
+        Create an analytics timing measurement.
+
+        Stored for aggregation, not displayed to users, not spoken via TTS.
+
+        Args:
+            session_id: The session ID.
+            stage: Pipeline stage name (e.g., "input_gate", "expert_pool", "aggregator").
+            timing_ms: Duration of this stage in milliseconds.
+            **extra_metadata: Additional context (e.g., expert_count, model).
+        """
+        return cls(
+            session_id=session_id,
+            type=OutputType.ANALYTICS,
+            content="",
+            metadata={
+                "stage": stage,
+                "timing_ms": timing_ms,
+                **extra_metadata,
+            },
+        )
+
     # --- Factory methods for HEALTH_STATUS outputs ---
 
     @classmethod

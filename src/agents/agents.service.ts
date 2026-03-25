@@ -6,6 +6,7 @@ import { KubernetesService } from '../kubernetes/kubernetes.service';
 import { AgentServerService } from '../agent-server/agent-server.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import { AgentMetricsResponseDto, StageLatencyDto } from './dto/agent-metrics.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 
@@ -895,4 +896,134 @@ export class AgentsService {
     // Delegate to centralized restart logic
     return await this.restartAgent(id);
   }
+
+  // ============================================================================
+  // Analytics / Metrics
+  // ============================================================================
+
+  /**
+   * Get aggregated per-stage latency metrics for an agent type within a project.
+   * Queries stored analytics messages and computes percentile statistics.
+   */
+  async getAgentMetrics(
+    projectId: string,
+    agentSlug: string,
+    from: Date,
+    to: Date,
+  ): Promise<AgentMetricsResponseDto> {
+    // 1. Look up AgentType by slug
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      throw new NotFoundException(`Agent type '${agentSlug}' not found`);
+    }
+
+    // 2. Find sessions that used this agent type within the date range
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+
+    if (sessionIds.length === 0) {
+      return {
+        agentSlug,
+        projectId,
+        dateRange: { from: from.toISOString(), to: to.toISOString() },
+        totalSessions: 0,
+        totalTurns: 0,
+        stages: [],
+      };
+    }
+
+    // 3. Query analytics messages for those sessions
+    const analyticsMessages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { metadata: true },
+    });
+
+    // 4. Count user turns for context
+    const totalTurns = await this.prisma.message.count({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: { in: ['transcript', 'user_text'] },
+        role: 'user',
+        timestamp: { gte: from, lte: to },
+      },
+    });
+
+    // 5. Extract stage timings from metadata
+    const stageTimings = new Map<string, number[]>();
+
+    for (const msg of analyticsMessages) {
+      const metadata = msg.metadata as any;
+      const data = metadata?.envelope?.data ?? metadata?.data ?? metadata;
+      const stage = data?.stage;
+      const timingMs = data?.timing_ms;
+
+      if (typeof stage === 'string' && typeof timingMs === 'number') {
+        if (!stageTimings.has(stage)) {
+          stageTimings.set(stage, []);
+        }
+        stageTimings.get(stage)!.push(timingMs);
+      }
+    }
+
+    // 6. Compute per-stage statistics
+    const stages: StageLatencyDto[] = [];
+
+    for (const [stage, timings] of stageTimings) {
+      const sorted = timings.slice().sort((a, b) => a - b);
+      const sum = sorted.reduce((acc, v) => acc + v, 0);
+
+      stages.push({
+        stage,
+        count: sorted.length,
+        mean_ms: Math.round((sum / sorted.length) * 100) / 100,
+        p50_ms: percentile(sorted, 50),
+        p95_ms: percentile(sorted, 95),
+        min_ms: sorted[0],
+        max_ms: sorted[sorted.length - 1],
+      });
+    }
+
+    // Sort stages alphabetically for consistent output
+    stages.sort((a, b) => a.stage.localeCompare(b.stage));
+
+    return {
+      agentSlug,
+      projectId,
+      dateRange: { from: from.toISOString(), to: to.toISOString() },
+      totalSessions: sessionIds.length,
+      totalTurns,
+      stages,
+    };
+  }
+}
+
+/**
+ * Linear interpolation percentile on a pre-sorted array.
+ */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return Math.round((sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)) * 100) / 100;
 }

@@ -14,6 +14,7 @@ Supports both:
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 import uuid
@@ -142,6 +143,7 @@ class StellaAgent(BaseAgent):
             AgentOutput messages (status updates, text chunks, debug, errors)
         """
         self._is_processing = True
+        t_pipeline_start = time.perf_counter()
 
         try:
             # Fetch conversation history from database (stateless - no in-memory storage)
@@ -168,6 +170,7 @@ class StellaAgent(BaseAgent):
             print(f"[StellaAgent] Running InputGate for: '{input.text}'")
 
             # Pass state machine context to input gate
+            t_gate_start = time.perf_counter()
             async for output in self.input_gate.process(
                 session_id=input.session_id,
                 user_input=input.text,
@@ -176,6 +179,11 @@ class StellaAgent(BaseAgent):
                 state_machine_context=sm_context
             ):
                 yield output
+            yield AgentOutput.analytics(
+                input.session_id,
+                stage="input_gate",
+                timing_ms=(time.perf_counter() - t_gate_start) * 1000,
+            )
 
             # Get gate result
             gate_result = self.input_gate.last_result
@@ -225,6 +233,7 @@ class StellaAgent(BaseAgent):
                     )
 
                     # Start expert pool IMMEDIATELY in background (don't wait for interim message)
+                    t_experts_start = time.perf_counter()
                     expert_outputs_queue: asyncio.Queue = asyncio.Queue()
 
                     async def run_experts_background():
@@ -277,6 +286,12 @@ class StellaAgent(BaseAgent):
 
                     # Get expert results
                     expert_results = self.expert_pool.last_results
+                    yield AgentOutput.analytics(
+                        input.session_id,
+                        stage="expert_pool",
+                        timing_ms=(time.perf_counter() - t_experts_start) * 1000,
+                        expert_count=len(expert_results),
+                    )
 
                     print(f"[StellaAgent] Got {len(expert_results)} expert results")
 
@@ -288,6 +303,7 @@ class StellaAgent(BaseAgent):
                     )
 
                     # Step 2b: Run Aggregator
+                    t_agg_start = time.perf_counter()
                     async for output in self.aggregator.synthesize(
                         session_id=input.session_id,
                         user_input=input.text,
@@ -297,6 +313,11 @@ class StellaAgent(BaseAgent):
                         state_machine_context=sm_context  # Pass plan context for deliverable-focused responses
                     ):
                         yield output
+                    yield AgentOutput.analytics(
+                        input.session_id,
+                        stage="aggregator",
+                        timing_ms=(time.perf_counter() - t_agg_start) * 1000,
+                    )
 
                     # Get aggregator result (used for verification, response already streamed)
                     agg_result = self.aggregator.last_result
@@ -440,6 +461,13 @@ class StellaAgent(BaseAgent):
                         agent_name=self.agent_name,
                         agent_icon="🤖"
                     )
+
+            # Emit total pipeline timing
+            yield AgentOutput.analytics(
+                input.session_id,
+                stage="total",
+                timing_ms=(time.perf_counter() - t_pipeline_start) * 1000,
+            )
 
         except Exception as e:
             print(f"[StellaAgent] Processing error: {e}")

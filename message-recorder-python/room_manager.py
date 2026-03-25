@@ -329,6 +329,11 @@ class RoomManager:
                 should_store = True
                 print(f"   ✅ Storing processing message: {message_type}")
 
+            elif message_type == 'analytics':
+                # STORE: Analytics timing measurements (for per-stage latency aggregation)
+                should_store = True
+                print(f"   ✅ Storing analytics message")
+
             elif message_type in ('complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'):
                 # STORE: Task and plan updates (for task panel replay)
                 should_store = True
