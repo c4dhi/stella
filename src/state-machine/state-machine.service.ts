@@ -948,6 +948,169 @@ export class StateMachineService {
   }
 
   /**
+   * Validate one condition config node before runtime evaluation.
+   * This keeps bad plan data fail-closed and produces deterministic warnings.
+   */
+  private validateConditionConfig(
+    conditionType: string,
+    conditionConfig: Record<string, unknown> | undefined,
+    depth = 0,
+  ): { valid: boolean; error?: string } {
+    if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
+      return {
+        valid: false,
+        error: `condition nesting exceeds max depth (${StateMachineService.MAX_CONDITION_DEPTH})`,
+      };
+    }
+
+    switch (conditionType) {
+      case 'all_tasks_complete':
+        return { valid: true };
+
+      case 'turn_count_exceeded': {
+        const rawThreshold = conditionConfig?.turns ?? conditionConfig?.value;
+        const threshold = this.toFiniteNumber(rawThreshold);
+        if (threshold === null || threshold < 0) {
+          return {
+            valid: false,
+            error: `'turns'/'value' must be a non-negative number`,
+          };
+        }
+
+        const scope = String(conditionConfig?.scope || 'without_progress').toLowerCase();
+        if (scope !== 'without_progress' && scope !== 'total') {
+          return {
+            valid: false,
+            error: `'scope' must be 'without_progress' or 'total'`,
+          };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value` };
+        }
+        if (!conditionConfig || !Object.prototype.hasOwnProperty.call(conditionConfig, 'value')) {
+          return { valid: false, error: `'value' is required for deliverable_value` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value_in': {
+        const key = conditionConfig?.key;
+        const values = conditionConfig?.values;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value_in` };
+        }
+        if (!Array.isArray(values) || values.length === 0) {
+          return { valid: false, error: `'values' must be a non-empty array` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value_numeric': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value_numeric` };
+        }
+
+        const operator = this.normalizeNumericOperator(conditionConfig?.operator);
+        if (!operator) {
+          return {
+            valid: false,
+            error: `'operator' is required and must be one of gt/gte/lt/lte/eq/neq/between`,
+          };
+        }
+
+        if (operator === 'between') {
+          const minValue = this.toFiniteNumber(conditionConfig?.min);
+          const maxValue = this.toFiniteNumber(conditionConfig?.max);
+          if (minValue === null || maxValue === null || minValue > maxValue) {
+            return {
+              valid: false,
+              error: `'between' requires numeric min/max with min <= max`,
+            };
+          }
+          return { valid: true };
+        }
+
+        const value = this.toFiniteNumber(conditionConfig?.value);
+        if (value === null) {
+          return { valid: false, error: `'value' must be numeric for numeric operators` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_exists': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_exists` };
+        }
+        return { valid: true };
+      }
+
+      case 'all_of':
+      case 'any_of':
+        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+
+      case 'compound': {
+        const operator = String(conditionConfig?.operator || '').toLowerCase();
+        if (operator !== 'and' && operator !== 'or') {
+          return { valid: false, error: `'operator' must be 'and' or 'or' for compound` };
+        }
+        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+      }
+
+      default:
+        return { valid: false, error: `unknown condition type '${conditionType}'` };
+    }
+  }
+
+  /**
+   * Validate child condition lists used by all_of/any_of/compound.
+   */
+  private validateCompositeConditionConfig(
+    conditionConfig: Record<string, unknown> | undefined,
+    depth: number,
+  ): { valid: boolean; error?: string } {
+    const conditions = conditionConfig?.conditions;
+    if (!Array.isArray(conditions) || conditions.length === 0) {
+      return { valid: false, error: `'conditions' must be a non-empty array` };
+    }
+
+    for (let i = 0; i < conditions.length; i++) {
+      const child = conditions[i];
+      if (!child || typeof child !== 'object') {
+        return { valid: false, error: `conditions[${i}] must be an object` };
+      }
+
+      const childRecord = child as Record<string, unknown>;
+      const childType = childRecord.condition_type ?? childRecord.type;
+      if (typeof childType !== 'string' || childType.trim() === '') {
+        return { valid: false, error: `conditions[${i}] missing valid condition_type` };
+      }
+
+      const childConfigRaw = childRecord.condition_config ?? childRecord.config;
+      const childConfig =
+        childConfigRaw && typeof childConfigRaw === 'object'
+          ? (childConfigRaw as Record<string, unknown>)
+          : undefined;
+
+      const childResult = this.validateConditionConfig(childType, childConfig, depth);
+      if (!childResult.valid) {
+        return {
+          valid: false,
+          error: `conditions[${i}] invalid: ${childResult.error || 'unknown error'}`,
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
    * Evaluate one condition node.
    * Supports simple condition types and nested composite conditions.
    */
@@ -1254,6 +1417,18 @@ export class StateMachineService {
       this.logger.log(
         `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
       );
+
+      // Validate condition config before execution so malformed plans fail closed.
+      const validation = this.validateConditionConfig(
+        transition.condition_type,
+        transition.condition_config,
+      );
+      if (!validation.valid) {
+        this.warnInvalidCondition(
+          `Skipping transition to '${transition.target_state_id}' due to invalid config for '${transition.condition_type}': ${validation.error || 'unknown validation error'}`,
+        );
+        continue;
+      }
 
       const conditionMet = this.evaluateTransitionCondition(
         transition.condition_type,
