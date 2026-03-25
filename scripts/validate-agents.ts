@@ -56,11 +56,49 @@ function formatBulletList(items: string[]): string {
   return items.map((item) => `  - ${item}`).join('\n')
 }
 
+function parseProjectVersionFromPyproject(pyprojectPath: string): string {
+  if (!fs.existsSync(pyprojectPath)) {
+    throw new Error(`SDK pyproject.toml not found: ${pyprojectPath}`)
+  }
+
+  const raw = fs.readFileSync(pyprojectPath, 'utf-8')
+  const projectSectionMatch = raw.match(/\[project\][\s\S]*?(?=\n\[|$)/)
+  const projectSection = projectSectionMatch ? projectSectionMatch[0] : raw
+  const versionMatch = projectSection.match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)
+
+  if (!versionMatch) {
+    throw new Error(`Could not parse SDK version from ${pyprojectPath}`)
+  }
+
+  return versionMatch[1]
+}
+
+function parseSemver(version: string): [number, number, number] | null {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/)
+  if (!match) return null
+  return [Number.parseInt(match[1], 10), Number.parseInt(match[2], 10), Number.parseInt(match[3], 10)]
+}
+
+function isSemverGte(actual: string, required: string): boolean {
+  const a = parseSemver(actual)
+  const b = parseSemver(required)
+  if (!a || !b) return false
+
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true
+    if (a[i] < b[i]) return false
+  }
+  return true
+}
+
 function main(): void {
   const workspaceRoot = resolveWorkspaceRoot()
   const agentsDir = path.join(workspaceRoot, 'agents')
+  const sdkPyprojectPath = path.join(workspaceRoot, 'agents', 'stella-ai-agent-sdk', 'pyproject.toml')
+  const sdkVersion = parseProjectVersionFromPyproject(sdkPyprojectPath)
 
   console.log(`Validating built-in agents from: ${agentsDir}`)
+  console.log(`Current SDK version: ${sdkVersion}`)
 
   if (!fs.existsSync(agentsDir)) {
     throw new Error(`Agents directory not found: ${agentsDir}`)
@@ -70,6 +108,7 @@ function main(): void {
   const failures: string[] = []
   const warnings: string[] = []
   const builtinAgentDirs = listBuiltinAgentDirectories(agentsDir)
+  const seenSlugs = new Map<string, string>()
 
   for (const agentDir of builtinAgentDirs) {
     const expectedManifestPath = path.join(agentDir, 'agent.yaml')
@@ -105,6 +144,38 @@ function main(): void {
     }
 
     const manifest = parsed.manifest
+    const manifestDirName = path.basename(agentDir)
+
+    if (manifest.metadata.slug !== manifestDirName) {
+      failures.push(
+        `[${relativeManifestPath}] metadata consistency check failed:\n` +
+          `  - metadata.slug "${manifest.metadata.slug}" must match directory name "${manifestDirName}"`,
+      )
+    }
+
+    const firstPathForSlug = seenSlugs.get(manifest.metadata.slug)
+    if (firstPathForSlug) {
+      failures.push(
+        `[${relativeManifestPath}] duplicate slug check failed:\n` +
+          `  - metadata.slug "${manifest.metadata.slug}" is already used by ${firstPathForSlug}`,
+      )
+    } else {
+      seenSlugs.set(manifest.metadata.slug, relativeManifestPath)
+    }
+
+    const requiredSdkVersion = manifest.sdk?.minVersion
+    if (!requiredSdkVersion) {
+      failures.push(
+        `[${relativeManifestPath}] sdk compatibility check failed:\n` +
+          '  - sdk.minVersion is required for built-in agents',
+      )
+    } else if (!isSemverGte(sdkVersion, requiredSdkVersion)) {
+      failures.push(
+        `[${relativeManifestPath}] sdk compatibility check failed:\n` +
+          `  - sdk.minVersion ${requiredSdkVersion} is not compatible with current SDK ${sdkVersion}`,
+      )
+    }
+
     if (!manifest.image.imageUrl) {
       const dockerfileRelativePath = manifest.image.dockerfile || 'Dockerfile'
       const dockerfileAbsolutePath = path.join(agentDir, dockerfileRelativePath)
