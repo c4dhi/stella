@@ -55,7 +55,11 @@ export interface PlanDeliverable {
 
 export interface StateTransition {
   target_state_id: string;
-  condition_type: 'all_tasks_complete' | 'deliverable_value' | 'deliverable_exists';
+  condition_type:
+    | 'all_tasks_complete'
+    | 'deliverable_value'
+    | 'deliverable_value_in'
+    | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
   priority?: number;
 }
@@ -939,6 +943,32 @@ export class StateMachineService {
           }
           this.logger.log(
             `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
+          );
+          break;
+
+        case 'deliverable_value_in':
+          // Expects condition_config: { key: string, values: unknown[] }.
+          // This enables enum-style branching where one transition matches multiple values.
+          const inKey = transition.condition_config?.key as string;
+          const expectedValues = transition.condition_config?.values;
+          const inActual = deliverables[inKey]?.value;
+
+          if (!Array.isArray(expectedValues)) {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_in' misconfigured for key='${inKey}': 'values' must be an array`,
+            );
+            conditionMet = false;
+          } else {
+            conditionMet = expectedValues.some((expectedValue) => {
+              if (typeof inActual === 'string' && typeof expectedValue === 'string') {
+                return inActual.trim().toLowerCase() === expectedValue.trim().toLowerCase();
+              }
+              return inActual === expectedValue;
+            });
+          }
+
+          this.logger.log(
+            `[evaluateAndTransition] 'deliverable_value_in' condition: ${inKey}='${inActual}' expected in=${JSON.stringify(expectedValues)} result: ${conditionMet}`,
           );
           break;
 
