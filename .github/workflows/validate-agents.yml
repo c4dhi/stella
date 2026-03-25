@@ -1,0 +1,42 @@
+name: Validate Agents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agents/**/agent.yaml'
+      - 'agents/**/Dockerfile'
+      - 'scripts/validate-agents.ts'
+      - 'src/agent-package/**'
+      - '.github/workflows/validate-agents.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'agents/**/agent.yaml'
+      - 'agents/**/Dockerfile'
+      - 'scripts/validate-agents.ts'
+      - 'src/agent-package/**'
+      - '.github/workflows/validate-agents.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-agents:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate agent manifests
+        run: npm run validate:agents
