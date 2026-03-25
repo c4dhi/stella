@@ -1,0 +1,65 @@
+name: Seed Roundtrip Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'prisma/**'
+      - 'agents/**/agent.yaml'
+      - 'agents/**/Dockerfile'
+      - 'src/agent-package/**'
+      - 'src/agent-registry/**'
+      - '.github/workflows/seed-roundtrip-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'prisma/**'
+      - 'agents/**/agent.yaml'
+      - 'agents/**/Dockerfile'
+      - 'src/agent-package/**'
+      - 'src/agent-registry/**'
+      - '.github/workflows/seed-roundtrip-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed-roundtrip:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stella_test?schema=public
+      NODE_ENV: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: stella_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d stella_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply Prisma migrations
+        run: npm run db:migrate
+
+      - name: Seed database (includes roundtrip verification)
+        run: npm run db:seed
