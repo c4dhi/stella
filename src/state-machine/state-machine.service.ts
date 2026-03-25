@@ -60,6 +60,9 @@ export interface StateTransition {
     | 'deliverable_value'
     | 'deliverable_value_in'
     | 'deliverable_value_numeric'
+    | 'compound'
+    | 'all_of'
+    | 'any_of'
     | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
   priority?: number;
@@ -889,6 +892,248 @@ export class StateMachineService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  /**
+   * Evaluate one condition node.
+   * Supports simple condition types and nested composite conditions.
+   */
+  private evaluateTransitionCondition(
+    conditionType: string,
+    conditionConfig: Record<string, unknown> | undefined,
+    state: SessionState,
+    currentState: PlanState,
+    deliverables: Record<string, DeliverableValue>,
+    depth = 0,
+  ): boolean {
+    // Guard against malformed recursive configs and accidental deep nesting.
+    if (depth > 5) {
+      this.logger.warn(
+        `[evaluateAndTransition] Condition nesting too deep (depth=${depth}) for type='${conditionType}'`,
+      );
+      return false;
+    }
+
+    switch (conditionType) {
+      case 'all_tasks_complete':
+        return this.isCurrentStateComplete(state, currentState);
+
+      case 'deliverable_value': {
+        const key = conditionConfig?.key as string;
+        const expected = conditionConfig?.value;
+        const actual = deliverables[key]?.value;
+        if (typeof actual === 'string' && typeof expected === 'string') {
+          return actual.trim().toLowerCase() === expected.trim().toLowerCase();
+        }
+        return actual === expected;
+      }
+
+      case 'deliverable_value_in': {
+        // Expects condition_config: { key: string, values: unknown[] }.
+        const key = conditionConfig?.key as string;
+        const expectedValues = conditionConfig?.values;
+        const actual = deliverables[key]?.value;
+
+        if (!Array.isArray(expectedValues)) {
+          this.logger.warn(
+            `[evaluateAndTransition] 'deliverable_value_in' misconfigured for key='${key}': 'values' must be an array`,
+          );
+          return false;
+        }
+
+        return expectedValues.some((expectedValue) => {
+          if (typeof actual === 'string' && typeof expectedValue === 'string') {
+            return actual.trim().toLowerCase() === expectedValue.trim().toLowerCase();
+          }
+          return actual === expectedValue;
+        });
+      }
+
+      case 'deliverable_value_numeric': {
+        // Expects condition_config:
+        // - { key, operator: 'gt'|'gte'|'lt'|'lte'|'eq'|'neq', value }
+        // - { key, operator: 'between', min, max, inclusive? } (inclusive defaults to true)
+        const numericKey = conditionConfig?.key as string | undefined;
+        const rawOperator = conditionConfig?.operator as string | undefined;
+        const numericActualRaw = numericKey ? deliverables[numericKey]?.value : undefined;
+        const numericActual = this.toFiniteNumber(numericActualRaw);
+
+        if (!numericKey) {
+          this.logger.warn(
+            `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured: missing 'key'`,
+          );
+          return false;
+        }
+
+        if (!rawOperator) {
+          this.logger.warn(
+            `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': missing 'operator'`,
+          );
+          return false;
+        }
+
+        if (numericActual === null) {
+          this.logger.warn(
+            `[evaluateAndTransition] 'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
+          );
+          return false;
+        }
+
+        const operator = rawOperator.toLowerCase();
+
+        // Support both semantic and symbolic operators to simplify authoring.
+        if (operator === 'gt' || operator === '>') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual > expectedValue;
+        }
+        if (operator === 'gte' || operator === '>=') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual >= expectedValue;
+        }
+        if (operator === 'lt' || operator === '<') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual < expectedValue;
+        }
+        if (operator === 'lte' || operator === '<=') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual <= expectedValue;
+        }
+        if (operator === 'eq' || operator === '==') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual === expectedValue;
+        }
+        if (operator === 'neq' || operator === '!=') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual !== expectedValue;
+        }
+        if (operator === 'between' || operator === 'range') {
+          const minValue = this.toFiniteNumber(conditionConfig?.min);
+          const maxValue = this.toFiniteNumber(conditionConfig?.max);
+          const inclusive = conditionConfig?.inclusive !== false;
+
+          if (minValue === null || maxValue === null || minValue > maxValue) {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${conditionConfig?.min}' max='${conditionConfig?.max}'`,
+            );
+            return false;
+          }
+
+          return inclusive
+            ? numericActual >= minValue && numericActual <= maxValue
+            : numericActual > minValue && numericActual < maxValue;
+        }
+
+        this.logger.warn(
+          `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
+        );
+        return false;
+      }
+
+      case 'deliverable_exists': {
+        const existsKey = conditionConfig?.key as string;
+        return existsKey in deliverables;
+      }
+
+      case 'all_of':
+        return this.evaluateCompositeCondition(
+          'and',
+          conditionConfig,
+          state,
+          currentState,
+          deliverables,
+          depth + 1,
+        );
+
+      case 'any_of':
+        return this.evaluateCompositeCondition(
+          'or',
+          conditionConfig,
+          state,
+          currentState,
+          deliverables,
+          depth + 1,
+        );
+
+      case 'compound': {
+        const operator = String(conditionConfig?.operator || '').toLowerCase();
+        if (operator !== 'and' && operator !== 'or') {
+          this.logger.warn(
+            `[evaluateAndTransition] 'compound' misconfigured: operator must be 'and' or 'or'`,
+          );
+          return false;
+        }
+
+        return this.evaluateCompositeCondition(
+          operator,
+          conditionConfig,
+          state,
+          currentState,
+          deliverables,
+          depth + 1,
+        );
+      }
+
+      default:
+        this.logger.warn(
+          `[evaluateAndTransition] Unknown condition type: '${conditionType}'`,
+        );
+        return false;
+    }
+  }
+
+  /**
+   * Evaluate a list of child conditions with AND/OR semantics.
+   */
+  private evaluateCompositeCondition(
+    operator: 'and' | 'or',
+    conditionConfig: Record<string, unknown> | undefined,
+    state: SessionState,
+    currentState: PlanState,
+    deliverables: Record<string, DeliverableValue>,
+    depth: number,
+  ): boolean {
+    const rawConditions = conditionConfig?.conditions;
+    if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
+      this.logger.warn(
+        `[evaluateAndTransition] Composite condition misconfigured: 'conditions' must be a non-empty array`,
+      );
+      return false;
+    }
+
+    const evaluateChild = (child: unknown): boolean => {
+      if (!child || typeof child !== 'object') {
+        this.logger.warn(
+          `[evaluateAndTransition] Composite condition has invalid child: ${JSON.stringify(child)}`,
+        );
+        return false;
+      }
+
+      const childRecord = child as Record<string, unknown>;
+      // Support both canonical keys and tolerant aliases for easier authoring/imports.
+      const childType = (childRecord.condition_type ?? childRecord.type) as string | undefined;
+      const childConfig = (childRecord.condition_config ??
+        childRecord.config) as Record<string, unknown> | undefined;
+
+      if (!childType || typeof childType !== 'string') {
+        this.logger.warn(
+          `[evaluateAndTransition] Composite child missing valid 'condition_type'`,
+        );
+        return false;
+      }
+
+      return this.evaluateTransitionCondition(
+        childType,
+        childConfig,
+        state,
+        currentState,
+        deliverables,
+        depth,
+      );
+    };
+
+    return operator === 'and'
+      ? rawConditions.every((child) => evaluateChild(child))
+      : rawConditions.some((child) => evaluateChild(child));
+  }
+
   private async evaluateAndTransition(
     sessionId: string,
   ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
@@ -937,149 +1182,16 @@ export class StateMachineService {
         `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
       );
 
-      switch (transition.condition_type) {
-        case 'all_tasks_complete':
-          conditionMet = this.isCurrentStateComplete(state, currentState);
-          this.logger.log(
-            `[evaluateAndTransition] 'all_tasks_complete' condition result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_value':
-          const key = transition.condition_config?.key as string;
-          const expected = transition.condition_config?.value;
-          const actual = deliverables[key]?.value;
-          if (typeof actual === 'string' && typeof expected === 'string') {
-            conditionMet = actual.trim().toLowerCase() === expected.trim().toLowerCase();
-          } else {
-            conditionMet = actual === expected;
-          }
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_value_in':
-          // Expects condition_config: { key: string, values: unknown[] }.
-          // This enables enum-style branching where one transition matches multiple values.
-          const inKey = transition.condition_config?.key as string;
-          const expectedValues = transition.condition_config?.values;
-          const inActual = deliverables[inKey]?.value;
-
-          if (!Array.isArray(expectedValues)) {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_in' misconfigured for key='${inKey}': 'values' must be an array`,
-            );
-            conditionMet = false;
-          } else {
-            conditionMet = expectedValues.some((expectedValue) => {
-              if (typeof inActual === 'string' && typeof expectedValue === 'string') {
-                return inActual.trim().toLowerCase() === expectedValue.trim().toLowerCase();
-              }
-              return inActual === expectedValue;
-            });
-          }
-
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_value_in' condition: ${inKey}='${inActual}' expected in=${JSON.stringify(expectedValues)} result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_value_numeric':
-          // Expects condition_config:
-          // - { key, operator: 'gt'|'gte'|'lt'|'lte'|'eq'|'neq', value }
-          // - { key, operator: 'between', min, max, inclusive? } (inclusive defaults to true)
-          // Fail-closed behavior: malformed configs never trigger transitions.
-          const numericKey = transition.condition_config?.key as string | undefined;
-          const rawOperator = transition.condition_config?.operator as string | undefined;
-          const numericActualRaw = numericKey ? deliverables[numericKey]?.value : undefined;
-          const numericActual = this.toFiniteNumber(numericActualRaw);
-
-          if (!numericKey) {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured: missing 'key'`,
-            );
-            conditionMet = false;
-            break;
-          }
-
-          if (!rawOperator) {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': missing 'operator'`,
-            );
-            conditionMet = false;
-            break;
-          }
-
-          if (numericActual === null) {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
-            );
-            conditionMet = false;
-            break;
-          }
-
-          const operator = rawOperator.toLowerCase();
-
-          // Support both semantic and symbolic operators to make plans easier to author.
-          if (operator === 'gt' || operator === '>') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual > expectedValue;
-          } else if (operator === 'gte' || operator === '>=') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual >= expectedValue;
-          } else if (operator === 'lt' || operator === '<') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual < expectedValue;
-          } else if (operator === 'lte' || operator === '<=') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual <= expectedValue;
-          } else if (operator === 'eq' || operator === '==') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual === expectedValue;
-          } else if (operator === 'neq' || operator === '!=') {
-            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
-            conditionMet = expectedValue !== null && numericActual !== expectedValue;
-          } else if (operator === 'between' || operator === 'range') {
-            const minValue = this.toFiniteNumber(transition.condition_config?.min);
-            const maxValue = this.toFiniteNumber(transition.condition_config?.max);
-            const inclusive = transition.condition_config?.inclusive !== false;
-
-            if (minValue === null || maxValue === null || minValue > maxValue) {
-              this.logger.warn(
-                `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${transition.condition_config?.min}' max='${transition.condition_config?.max}'`,
-              );
-              conditionMet = false;
-            } else {
-              conditionMet = inclusive
-                ? numericActual >= minValue && numericActual <= maxValue
-                : numericActual > minValue && numericActual < maxValue;
-            }
-          } else {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
-            );
-            conditionMet = false;
-          }
-
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_value_numeric' condition: key='${numericKey}' actual=${numericActual} operator='${rawOperator}' config=${JSON.stringify(transition.condition_config)} result=${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_exists':
-          const existsKey = transition.condition_config?.key as string;
-          conditionMet = existsKey in deliverables;
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_exists' condition: ${existsKey} exists=${conditionMet}`,
-          );
-          break;
-
-        default:
-          this.logger.log(
-            `[evaluateAndTransition] Unknown condition type: '${transition.condition_type}'`,
-          );
-      }
+      conditionMet = this.evaluateTransitionCondition(
+        transition.condition_type,
+        transition.condition_config,
+        state,
+        currentState,
+        deliverables,
+      );
+      this.logger.log(
+        `[evaluateAndTransition] Condition '${transition.condition_type}' result: ${conditionMet}`,
+      );
 
       if (conditionMet) {
         const targetState = plan.states.find(s => s.id === transition.target_state_id);
