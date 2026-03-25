@@ -59,6 +59,7 @@ export interface StateTransition {
     | 'all_tasks_complete'
     | 'deliverable_value'
     | 'deliverable_value_in'
+    | 'deliverable_value_numeric'
     | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
   priority?: number;
@@ -876,6 +877,18 @@ export class StateMachineService {
     return true;
   }
 
+  /**
+   * Convert unknown values to a finite number for numeric transition checks.
+   * Returns null for null/undefined/empty/non-numeric/NaN/Infinity values.
+   */
+  private toFiniteNumber(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   private async evaluateAndTransition(
     sessionId: string,
   ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
@@ -969,6 +982,88 @@ export class StateMachineService {
 
           this.logger.log(
             `[evaluateAndTransition] 'deliverable_value_in' condition: ${inKey}='${inActual}' expected in=${JSON.stringify(expectedValues)} result: ${conditionMet}`,
+          );
+          break;
+
+        case 'deliverable_value_numeric':
+          // Expects condition_config:
+          // - { key, operator: 'gt'|'gte'|'lt'|'lte'|'eq'|'neq', value }
+          // - { key, operator: 'between', min, max, inclusive? } (inclusive defaults to true)
+          // Fail-closed behavior: malformed configs never trigger transitions.
+          const numericKey = transition.condition_config?.key as string | undefined;
+          const rawOperator = transition.condition_config?.operator as string | undefined;
+          const numericActualRaw = numericKey ? deliverables[numericKey]?.value : undefined;
+          const numericActual = this.toFiniteNumber(numericActualRaw);
+
+          if (!numericKey) {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured: missing 'key'`,
+            );
+            conditionMet = false;
+            break;
+          }
+
+          if (!rawOperator) {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': missing 'operator'`,
+            );
+            conditionMet = false;
+            break;
+          }
+
+          if (numericActual === null) {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
+            );
+            conditionMet = false;
+            break;
+          }
+
+          const operator = rawOperator.toLowerCase();
+
+          // Support both semantic and symbolic operators to make plans easier to author.
+          if (operator === 'gt' || operator === '>') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual > expectedValue;
+          } else if (operator === 'gte' || operator === '>=') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual >= expectedValue;
+          } else if (operator === 'lt' || operator === '<') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual < expectedValue;
+          } else if (operator === 'lte' || operator === '<=') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual <= expectedValue;
+          } else if (operator === 'eq' || operator === '==') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual === expectedValue;
+          } else if (operator === 'neq' || operator === '!=') {
+            const expectedValue = this.toFiniteNumber(transition.condition_config?.value);
+            conditionMet = expectedValue !== null && numericActual !== expectedValue;
+          } else if (operator === 'between' || operator === 'range') {
+            const minValue = this.toFiniteNumber(transition.condition_config?.min);
+            const maxValue = this.toFiniteNumber(transition.condition_config?.max);
+            const inclusive = transition.condition_config?.inclusive !== false;
+
+            if (minValue === null || maxValue === null || minValue > maxValue) {
+              this.logger.warn(
+                `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${transition.condition_config?.min}' max='${transition.condition_config?.max}'`,
+              );
+              conditionMet = false;
+            } else {
+              conditionMet = inclusive
+                ? numericActual >= minValue && numericActual <= maxValue
+                : numericActual > minValue && numericActual < maxValue;
+            }
+          } else {
+            this.logger.warn(
+              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
+            );
+            conditionMet = false;
+          }
+
+          this.logger.log(
+            `[evaluateAndTransition] 'deliverable_value_numeric' condition: key='${numericKey}' actual=${numericActual} operator='${rawOperator}' config=${JSON.stringify(transition.condition_config)} result=${conditionMet}`,
           );
           break;
 
