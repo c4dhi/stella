@@ -5,10 +5,20 @@ import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import EmojiPicker from '../EmojiPicker'
 import type { VisualizerType } from '../face/types'
-import type { AgentType, PlanTemplate, EnvVarTemplate, UpdatePublicConfigDto, PublicAgentConfig, ProjectWithCounts, Project } from '../../lib/api-types'
+import type {
+  AgentType,
+  PlanTemplate,
+  EnvVarTemplate,
+  UpdatePublicConfigDto,
+  PublicAgentConfig,
+  ProjectWithCounts,
+  Project,
+  AgentConfiguration,
+} from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
 import {
   AgentGalleryStep,
+  ConfigurationSelectionStep,
   PlanSelectionStep,
   VisualizerSelectionStep,
   ExpirationSelectionStep,
@@ -24,7 +34,7 @@ interface ProjectModalProps {
   onProjectUpdated?: (project: Project) => void
 }
 
-type Step = 'basic' | 'agent' | 'configure' | 'plan' | 'envvars' | 'visualizer' | 'expiration' | 'complete'
+type Step = 'basic' | 'agent' | 'configure' | 'configuration' | 'plan' | 'envvars' | 'visualizer' | 'expiration' | 'complete'
 type ProjectType = 'private' | 'public'
 type EnvVarsView = 'select' | 'edit'
 
@@ -41,10 +51,11 @@ const TIMEOUT_OPTIONS = [
 const STEPS_CONFIG: { id: Step; number: number; label: string }[] = [
   { id: 'agent', number: 1, label: 'Select Agent' },
   { id: 'configure', number: 2, label: 'Configure' },
-  { id: 'plan', number: 3, label: 'Plan' },
-  { id: 'envvars', number: 4, label: 'Env Vars' },
-  { id: 'visualizer', number: 5, label: 'Visualizer' },
-  { id: 'expiration', number: 6, label: 'Expiration' },
+  { id: 'configuration', number: 3, label: 'Configuration' },
+  { id: 'plan', number: 4, label: 'Plan' },
+  { id: 'envvars', number: 5, label: 'Env Vars' },
+  { id: 'visualizer', number: 6, label: 'Visualizer' },
+  { id: 'expiration', number: 7, label: 'Expiration' },
 ]
 
 export default function ProjectModal({
@@ -83,6 +94,7 @@ export default function ProjectModal({
   // Plan selection (PlanSelectionStep manages its own loading/fetching)
   const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>([])
   const [selectedPlan, setSelectedPlan] = useState<PlanTemplate | null>(null)
+  const [selectedConfiguration, setSelectedConfiguration] = useState<AgentConfiguration | null>(null)
 
   // Env var state (EnvVarsSelectionStep handles fetching templates)
   const [selectedEnvVarTemplate, setSelectedEnvVarTemplate] = useState<EnvVarTemplate | null>(null)
@@ -106,27 +118,31 @@ export default function ProjectModal({
 
   // Parse agent requirements
   const agentRequirements = useMemo(() => {
-    if (!selectedAgentType) return { requiresPlan: false, requiredEnvVars: [] as string[] }
+    if (!selectedAgentType) return { requiresPlan: false, requiredEnvVars: [] as string[], supportsConfigurator: false }
     return parseAgentRequirements(selectedAgentType.configSchema)
   }, [selectedAgentType])
 
   // Dynamic steps for public project (excluding basic)
   const publicSteps = useMemo((): Step[] => {
     const s: Step[] = ['agent', 'configure']
+    if (agentRequirements.supportsConfigurator && selectedAgentType?.pipelineSchema) {
+      s.push('configuration')
+    }
     if (agentRequirements.requiresPlan) {
       s.push('plan')
     }
     s.push('envvars', 'visualizer', 'expiration')
     return s
-  }, [agentRequirements.requiresPlan])
+  }, [agentRequirements.requiresPlan, agentRequirements.supportsConfigurator, selectedAgentType?.pipelineSchema])
 
   // Get visible step configs (filtered based on requirements)
   const visibleStepConfigs = useMemo(() => {
     return STEPS_CONFIG.filter(s => {
       if (s.id === 'plan') return agentRequirements.requiresPlan
+      if (s.id === 'configuration') return agentRequirements.supportsConfigurator && !!selectedAgentType?.pipelineSchema
       return publicSteps.includes(s.id)
     }).map((s, idx) => ({ ...s, number: idx + 1 }))
-  }, [publicSteps, agentRequirements.requiresPlan])
+  }, [publicSteps, agentRequirements.requiresPlan, agentRequirements.supportsConfigurator, selectedAgentType?.pipelineSchema])
 
   const getStepNumber = (s: Step): number => {
     const config = visibleStepConfigs.find(c => c.id === s)
@@ -170,6 +186,7 @@ export default function ProjectModal({
         setAgentName('')
         setAgentIcon('🤖')
         setSelectedPlan(null)
+        setSelectedConfiguration(null)
         setSelectedEnvVarTemplate(null)
         setEnvVars({})
         setEnvVarsView('select')
@@ -185,6 +202,8 @@ export default function ProjectModal({
     if (selectedAgentType) {
       setAgentName(selectedAgentType.name)
       setAgentIcon(selectedAgentType.icon || '🤖')
+      // Configurations are agent-type specific, reset on agent switch.
+      setSelectedConfiguration(null)
     }
   }, [selectedAgentType])
 
@@ -254,6 +273,8 @@ export default function ProjectModal({
         return agentName.trim().length > 0
       case 'plan':
         return selectedPlan !== null
+      case 'configuration':
+        return selectedConfiguration !== null
       case 'envvars':
         // If a template is selected, we can proceed (template has the values stored securely on server)
         if (selectedEnvVarTemplate !== null) {
@@ -272,7 +293,7 @@ export default function ProjectModal({
       default:
         return false
     }
-  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars, isEditMode, project, agentInactivityTimeout])
+  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedConfiguration, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars, isEditMode, project, agentInactivityTimeout])
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -319,8 +340,25 @@ export default function ProjectModal({
             agentConfig.plan = selectedPlan.content as unknown as Record<string, unknown>
           }
 
+          if (selectedConfiguration) {
+            // Backend maps pipelineConfig -> pipeline_config at deploy time.
+            agentConfig.pipelineConfig = selectedConfiguration.configuration as unknown as Record<string, unknown>
+          }
+
           if (selectedEnvVarTemplate) {
             agentConfig.envVarTemplateId = selectedEnvVarTemplate.id
+          }
+
+          // Include manual env vars / overrides for public deployment.
+          // Skip masked placeholders coming from template preview.
+          const filteredEnvVars: Record<string, string> = {}
+          for (const [key, value] of Object.entries(envVars)) {
+            if (value && value !== '••••••••' && value.trim() !== '') {
+              filteredEnvVars[key] = value
+            }
+          }
+          if (Object.keys(filteredEnvVars).length > 0) {
+            agentConfig.envVars = filteredEnvVars
           }
 
           const publicConfig: UpdatePublicConfigDto = {
@@ -373,6 +411,7 @@ export default function ProjectModal({
       case 'basic': return 'Create Project'
       case 'agent': return 'Select Agent'
       case 'configure': return 'Configure Agent'
+      case 'configuration': return 'Pipeline Configuration'
       case 'plan': return 'Select Plan'
       case 'envvars': return 'Environment Variables'
       case 'visualizer': return 'Choose Visualizer'
@@ -859,6 +898,25 @@ export default function ProjectModal({
                       {error}
                     </motion.div>
                   )}
+                </motion.div>
+              )}
+
+              {/* Configuration Step */}
+              {step === 'configuration' && selectedAgentType?.pipelineSchema && (
+                <motion.div
+                  key="configuration"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <ConfigurationSelectionStep
+                    agentTypeId={selectedAgentType.id}
+                    pipelineSchema={selectedAgentType.pipelineSchema}
+                    selectedConfiguration={selectedConfiguration}
+                    onSelectConfiguration={setSelectedConfiguration}
+                  />
                 </motion.div>
               )}
 

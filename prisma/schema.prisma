@@ -68,7 +68,7 @@ model Project {
   publicToken            String?    @unique @default(uuid())
   publicAgentTypeId      String?
   publicAgentType        AgentType? @relation(fields: [publicAgentTypeId], references: [id], name: "publicProjects")
-  publicAgentConfig      Json?      // { name, icon, plan, envVarTemplateId }
+  publicAgentConfig      Json?      // { name, icon, plan?, config?, pipelineConfig?, envVarTemplateId?, envVars? }
   publicVisualizerType   String?
   publicVisualizerLocked Boolean    @default(false)
   publicExpiresAt        DateTime?

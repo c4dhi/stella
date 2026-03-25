@@ -354,6 +354,9 @@ export class WebhooksService {
         agentType: firstAgent.agentType,
         agentConfig: firstAgent.agentConfig,
         envVarTemplateId: firstAgent.envVarTemplateId,
+        // Preserve previously stored manual env vars for on_demand resume.
+        // AgentInstance doesn't persist envVars separately, so keep them in session.lastAgentConfig.
+        envVars: (session.lastAgentConfig as any)?.envVars || {},
       };
 
       await this.prisma.session.update({
@@ -443,6 +446,7 @@ export class WebhooksService {
             agentType: config.agentType || 'stella-agent',
             config: config.agentConfig || {},
             envVarTemplateId: config.envVarTemplateId,
+            envVars: config.envVars || {},
           },
           projectMembership.userId,
         );
