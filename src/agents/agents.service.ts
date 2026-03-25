@@ -75,7 +75,12 @@ export class AgentsService {
     if (!envVars || Object.keys(envVars).length === 0) {
       return null;
     }
-    return this.encryptionService.encrypt(envVars);
+    try {
+      return this.encryptionService.encrypt(envVars);
+    } catch (error) {
+      this.logger.error(`Failed to encrypt manual env vars for storage: ${error.message}`);
+      throw new BadRequestException('Unable to store manual environment variables');
+    }
   }
 
   /**
