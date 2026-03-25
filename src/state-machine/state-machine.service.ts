@@ -57,6 +57,7 @@ export interface StateTransition {
   target_state_id: string;
   condition_type:
     | 'all_tasks_complete'
+    | 'turn_count_exceeded'
     | 'deliverable_value'
     | 'deliverable_value_in'
     | 'deliverable_value_numeric'
@@ -969,6 +970,36 @@ export class StateMachineService {
     switch (conditionType) {
       case 'all_tasks_complete':
         return this.isCurrentStateComplete(state, currentState);
+
+      case 'turn_count_exceeded': {
+        // Expects condition_config:
+        // - { turns: number } OR { value: number }
+        // - optional { scope: 'without_progress' | 'total' } (default: without_progress)
+        // This enables transitions based on conversation turn count thresholds.
+        const rawThreshold = conditionConfig?.turns ?? conditionConfig?.value;
+        const thresholdNumber = this.toFiniteNumber(rawThreshold);
+        const scope = String(conditionConfig?.scope || 'without_progress').toLowerCase();
+
+        if (thresholdNumber === null || thresholdNumber < 0) {
+          this.warnInvalidCondition(
+            `'turn_count_exceeded' misconfigured: threshold must be a non-negative number (received '${String(rawThreshold)}')`,
+          );
+          return false;
+        }
+
+        const threshold = Math.floor(thresholdNumber);
+        if (scope === 'without_progress') {
+          return state.turnsWithoutProgress >= threshold;
+        }
+        if (scope === 'total') {
+          return state.totalTurns >= threshold;
+        }
+
+        this.warnInvalidCondition(
+          `'turn_count_exceeded' misconfigured: unsupported scope '${scope}' (use 'without_progress' or 'total')`,
+        );
+        return false;
+      }
 
       case 'deliverable_value': {
         const key = conditionConfig?.key as string;
