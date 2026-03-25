@@ -645,9 +645,21 @@ export interface PlanTask {
 /**
  * State transition definition.
  */
+// Keep this union aligned with backend StateTransition.condition_type in state-machine.service.ts.
+export type StateTransitionConditionType =
+  | 'all_tasks_complete'
+  | 'turn_count_exceeded'
+  | 'deliverable_value'
+  | 'deliverable_value_in'
+  | 'deliverable_value_numeric'
+  | 'compound'
+  | 'all_of'
+  | 'any_of'
+  | 'deliverable_exists'
+
 export interface StateTransition {
   target_state_id: string
-  condition_type: string           // "all_tasks_complete", "deliverable_value", "deliverable_exists"
+  condition_type: StateTransitionConditionType
   priority?: number
   condition_config?: Record<string, unknown>
 }
