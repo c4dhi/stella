@@ -187,6 +187,8 @@ export interface FullStateInfo {
 @Injectable()
 export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
+  // Guard against pathological recursive condition trees.
+  private static readonly MAX_CONDITION_DEPTH = 5;
 
   constructor(private prisma: PrismaService) {}
 
@@ -893,6 +895,58 @@ export class StateMachineService {
   }
 
   /**
+   * Normalized string comparison used across condition evaluators.
+   * Keeps behavior consistent between deliverable_value and deliverable_value_in.
+   */
+  private normalizeStringValue(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
+  /**
+   * Compare two values with consistent semantics:
+   * - strings => case-insensitive + trim
+   * - non-strings => strict equality
+   */
+  private areValuesEqualLoose(actual: unknown, expected: unknown): boolean {
+    if (typeof actual === 'string' && typeof expected === 'string') {
+      return this.normalizeStringValue(actual) === this.normalizeStringValue(expected);
+    }
+    return actual === expected;
+  }
+
+  /**
+   * Normalize supported numeric operators into canonical keys.
+   * Returns null for unsupported operators.
+   */
+  private normalizeNumericOperator(operator: unknown): 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'between' | null {
+    if (typeof operator !== 'string') return null;
+
+    const op = operator.toLowerCase();
+    const aliases: Record<string, 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'between'> = {
+      gt: 'gt',
+      '>': 'gt',
+      gte: 'gte',
+      '>=': 'gte',
+      lt: 'lt',
+      '<': 'lt',
+      lte: 'lte',
+      '<=': 'lte',
+      eq: 'eq',
+      '==': 'eq',
+      neq: 'neq',
+      '!=': 'neq',
+      between: 'between',
+      range: 'between',
+    };
+
+    return aliases[op] ?? null;
+  }
+
+  private warnInvalidCondition(message: string): void {
+    this.logger.warn(`[evaluateAndTransition] ${message}`);
+  }
+
+  /**
    * Evaluate one condition node.
    * Supports simple condition types and nested composite conditions.
    */
@@ -905,9 +959,9 @@ export class StateMachineService {
     depth = 0,
   ): boolean {
     // Guard against malformed recursive configs and accidental deep nesting.
-    if (depth > 5) {
-      this.logger.warn(
-        `[evaluateAndTransition] Condition nesting too deep (depth=${depth}) for type='${conditionType}'`,
+    if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
+      this.warnInvalidCondition(
+        `Condition nesting too deep (depth=${depth}) for type='${conditionType}'`,
       );
       return false;
     }
@@ -920,10 +974,7 @@ export class StateMachineService {
         const key = conditionConfig?.key as string;
         const expected = conditionConfig?.value;
         const actual = deliverables[key]?.value;
-        if (typeof actual === 'string' && typeof expected === 'string') {
-          return actual.trim().toLowerCase() === expected.trim().toLowerCase();
-        }
-        return actual === expected;
+        return this.areValuesEqualLoose(actual, expected);
       }
 
       case 'deliverable_value_in': {
@@ -933,18 +984,15 @@ export class StateMachineService {
         const actual = deliverables[key]?.value;
 
         if (!Array.isArray(expectedValues)) {
-          this.logger.warn(
-            `[evaluateAndTransition] 'deliverable_value_in' misconfigured for key='${key}': 'values' must be an array`,
+          this.warnInvalidCondition(
+            `'deliverable_value_in' misconfigured for key='${key}': 'values' must be an array`,
           );
           return false;
         }
 
-        return expectedValues.some((expectedValue) => {
-          if (typeof actual === 'string' && typeof expectedValue === 'string') {
-            return actual.trim().toLowerCase() === expectedValue.trim().toLowerCase();
-          }
-          return actual === expectedValue;
-        });
+        return expectedValues.some((expectedValue) =>
+          this.areValuesEqualLoose(actual, expectedValue),
+        );
       }
 
       case 'deliverable_value_numeric': {
@@ -957,61 +1005,60 @@ export class StateMachineService {
         const numericActual = this.toFiniteNumber(numericActualRaw);
 
         if (!numericKey) {
-          this.logger.warn(
-            `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured: missing 'key'`,
+          this.warnInvalidCondition(
+            `'deliverable_value_numeric' misconfigured: missing 'key'`,
           );
           return false;
         }
 
-        if (!rawOperator) {
-          this.logger.warn(
-            `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': missing 'operator'`,
+        const operator = this.normalizeNumericOperator(rawOperator);
+        if (!operator) {
+          this.warnInvalidCondition(
+            `'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported or missing operator '${String(rawOperator)}'`,
           );
           return false;
         }
 
         if (numericActual === null) {
-          this.logger.warn(
-            `[evaluateAndTransition] 'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
+          this.warnInvalidCondition(
+            `'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
           );
           return false;
         }
 
-        const operator = rawOperator.toLowerCase();
-
         // Support both semantic and symbolic operators to simplify authoring.
-        if (operator === 'gt' || operator === '>') {
+        if (operator === 'gt') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual > expectedValue;
         }
-        if (operator === 'gte' || operator === '>=') {
+        if (operator === 'gte') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual >= expectedValue;
         }
-        if (operator === 'lt' || operator === '<') {
+        if (operator === 'lt') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual < expectedValue;
         }
-        if (operator === 'lte' || operator === '<=') {
+        if (operator === 'lte') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual <= expectedValue;
         }
-        if (operator === 'eq' || operator === '==') {
+        if (operator === 'eq') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual === expectedValue;
         }
-        if (operator === 'neq' || operator === '!=') {
+        if (operator === 'neq') {
           const expectedValue = this.toFiniteNumber(conditionConfig?.value);
           return expectedValue !== null && numericActual !== expectedValue;
         }
-        if (operator === 'between' || operator === 'range') {
+        if (operator === 'between') {
           const minValue = this.toFiniteNumber(conditionConfig?.min);
           const maxValue = this.toFiniteNumber(conditionConfig?.max);
           const inclusive = conditionConfig?.inclusive !== false;
 
           if (minValue === null || maxValue === null || minValue > maxValue) {
-            this.logger.warn(
-              `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${conditionConfig?.min}' max='${conditionConfig?.max}'`,
+            this.warnInvalidCondition(
+              `'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${conditionConfig?.min}' max='${conditionConfig?.max}'`,
             );
             return false;
           }
@@ -1021,8 +1068,8 @@ export class StateMachineService {
             : numericActual > minValue && numericActual < maxValue;
         }
 
-        this.logger.warn(
-          `[evaluateAndTransition] 'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
+        this.warnInvalidCondition(
+          `'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
         );
         return false;
       }
@@ -1055,8 +1102,8 @@ export class StateMachineService {
       case 'compound': {
         const operator = String(conditionConfig?.operator || '').toLowerCase();
         if (operator !== 'and' && operator !== 'or') {
-          this.logger.warn(
-            `[evaluateAndTransition] 'compound' misconfigured: operator must be 'and' or 'or'`,
+          this.warnInvalidCondition(
+            `'compound' misconfigured: operator must be 'and' or 'or'`,
           );
           return false;
         }
@@ -1072,9 +1119,7 @@ export class StateMachineService {
       }
 
       default:
-        this.logger.warn(
-          `[evaluateAndTransition] Unknown condition type: '${conditionType}'`,
-        );
+        this.warnInvalidCondition(`Unknown condition type: '${conditionType}'`);
         return false;
     }
   }
@@ -1092,16 +1137,16 @@ export class StateMachineService {
   ): boolean {
     const rawConditions = conditionConfig?.conditions;
     if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
-      this.logger.warn(
-        `[evaluateAndTransition] Composite condition misconfigured: 'conditions' must be a non-empty array`,
+      this.warnInvalidCondition(
+        `Composite condition misconfigured: 'conditions' must be a non-empty array`,
       );
       return false;
     }
 
     const evaluateChild = (child: unknown): boolean => {
       if (!child || typeof child !== 'object') {
-        this.logger.warn(
-          `[evaluateAndTransition] Composite condition has invalid child: ${JSON.stringify(child)}`,
+        this.warnInvalidCondition(
+          `Composite condition has invalid child: ${JSON.stringify(child)}`,
         );
         return false;
       }
@@ -1113,9 +1158,7 @@ export class StateMachineService {
         childRecord.config) as Record<string, unknown> | undefined;
 
       if (!childType || typeof childType !== 'string') {
-        this.logger.warn(
-          `[evaluateAndTransition] Composite child missing valid 'condition_type'`,
-        );
+        this.warnInvalidCondition(`Composite child missing valid 'condition_type'`);
         return false;
       }
 
@@ -1172,17 +1215,16 @@ export class StateMachineService {
 
     // Sort transitions by priority
     const sortedTransitions = [...currentState.transitions].sort(
-      (a, b) => (a.priority || 100) - (b.priority || 100),
+      // Nullish coalescing keeps explicit priority=0 valid (unlike ||).
+      (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
     );
 
     for (const transition of sortedTransitions) {
-      let conditionMet = false;
-
       this.logger.log(
         `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
       );
 
-      conditionMet = this.evaluateTransitionCondition(
+      const conditionMet = this.evaluateTransitionCondition(
         transition.condition_type,
         transition.condition_config,
         state,
