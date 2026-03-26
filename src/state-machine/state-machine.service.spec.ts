@@ -163,6 +163,42 @@ function buildNonLinearPlan(): PlanData {
   };
 }
 
+function buildCircularPlan(): PlanData {
+  return {
+    id: 'plan-circular',
+    title: 'Circular Plan',
+    initial_state_id: 'state-a',
+    states: [
+      {
+        id: 'state-a',
+        title: 'A',
+        type: 'loose',
+        tasks: [],
+        transitions: [
+          {
+            target_state_id: 'state-b',
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+        ],
+      },
+      {
+        id: 'state-b',
+        title: 'B',
+        type: 'loose',
+        tasks: [],
+        transitions: [
+          {
+            target_state_id: 'state-a',
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 describe('StateMachineService non-linear transitions', () => {
   const sessionId = 'session-nonlinear';
   let service: StateMachineService;
@@ -223,5 +259,20 @@ describe('StateMachineService non-linear transitions', () => {
     expect(stateStatus.get('state-a')).toBe('active');
     expect(stateStatus.get('state-b')).toBe('pending');
     expect(stateStatus.get('state-c')).toBe('completed');
+  });
+
+  it('stops circular transitions with max-transitions-per-turn guard', async () => {
+    const circularSessionId = 'session-circular';
+    await service.initializeForSession(circularSessionId, buildCircularPlan());
+
+    // Call transition evaluation directly to verify backend loop guard behavior.
+    const result = await (service as any).evaluateAndTransition(circularSessionId);
+
+    expect(result.transitioned).toBe(true);
+    expect(result.newStateId).toBeDefined();
+
+    const state = await service.getCurrentState(circularSessionId);
+    expect(state?.stateId).toBe(result.newStateId);
+    expect(['state-a', 'state-b']).toContain(state?.stateId);
   });
 });
