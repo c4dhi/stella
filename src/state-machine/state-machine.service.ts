@@ -960,11 +960,19 @@ export class StateMachineService {
         (a, b) => (a.priority || 100) - (b.priority || 100),
       );
 
-      let matchedTargetId: string | undefined;
-      let matchedTargetTitle: string | undefined;
+      // Collect per-transition evaluation details for a single decision summary log.
+      const evaluated: Array<{
+        target: string;
+        condition: string;
+        priority: number;
+        matched: boolean;
+      }> = [];
+      // Keep only transitions that matched; winner is selected by sorted priority order.
+      const matchedTransitions: typeof sortedTransitions = [];
 
       for (const transition of sortedTransitions) {
         let conditionMet = false;
+        const priority = transition.priority || 100;
 
         this.logger.log(
           `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
@@ -1006,17 +1014,54 @@ export class StateMachineService {
             );
         }
 
+        evaluated.push({
+          target: transition.target_state_id,
+          condition: transition.condition_type,
+          priority,
+          matched: conditionMet,
+        });
+
         if (conditionMet) {
-          const targetState = plan.states.find(s => s.id === transition.target_state_id);
-          if (targetState) {
-            matchedTargetId = transition.target_state_id;
-            matchedTargetTitle = targetState.title || targetState.id;
-          } else {
-            this.logger.warn(
-              `[evaluateAndTransition] Target state '${transition.target_state_id}' not found in plan`,
-            );
-          }
-          break;
+          matchedTransitions.push(transition);
+        }
+      }
+
+      // Summary log: which conditions were checked and which matched.
+      const matchedSummary = matchedTransitions.map(t => ({
+        target: t.target_state_id,
+        condition: t.condition_type,
+        priority: t.priority || 100,
+      }));
+      this.logger.log(
+        `[evaluateAndTransition] Decision summary: evaluated=${JSON.stringify(evaluated)}, matched=${JSON.stringify(matchedSummary)}`,
+      );
+
+      // Deterministic winner: first matched transition after priority sort.
+      const winner = matchedTransitions[0];
+      let matchedTargetId: string | undefined;
+      let matchedTargetTitle: string | undefined;
+
+      if (winner) {
+        if (
+          matchedTransitions.length > 1 &&
+          (matchedTransitions[0].priority || 100) === (matchedTransitions[1].priority || 100)
+        ) {
+          this.logger.log(
+            `[evaluateAndTransition] Priority tie detected at ${winner.priority || 100}; winner target='${winner.target_state_id}' (stable sorted order)`,
+          );
+        }
+
+        const targetState = plan.states.find(s => s.id === winner.target_state_id);
+        if (targetState) {
+          matchedTargetId = winner.target_state_id;
+          matchedTargetTitle = targetState.title || targetState.id;
+          this.logger.log(
+            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority || 100}`,
+          );
+        } else {
+          this.logger.warn(
+            `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
+          );
         }
       }
 
