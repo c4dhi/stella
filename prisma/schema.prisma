@@ -269,6 +269,8 @@ model AgentInstance {
   // Environment variable template (for API keys like OPENAI_API_KEY)
   envVarTemplateId String?
   envVarTemplate   EnvVarTemplate? @relation(fields: [envVarTemplateId], references: [id])
+  // Encrypted manual env vars entered during deployment (used to preserve restart behavior)
+  manualEnvVarsEncrypted String? @db.Text
 
   // Health tracking (Phase 3.2)
   healthState       String?   @default("unknown")  // Agent state: initializing, ready, processing, error, etc.

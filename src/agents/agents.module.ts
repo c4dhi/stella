@@ -5,6 +5,7 @@ import { KubernetesModule } from '../kubernetes/kubernetes.module';
 import { AgentServerModule } from '../agent-server/agent-server.module';
 import { AgentImageModule } from '../agent-image/agent-image.module';
 import { SessionsModule } from '../sessions/sessions.module';
+import { EnvVarTemplatesModule } from '../env-var-templates/env-var-templates.module';
 
 /**
  * AgentsModule - Manages agent lifecycle.
@@ -18,6 +19,8 @@ import { SessionsModule } from '../sessions/sessions.module';
   imports: [
     KubernetesModule,
     AgentImageModule,
+    // Import encryption provider so manual env vars can be persisted securely for restart reuse.
+    EnvVarTemplatesModule,
     forwardRef(() => AgentServerModule),
     forwardRef(() => SessionsModule),
   ],
