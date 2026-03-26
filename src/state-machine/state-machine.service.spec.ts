@@ -199,6 +199,41 @@ function buildCircularPlan(): PlanData {
   };
 }
 
+function buildDeadEndPlan(): PlanData {
+  // Dead-end scenario:
+  // state-a has a transition, but its condition requires a deliverable key
+  // that is never set in this test ("missing_key").
+  // Expected behavior: no transition should happen.
+  return {
+    id: 'plan-dead-end',
+    title: 'Dead End Plan',
+    initial_state_id: 'state-a',
+    states: [
+      {
+        id: 'state-a',
+        title: 'A',
+        type: 'loose',
+        tasks: [],
+        transitions: [
+          {
+            target_state_id: 'state-b',
+            condition_type: 'deliverable_exists',
+            condition_config: { key: 'missing_key' },
+            priority: 1,
+          },
+        ],
+      },
+      {
+        id: 'state-b',
+        title: 'B',
+        type: 'loose',
+        tasks: [],
+        transitions: [],
+      },
+    ],
+  };
+}
+
 describe('StateMachineService non-linear transitions', () => {
   const sessionId = 'session-nonlinear';
   let service: StateMachineService;
@@ -274,5 +309,24 @@ describe('StateMachineService non-linear transitions', () => {
     const state = await service.getCurrentState(circularSessionId);
     expect(state?.stateId).toBe(result.newStateId);
     expect(['state-a', 'state-b']).toContain(state?.stateId);
+  });
+
+  it('stays in current state when no transition condition matches (dead end)', async () => {
+    const deadEndSessionId = 'session-dead-end';
+    await service.initializeForSession(deadEndSessionId, buildDeadEndPlan());
+
+    // Baseline: session starts in state-a.
+    const before = await service.getCurrentState(deadEndSessionId);
+    expect(before?.stateId).toBe('state-a');
+
+    // Evaluate transitions directly with no deliverables present.
+    // Transition condition should fail, so no state change.
+    const result = await (service as any).evaluateAndTransition(deadEndSessionId);
+    expect(result.transitioned).toBe(false);
+    expect(result.newStateId).toBeUndefined();
+
+    // Verify state remains unchanged after evaluation.
+    const after = await service.getCurrentState(deadEndSessionId);
+    expect(after?.stateId).toBe('state-a');
   });
 });
