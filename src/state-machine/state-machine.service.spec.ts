@@ -234,6 +234,70 @@ function buildDeadEndPlan(): PlanData {
   };
 }
 
+function buildMultiMatchPriorityPlan(): PlanData {
+  // Multiple transitions from state-a intentionally match at the same time.
+  // The lower priority number (1) should win deterministically.
+  return {
+    id: 'plan-multi-match-priority',
+    title: 'Multi Match Priority Plan',
+    initial_state_id: 'state-a',
+    states: [
+      {
+        id: 'state-a',
+        title: 'A',
+        type: 'loose',
+        tasks: [],
+        transitions: [
+          {
+            target_state_id: 'state-b',
+            condition_type: 'all_tasks_complete',
+            priority: 2,
+          },
+          {
+            target_state_id: 'state-c',
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+        ],
+      },
+      { id: 'state-b', title: 'B', type: 'loose', tasks: [], transitions: [] },
+      { id: 'state-c', title: 'C', type: 'loose', tasks: [], transitions: [] },
+    ],
+  };
+}
+
+function buildMultiMatchTiePlan(): PlanData {
+  // Tie case: both transitions from state-a have identical priority and both match.
+  // We verify runtime behavior stays deterministic across repeated runs.
+  return {
+    id: 'plan-multi-match-tie',
+    title: 'Multi Match Tie Plan',
+    initial_state_id: 'state-a',
+    states: [
+      {
+        id: 'state-a',
+        title: 'A',
+        type: 'loose',
+        tasks: [],
+        transitions: [
+          {
+            target_state_id: 'state-b',
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+          {
+            target_state_id: 'state-c',
+            condition_type: 'all_tasks_complete',
+            priority: 1,
+          },
+        ],
+      },
+      { id: 'state-b', title: 'B', type: 'loose', tasks: [], transitions: [] },
+      { id: 'state-c', title: 'C', type: 'loose', tasks: [], transitions: [] },
+    ],
+  };
+}
+
 describe('StateMachineService non-linear transitions', () => {
   const sessionId = 'session-nonlinear';
   let service: StateMachineService;
@@ -328,5 +392,37 @@ describe('StateMachineService non-linear transitions', () => {
     // Verify state remains unchanged after evaluation.
     const after = await service.getCurrentState(deadEndSessionId);
     expect(after?.stateId).toBe('state-a');
+  });
+
+  it('uses priority deterministically when multiple transition conditions match', async () => {
+    // Both transitions are true ("all_tasks_complete" on an empty task list),
+    // so transition choice must be resolved by priority.
+    const sessionId = 'session-multi-match-priority';
+    await service.initializeForSession(sessionId, buildMultiMatchPriorityPlan());
+
+    const result = await (service as any).evaluateAndTransition(sessionId);
+    expect(result.transitioned).toBe(true);
+    // priority=1 transition targets state-c, so it must win over priority=2.
+    expect(result.newStateId).toBe('state-c');
+
+    const state = await service.getCurrentState(sessionId);
+    expect(state?.stateId).toBe('state-c');
+  });
+
+  it('remains deterministic when multiple matching transitions have equal priority', async () => {
+    // Run the same tie-priority setup multiple times with fresh sessions.
+    // Expected: identical outcome each run (stable deterministic selection).
+    const outcomes: string[] = [];
+
+    for (let i = 0; i < 5; i++) {
+      const sessionId = `session-multi-match-tie-${i}`;
+      await service.initializeForSession(sessionId, buildMultiMatchTiePlan());
+      const result = await (service as any).evaluateAndTransition(sessionId);
+      expect(result.transitioned).toBe(true);
+      outcomes.push(result.newStateId as string);
+    }
+
+    // If deterministic, all outcomes collapse to a single selected target.
+    expect(new Set(outcomes).size).toBe(1);
   });
 });
