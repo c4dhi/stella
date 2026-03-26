@@ -164,6 +164,22 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
 }
 
 function normalizeJsonForCompare(value: unknown): unknown {
+  // Prisma null sentinels (DbNull/JsonNull/AnyNull) should compare as null
+  // against values read back from the database.
+  if (value === Prisma.DbNull || value === Prisma.JsonNull || value === Prisma.AnyNull) {
+    return null
+  }
+
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    ['DbNull', 'JsonNull', 'AnyNull'].includes(
+      (value as { constructor?: { name?: string } }).constructor?.name ?? '',
+    )
+  ) {
+    return null
+  }
+
   if (value === null || value === undefined) return null
   if (Array.isArray(value)) {
     return value.map(normalizeJsonForCompare)
