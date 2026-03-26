@@ -179,6 +179,8 @@ export interface FullStateInfo {
 @Injectable()
 export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
+  // Guard against circular transition loops in a single turn (e.g., A -> B -> A).
+  private static readonly MAX_TRANSITIONS_PER_TURN = 10;
 
   constructor(private prisma: PrismaService) {}
 
@@ -922,112 +924,153 @@ export class StateMachineService {
     // Normalize the plan to ensure transitions exist (fixes plans created without transitions)
     const rawPlan = state.planData as unknown as PlanData;
     const plan = this.ensureTransitions(rawPlan);
-    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
-
-    this.logger.log(
-      `[evaluateAndTransition] Session ${sessionId}, current state: '${state.currentStateId}'`,
-    );
-
-    if (!currentState) {
-      this.logger.log(`[evaluateAndTransition] Current state not found in plan`);
-      return { transitioned: false };
-    }
-
-    if (!currentState.transitions || currentState.transitions.length === 0) {
-      this.logger.log(
-        `[evaluateAndTransition] State '${currentState.id}' has no transitions defined`,
-      );
-      return { transitioned: false };
-    }
-
-    this.logger.log(
-      `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
-    );
-
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
+    let currentStateId = state.currentStateId;
+    let transitioned = false;
+    let lastStateId: string | undefined;
+    let lastStateTitle: string | undefined;
+    let hitGuard = true;
+    const visitedStateIds = new Set<string>([currentStateId]);
 
-    // Sort transitions by priority
-    const sortedTransitions = [...currentState.transitions].sort(
-      (a, b) => (a.priority || 100) - (b.priority || 100),
+    this.logger.log(
+      `[evaluateAndTransition] Session ${sessionId}, current state: '${currentStateId}'`,
     );
 
-    for (const transition of sortedTransitions) {
-      let conditionMet = false;
-
-      this.logger.log(
-        `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
-      );
-
-      switch (transition.condition_type) {
-        case 'all_tasks_complete':
-          conditionMet = this.isCurrentStateComplete(state, currentState);
-          this.logger.log(
-            `[evaluateAndTransition] 'all_tasks_complete' condition result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_value':
-          const key = transition.condition_config?.key as string;
-          const expected = transition.condition_config?.value;
-          const actual = deliverables[key]?.value;
-          if (typeof actual === 'string' && typeof expected === 'string') {
-            conditionMet = actual.trim().toLowerCase() === expected.trim().toLowerCase();
-          } else {
-            conditionMet = actual === expected;
-          }
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_exists':
-          const existsKey = transition.condition_config?.key as string;
-          conditionMet = existsKey in deliverables;
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_exists' condition: ${existsKey} exists=${conditionMet}`,
-          );
-          break;
-
-        default:
-          this.logger.log(
-            `[evaluateAndTransition] Unknown condition type: '${transition.condition_type}'`,
-          );
+    for (let i = 0; i < StateMachineService.MAX_TRANSITIONS_PER_TURN; i++) {
+      const currentState = this.getCurrentPlanState(plan, currentStateId);
+      if (!currentState) {
+        this.logger.log(`[evaluateAndTransition] Current state not found in plan`);
+        hitGuard = false;
+        break;
       }
 
-      if (conditionMet) {
-        const targetState = plan.states.find(s => s.id === transition.target_state_id);
-        if (targetState) {
-          this.logger.log(
-            `[evaluateAndTransition] Condition met! Transitioning from '${state.currentStateId}' to '${transition.target_state_id}'`,
-          );
+      if (!currentState.transitions || currentState.transitions.length === 0) {
+        this.logger.log(
+          `[evaluateAndTransition] State '${currentState.id}' has no transitions defined`,
+        );
+        hitGuard = false;
+        break;
+      }
 
-          await this.prisma.sessionState.update({
-            where: { sessionId },
-            data: {
-              currentStateId: transition.target_state_id,
-              turnsWithoutProgress: 0,
-              lastTransitionAt: new Date(),
-            },
-          });
+      this.logger.log(
+        `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
+      );
 
-          this.logger.log(
-            `Session ${sessionId} transitioned from ${state.currentStateId} to ${transition.target_state_id}`,
-          );
+      const sortedTransitions = [...currentState.transitions].sort(
+        (a, b) => (a.priority || 100) - (b.priority || 100),
+      );
 
-          return {
-            transitioned: true,
-            newStateId: transition.target_state_id,
-            newStateTitle: targetState.title || targetState.id,
-          };
-        } else {
-          this.logger.warn(
-            `[evaluateAndTransition] Target state '${transition.target_state_id}' not found in plan`,
-          );
+      let matchedTargetId: string | undefined;
+      let matchedTargetTitle: string | undefined;
+
+      for (const transition of sortedTransitions) {
+        let conditionMet = false;
+
+        this.logger.log(
+          `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
+        );
+
+        switch (transition.condition_type) {
+          case 'all_tasks_complete':
+            conditionMet = this.isCurrentStateComplete(state, currentState);
+            this.logger.log(
+              `[evaluateAndTransition] 'all_tasks_complete' condition result: ${conditionMet}`,
+            );
+            break;
+
+          case 'deliverable_value':
+            const key = transition.condition_config?.key as string;
+            const expected = transition.condition_config?.value;
+            const actual = deliverables[key]?.value;
+            if (typeof actual === 'string' && typeof expected === 'string') {
+              conditionMet = actual.trim().toLowerCase() === expected.trim().toLowerCase();
+            } else {
+              conditionMet = actual === expected;
+            }
+            this.logger.log(
+              `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
+            );
+            break;
+
+          case 'deliverable_exists':
+            const existsKey = transition.condition_config?.key as string;
+            conditionMet = existsKey in deliverables;
+            this.logger.log(
+              `[evaluateAndTransition] 'deliverable_exists' condition: ${existsKey} exists=${conditionMet}`,
+            );
+            break;
+
+          default:
+            this.logger.log(
+              `[evaluateAndTransition] Unknown condition type: '${transition.condition_type}'`,
+            );
+        }
+
+        if (conditionMet) {
+          const targetState = plan.states.find(s => s.id === transition.target_state_id);
+          if (targetState) {
+            matchedTargetId = transition.target_state_id;
+            matchedTargetTitle = targetState.title || targetState.id;
+          } else {
+            this.logger.warn(
+              `[evaluateAndTransition] Target state '${transition.target_state_id}' not found in plan`,
+            );
+          }
+          break;
         }
       }
+
+      if (!matchedTargetId) {
+        this.logger.log(`[evaluateAndTransition] No transition conditions met`);
+        hitGuard = false;
+        break;
+      }
+
+      if (visitedStateIds.has(matchedTargetId)) {
+        this.logger.warn(
+          `[evaluateAndTransition] Transition cycle detected (${currentStateId} -> ${matchedTargetId}) for session ${sessionId}; stopping to prevent loops`,
+        );
+        hitGuard = false;
+        break;
+      }
+
+      this.logger.log(
+        `[evaluateAndTransition] Condition met! Transitioning from '${currentStateId}' to '${matchedTargetId}'`,
+      );
+
+      await this.prisma.sessionState.update({
+        where: { sessionId },
+        data: {
+          currentStateId: matchedTargetId,
+          turnsWithoutProgress: 0,
+          lastTransitionAt: new Date(),
+        },
+      });
+
+      this.logger.log(
+        `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
+      );
+
+      transitioned = true;
+      currentStateId = matchedTargetId;
+      visitedStateIds.add(currentStateId);
+      lastStateId = matchedTargetId;
+      lastStateTitle = matchedTargetTitle;
     }
 
-    this.logger.log(`[evaluateAndTransition] No transition conditions met`);
+    if (transitioned) {
+      if (hitGuard) {
+        this.logger.warn(
+          `[evaluateAndTransition] Max transitions per turn (${StateMachineService.MAX_TRANSITIONS_PER_TURN}) reached for session ${sessionId}; stopping to prevent loops`,
+        );
+      }
+      return {
+        transitioned: true,
+        newStateId: lastStateId,
+        newStateTitle: lastStateTitle,
+      };
+    }
+
     return { transitioned: false };
   }
 
