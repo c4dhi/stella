@@ -202,6 +202,14 @@ The structure must follow this exact schema:
               }
             ]
           }
+        ],
+        "transitions": [
+          {
+            "target_state_id": "state_<target_id>",
+            "condition_type": "all_tasks_complete" | "turn_count_exceeded" | "deliverable_value" | "deliverable_value_in" | "deliverable_value_numeric" | "deliverable_exists" | "all_of" | "any_of" | "compound",
+            "priority": 1,
+            "condition_config": {}
+          }
         ]
       }
     ],
@@ -423,6 +431,104 @@ EXAMPLE 2 — Goal-oriented plan for natural conversation:
   "suggestedDescription": "A natural coaching conversation to understand the client's situation, aspirations, and obstacles."
 }
 
+EXAMPLE 3 — Conditional branching transitions:
+
+{
+  "content": {
+    "id": "plan_support_router",
+    "title": "Support Triage Flow",
+    "description": "Route users based on issue type and urgency",
+    "initial_state_id": "state_intake",
+    "states": [
+      {
+        "id": "state_intake",
+        "title": "Intake",
+        "type": "loose",
+        "description": "Collect routing signals",
+        "tasks": [
+          {
+            "id": "task_issue_type",
+            "description": "Capture issue type",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "issue_type",
+                "description": "Category of issue",
+                "type": "enum",
+                "required": true,
+                "enum_values": ["billing", "technical", "account"],
+                "acceptance_criteria": "Must map to one of the listed categories."
+              }
+            ]
+          },
+          {
+            "id": "task_urgency_score",
+            "description": "Capture urgency score",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "urgency_score",
+                "description": "Urgency from 1 to 10",
+                "type": "number",
+                "required": true,
+                "acceptance_criteria": "A number between 1 and 10."
+              }
+            ]
+          }
+        ],
+        "transitions": [
+          {
+            "target_state_id": "state_priority_queue",
+            "condition_type": "all_of",
+            "priority": 1,
+            "condition_config": {
+              "conditions": [
+                {
+                  "condition_type": "deliverable_value_in",
+                  "condition_config": {
+                    "key": "issue_type",
+                    "values": ["billing", "account"]
+                  }
+                },
+                {
+                  "condition_type": "deliverable_value_numeric",
+                  "condition_config": {
+                    "key": "urgency_score",
+                    "operator": "gte",
+                    "value": 7
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "target_state_id": "state_standard_queue",
+            "condition_type": "all_tasks_complete",
+            "priority": 99
+          }
+        ]
+      },
+      {
+        "id": "state_priority_queue",
+        "title": "Priority Queue",
+        "type": "strict",
+        "description": "Handle urgent requests first",
+        "tasks": []
+      },
+      {
+        "id": "state_standard_queue",
+        "title": "Standard Queue",
+        "type": "strict",
+        "description": "Handle normal priority requests",
+        "tasks": []
+      }
+    ],
+    "system_prompt": "You are a calm support triage assistant. Gather facts clearly and route deterministically."
+  },
+  "suggestedName": "Support Triage Flow",
+  "suggestedDescription": "Routes users by issue category and urgency."
+}
+
 Guidelines:
 1. REQUIRED FIELDS: Always include id, title, description, and initial_state_id in content
 2. STATES = conversation phases (typically 2-4 states)
@@ -441,6 +547,20 @@ Guidelines:
     - Communication style (casual, professional, enthusiastic, etc.)
     - 2-3 sentences max
 11. For goal states, the "goal" object is critical — it tells the AI HOW to conduct the conversation, not just WHAT to collect
+12. TRANSITIONS:
+    - Always include transitions for each non-terminal state.
+    - Always set an explicit numeric priority.
+    - Lower priority number is evaluated first.
+    - Keep fallback transitions last (typically "all_tasks_complete" with a high priority value).
+13. CONDITION CONFIG PATTERNS:
+    - "deliverable_value": { "key": "...", "value": ... }
+    - "deliverable_value_in": { "key": "...", "values": [ ... ] }
+    - "deliverable_value_numeric": { "key": "...", "operator": "gt|gte|lt|lte|eq|neq|between", "value": n } OR { "key": "...", "operator": "between", "min": n, "max": n, "inclusive": true|false }
+    - "deliverable_exists": { "key": "..." }
+    - "turn_count_exceeded": { "turns": n, "scope": "without_progress" | "total" }
+    - "all_of": { "conditions": [ { "condition_type": "...", "condition_config": { ... } }, ... ] }
+    - "any_of": { "conditions": [ { "condition_type": "...", "condition_config": { ... } }, ... ] }
+    - "compound": { "operator": "and" | "or", "conditions": [ ... ] }
 
 Respond ONLY with valid JSON matching the schema above.`;
   }
