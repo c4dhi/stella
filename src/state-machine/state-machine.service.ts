@@ -872,6 +872,44 @@ export class StateMachineService {
     return true;
   }
 
+  /**
+   * Change for non-linear transitions:
+   * Determine whether an arbitrary state is complete based on actual data
+   * (completed tasks + collected deliverables), not plan array position.
+   *
+   * This is used by getFullState() so backward jumps don't incorrectly mark
+   * earlier-in-array states as completed.
+   */
+  private isPlanStateComplete(state: SessionState, planState: PlanState): boolean {
+    const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
+    const stateType = planState.type || 'loose';
+
+    for (const task of planState.tasks) {
+      if (task.required === false) continue;
+
+      const taskDeliverables = task.deliverables || [];
+      if (taskDeliverables.length === 0) {
+        if (stateType === 'goal') continue;
+        if (!state.completedTasks.includes(task.id)) return false;
+        continue;
+      }
+
+      for (const d of taskDeliverables) {
+        if (d.required === false) continue;
+        if (!(d.key in deliverables)) return false;
+      }
+    }
+
+    if (planState.type === 'goal' && planState.goal?.deliverables) {
+      for (const d of planState.goal.deliverables) {
+        if (d.required === false) continue;
+        if (!(d.key in deliverables)) return false;
+      }
+    }
+
+    return true;
+  }
+
   private async evaluateAndTransition(
     sessionId: string,
   ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
@@ -1005,25 +1043,14 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
     const completedTasks = state.completedTasks || [];
 
-    // Calculate which states are completed
-    const completedStates = new Set<string>();
-    for (let i = 0; i < plan.states.length; i++) {
-      const planState = plan.states[i];
-      if (planState.id === state.currentStateId) {
-        // Mark all previous states as completed
-        for (let j = 0; j < i; j++) {
-          completedStates.add(plan.states[j].id);
-        }
-        break;
-      }
-    }
-
-    // Build full state info
+    // Change for non-linear transitions:
+    // Build status per state using completion checks instead of positional
+    // "all states before current are completed" logic.
     const states: FullStateStateInfo[] = plan.states.map(planState => {
       let stateStatus: 'pending' | 'active' | 'completed' = 'pending';
       if (planState.id === state.currentStateId) {
         stateStatus = 'active';
-      } else if (completedStates.has(planState.id)) {
+      } else if (this.isPlanStateComplete(state, planState)) {
         stateStatus = 'completed';
       }
 
