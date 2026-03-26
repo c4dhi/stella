@@ -55,7 +55,16 @@ export interface PlanDeliverable {
 
 export interface StateTransition {
   target_state_id: string;
-  condition_type: 'all_tasks_complete' | 'deliverable_value' | 'deliverable_exists';
+  condition_type:
+    | 'all_tasks_complete'
+    | 'turn_count_exceeded'
+    | 'deliverable_value'
+    | 'deliverable_value_in'
+    | 'deliverable_value_numeric'
+    | 'compound'
+    | 'all_of'
+    | 'any_of'
+    | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
   priority?: number;
 }
@@ -181,6 +190,9 @@ export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
   // Guard against circular transition loops in a single turn (e.g., A -> B -> A).
   private static readonly MAX_TRANSITIONS_PER_TURN = 10;
+
+  // Guard against pathological recursive condition trees.
+  private static readonly MAX_CONDITION_DEPTH = 5;
 
   constructor(private prisma: PrismaService) {}
 

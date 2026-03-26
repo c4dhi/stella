@@ -9,7 +9,9 @@ const BLOCKED_KEYS = new Set([
   '__proto__', 'constructor', 'prototype',
 ]);
 
-const MAX_DEPTH = 5;
+// Allow deeper nested plan structures (e.g., composite transition conditions)
+// while still keeping a practical recursion guard.
+const MAX_DEPTH = 8;
 const MAX_STRING_LENGTH = 10000;
 const MAX_KEYS = 100;
 
