@@ -68,23 +68,38 @@ export default function PlanStateEditor({
   }
 
   return (
-    <div className="p-6">
+    <div className="p-6 w-full min-w-0 overflow-x-hidden">
       {/* State Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div className="flex-1 space-y-4">
-          <input
-            type="text"
-            value={state.title}
-            onChange={(e) => onChange({ ...state, title: e.target.value })}
-            placeholder="State name"
-            className="input-field w-full text-heading font-semibold"
-          />
+      <div className="mb-6 w-full min-w-0">
+        <div className="space-y-4 min-w-0">
+          <div className="flex items-center gap-2 w-full min-w-0">
+            <input
+              type="text"
+              value={state.title}
+              onChange={(e) => onChange({ ...state, title: e.target.value })}
+              placeholder="State name"
+              className="input-field w-full min-w-0 text-heading font-semibold"
+            />
+            <button
+              onClick={onDelete}
+              className={`p-2 rounded-lg transition-colors shrink-0 ${
+                isDark
+                  ? 'text-red-400 hover:bg-red-500/10'
+                  : 'text-red-600 hover:bg-red-50'
+              }`}
+              title="Delete state"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+          </div>
           <textarea
             value={state.description || ''}
             onChange={(e) => onChange({ ...state, description: e.target.value || undefined })}
             placeholder="State description (optional)"
             rows={2}
-            className="input-field w-full resize-none"
+            className="input-field w-full min-w-0 resize-none"
           />
           <div>
             <label className={`text-body-sm font-medium mb-2 block ${
@@ -179,12 +194,12 @@ export default function PlanStateEditor({
                 }`}>
                   Boundaries
                 </label>
-                <input
-                  type="text"
+                <textarea
                   value={state.goal?.boundaries || ''}
                   onChange={(e) => onChange({ ...state, goal: { ...state.goal!, boundaries: e.target.value || undefined } })}
                   placeholder="What NOT to discuss. e.g., Don't discuss nutrition — that's covered in a later state."
-                  className="input-field w-full"
+                  rows={2}
+                  className="input-field w-full resize-none"
                 />
               </div>
               <div>
@@ -241,10 +256,9 @@ export default function PlanStateEditor({
                       <div key={del.key} className={`rounded-lg border p-3 space-y-2 ${
                         isDark ? 'border-neutral-700 bg-neutral-800/50' : 'border-neutral-200 bg-white'
                       }`}>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 space-y-2">
-                            <input
-                              type="text"
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <div className="flex-1 space-y-2 min-w-0">
+                            <textarea
                               value={del.description}
                               onChange={(e) => {
                                 const updated = [...(state.goal?.deliverables || [])]
@@ -252,9 +266,10 @@ export default function PlanStateEditor({
                                 onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
                               }}
                               placeholder="What to collect (e.g., User's primary fitness goal)"
-                              className="input-field w-full text-body-sm"
+                              rows={2}
+                              className="input-field w-full min-w-0 text-body-sm resize-none"
                             />
-                            <div className="flex gap-2 items-center">
+                            <div className="flex flex-wrap gap-2 items-center min-w-0">
                               <input
                                 type="text"
                                 value={del.key}
@@ -264,7 +279,7 @@ export default function PlanStateEditor({
                                   onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
                                 }}
                                 placeholder="key_name"
-                                className="input-field w-32 text-caption font-mono"
+                                className="input-field w-32 shrink-0 text-caption font-mono"
                               />
                               <select
                                 value={del.type}
@@ -273,14 +288,14 @@ export default function PlanStateEditor({
                                   updated[i] = { ...updated[i], type: e.target.value as any }
                                   onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
                                 }}
-                                className="input-field text-caption w-24"
+                                className="input-field text-caption w-24 shrink-0"
                               >
                                 <option value="string">String</option>
                                 <option value="number">Number</option>
                                 <option value="boolean">Boolean</option>
                                 <option value="enum">Enum</option>
                               </select>
-                              <label className="flex items-center gap-1 text-caption">
+                              <label className="flex items-center gap-1 text-caption shrink-0 whitespace-nowrap">
                                 <input
                                   type="checkbox"
                                   checked={del.required}
@@ -294,19 +309,6 @@ export default function PlanStateEditor({
                                 Required
                               </label>
                             </div>
-                            {del.acceptance_criteria !== undefined && (
-                              <input
-                                type="text"
-                                value={del.acceptance_criteria || ''}
-                                onChange={(e) => {
-                                  const updated = [...(state.goal?.deliverables || [])]
-                                  updated[i] = { ...updated[i], acceptance_criteria: e.target.value || undefined }
-                                  onChange({ ...state, goal: { ...state.goal!, deliverables: updated } })
-                                }}
-                                placeholder="Acceptance criteria"
-                                className="input-field w-full text-caption"
-                              />
-                            )}
                           </div>
                           <button
                             onClick={() => {
@@ -328,19 +330,6 @@ export default function PlanStateEditor({
             </div>
           )}
         </div>
-        <button
-          onClick={onDelete}
-          className={`p-2 rounded-lg transition-colors ml-4 ${
-            isDark
-              ? 'text-red-400 hover:bg-red-500/10'
-              : 'text-red-600 hover:bg-red-50'
-          }`}
-          title="Delete state"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
-        </button>
       </div>
 
       {/* Tasks Section — hidden for goal states (deliverables are on the goal) */}
