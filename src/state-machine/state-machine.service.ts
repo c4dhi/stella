@@ -211,9 +211,6 @@ export class StateMachineService {
   // Guard against runaway recursion in composite conditions (all_of / any_of / compound).
   private static readonly MAX_CONDITION_DEPTH = 5;
 
-  // Guard against pathological recursive condition trees.
-  private static readonly MAX_CONDITION_DEPTH = 5;
-
   constructor(private prisma: PrismaService) {}
 
   /**
