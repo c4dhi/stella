@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import type { NodeProps } from '@xyflow/react'
+import { Handle, Position, type NodeProps } from '@xyflow/react'
 
 interface PlanCanvasNodeData {
   stateId: string
@@ -26,6 +26,19 @@ function PlanCanvasNodeComponent({ data }: NodeProps) {
             : 'border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-[0_2px_16px_rgba(0,0,0,0.06)]'
       }`}
     >
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left"
+        className="!w-4 !h-4 !rounded-full !border-2 !border-white dark:!border-zinc-900 !bg-zinc-400 dark:!bg-zinc-500"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="right"
+        className="!w-4 !h-4 !rounded-full !border-2 !border-white dark:!border-zinc-900 !bg-zinc-400 dark:!bg-zinc-500"
+      />
+
       <button
         onClick={(e) => {
           e.stopPropagation()
