@@ -1470,8 +1470,11 @@ export class StateMachineService {
         `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
       );
 
+      // Use ?? instead of || so that priority:0 (highest urgency) is respected.
+      // With ||, 0 is falsy and would be replaced by 100, silently demoting the
+      // highest-priority transition to the default bucket.
       const sortedTransitions = [...currentState.transitions].sort(
-        (a, b) => (a.priority || 100) - (b.priority || 100),
+        (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
       );
 
       // Collect per-transition evaluation details for a single decision summary log.
@@ -1486,7 +1489,8 @@ export class StateMachineService {
 
       for (const transition of sortedTransitions) {
         let conditionMet = false;
-        const priority = transition.priority || 100;
+        // ?? ensures priority:0 is kept as-is; || would treat 0 as falsy and use 100 instead.
+        const priority = transition.priority ?? 100;
 
         this.logger.log(
           `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
@@ -1542,7 +1546,7 @@ export class StateMachineService {
       const matchedSummary = matchedTransitions.map(t => ({
         target: t.target_state_id,
         condition: t.condition_type,
-        priority: t.priority || 100,
+        priority: t.priority ?? 100, // ?? preserves explicit priority:0
       }));
       this.logger.log(
         `[evaluateAndTransition] Decision summary: evaluated=${JSON.stringify(evaluated)}, matched=${JSON.stringify(matchedSummary)}`,
@@ -1556,10 +1560,11 @@ export class StateMachineService {
       if (winner) {
         if (
           matchedTransitions.length > 1 &&
-          (matchedTransitions[0].priority || 100) === (matchedTransitions[1].priority || 100)
+          // ?? so that an explicit priority:0 is not mistaken for "no priority set".
+          (matchedTransitions[0].priority ?? 100) === (matchedTransitions[1].priority ?? 100)
         ) {
           this.logger.log(
-            `[evaluateAndTransition] Priority tie detected at ${winner.priority || 100}; winner target='${winner.target_state_id}' (stable sorted order)`,
+            `[evaluateAndTransition] Priority tie detected at ${winner.priority ?? 100}; winner target='${winner.target_state_id}' (stable sorted order)`,
           );
         }
 
@@ -1568,7 +1573,7 @@ export class StateMachineService {
           matchedTargetId = winner.target_state_id;
           matchedTargetTitle = targetState.title || targetState.id;
           this.logger.log(
-            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority || 100}`,
+            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
           );
         } else {
           this.logger.warn(
