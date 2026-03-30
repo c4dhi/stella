@@ -11,11 +11,14 @@ import type {
   PlanCanvasPosition,
   PlanState,
   StateTransition,
+  SessionContext,
+  AgentSpawnMode,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
 import PlanTransitionEditor from './PlanTransitionEditor'
+import PlanStartEditor from './PlanStartEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -121,6 +124,10 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
 }
 
 const hasMetadataContent = (metadata: PlanMetadata) => Object.keys(metadata).length > 0
+const extractSpawnMode = (metadata: PlanMetadata | undefined): AgentSpawnMode => {
+  const mode = metadata?.plan_builder?.start?.agent_spawn_mode
+  return mode === 'on_demand' ? 'on_demand' : 'immediate'
+}
 
 interface SelectedTransition {
   sourceStateId: string
@@ -141,6 +148,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
+  const [sessionContext, setSessionContext] = useState<SessionContext>(template?.content.session_context || { fields: [] })
+  const [agentSpawnMode, setAgentSpawnMode] = useState<AgentSpawnMode>(extractSpawnMode(template?.content.metadata))
   const [states, setStates] = useState<PlanState[]>(
     normalizePlanStates(template?.content.states || [])
   )
@@ -152,6 +161,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     template?.content.states?.length ? 0 : null
   )
   const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
+  const [selectedStartNode, setSelectedStartNode] = useState(false)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -188,12 +198,17 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const buildContent = (): PlanContent => ({
     states,
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
-    ...(hasMetadataContent(metadata)
+    ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
+    ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'
       ? {
           metadata: {
             ...metadata,
             plan_builder: {
               ...(metadata.plan_builder || {}),
+              start: {
+                ...(metadata.plan_builder?.start || {}),
+                agent_spawn_mode: agentSpawnMode,
+              },
               canvas: {
                 ...(metadata.plan_builder?.canvas || {}),
                 ...canvasMetadata,
@@ -213,6 +228,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setStates((prev) => [...prev, newState])
     setSelectedStateIndex(newIndex)
     setSelectedTransition(null)
+    setSelectedStartNode(false)
     setInitialStateId((current) => current || newState.id)
 
     updateCanvasMetadata((current) => ({
@@ -287,6 +303,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     const index = states.findIndex((state) => state.id === stateId)
     setSelectedStateIndex(index >= 0 ? index : null)
     setSelectedTransition(null)
+    setSelectedStartNode(false)
   }
 
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
@@ -318,26 +335,19 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const handleSelectTransition = (sourceStateId: string, transitionIndex: number) => {
     setSelectedStateIndex(null)
     setSelectedTransition({ sourceStateId, transitionIndex })
+    setSelectedStartNode(false)
+  }
+
+  const handleSelectStartNode = () => {
+    setSelectedStateIndex(null)
+    setSelectedTransition(null)
+    setSelectedStartNode(true)
   }
 
   const handleInitialStateChange = (stateId: string) => {
     const exists = states.some((state) => state.id === stateId)
     if (!exists) return
-    if (initialStateId && initialStateId !== stateId) {
-      addToast({
-        message: 'Delete the current Start edge first, then connect Start to a new state.',
-        type: 'info',
-      })
-      return
-    }
     setInitialStateId(stateId)
-    setSelectedStateIndex(states.findIndex((state) => state.id === stateId))
-    setSelectedTransition(null)
-    markChanged()
-  }
-
-  const handleDeleteStartConnection = () => {
-    setInitialStateId(null)
     markChanged()
   }
 
@@ -476,8 +486,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
         setSelectedTransition(null)
+        setSelectedStartNode(false)
         setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
         setSystemPrompt(content.system_prompt || '')
+        setSessionContext(content.session_context || { fields: [] })
+        setAgentSpawnMode(extractSpawnMode((content.metadata as PlanMetadata) || {}))
         setMetadata((content.metadata as PlanMetadata) || {})
         setAutoFitKey((prev) => prev + 1)
 
@@ -569,8 +582,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   useEffect(() => {
-    if (initialStateId && !states.some((state) => state.id === initialStateId)) {
+    if (states.length === 0) {
       setInitialStateId(null)
+      return
+    }
+    if (!initialStateId || !states.some((state) => state.id === initialStateId)) {
+      setInitialStateId(states[0].id)
     }
   }, [states, initialStateId])
 
@@ -766,20 +783,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                 <PlanCanvas
                   states={states}
                   initialStateId={initialStateId}
+                  agentSpawnMode={agentSpawnMode}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
+                  selectedStartNode={selectedStartNode}
                   selectedTransition={selectedTransition}
                   statePositions={statePositions}
                   endNodePosition={endNodePosition}
                   showEndNode={showEndNode}
                   autoFitKey={autoFitKey}
                   isDark={isDark}
+                  onSelectStart={handleSelectStartNode}
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
-                  onSetInitialState={handleInitialStateChange}
                   endStateIds={endStateIds}
                   onConnectEndState={handleConnectEndState}
-                  onDeleteStartConnection={handleDeleteStartConnection}
                   onDeleteEndConnection={handleDeleteEndConnection}
                   onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
@@ -788,6 +806,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   onCanvasClick={() => {
                     setSelectedStateIndex(null)
                     setSelectedTransition(null)
+                    setSelectedStartNode(false)
                   }}
                 />
               </div>
@@ -834,10 +853,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                {selectedTransitionData ? 'Transition Editor' : 'State Editor'}
+                {selectedStartNode ? 'Start Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                {selectedTransitionData
+                {selectedStartNode
+                  ? 'Configure session start settings'
+                  : selectedTransitionData
                   ? 'Click an edge to edit condition and priority'
                   : 'Click a state node to edit details'}
               </p>
@@ -864,7 +885,26 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedTransitionData && selectedTransitionState ? (
+                {selectedStartNode ? (
+                  <motion.div
+                    key="start-node"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanStartEditor
+                      states={states}
+                      initialStateId={initialStateId}
+                      spawnMode={agentSpawnMode}
+                      sessionContext={sessionContext}
+                      onInitialStateChange={handleInitialStateChange}
+                      onSpawnModeChange={(mode) => { setAgentSpawnMode(mode); markChanged() }}
+                      onSessionContextChange={(context) => { setSessionContext(context); markChanged() }}
+                    />
+                  </motion.div>
+                ) : selectedTransitionData && selectedTransitionState ? (
                   <motion.div
                     key={`transition-${selectedTransitionState.id}-${selectedTransition?.transitionIndex ?? 0}`}
                     initial={{ opacity: 0, x: 20 }}
