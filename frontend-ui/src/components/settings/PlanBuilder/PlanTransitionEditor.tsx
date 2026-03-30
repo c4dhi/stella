@@ -84,12 +84,12 @@ export default function PlanTransitionEditor({
         >
           {!isSupported && (
             <option value={transition.condition_type}>
-              {transition.condition_type.replace(/_/g, ' ')} (existing)
+              {transition.condition_type.replace(/_/g, ' ')} (Existing)
             </option>
           )}
-          <option value="all_tasks_complete">all_tasks_complete</option>
-          <option value="deliverable_exists">deliverable_exists</option>
-          <option value="deliverable_value">deliverable_value</option>
+          <option value="all_tasks_complete">All tasks complete</option>
+          <option value="deliverable_exists">Deliverable exists</option>
+          <option value="deliverable_value">Deliverable value</option>
         </select>
       </div>
 
