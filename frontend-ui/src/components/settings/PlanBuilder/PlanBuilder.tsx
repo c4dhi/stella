@@ -16,6 +16,7 @@ import type {
 import PlanStateEditor from './PlanStateEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
+import { getDefaultStatePosition } from './planCanvasLayout'
 
 interface PlanBuilderProps {
   template?: PlanTemplate
@@ -175,10 +176,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       ...current,
       state_positions: {
         ...(current.state_positions || {}),
-        [newState.id]: {
-          x: 220 + newIndex * 260,
-          y: 190 + (newIndex % 2) * 150,
-        },
+        [newState.id]: getDefaultStatePosition(newIndex),
       },
     }))
 

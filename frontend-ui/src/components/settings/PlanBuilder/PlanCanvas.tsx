@@ -10,6 +10,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import PlanCanvasNode from './PlanCanvasNode'
 import type { PlanState } from '../../../lib/api-types'
+import { getDefaultStatePosition } from './planCanvasLayout'
 
 interface CanvasPosition {
   x: number
@@ -73,7 +74,7 @@ export default function PlanCanvas({
     }
 
     const stateNodes: Node[] = states.map((state, index) => {
-      const position = statePositions[state.id] || { x: 220 + index * 260, y: 200 + (index % 2) * 140 }
+      const position = statePositions[state.id] || getDefaultStatePosition(index)
       return {
         id: state.id,
         type: 'planState',
@@ -97,7 +98,7 @@ export default function PlanCanvas({
     if (showEndNode) {
       const positionedStates = states.map((state, index) => ({
         id: state.id,
-        position: statePositions[state.id] || { x: 220 + index * 260, y: 200 + (index % 2) * 140 },
+        position: statePositions[state.id] || getDefaultStatePosition(index),
       }))
       const rightmost = positionedStates.reduce(
         (acc, item) => (item.position.x > acc.position.x ? item : acc),
