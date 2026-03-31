@@ -1,10 +1,12 @@
+import { useState } from 'react'
 import { useThemeStore } from '../../../store/themeStore'
-import type { StateTransition, StateTransitionConditionType } from '../../../lib/api-types'
+import type { PlanDeliverable, StateTransition, StateTransitionConditionType } from '../../../lib/api-types'
 
 interface PlanTransitionEditorProps {
   sourceStateTitle: string
   targetStateTitle: string
   transition: StateTransition
+  availableDeliverables: PlanDeliverable[]
   onChange: (transition: StateTransition) => void
   onDelete: () => void
 }
@@ -25,18 +27,28 @@ export default function PlanTransitionEditor({
   sourceStateTitle,
   targetStateTitle,
   transition,
+  availableDeliverables,
   onChange,
   onDelete,
 }: PlanTransitionEditorProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const [optionsOpen, setOptionsOpen] = useState(false)
   const isSupported = SUPPORTED_CONDITIONS.includes(transition.condition_type)
   const conditionConfig = transition.condition_config || {}
   const keyValue = typeof conditionConfig.key === 'string' ? conditionConfig.key : ''
-  const valueValue =
-    typeof conditionConfig.value === 'string' || typeof conditionConfig.value === 'number'
-      ? String(conditionConfig.value)
-      : ''
+  const valueValue = conditionConfig.value
+  const selectedDeliverable = availableDeliverables.find((deliverable) => deliverable.key === keyValue)
+  const selectedOptions =
+    Array.isArray(valueValue) ? valueValue.filter((value): value is string => typeof value === 'string') : []
+  const deliverableTypeLabel =
+    selectedDeliverable?.type === 'number'
+      ? 'Number'
+      : selectedDeliverable?.type === 'boolean'
+        ? 'Yes/No'
+        : selectedDeliverable?.type === 'enum'
+          ? 'Options'
+          : 'Text'
 
   const handleConditionChange = (conditionType: StateTransitionConditionType) => {
     if (conditionType === 'all_tasks_complete') {
@@ -98,21 +110,48 @@ export default function PlanTransitionEditor({
           <label className={`text-caption font-medium mb-1 block ${
             isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
           }`}>
-            Deliverable Key
+            Deliverable
           </label>
-          <input
-            type="text"
+          <select
             value={keyValue}
             onChange={(e) => {
               const nextConfig = {
                 ...(conditionConfig || {}),
                 key: e.target.value,
+                ...(transition.condition_type === 'deliverable_value'
+                  ? {
+                      value:
+                        availableDeliverables.find((deliverable) => deliverable.key === e.target.value)?.type === 'enum'
+                          ? []
+                          : '',
+                    }
+                  : {}),
               }
               onChange({ ...transition, condition_config: nextConfig })
             }}
-            placeholder="e.g. user_budget"
             className="input-field w-full"
-          />
+          >
+            <option value="">Select deliverable</option>
+            {availableDeliverables.map((deliverable) => (
+              <option key={deliverable.key} value={deliverable.key}>
+                {deliverable.description}
+              </option>
+            ))}
+          </select>
+          {selectedDeliverable && (
+            <div className="mt-2 flex gap-2">
+              <span className={`px-2 py-1 rounded-md text-[11px] font-medium ${
+                isDark ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30' : 'bg-blue-50 text-blue-700 border border-blue-200'
+              }`}>
+                {selectedDeliverable.required ? 'Deliverable is required' : 'Deliverable not required'}
+              </span>
+              <span className={`px-2 py-1 rounded-md text-[11px] font-medium ${
+                isDark ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              }`}>
+                Type: {deliverableTypeLabel}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -123,19 +162,77 @@ export default function PlanTransitionEditor({
           }`}>
             Expected Value
           </label>
-          <input
-            type="text"
-            value={valueValue}
-            onChange={(e) => {
-              const nextConfig = {
-                ...(conditionConfig || {}),
-                value: e.target.value,
+          {selectedDeliverable?.type === 'enum' && (selectedDeliverable.enum_values?.length ?? 0) > 0 ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setOptionsOpen((open) => !open)}
+                className="input-field w-full text-left flex items-center justify-between"
+              >
+                <span className="truncate">
+                  {selectedOptions.length > 0 ? selectedOptions.join(', ') : 'Select options'}
+                </span>
+                <span className={`text-caption ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                  {optionsOpen ? '▲' : '▼'}
+                </span>
+              </button>
+              {optionsOpen && (
+                <div className={`absolute z-20 mt-1 w-full rounded-lg border shadow-lg max-h-56 overflow-y-auto ${
+                  isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-neutral-200'
+                }`}>
+                  {selectedDeliverable.enum_values!.map((enumValue) => {
+                    const checked = selectedOptions.includes(enumValue)
+                    return (
+                      <label
+                        key={enumValue}
+                        className={`flex items-center gap-2 px-3 py-2 text-body-sm cursor-pointer ${
+                          isDark ? 'hover:bg-zinc-800 text-zinc-200' : 'hover:bg-neutral-50 text-neutral-800'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const next = checked
+                              ? selectedOptions.filter((value) => value !== enumValue)
+                              : [...selectedOptions, enumValue]
+                            onChange({
+                              ...transition,
+                              condition_config: {
+                                ...(conditionConfig || {}),
+                                value: next,
+                              },
+                            })
+                          }}
+                        />
+                        <span>{enumValue}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={
+                typeof valueValue === 'string' || typeof valueValue === 'number' || typeof valueValue === 'boolean'
+                  ? String(valueValue)
+                  : ''
               }
-              onChange({ ...transition, condition_config: nextConfig })
-            }}
-            placeholder="e.g. premium"
-            className="input-field w-full"
-          />
+              onChange={(e) =>
+                onChange({
+                  ...transition,
+                  condition_config: {
+                    ...(conditionConfig || {}),
+                    value: e.target.value,
+                  },
+                })
+              }
+              placeholder="Expected value"
+              className="input-field w-full"
+            />
+          )}
         </div>
       )}
 

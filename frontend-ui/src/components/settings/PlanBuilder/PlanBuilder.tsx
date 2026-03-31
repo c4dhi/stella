@@ -610,6 +610,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const selectedTransitionTarget = selectedTransitionData
     ? states.find((state) => state.id === selectedTransitionData.target_state_id)
     : null
+  const selectedTransitionDeliverables = selectedTransitionState
+    ? selectedTransitionState.type === 'goal'
+      ? selectedTransitionState.goal?.deliverables || []
+      : selectedTransitionState.tasks.flatMap((task) => task.deliverables)
+    : []
 
   return (
     <div className="h-full flex flex-col">
@@ -917,6 +922,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
                       targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
                       transition={selectedTransitionData}
+                      availableDeliverables={selectedTransitionDeliverables}
                       onChange={handleUpdateTransition}
                       onDelete={handleDeleteTransition}
                     />
