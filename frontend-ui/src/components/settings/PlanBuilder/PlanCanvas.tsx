@@ -3,6 +3,8 @@ import {
   ReactFlow,
   Background,
   BackgroundVariant,
+  BaseEdge,
+  EdgeLabelRenderer,
   Handle,
   Position,
   applyNodeChanges,
@@ -10,6 +12,7 @@ import {
   type Node,
   type NodeChange,
   type Edge,
+  type EdgeProps,
   type EdgeChange,
   type Connection,
   type NodeProps,
@@ -58,6 +61,78 @@ interface TerminalNodeData {
   kind: 'start' | 'end'
 }
 
+interface TransitionEdgeData {
+  label: string
+  isDark: boolean
+  isSelected: boolean
+  edgeOffset: number
+  control?: CanvasPosition
+  onSelect?: () => void
+  onLabelPointerDown?: (edgeId: string, x: number, y: number, control: CanvasPosition) => void
+}
+
+function TransitionEdgeComponent(props: EdgeProps) {
+  const data = (props.data || {}) as unknown as TransitionEdgeData
+  const edgeOffset = data.edgeOffset || 0
+  const center = {
+    x: (props.sourceX + props.targetX) / 2,
+    y: (props.sourceY + props.targetY) / 2,
+  }
+  const normal = {
+    x: props.targetY - props.sourceY,
+    y: -(props.targetX - props.sourceX),
+  }
+  const normalLength = Math.hypot(normal.x, normal.y) || 1
+  const defaultControl = {
+    x: center.x + (normal.x / normalLength) * edgeOffset,
+    y: center.y + (normal.y / normalLength) * edgeOffset,
+  }
+  const control = data.control || defaultControl
+  const path = `M ${props.sourceX},${props.sourceY} Q ${control.x},${control.y} ${props.targetX},${props.targetY}`
+  const labelX = 0.25 * props.sourceX + 0.5 * control.x + 0.25 * props.targetX
+  const labelY = 0.25 * props.sourceY + 0.5 * control.y + 0.25 * props.targetY
+
+  return (
+    <>
+      <BaseEdge
+        id={props.id}
+        path={path}
+        markerEnd={props.markerEnd}
+        style={props.style}
+        interactionWidth={props.interactionWidth}
+      />
+      <EdgeLabelRenderer>
+        <div
+          className="nodrag nopan absolute cursor-grab active:cursor-grabbing"
+          style={{
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+            fontSize: 10,
+            fontWeight: 500,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: data.isSelected ? (data.isDark ? '#d8b4fe' : '#5b21b6') : data.isDark ? '#a1a1aa' : '#6b7280',
+            background: data.isDark ? 'rgba(24,24,27,0.88)' : 'rgba(255,255,255,0.95)',
+            border: `1px solid ${data.isSelected ? (data.isDark ? '#a78bfa' : '#6d28d9') : data.isDark ? '#3f3f46' : '#e5e7eb'}`,
+            borderRadius: 8,
+            padding: '3px 6px',
+          }}
+          onClick={(event) => {
+            event.stopPropagation()
+            data.onSelect?.()
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation()
+            data.onLabelPointerDown?.(props.id, event.clientX, event.clientY, control)
+          }}
+        >
+          {data.label}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
+
 function TerminalNodeComponent({ data }: NodeProps) {
   const nodeData = data as unknown as TerminalNodeData
 
@@ -98,6 +173,10 @@ function TerminalNodeComponent({ data }: NodeProps) {
 const nodeTypes = {
   planState: PlanCanvasNode,
   terminal: memo(TerminalNodeComponent),
+}
+
+const edgeTypes = {
+  planTransition: memo(TransitionEdgeComponent),
 }
 
 const getStateOrder = (states: PlanState[], initialStateId: string | null): string[] => {
@@ -192,6 +271,13 @@ export default function PlanCanvas({
 }: PlanCanvasProps) {
   const [flowInstance, setFlowInstance] = useState<{
     fitView: (options?: { padding?: number; minZoom?: number; maxZoom?: number; duration?: number }) => void
+    screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number }
+  } | null>(null)
+  const [edgeControls, setEdgeControls] = useState<Record<string, CanvasPosition>>({})
+  const [draggingEdge, setDraggingEdge] = useState<{
+    edgeId: string
+    startPointer: CanvasPosition
+    startControl: CanvasPosition
   } | null>(null)
 
   const orderedStateIds = useMemo(() => getStateOrder(states, initialStateId), [states, initialStateId])
@@ -261,27 +347,58 @@ export default function PlanCanvas({
 
   const [nodes, setNodes] = useState<Node[]>(builtNodes)
   const builtEdges = useMemo<Edge[]>(() => {
+    const stateIds = new Set(states.map((state) => state.id))
+    const parallelGroups = new Map<string, number[]>()
+    for (const state of states) {
+      for (let index = 0; index < (state.transitions || []).length; index += 1) {
+        const transition = state.transitions![index]
+        if (!stateIds.has(transition.target_state_id)) continue
+        const key = `${state.id}__${transition.target_state_id}`
+        const bucket = parallelGroups.get(key) || []
+        bucket.push(index)
+        parallelGroups.set(key, bucket)
+      }
+    }
+
     const transitionEdges = states.flatMap((state) =>
       (state.transitions || [])
         .map((transition, index): Edge | null => {
-          const targetExists = states.some((candidate) => candidate.id === transition.target_state_id)
+          const targetExists = stateIds.has(transition.target_state_id)
           if (!targetExists) return null
 
+          const group = parallelGroups.get(`${state.id}__${transition.target_state_id}`) || [index]
+          const groupIndex = Math.max(0, group.indexOf(index))
+          const edgeOffset = (groupIndex - (group.length - 1) / 2) * 34
+          const edgeId = `${state.id}__${index}`
           const isSelected =
             selectedTransition?.sourceStateId === state.id &&
             selectedTransition?.transitionIndex === index
           const conditionLabel = transition.condition_type.replace(/_/g, ' ')
 
           return {
-            id: `${state.id}__${index}`,
+            id: edgeId,
+            type: 'planTransition',
             source: state.id,
             target: transition.target_state_id,
-            label: conditionLabel,
-            interactionWidth: 32,
+            interactionWidth: 36,
             data: {
               kind: 'transition',
               transitionIndex: index,
               sourceStateId: state.id,
+              label: conditionLabel,
+              isDark,
+              isSelected,
+              edgeOffset,
+              control: edgeControls[edgeId],
+              onSelect: () => onSelectTransition(state.id, index),
+              onLabelPointerDown: (id: string, x: number, y: number, control: CanvasPosition) => {
+                if (!flowInstance) return
+                setDraggingEdge({
+                  edgeId: id,
+                  startPointer: flowInstance.screenToFlowPosition({ x, y }),
+                  startControl: control,
+                })
+              },
             },
             markerEnd: {
               type: MarkerType.ArrowClosed,
@@ -292,20 +409,6 @@ export default function PlanCanvas({
             style: {
               stroke: isSelected ? (isDark ? '#a78bfa' : '#6d28d9') : isDark ? '#71717a' : '#9ca3af',
               strokeWidth: isSelected ? 2.5 : 1.8,
-            },
-            labelStyle: {
-              fontSize: 10,
-              fontWeight: 500,
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-              fill: isSelected ? (isDark ? '#d8b4fe' : '#5b21b6') : isDark ? '#a1a1aa' : '#6b7280',
-            },
-            labelBgPadding: [6, 3],
-            labelBgBorderRadius: 8,
-            labelBgStyle: {
-              fill: isDark ? 'rgba(24,24,27,0.88)' : 'rgba(255,255,255,0.95)',
-              stroke: isSelected ? (isDark ? '#a78bfa' : '#6d28d9') : isDark ? '#3f3f46' : '#e5e7eb',
-              strokeWidth: 1,
             },
           }
         })
@@ -331,7 +434,6 @@ export default function PlanCanvas({
     }
 
     if (showEndNode) {
-      const stateIds = new Set(states.map((state) => state.id))
       for (const endSourceStateId of endStateIds) {
         if (!stateIds.has(endSourceStateId)) continue
         edges.push({
@@ -347,7 +449,7 @@ export default function PlanCanvas({
     }
 
     return edges
-  }, [states, initialStateId, showEndNode, selectedTransition, endStateIds, isDark])
+  }, [states, initialStateId, showEndNode, selectedTransition, endStateIds, isDark, edgeControls, flowInstance, onSelectTransition])
 
   useEffect(() => {
     setNodes(builtNodes)
@@ -423,6 +525,30 @@ export default function PlanCanvas({
     }
   }, [builtEdges, handleEdgesDelete])
 
+  useEffect(() => {
+    if (!draggingEdge || !flowInstance) return
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const point = flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      setEdgeControls((prev) => ({
+        ...prev,
+        [draggingEdge.edgeId]: {
+          x: draggingEdge.startControl.x + point.x - draggingEdge.startPointer.x,
+          y: draggingEdge.startControl.y + point.y - draggingEdge.startPointer.y,
+        },
+      }))
+    }
+
+    const handlePointerUp = () => setDraggingEdge(null)
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [draggingEdge, flowInstance])
+
   return (
     <div className={`relative w-full h-full ${isDark ? 'bg-surface-dark' : 'bg-surface'}`}>
       <button
@@ -444,6 +570,7 @@ export default function PlanCanvas({
         nodes={nodes}
         edges={builtEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={handleNodesChange}
         onConnect={handleConnect}
         onNodeClick={(_, node) => {
