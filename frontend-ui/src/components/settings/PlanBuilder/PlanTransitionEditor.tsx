@@ -7,6 +7,8 @@ interface PlanTransitionEditorProps {
   targetStateTitle: string
   transition: StateTransition
   availableDeliverables: PlanDeliverable[]
+  isAmbiguous: boolean
+  isConditionIncomplete: boolean
   onChange: (transition: StateTransition) => void
   onDelete: () => void
 }
@@ -28,6 +30,8 @@ export default function PlanTransitionEditor({
   targetStateTitle,
   transition,
   availableDeliverables,
+  isAmbiguous,
+  isConditionIncomplete,
   onChange,
   onDelete,
 }: PlanTransitionEditorProps) {
@@ -41,6 +45,17 @@ export default function PlanTransitionEditor({
   const selectedDeliverable = availableDeliverables.find((deliverable) => deliverable.key === keyValue)
   const selectedOptions =
     Array.isArray(valueValue) ? valueValue.filter((value): value is string => typeof value === 'string') : []
+  const expectedValueText =
+    typeof valueValue === 'string' || typeof valueValue === 'number' || typeof valueValue === 'boolean'
+      ? String(valueValue).trim()
+      : ''
+  const isMissingDeliverable =
+    (transition.condition_type === 'deliverable_exists' || transition.condition_type === 'deliverable_value') &&
+    keyValue.trim().length === 0
+  const isMissingExpectedValue =
+    transition.condition_type === 'deliverable_value' &&
+    !isMissingDeliverable &&
+    (selectedDeliverable?.type === 'enum' ? selectedOptions.length === 0 : expectedValueText.length === 0)
   const deliverableTypeLabel =
     selectedDeliverable?.type === 'number'
       ? 'Number'
@@ -82,6 +97,34 @@ export default function PlanTransitionEditor({
           {sourceStateTitle} → {targetStateTitle}
         </div>
       </div>
+      {isAmbiguous && (
+        <div className={`rounded-xl border px-3 py-2 text-caption ${
+          isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+        }`}>
+          Ambiguous route: this condition is duplicated on another outgoing transition from the same state.
+        </div>
+      )}
+      {isMissingExpectedValue && (
+        <div className={`rounded-xl border px-3 py-2 text-caption ${
+          isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+        }`}>
+          Expected value is required for this condition.
+        </div>
+      )}
+      {isMissingDeliverable && (
+        <div className={`rounded-xl border px-3 py-2 text-caption ${
+          isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+        }`}>
+          Deliverable selection is required for this condition.
+        </div>
+      )}
+      {isConditionIncomplete && !isMissingExpectedValue && !isMissingDeliverable && (
+        <div className={`rounded-xl border px-3 py-2 text-caption ${
+          isDark ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-800'
+        }`}>
+          Transition condition is incomplete.
+        </div>
+      )}
 
       <div>
         <label className={`text-caption font-medium mb-1 block ${

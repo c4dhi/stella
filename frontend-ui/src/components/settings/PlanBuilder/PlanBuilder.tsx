@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
@@ -139,6 +139,43 @@ interface TransitionRef {
   transitionIndex: number
 }
 
+const normalizeTransitionValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    const values = value.filter((item): item is string | number | boolean =>
+      typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
+    )
+    return `array:${values.map(String).sort().join(',')}`
+  }
+  if (typeof value === 'string') return `string:${value}`
+  if (typeof value === 'number') return `number:${String(value)}`
+  if (typeof value === 'boolean') return `boolean:${String(value)}`
+  return 'undefined:'
+}
+
+const getConditionSignature = (transition: StateTransition): string => {
+  const config = transition.condition_config || {}
+  const key = typeof config.key === 'string' ? config.key : ''
+  const valueSignature = normalizeTransitionValue((config as Record<string, unknown>).value)
+  return `${transition.condition_type}|${key}|${valueSignature}`
+}
+
+const isTransitionConditionIncomplete = (transition: StateTransition): boolean => {
+  const config = transition.condition_config || {}
+  const key = typeof config.key === 'string' ? config.key.trim() : ''
+  if (transition.condition_type === 'deliverable_exists') {
+    return key.length === 0
+  }
+  if (transition.condition_type === 'deliverable_value') {
+    if (key.length === 0) return true
+    const rawValue = (config as Record<string, unknown>).value
+    if (Array.isArray(rawValue)) return rawValue.length === 0
+    if (typeof rawValue === 'string') return rawValue.trim().length === 0
+    if (typeof rawValue === 'number' || typeof rawValue === 'boolean') return false
+    return true
+  }
+  return false
+}
+
 export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
@@ -194,6 +231,49 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     states.some((state) => state.id === stateId)
   )
   const endNodePosition = canvasMetadata.end_node_position
+  const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
+    const refs: TransitionRef[] = []
+    for (const state of states) {
+      const groups = new Map<string, number[]>()
+      ;(state.transitions || []).forEach((transition, transitionIndex) => {
+        const signature = getConditionSignature(transition)
+        const indices = groups.get(signature) || []
+        indices.push(transitionIndex)
+        groups.set(signature, indices)
+      })
+      for (const indices of groups.values()) {
+        if (indices.length < 2) continue
+        for (const transitionIndex of indices) {
+          refs.push({ sourceStateId: state.id, transitionIndex })
+        }
+      }
+    }
+    return refs
+  }, [states])
+  const ambiguousTransitionIdSet = useMemo(
+    () => new Set(ambiguousTransitionRefs.map((ref) => `${ref.sourceStateId}__${ref.transitionIndex}`)),
+    [ambiguousTransitionRefs]
+  )
+  const incompleteTransitionRefs = useMemo<TransitionRef[]>(() => {
+    const refs: TransitionRef[] = []
+    for (const state of states) {
+      ;(state.transitions || []).forEach((transition, transitionIndex) => {
+        if (isTransitionConditionIncomplete(transition)) {
+          refs.push({ sourceStateId: state.id, transitionIndex })
+        }
+      })
+    }
+    return refs
+  }, [states])
+  const incompleteTransitionIdSet = useMemo(
+    () => new Set(incompleteTransitionRefs.map((ref) => `${ref.sourceStateId}__${ref.transitionIndex}`)),
+    [incompleteTransitionRefs]
+  )
+  const transitionIssueIdSet = useMemo(() => {
+    const ids = new Set<string>(ambiguousTransitionIdSet)
+    for (const id of incompleteTransitionIdSet) ids.add(id)
+    return ids
+  }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
 
   const buildContent = (): PlanContent => ({
     states,
@@ -309,6 +389,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
     const sourceState = states.find((state) => state.id === sourceStateId)
     if (!sourceState) return
+    const createsAmbiguousDefault = (sourceState.transitions || []).some(
+      (transition) => transition.condition_type === 'all_tasks_complete'
+    )
 
     const nextTransition: StateTransition = {
       target_state_id: targetStateId,
@@ -329,6 +412,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       sourceStateId,
       transitionIndex: sourceState.transitions?.length ?? 0,
     })
+    if (createsAmbiguousDefault) {
+      addToast({
+        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "All tasks complete" transitions.`,
+        type: 'info',
+      })
+    }
     markChanged()
   }
 
@@ -530,6 +619,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     const startConnected = !!initialStateId && states.some((state) => state.id === initialStateId)
     if (!startConnected) {
       addToast({ message: 'Please connect Start to a state', type: 'error' })
+      return
+    }
+
+    if (transitionIssueIdSet.size > 0) {
+      addToast({
+        message: `Please resolve ${transitionIssueIdSet.size} transition condition issue(s) before saving.`,
+        type: 'error',
+      })
       return
     }
 
@@ -782,6 +879,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   >
                     Add State
                   </button>
+                  {transitionIssueIdSet.size > 0 && (
+                    <div className={`px-2.5 py-1.5 rounded-lg text-caption font-medium ${
+                      isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      Transition issues: {transitionIssueIdSet.size}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex-1 min-h-0">
@@ -923,6 +1027,18 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
                       transition={selectedTransitionData}
                       availableDeliverables={selectedTransitionDeliverables}
+                      isAmbiguous={
+                        !!selectedTransition &&
+                        ambiguousTransitionIdSet.has(
+                          `${selectedTransition.sourceStateId}__${selectedTransition.transitionIndex}`
+                        )
+                      }
+                      isConditionIncomplete={
+                        !!selectedTransition &&
+                        incompleteTransitionIdSet.has(
+                          `${selectedTransition.sourceStateId}__${selectedTransition.transitionIndex}`
+                        )
+                      }
                       onChange={handleUpdateTransition}
                       onDelete={handleDeleteTransition}
                     />
