@@ -704,6 +704,25 @@ export interface SessionContext {
   fields: SessionContextField[]
 }
 
+export interface PlanCanvasPosition {
+  x: number
+  y: number
+}
+
+export interface PlanCanvasMetadata {
+  state_positions?: Record<string, PlanCanvasPosition>
+  show_end_node?: boolean
+  end_node_position?: PlanCanvasPosition
+}
+
+export interface PlanMetadata {
+  plan_builder?: {
+    canvas?: PlanCanvasMetadata
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 /**
  * Complete plan content structure.
  *
@@ -717,7 +736,7 @@ export interface PlanContent {
   description?: string             // Plan description (optional, from template)
   initial_state_id?: string        // Starting state ID
   states: PlanState[]
-  metadata?: Record<string, unknown>
+  metadata?: PlanMetadata
   // Initial prompt configuration
   system_prompt?: string           // Agent persona (snake_case for SDK consistency)
   session_context?: SessionContext

@@ -173,6 +173,7 @@
            hover:border-border-secondary
            focus:border-neutral-900 focus:ring-2 focus:ring-neutral-900/20
            transition-all duration-200 ease-smooth;
+    min-width: 0;
   }
 
   body.dark .input-field {
@@ -181,6 +182,15 @@
            placeholder:text-content-inverse-tertiary
            hover:border-border-dark-secondary
            focus:border-primary-400 focus:ring-primary-400/20;
+  }
+
+  textarea.input-field {
+    overflow: auto;
+    word-break: break-word;
+  }
+
+  input.input-field {
+    overflow-x: auto;
   }
 
   /* Native checkbox accent override (avoid OS default accent colors) */
