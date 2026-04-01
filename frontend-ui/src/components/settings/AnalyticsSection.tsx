@@ -55,12 +55,14 @@ export default function AnalyticsSection() {
 
   const { data, isLoading, error } = useAgentMetrics(selectedProjectId, selectedAgentSlug, days)
 
-  // Pick best stage for live timeline: prefer ttfab, fall back to total, then first available
-  const timelineStage = data?.stages.find(s => s.stage === 'ttfab')
-    ? 'ttfab'
-    : data?.stages.find(s => s.stage === 'total')
-      ? 'total'
-      : data?.stages[0]?.stage || 'ttfab'
+  // Pick best stage for live timeline: prefer bridge TTFAB, then direct, then total
+  const timelineStage = data?.stages.find(s => s.stage === 'ttfab_bridge')
+    ? 'ttfab_bridge'
+    : data?.stages.find(s => s.stage === 'ttfab_direct')
+      ? 'ttfab_direct'
+      : data?.stages.find(s => s.stage === 'total')
+        ? 'total'
+        : data?.stages[0]?.stage || 'ttfab_bridge'
   const { points: timelinePoints } = useMetricsTimeline(selectedProjectId, selectedAgentSlug, timelineStage)
 
   const selectClass = `rounded-lg px-3 py-2 text-sm ${
@@ -144,8 +146,9 @@ export default function AnalyticsSection() {
       {data && !isLoading && (
         <>
           {(() => {
-            const ttfab = data.stages.find(s => s.stage === 'ttfab')
-            const agentTtft = data.stages.find(s => s.stage === 'agent_ttft')
+            const ttfabBridge = data.stages.find(s => s.stage === 'ttfab_bridge')
+            const ttfabDirect = data.stages.find(s => s.stage === 'ttfab_direct')
+            const bridgeGap = data.stages.find(s => s.stage === 'bridge_response_gap')
             return (
               <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatsCard
@@ -170,9 +173,9 @@ export default function AnalyticsSection() {
                   }
                 />
                 <StatsCard
-                  title="TTFAB P50"
-                  value={ttfab ? Math.round(ttfab.p50_ms) : 0}
-                  subtitle={ttfab ? `P95: ${Math.round(ttfab.p95_ms)}ms` : 'No data'}
+                  title="Bridge TTFAB P50"
+                  value={ttfabBridge ? Math.round(ttfabBridge.p50_ms) : (ttfabDirect ? Math.round(ttfabDirect.p50_ms) : 0)}
+                  subtitle={ttfabBridge ? `P95: ${Math.round(ttfabBridge.p95_ms)}ms` : (ttfabDirect ? `Direct P95: ${Math.round(ttfabDirect.p95_ms)}ms` : 'No data')}
                   color="orange"
                   icon={
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -182,13 +185,14 @@ export default function AnalyticsSection() {
                   }
                 />
                 <StatsCard
-                  title="Agent TTFT P50"
-                  value={agentTtft ? Math.round(agentTtft.p50_ms) : 0}
-                  subtitle={agentTtft ? `P95: ${Math.round(agentTtft.p95_ms)}ms` : 'No data'}
+                  title="Bridge-Response Gap"
+                  value={bridgeGap ? Math.round(bridgeGap.p50_ms) : 0}
+                  subtitle={bridgeGap ? `P95: ${Math.round(bridgeGap.p95_ms)}ms` : 'No data'}
                   color="green"
                   icon={
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                      <path d="M5 9l4-4 4 4" />
+                      <path d="M9 5v12a4 4 0 0 0 4 4h6" />
                     </svg>
                   }
                 />

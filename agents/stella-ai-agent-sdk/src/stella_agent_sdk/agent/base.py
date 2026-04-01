@@ -76,6 +76,8 @@ class BaseAgent(ABC):
         self._last_progress_payload: Optional[Dict[str, Any]] = None
         # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
         self._sentence_buffer: str = ""
+        # Current sentence source for analytics ("bridge" or "response")
+        self._current_sentence_source: str = "response"
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
@@ -544,6 +546,9 @@ class BaseAgent(ABC):
                                 current_transcript_id = output.transcript_id or f"response_{uuid.uuid4().hex[:8]}"
                                 # Capture first-text timestamp for TTFT measurement
                                 self.audio._turn_first_text_ts = time.perf_counter()
+                                # Detect bridge vs response from transcript_id prefix
+                                tid = current_transcript_id
+                                self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_")) else "response"
 
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
@@ -579,15 +584,16 @@ class BaseAgent(ABC):
                             ):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining)
+                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
 
                             if output.is_final:
                                 # Flush any remaining partial sentence to TTS
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining)
+                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
                                 tts_buffer = ""
                                 current_transcript_id = None
+                                self._current_sentence_source = "response"
 
                         elif output.type == OutputType.TEXT_FINAL:
                             # Direct final response - publish and speak
@@ -749,7 +755,7 @@ class BaseAgent(ABC):
         for sentence in parts[:-1]:
             sentence = sentence.strip()
             if sentence:
-                self.audio.enqueue_sentence(sentence)
+                self.audio.enqueue_sentence(sentence, source=self._current_sentence_source)
 
         # Keep the last (incomplete) part in the buffer
         self._sentence_buffer = parts[-1]

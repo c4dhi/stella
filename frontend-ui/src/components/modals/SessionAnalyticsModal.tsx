@@ -83,27 +83,27 @@ export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: Se
               {data && !isLoading && (
                 <>
                   {(() => {
-                    const ttfab = data.stages.find(s => s.stage === 'ttfab')
-                    const agentTtft = data.stages.find(s => s.stage === 'agent_ttft')
-                    return (ttfab || agentTtft) ? (
+                    const ttfabBridge = data.stages.find(s => s.stage === 'ttfab_bridge')
+                    const ttfabDirect = data.stages.find(s => s.stage === 'ttfab_direct')
+                    const bridgeGap = data.stages.find(s => s.stage === 'bridge_response_gap')
+                    const ttfab = ttfabBridge || ttfabDirect
+                    return ttfab ? (
                       <div className={`flex gap-6 justify-center mb-5 py-3 rounded-lg ${isDark ? 'bg-surface-dark-tertiary' : 'bg-neutral-50'}`}>
-                        {ttfab && (
+                        <div className="text-center">
+                          <span className={`text-2xl font-bold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                            {ttfab.p50_ms.toFixed(0)}ms
+                          </span>
+                          <span className={`text-xs ml-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                            {ttfabBridge ? 'Bridge' : 'Direct'} TTFAB
+                          </span>
+                        </div>
+                        {bridgeGap && (
                           <div className="text-center">
                             <span className={`text-2xl font-bold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                              {ttfab.p50_ms.toFixed(0)}ms
+                              {bridgeGap.p50_ms.toFixed(0)}ms
                             </span>
                             <span className={`text-xs ml-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                              TTFAB P50
-                            </span>
-                          </div>
-                        )}
-                        {agentTtft && (
-                          <div className="text-center">
-                            <span className={`text-2xl font-bold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                              {agentTtft.p50_ms.toFixed(0)}ms
-                            </span>
-                            <span className={`text-xs ml-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                              Agent TTFT P50
+                              Bridge-Response Gap
                             </span>
                           </div>
                         )}

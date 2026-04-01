@@ -139,8 +139,8 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
-        # Sentence-level streaming TTS queue
-        self._speech_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        # Sentence-level streaming TTS queue (tuple of sentence text + source label)
+        self._speech_queue: asyncio.Queue = asyncio.Queue()
         self._speech_worker_task: Optional[asyncio.Task] = None
 
         # Per-turn analytics timing state
@@ -149,6 +149,10 @@ class AudioPipeline:
         self._turn_first_audio_ts: float = 0
         self._turn_id: Optional[str] = None
         self._turn_first_audio_captured: bool = False
+        self._turn_first_audio_source: str = "response"
+        self._turn_bridge_last_audio_ts: float = 0
+        self._turn_response_first_audio_ts: float = 0
+        self._turn_response_first_audio_captured: bool = False
 
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
@@ -833,6 +837,7 @@ class AudioPipeline:
         voice: Optional[str] = None,
         speed: float = 1.0,
         language: Optional[str] = None,
+        source: str = "response",
     ) -> None:
         """
         Send a sentence to TTS and publish audio to LiveKit with retry logic.
@@ -842,11 +847,12 @@ class AudioPipeline:
             voice: Optional voice override
             speed: Speech rate
             language: Optional ISO 639-1 language code (e.g., "en", "de")
+            source: Sentence origin — "bridge" or "response" (for analytics)
         """
         if not sentence.strip():
             return
 
-        logger.info(f"[TTS] Speaking sentence: {sentence[:50]}...")
+        logger.info(f"[TTS] Speaking {source} sentence: {sentence[:50]}...")
 
         max_retries = 3
         base_delay = 0.5  # seconds
@@ -868,6 +874,14 @@ class AudioPipeline:
                     if not self._turn_first_audio_captured:
                         self._turn_first_audio_ts = time.perf_counter()
                         self._turn_first_audio_captured = True
+                        self._turn_first_audio_source = source
+
+                    # Track bridge end and response start for gap measurement
+                    if source == "bridge":
+                        self._turn_bridge_last_audio_ts = time.perf_counter()
+                    elif source == "response" and not self._turn_response_first_audio_captured:
+                        self._turn_response_first_audio_ts = time.perf_counter()
+                        self._turn_response_first_audio_captured = True
 
                     await self._room.publish_audio(chunk.audio_data)
 
@@ -922,7 +936,7 @@ class AudioPipeline:
     # Sentence-level streaming TTS
     # ─────────────────────────────────────────────────────────────────────
 
-    def enqueue_sentence(self, sentence: str) -> None:
+    def enqueue_sentence(self, sentence: str, source: str = "response") -> None:
         """Enqueue a complete sentence for TTS synthesis.
 
         Sentences are spoken sequentially by a background worker in the
@@ -932,6 +946,10 @@ class AudioPipeline:
 
         The worker is started lazily on the first enqueue and shut down
         by flush_speech_queue().
+
+        Args:
+            sentence: The text to synthesize.
+            source: Label for analytics — "bridge" or "response".
         """
         if not sentence.strip():
             return
@@ -940,8 +958,8 @@ class AudioPipeline:
         if self._speech_worker_task is None or self._speech_worker_task.done():
             self._speech_worker_task = asyncio.create_task(self._speech_worker())
 
-        self._speech_queue.put_nowait(sentence)
-        logger.info(f"[TTS] Enqueued sentence ({len(sentence.split())} words): {sentence[:60]}...")
+        self._speech_queue.put_nowait((sentence, source))
+        logger.info(f"[TTS] Enqueued {source} sentence ({len(sentence.split())} words): {sentence[:60]}...")
 
     async def flush_speech_queue(self) -> None:
         """Signal end-of-stream and wait for all queued sentences to finish.
@@ -971,12 +989,21 @@ class AudioPipeline:
         try:
             turn_id = self._turn_id or ""
 
-            # TTFAB: STT end -> first audio byte (only when TTS produced audio)
+            # Split TTFAB: STT end -> first audio byte, labeled by source
             if self._turn_stt_end_ts > 0 and self._turn_first_audio_captured:
                 ttfab_ms = (self._turn_first_audio_ts - self._turn_stt_end_ts) * 1000
+                stage_name = "ttfab_bridge" if self._turn_first_audio_source == "bridge" else "ttfab_direct"
                 await self._room.publish_data({
                     "type": "analytics",
-                    "data": {"stage": "ttfab", "timing_ms": round(ttfab_ms, 2), "turn_id": turn_id}
+                    "data": {"stage": stage_name, "timing_ms": round(ttfab_ms, 2), "turn_id": turn_id}
+                })
+
+            # Bridge-to-response gap (silence between bridge end and response start)
+            if self._turn_bridge_last_audio_ts > 0 and self._turn_response_first_audio_captured:
+                gap_ms = (self._turn_response_first_audio_ts - self._turn_bridge_last_audio_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "bridge_response_gap", "timing_ms": round(gap_ms, 2), "turn_id": turn_id}
                 })
 
             # TTS first byte: first text from agent -> first audio chunk
@@ -1002,6 +1029,10 @@ class AudioPipeline:
             self._turn_first_text_ts = 0
             self._turn_first_audio_ts = 0
             self._turn_first_audio_captured = False
+            self._turn_first_audio_source = "response"
+            self._turn_bridge_last_audio_ts = 0
+            self._turn_response_first_audio_ts = 0
+            self._turn_response_first_audio_captured = False
 
     async def _speech_worker(self) -> None:
         """Background worker that speaks queued sentences sequentially.
@@ -1016,11 +1047,13 @@ class AudioPipeline:
 
         try:
             while True:
-                sentence = await self._speech_queue.get()
+                item = await self._speech_queue.get()
 
                 # Sentinel: no more sentences
-                if sentence is None:
+                if item is None:
                     break
+
+                sentence, source = item
 
                 # Skip if interrupted (barge-in drained the queue, but
                 # we may have dequeued just before the drain)
@@ -1028,7 +1061,7 @@ class AudioPipeline:
                     logger.info("[TTS] Speech worker: interrupted, skipping remaining")
                     break
 
-                await self._speak_sentence(sentence)
+                await self._speak_sentence(sentence, source=source)
 
         except asyncio.CancelledError:
             logger.info("[TTS] Speech worker cancelled")
