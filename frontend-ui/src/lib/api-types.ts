@@ -645,9 +645,21 @@ export interface PlanTask {
 /**
  * State transition definition.
  */
+// Keep this union aligned with backend StateTransition.condition_type in state-machine.service.ts.
+export type StateTransitionConditionType =
+  | 'all_tasks_complete'
+  | 'turn_count_exceeded'
+  | 'deliverable_value'
+  | 'deliverable_value_in'
+  | 'deliverable_value_numeric'
+  | 'compound'
+  | 'all_of'
+  | 'any_of'
+  | 'deliverable_exists'
+
 export interface StateTransition {
   target_state_id: string
-  condition_type: string           // "all_tasks_complete", "deliverable_value", "deliverable_exists"
+  condition_type: StateTransitionConditionType
   priority?: number
   condition_config?: Record<string, unknown>
 }
@@ -692,6 +704,33 @@ export interface SessionContext {
   fields: SessionContextField[]
 }
 
+export interface PlanCanvasPosition {
+  x: number
+  y: number
+}
+
+export interface PlanCanvasMetadata {
+  state_positions?: Record<string, PlanCanvasPosition>
+  show_end_node?: boolean
+  end_node_position?: PlanCanvasPosition
+  end_state_ids?: string[]
+}
+
+export type AgentSpawnMode = 'immediate' | 'on_demand'
+
+export interface PlanStartMetadata {
+  agent_spawn_mode?: AgentSpawnMode
+}
+
+export interface PlanMetadata {
+  plan_builder?: {
+    canvas?: PlanCanvasMetadata
+    start?: PlanStartMetadata
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
 /**
  * Complete plan content structure.
  *
@@ -705,7 +744,7 @@ export interface PlanContent {
   description?: string             // Plan description (optional, from template)
   initial_state_id?: string        // Starting state ID
   states: PlanState[]
-  metadata?: Record<string, unknown>
+  metadata?: PlanMetadata
   // Initial prompt configuration
   system_prompt?: string           // Agent persona (snake_case for SDK consistency)
   session_context?: SessionContext

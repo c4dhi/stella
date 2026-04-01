@@ -106,8 +106,10 @@ export default function PlanBuilderModal() {
 
           {/* Modal Content */}
           <motion.div
-            className={`relative w-full h-full max-w-7xl max-h-[95vh] m-4 rounded-2xl overflow-hidden shadow-2xl ring-1 ${
-              isDark ? 'bg-surface-dark ring-white/10' : 'bg-surface ring-black/5'
+            className={`relative rounded-[20px] w-full max-w-[1600px] h-[90vh] overflow-hidden flex flex-col ${
+              isDark
+                ? 'bg-zinc-900 border border-zinc-700 shadow-[0_8px_40px_rgba(0,0,0,0.5)]'
+                : 'bg-white border border-neutral-200 shadow-[0_1px_40px_rgba(0,0,0,0.12)]'
             }`}
             initial={{ scale: 0.95, y: 20 }}
             animate={{ scale: 1, y: 0 }}

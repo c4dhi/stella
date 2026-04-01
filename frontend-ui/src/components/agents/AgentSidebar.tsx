@@ -107,8 +107,19 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   }, [sessionId])
 
   // Deploy new agent
-  const handleDeployAgent = async (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string) => {
-    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType })
+  const handleDeployAgent = async (
+    name: string,
+    icon?: string,
+    config?: Record<string, unknown>,
+    agentType?: string,
+    // Optional saved template selected during deploy (backend resolves encrypted values).
+    envVarTemplateId?: string,
+    // Optional one-time manual env vars entered in the deploy flow.
+    envVars?: Record<string, string>
+  ) => {
+    // Keep payload shape aligned with SessionView/DeployAgentModal so this helper
+    // does not silently drop env var inputs if it becomes active again.
+    const newAgent = await apiClient.createAgent(sessionId, { name, icon, config, agentType, envVarTemplateId, envVars })
     setAgents(prev => [...prev, newAgent])
 
     // Auto-expand console to show deployment progress

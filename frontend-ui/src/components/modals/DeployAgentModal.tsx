@@ -305,9 +305,11 @@ export default function DeployAgentModal({
       // Only send env vars that the user has actually modified or added
       const filteredEnvVars: Record<string, string> = {}
       for (const [key, value] of Object.entries(envVars)) {
+        // Secrets must be single-line values; remove accidental Enter/newline characters.
+        const singleLineValue = value.replace(/[\r\n]/g, '')
         // Skip masked placeholder values from template prefill
-        if (value && value !== '••••••••' && value.trim() !== '') {
-          filteredEnvVars[key] = value
+        if (singleLineValue && singleLineValue !== '••••••••' && singleLineValue.trim() !== '') {
+          filteredEnvVars[key] = singleLineValue
         }
       }
 
@@ -324,6 +326,36 @@ export default function DeployAgentModal({
       setError(err instanceof Error ? err.message : 'Failed to deploy agent')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const setEnvVarValue = (key: string, rawValue: string) => {
+    // Never persist newline characters in secret values (prevents accidental Enter suffixes).
+    const sanitizedValue = rawValue.replace(/[\r\n]/g, '')
+    setEnvVars(prev => ({ ...prev, [key]: sanitizedValue }))
+  }
+
+  const addNewEnvVar = () => {
+    if (newEnvVarKey && !envVars[newEnvVarKey]) {
+      setEnvVars(prev => ({ ...prev, [newEnvVarKey]: '' }))
+      setNewEnvVarKey('')
+    }
+  }
+
+  const handleEnvVarInputEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+    e.preventDefault()
+
+    // In env var edit step, Enter confirms the current step action.
+    if (isLastStep()) {
+      if (canContinue() && !isSubmitting) {
+        void handleSubmit()
+      }
+      return
+    }
+
+    if (canContinue()) {
+      handleContinue()
     }
   }
 
@@ -440,7 +472,7 @@ export default function DeployAgentModal({
                       <div className={`
                         w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
                         ${getCurrentStepNumber() >= num
-                          ? 'bg-primary-500 text-white'
+                          ? isDark ? 'bg-primary-500 text-white' : 'bg-primary-500 text-neutral-900'
                           : isDark ? 'bg-zinc-600 text-zinc-300' : 'bg-neutral-200 text-neutral-600'
                         }
                       `}>
@@ -966,7 +998,8 @@ export default function DeployAgentModal({
                                   <input
                                     type="password"
                                     value={value}
-                                    onChange={(e) => setEnvVars(prev => ({ ...prev, [key]: e.target.value }))}
+                                    onChange={(e) => setEnvVarValue(key, e.target.value)}
+                                    onKeyDown={handleEnvVarInputEnter}
                                     className={`
                                       w-full px-4 py-2.5 rounded-xl text-sm font-mono
                                       focus:outline-none transition-all duration-200
@@ -1013,6 +1046,12 @@ export default function DeployAgentModal({
                                 type="text"
                                 value={newEnvVarKey}
                                 onChange={(e) => setNewEnvVarKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                                    e.preventDefault()
+                                    addNewEnvVar()
+                                  }
+                                }}
                                 placeholder="NEW_VARIABLE_NAME"
                                 className={`
                                   flex-1 px-3 py-2 rounded-lg text-sm font-mono
@@ -1025,12 +1064,7 @@ export default function DeployAgentModal({
                               />
                               <button
                                 type="button"
-                                onClick={() => {
-                                  if (newEnvVarKey && !envVars[newEnvVarKey]) {
-                                    setEnvVars(prev => ({ ...prev, [newEnvVarKey]: '' }))
-                                    setNewEnvVarKey('')
-                                  }
-                                }}
+                                onClick={addNewEnvVar}
                                 disabled={!newEnvVarKey || !!envVars[newEnvVarKey]}
                                 className={`
                                   px-3 py-2 rounded-lg text-sm font-medium transition-all

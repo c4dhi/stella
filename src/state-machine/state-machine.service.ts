@@ -55,7 +55,34 @@ export interface PlanDeliverable {
 
 export interface StateTransition {
   target_state_id: string;
-  condition_type: 'all_tasks_complete' | 'deliverable_value' | 'deliverable_exists';
+  /**
+   * All supported condition types. The full set must be listed here so that
+   * TypeScript catches unsupported types at compile time and the plan generator
+   * can reference them without silent runtime failures.
+   *
+   * Simple:
+   *   all_tasks_complete       – all required tasks/deliverables in the state are done
+   *   deliverable_value        – a deliverable key equals a specific value (loose equality)
+   *   deliverable_value_in     – a deliverable key matches any value in an array
+   *   deliverable_value_numeric – a deliverable key satisfies a numeric comparison
+   *   deliverable_exists       – a deliverable key is present regardless of value
+   *   turn_count_exceeded      – turn counter (total or without-progress) exceeds threshold
+   *
+   * Composite (nest any of the above with AND/OR logic):
+   *   all_of    – all child conditions must be true (AND)
+   *   any_of    – at least one child condition must be true (OR)
+   *   compound  – explicit operator:'and'|'or' with child conditions array
+   */
+  condition_type:
+    | 'all_tasks_complete'
+    | 'turn_count_exceeded'
+    | 'deliverable_value'
+    | 'deliverable_value_in'
+    | 'deliverable_value_numeric'
+    | 'compound'
+    | 'all_of'
+    | 'any_of'
+    | 'deliverable_exists';
   condition_config?: Record<string, unknown>;
   priority?: number;
 }
@@ -179,6 +206,10 @@ export interface FullStateInfo {
 @Injectable()
 export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
+  // Guard against circular transition loops in a single turn (e.g., A -> B -> A).
+  private static readonly MAX_TRANSITIONS_PER_TURN = 10;
+  // Guard against runaway recursion in composite conditions (all_of / any_of / compound).
+  private static readonly MAX_CONDITION_DEPTH = 5;
 
   constructor(private prisma: PrismaService) {}
 
@@ -872,6 +903,529 @@ export class StateMachineService {
     return true;
   }
 
+  /**
+   * Change for non-linear transitions:
+   * Determine whether an arbitrary state is complete based on actual data
+   * (completed tasks + collected deliverables), not plan array position.
+   *
+   * This is used by getFullState() so backward jumps don't incorrectly mark
+   * earlier-in-array states as completed.
+   */
+  private isPlanStateComplete(state: SessionState, planState: PlanState): boolean {
+    const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
+    const stateType = planState.type || 'loose';
+
+    for (const task of planState.tasks) {
+      if (task.required === false) continue;
+
+      const taskDeliverables = task.deliverables || [];
+      if (taskDeliverables.length === 0) {
+        if (stateType === 'goal') continue;
+        if (!state.completedTasks.includes(task.id)) return false;
+        continue;
+      }
+
+      for (const d of taskDeliverables) {
+        if (d.required === false) continue;
+        if (!(d.key in deliverables)) return false;
+      }
+    }
+
+    if (planState.type === 'goal' && planState.goal?.deliverables) {
+      for (const d of planState.goal.deliverables) {
+        if (d.required === false) continue;
+        if (!(d.key in deliverables)) return false;
+      }
+    }
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Condition evaluation infrastructure (ported from main, kept as standalones
+  // so the loop in evaluateAndTransition can call them without an inline switch).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Coerce any value to a finite number.
+   * Returns null for null/undefined/empty/non-numeric/NaN/Infinity so callers
+   * can treat null as "misconfigured" without separate type checks.
+   */
+  private toFiniteNumber(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  /**
+   * Normalise a string for loose equality comparisons (trim + lower-case).
+   * Centralised so every condition that compares strings uses identical logic.
+   */
+  private normalizeStringValue(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
+  /**
+   * Compare two values with consistent semantics across all condition types:
+   *   - strings  → case-insensitive, trimmed
+   *   - anything else → strict equality (===)
+   */
+  private areValuesEqualLoose(actual: unknown, expected: unknown): boolean {
+    if (typeof actual === 'string' && typeof expected === 'string') {
+      return this.normalizeStringValue(actual) === this.normalizeStringValue(expected);
+    }
+    return actual === expected;
+  }
+
+  /**
+   * Map operator strings (including symbolic aliases) to canonical keys.
+   * Returns null when the operator is unrecognised, so callers can fail-closed.
+   */
+  private normalizeNumericOperator(
+    operator: unknown,
+  ): 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'between' | null {
+    if (typeof operator !== 'string') return null;
+
+    const op = operator.toLowerCase();
+    const aliases: Record<string, 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'between'> = {
+      gt: 'gt',
+      '>': 'gt',
+      gte: 'gte',
+      '>=': 'gte',
+      lt: 'lt',
+      '<': 'lt',
+      lte: 'lte',
+      '<=': 'lte',
+      eq: 'eq',
+      '==': 'eq',
+      neq: 'neq',
+      '!=': 'neq',
+      between: 'between',
+      range: 'between',
+    };
+
+    return aliases[op] ?? null;
+  }
+
+  /** Centralised warning helper so all condition logs share the same prefix. */
+  private warnInvalidCondition(message: string): void {
+    this.logger.warn(`[evaluateAndTransition] ${message}`);
+  }
+
+  /**
+   * Validate one condition config node before runtime evaluation.
+   * Called by evaluateAndTransition() before invoking evaluateTransitionCondition()
+   * so that malformed plan data fails closed with a deterministic warning instead
+   * of throwing or silently returning false.
+   */
+  private validateConditionConfig(
+    conditionType: string,
+    conditionConfig: Record<string, unknown> | undefined,
+    depth = 0,
+  ): { valid: boolean; error?: string } {
+    if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
+      return {
+        valid: false,
+        error: `condition nesting exceeds max depth (${StateMachineService.MAX_CONDITION_DEPTH})`,
+      };
+    }
+
+    switch (conditionType) {
+      case 'all_tasks_complete':
+        return { valid: true };
+
+      case 'turn_count_exceeded': {
+        const rawThreshold = conditionConfig?.turns ?? conditionConfig?.value;
+        const threshold = this.toFiniteNumber(rawThreshold);
+        if (threshold === null || threshold < 0) {
+          return { valid: false, error: `'turns'/'value' must be a non-negative number` };
+        }
+
+        const scope = String(conditionConfig?.scope || 'without_progress').toLowerCase();
+        if (scope !== 'without_progress' && scope !== 'total') {
+          return { valid: false, error: `'scope' must be 'without_progress' or 'total'` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value` };
+        }
+        if (!conditionConfig || !Object.prototype.hasOwnProperty.call(conditionConfig, 'value')) {
+          return { valid: false, error: `'value' is required for deliverable_value` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value_in': {
+        const key = conditionConfig?.key;
+        const values = conditionConfig?.values;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value_in` };
+        }
+        if (!Array.isArray(values) || values.length === 0) {
+          return { valid: false, error: `'values' must be a non-empty array` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_value_numeric': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_value_numeric` };
+        }
+
+        const operator = this.normalizeNumericOperator(conditionConfig?.operator);
+        if (!operator) {
+          return {
+            valid: false,
+            error: `'operator' is required and must be one of gt/gte/lt/lte/eq/neq/between`,
+          };
+        }
+
+        if (operator === 'between') {
+          const minValue = this.toFiniteNumber(conditionConfig?.min);
+          const maxValue = this.toFiniteNumber(conditionConfig?.max);
+          if (minValue === null || maxValue === null || minValue > maxValue) {
+            return {
+              valid: false,
+              error: `'between' requires numeric min/max with min <= max`,
+            };
+          }
+          return { valid: true };
+        }
+
+        const value = this.toFiniteNumber(conditionConfig?.value);
+        if (value === null) {
+          return { valid: false, error: `'value' must be numeric for numeric operators` };
+        }
+        return { valid: true };
+      }
+
+      case 'deliverable_exists': {
+        const key = conditionConfig?.key;
+        if (typeof key !== 'string' || key.trim() === '') {
+          return { valid: false, error: `'key' is required for deliverable_exists` };
+        }
+        return { valid: true };
+      }
+
+      // Composite conditions — delegate child validation recursively.
+      case 'all_of':
+      case 'any_of':
+        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+
+      case 'compound': {
+        const operator = String(conditionConfig?.operator || '').toLowerCase();
+        if (operator !== 'and' && operator !== 'or') {
+          return { valid: false, error: `'operator' must be 'and' or 'or' for compound` };
+        }
+        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+      }
+
+      default:
+        return { valid: false, error: `unknown condition type '${conditionType}'` };
+    }
+  }
+
+  /**
+   * Validate the shared child-conditions array used by all_of / any_of / compound.
+   * Recurses into each child so deeply-nested composite configs are fully checked.
+   */
+  private validateCompositeConditionConfig(
+    conditionConfig: Record<string, unknown> | undefined,
+    depth: number,
+  ): { valid: boolean; error?: string } {
+    const conditions = conditionConfig?.conditions;
+    if (!Array.isArray(conditions) || conditions.length === 0) {
+      return { valid: false, error: `'conditions' must be a non-empty array` };
+    }
+
+    for (let i = 0; i < conditions.length; i++) {
+      const child = conditions[i];
+      if (!child || typeof child !== 'object') {
+        return { valid: false, error: `conditions[${i}] must be an object` };
+      }
+
+      const childRecord = child as Record<string, unknown>;
+      // Accept both the canonical 'condition_type' key and the shorter 'type' alias
+      // so plan authors aren't forced to use the verbose key in nested conditions.
+      const childType = childRecord.condition_type ?? childRecord.type;
+      if (typeof childType !== 'string' || childType.trim() === '') {
+        return { valid: false, error: `conditions[${i}] missing valid condition_type` };
+      }
+
+      const childConfigRaw = childRecord.condition_config ?? childRecord.config;
+      const childConfig =
+        childConfigRaw && typeof childConfigRaw === 'object'
+          ? (childConfigRaw as Record<string, unknown>)
+          : undefined;
+
+      const childResult = this.validateConditionConfig(childType, childConfig, depth);
+      if (!childResult.valid) {
+        return {
+          valid: false,
+          error: `conditions[${i}] invalid: ${childResult.error || 'unknown error'}`,
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Evaluate a single condition node against the current session state.
+   *
+   * Handles all 9 condition types including recursive composite conditions
+   * (all_of / any_of / compound).  The depth parameter guards against
+   * infinite recursion from malformed plans.
+   *
+   * Always call validateConditionConfig() before this method — validation is
+   * kept separate so the loop can skip transitions cleanly with a warning
+   * rather than relying on scattered defensive checks here.
+   */
+  private evaluateTransitionCondition(
+    conditionType: string,
+    conditionConfig: Record<string, unknown> | undefined,
+    state: SessionState,
+    currentState: PlanState,
+    deliverables: Record<string, DeliverableValue>,
+    depth = 0,
+  ): boolean {
+    // Safety net: validation should already catch this, but guard here too.
+    if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
+      this.warnInvalidCondition(
+        `Condition nesting too deep (depth=${depth}) for type='${conditionType}'`,
+      );
+      return false;
+    }
+
+    switch (conditionType) {
+      case 'all_tasks_complete':
+        // Delegates to the existing helper that checks required tasks & deliverables.
+        return this.isCurrentStateComplete(state, currentState);
+
+      case 'turn_count_exceeded': {
+        // Supports two scopes:
+        //   'without_progress' (default) – turns since last deliverable was set
+        //   'total'                      – total turns in the session
+        const rawThreshold = conditionConfig?.turns ?? conditionConfig?.value;
+        const thresholdNumber = this.toFiniteNumber(rawThreshold);
+        const scope = String(conditionConfig?.scope || 'without_progress').toLowerCase();
+
+        if (thresholdNumber === null || thresholdNumber < 0) {
+          this.warnInvalidCondition(
+            `'turn_count_exceeded' misconfigured: threshold must be a non-negative number (received '${String(rawThreshold)}')`,
+          );
+          return false;
+        }
+
+        const threshold = Math.floor(thresholdNumber);
+        if (scope === 'without_progress') return state.turnsWithoutProgress >= threshold;
+        if (scope === 'total') return state.totalTurns >= threshold;
+
+        this.warnInvalidCondition(
+          `'turn_count_exceeded' misconfigured: unsupported scope '${scope}'`,
+        );
+        return false;
+      }
+
+      case 'deliverable_value': {
+        // Loose equality: strings are trimmed and compared case-insensitively.
+        const key = conditionConfig?.key as string;
+        const expected = conditionConfig?.value;
+        const actual = deliverables[key]?.value;
+        return this.areValuesEqualLoose(actual, expected);
+      }
+
+      case 'deliverable_value_in': {
+        // True when the deliverable value matches any entry in the values array.
+        const key = conditionConfig?.key as string;
+        const expectedValues = conditionConfig?.values;
+        const actual = deliverables[key]?.value;
+
+        if (!Array.isArray(expectedValues)) {
+          this.warnInvalidCondition(
+            `'deliverable_value_in' misconfigured for key='${key}': 'values' must be an array`,
+          );
+          return false;
+        }
+
+        return expectedValues.some((expectedValue) =>
+          this.areValuesEqualLoose(actual, expectedValue),
+        );
+      }
+
+      case 'deliverable_value_numeric': {
+        // Numeric comparison with operator aliases (gt/>/gte/>=/ etc.) and
+        // an inclusive 'between' range variant.
+        const numericKey = conditionConfig?.key as string | undefined;
+        const rawOperator = conditionConfig?.operator as string | undefined;
+        const numericActualRaw = numericKey ? deliverables[numericKey]?.value : undefined;
+        const numericActual = this.toFiniteNumber(numericActualRaw);
+
+        if (!numericKey) {
+          this.warnInvalidCondition(`'deliverable_value_numeric' misconfigured: missing 'key'`);
+          return false;
+        }
+
+        const operator = this.normalizeNumericOperator(rawOperator);
+        if (!operator) {
+          this.warnInvalidCondition(
+            `'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${String(rawOperator)}'`,
+          );
+          return false;
+        }
+
+        if (numericActual === null) {
+          this.warnInvalidCondition(
+            `'deliverable_value_numeric' key='${numericKey}' has non-numeric actual value: ${JSON.stringify(numericActualRaw)}`,
+          );
+          return false;
+        }
+
+        if (operator === 'gt') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual > expectedValue;
+        }
+        if (operator === 'gte') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual >= expectedValue;
+        }
+        if (operator === 'lt') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual < expectedValue;
+        }
+        if (operator === 'lte') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual <= expectedValue;
+        }
+        if (operator === 'eq') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual === expectedValue;
+        }
+        if (operator === 'neq') {
+          const expectedValue = this.toFiniteNumber(conditionConfig?.value);
+          return expectedValue !== null && numericActual !== expectedValue;
+        }
+        if (operator === 'between') {
+          const minValue = this.toFiniteNumber(conditionConfig?.min);
+          const maxValue = this.toFiniteNumber(conditionConfig?.max);
+          // Default inclusive; set inclusive:false for open-interval behaviour.
+          const inclusive = conditionConfig?.inclusive !== false;
+
+          if (minValue === null || maxValue === null || minValue > maxValue) {
+            this.warnInvalidCondition(
+              `'deliverable_value_numeric' misconfigured for key='${numericKey}': invalid range min='${conditionConfig?.min}' max='${conditionConfig?.max}'`,
+            );
+            return false;
+          }
+
+          return inclusive
+            ? numericActual >= minValue && numericActual <= maxValue
+            : numericActual > minValue && numericActual < maxValue;
+        }
+
+        this.warnInvalidCondition(
+          `'deliverable_value_numeric' misconfigured for key='${numericKey}': unsupported operator '${rawOperator}'`,
+        );
+        return false;
+      }
+
+      case 'deliverable_exists': {
+        // Presence check only — value is irrelevant.
+        const existsKey = conditionConfig?.key as string;
+        return existsKey in deliverables;
+      }
+
+      // Composite conditions — delegate to evaluateCompositeCondition().
+      case 'all_of':
+        return this.evaluateCompositeCondition(
+          'and', conditionConfig, state, currentState, deliverables, depth + 1,
+        );
+
+      case 'any_of':
+        return this.evaluateCompositeCondition(
+          'or', conditionConfig, state, currentState, deliverables, depth + 1,
+        );
+
+      case 'compound': {
+        // 'compound' is the explicit-operator variant of all_of/any_of.
+        const operator = String(conditionConfig?.operator || '').toLowerCase();
+        if (operator !== 'and' && operator !== 'or') {
+          this.warnInvalidCondition(`'compound' misconfigured: operator must be 'and' or 'or'`);
+          return false;
+        }
+        return this.evaluateCompositeCondition(
+          operator, conditionConfig, state, currentState, deliverables, depth + 1,
+        );
+      }
+
+      default:
+        this.warnInvalidCondition(`Unknown condition type: '${conditionType}'`);
+        return false;
+    }
+  }
+
+  /**
+   * Evaluate a list of child conditions with AND or OR semantics.
+   * Used by all_of, any_of, and compound condition types.
+   *
+   * Each child object supports both the canonical 'condition_type'/'condition_config'
+   * keys and shorter 'type'/'config' aliases for easier plan authoring.
+   */
+  private evaluateCompositeCondition(
+    operator: 'and' | 'or',
+    conditionConfig: Record<string, unknown> | undefined,
+    state: SessionState,
+    currentState: PlanState,
+    deliverables: Record<string, DeliverableValue>,
+    depth: number,
+  ): boolean {
+    const rawConditions = conditionConfig?.conditions;
+    if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
+      this.warnInvalidCondition(
+        `Composite condition misconfigured: 'conditions' must be a non-empty array`,
+      );
+      return false;
+    }
+
+    const evaluateChild = (child: unknown): boolean => {
+      if (!child || typeof child !== 'object') {
+        this.warnInvalidCondition(
+          `Composite condition has invalid child: ${JSON.stringify(child)}`,
+        );
+        return false;
+      }
+
+      const childRecord = child as Record<string, unknown>;
+      // Accept both canonical and short-form keys (see validateCompositeConditionConfig).
+      const childType = (childRecord.condition_type ?? childRecord.type) as string | undefined;
+      const childConfig = (childRecord.condition_config ??
+        childRecord.config) as Record<string, unknown> | undefined;
+
+      if (!childType || typeof childType !== 'string') {
+        this.warnInvalidCondition(`Composite child missing valid 'condition_type'`);
+        return false;
+      }
+
+      return this.evaluateTransitionCondition(
+        childType, childConfig, state, currentState, deliverables, depth,
+      );
+    };
+
+    // AND: every child must be true. OR: at least one child must be true.
+    return operator === 'and'
+      ? rawConditions.every((child) => evaluateChild(child))
+      : rawConditions.some((child) => evaluateChild(child));
+  }
+
+  // ---------------------------------------------------------------------------
+
   private async evaluateAndTransition(
     sessionId: string,
   ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
@@ -884,112 +1438,205 @@ export class StateMachineService {
     // Normalize the plan to ensure transitions exist (fixes plans created without transitions)
     const rawPlan = state.planData as unknown as PlanData;
     const plan = this.ensureTransitions(rawPlan);
-    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
-
-    this.logger.log(
-      `[evaluateAndTransition] Session ${sessionId}, current state: '${state.currentStateId}'`,
-    );
-
-    if (!currentState) {
-      this.logger.log(`[evaluateAndTransition] Current state not found in plan`);
-      return { transitioned: false };
-    }
-
-    if (!currentState.transitions || currentState.transitions.length === 0) {
-      this.logger.log(
-        `[evaluateAndTransition] State '${currentState.id}' has no transitions defined`,
-      );
-      return { transitioned: false };
-    }
-
-    this.logger.log(
-      `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
-    );
-
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
+    let currentStateId = state.currentStateId;
+    let transitioned = false;
+    let lastStateId: string | undefined;
+    let lastStateTitle: string | undefined;
+    const visitedStateIds = new Set<string>([currentStateId]);
 
-    // Sort transitions by priority
-    const sortedTransitions = [...currentState.transitions].sort(
-      (a, b) => (a.priority || 100) - (b.priority || 100),
+    this.logger.log(
+      `[evaluateAndTransition] Session ${sessionId}, current state: '${currentStateId}'`,
     );
 
-    for (const transition of sortedTransitions) {
-      let conditionMet = false;
-
-      this.logger.log(
-        `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
-      );
-
-      switch (transition.condition_type) {
-        case 'all_tasks_complete':
-          conditionMet = this.isCurrentStateComplete(state, currentState);
-          this.logger.log(
-            `[evaluateAndTransition] 'all_tasks_complete' condition result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_value':
-          const key = transition.condition_config?.key as string;
-          const expected = transition.condition_config?.value;
-          const actual = deliverables[key]?.value;
-          if (typeof actual === 'string' && typeof expected === 'string') {
-            conditionMet = actual.trim().toLowerCase() === expected.trim().toLowerCase();
-          } else {
-            conditionMet = actual === expected;
-          }
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_value' condition: ${key}='${actual}' expected='${expected}' result: ${conditionMet}`,
-          );
-          break;
-
-        case 'deliverable_exists':
-          const existsKey = transition.condition_config?.key as string;
-          conditionMet = existsKey in deliverables;
-          this.logger.log(
-            `[evaluateAndTransition] 'deliverable_exists' condition: ${existsKey} exists=${conditionMet}`,
-          );
-          break;
-
-        default:
-          this.logger.log(
-            `[evaluateAndTransition] Unknown condition type: '${transition.condition_type}'`,
-          );
+    // Declare i outside the loop so we can check it afterwards to determine
+    // whether the loop ran to exhaustion or exited early via break.
+    let i = 0;
+    for (; i < StateMachineService.MAX_TRANSITIONS_PER_TURN; i++) {
+      const currentState = this.getCurrentPlanState(plan, currentStateId);
+      if (!currentState) {
+        this.logger.log(`[evaluateAndTransition] Current state not found in plan`);
+        break;
       }
 
-      if (conditionMet) {
-        const targetState = plan.states.find(s => s.id === transition.target_state_id);
-        if (targetState) {
-          this.logger.log(
-            `[evaluateAndTransition] Condition met! Transitioning from '${state.currentStateId}' to '${transition.target_state_id}'`,
-          );
+      if (!currentState.transitions || currentState.transitions.length === 0) {
+        this.logger.log(
+          `[evaluateAndTransition] State '${currentState.id}' has no transitions defined`,
+        );
+        break;
+      }
 
-          await this.prisma.sessionState.update({
-            where: { sessionId },
-            data: {
-              currentStateId: transition.target_state_id,
-              turnsWithoutProgress: 0,
-              lastTransitionAt: new Date(),
-            },
+      this.logger.log(
+        `[evaluateAndTransition] State '${currentState.id}' has ${currentState.transitions.length} transition(s)`,
+      );
+
+      // Use ?? instead of || so that priority:0 (highest urgency) is respected.
+      // With ||, 0 is falsy and would be replaced by 100, silently demoting the
+      // highest-priority transition to the default bucket.
+      const sortedTransitions = [...currentState.transitions].sort(
+        (a, b) => (a.priority ?? 100) - (b.priority ?? 100),
+      );
+
+      // Collect per-transition evaluation details for a single decision summary log.
+      const evaluated: Array<{
+        target: string;
+        condition: string;
+        priority: number;
+        matched: boolean;
+      }> = [];
+      // Keep only transitions that matched; winner is selected by sorted priority order.
+      const matchedTransitions: typeof sortedTransitions = [];
+
+      for (const transition of sortedTransitions) {
+        let conditionMet = false;
+        // ?? ensures priority:0 is kept as-is; || would treat 0 as falsy and use 100 instead.
+        const priority = transition.priority ?? 100;
+
+        this.logger.log(
+          `[evaluateAndTransition] Checking transition to '${transition.target_state_id}' with condition '${transition.condition_type}'`,
+        );
+
+        // Validate the condition config before evaluation so malformed plan data
+        // fails closed with a warning instead of silently returning false or throwing.
+        const validation = this.validateConditionConfig(
+          transition.condition_type,
+          transition.condition_config,
+        );
+        if (!validation.valid) {
+          this.warnInvalidCondition(
+            `Skipping transition to '${transition.target_state_id}' — invalid config for '${transition.condition_type}': ${validation.error ?? 'unknown validation error'}`,
+          );
+          // Record the skipped transition in the decision summary so it is visible in logs.
+          evaluated.push({
+            target: transition.target_state_id,
+            condition: transition.condition_type,
+            priority,
+            matched: false,
           });
+          continue;
+        }
 
+        // Delegate evaluation to the standalone helper that handles all 9 condition types
+        // (including composite all_of / any_of / compound).  The loop guard, cycle
+        // detection, and decision summary logging remain here in the loop.
+        conditionMet = this.evaluateTransitionCondition(
+          transition.condition_type,
+          transition.condition_config,
+          state,
+          currentState,
+          deliverables,
+        );
+        this.logger.log(
+          `[evaluateAndTransition] Condition '${transition.condition_type}' result: ${conditionMet}`,
+        );
+
+        evaluated.push({
+          target: transition.target_state_id,
+          condition: transition.condition_type,
+          priority,
+          matched: conditionMet,
+        });
+
+        if (conditionMet) {
+          matchedTransitions.push(transition);
+        }
+      }
+
+      // Summary log: which conditions were checked and which matched.
+      const matchedSummary = matchedTransitions.map(t => ({
+        target: t.target_state_id,
+        condition: t.condition_type,
+        priority: t.priority ?? 100, // ?? preserves explicit priority:0
+      }));
+      this.logger.log(
+        `[evaluateAndTransition] Decision summary: evaluated=${JSON.stringify(evaluated)}, matched=${JSON.stringify(matchedSummary)}`,
+      );
+
+      // Deterministic winner: first matched transition after priority sort.
+      const winner = matchedTransitions[0];
+      let matchedTargetId: string | undefined;
+      let matchedTargetTitle: string | undefined;
+
+      if (winner) {
+        if (
+          matchedTransitions.length > 1 &&
+          // ?? so that an explicit priority:0 is not mistaken for "no priority set".
+          (matchedTransitions[0].priority ?? 100) === (matchedTransitions[1].priority ?? 100)
+        ) {
           this.logger.log(
-            `Session ${sessionId} transitioned from ${state.currentStateId} to ${transition.target_state_id}`,
+            `[evaluateAndTransition] Priority tie detected at ${winner.priority ?? 100}; winner target='${winner.target_state_id}' (stable sorted order)`,
           );
+        }
 
-          return {
-            transitioned: true,
-            newStateId: transition.target_state_id,
-            newStateTitle: targetState.title || targetState.id,
-          };
+        const targetState = plan.states.find(s => s.id === winner.target_state_id);
+        if (targetState) {
+          matchedTargetId = winner.target_state_id;
+          matchedTargetTitle = targetState.title || targetState.id;
+          this.logger.log(
+            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
+          );
         } else {
           this.logger.warn(
-            `[evaluateAndTransition] Target state '${transition.target_state_id}' not found in plan`,
+            `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
           );
         }
       }
+
+      if (!matchedTargetId) {
+        this.logger.log(`[evaluateAndTransition] No transition conditions met`);
+        break;
+      }
+
+      if (visitedStateIds.has(matchedTargetId)) {
+        this.logger.warn(
+          `[evaluateAndTransition] Transition cycle detected (${currentStateId} -> ${matchedTargetId}) for session ${sessionId}; stopping to prevent loops`,
+        );
+        break;
+      }
+
+      this.logger.log(
+        `[evaluateAndTransition] Condition met! Transitioning from '${currentStateId}' to '${matchedTargetId}'`,
+      );
+
+      await this.prisma.sessionState.update({
+        where: { sessionId },
+        data: {
+          currentStateId: matchedTargetId,
+          turnsWithoutProgress: 0,
+          lastTransitionAt: new Date(),
+        },
+      });
+
+      this.logger.log(
+        `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
+      );
+
+      transitioned = true;
+      currentStateId = matchedTargetId;
+      visitedStateIds.add(currentStateId);
+      lastStateId = matchedTargetId;
+      lastStateTitle = matchedTargetTitle;
     }
 
-    this.logger.log(`[evaluateAndTransition] No transition conditions met`);
+    // If i reached the limit, the loop exhausted all allowed transitions without
+    // breaking early — meaning we hit the safety cap, not a natural stopping point.
+    // Every early exit (no conditions met, cycle detected, state not found) uses
+    // break, so those cases will always leave i < MAX_TRANSITIONS_PER_TURN.
+    const reachedMaxTransitions = i >= StateMachineService.MAX_TRANSITIONS_PER_TURN;
+
+    if (transitioned) {
+      if (reachedMaxTransitions) {
+        this.logger.warn(
+          `[evaluateAndTransition] Max transitions per turn (${StateMachineService.MAX_TRANSITIONS_PER_TURN}) reached for session ${sessionId}; stopping to prevent loops`,
+        );
+      }
+      return {
+        transitioned: true,
+        newStateId: lastStateId,
+        newStateTitle: lastStateTitle,
+      };
+    }
+
     return { transitioned: false };
   }
 
@@ -1005,25 +1652,14 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
     const completedTasks = state.completedTasks || [];
 
-    // Calculate which states are completed
-    const completedStates = new Set<string>();
-    for (let i = 0; i < plan.states.length; i++) {
-      const planState = plan.states[i];
-      if (planState.id === state.currentStateId) {
-        // Mark all previous states as completed
-        for (let j = 0; j < i; j++) {
-          completedStates.add(plan.states[j].id);
-        }
-        break;
-      }
-    }
-
-    // Build full state info
+    // Change for non-linear transitions:
+    // Build status per state using completion checks instead of positional
+    // "all states before current are completed" logic.
     const states: FullStateStateInfo[] = plan.states.map(planState => {
       let stateStatus: 'pending' | 'active' | 'completed' = 'pending';
       if (planState.id === state.currentStateId) {
         stateStatus = 'active';
-      } else if (completedStates.has(planState.id)) {
+      } else if (this.isPlanStateComplete(state, planState)) {
         stateStatus = 'completed';
       }
 
