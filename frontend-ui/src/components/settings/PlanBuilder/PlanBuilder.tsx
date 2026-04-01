@@ -478,8 +478,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleConnectEndState = (sourceStateId: string) => {
-    if (!states.some((state) => state.id === sourceStateId)) return
+    const sourceState = states.find((state) => state.id === sourceStateId)
+    if (!sourceState) return
 
+    // Record in canvas metadata so the End node edge is rendered
     updateCanvasMetadata((current) => {
       const existing = current.end_state_ids || []
       if (existing.includes(sourceStateId)) return current
@@ -488,14 +490,54 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         end_state_ids: [...existing, sourceStateId],
       }
     })
+
+    // Also write the actual transition into the plan so the backend can act on it.
+    // Without this the connection is purely cosmetic — the state machine never sees __end__.
+    const alreadyHasEndTransition = (sourceState.transitions || []).some(
+      (t) => t.target_state_id === '__end__'
+    )
+    if (!alreadyHasEndTransition) {
+      setStates((prev) =>
+        prev.map((state) =>
+          state.id === sourceStateId
+            ? {
+                ...state,
+                transitions: [
+                  ...(state.transitions || []),
+                  {
+                    target_state_id: '__end__',
+                    condition_type: 'all_tasks_complete' as const,
+                    priority: state.transitions?.length ?? 0,
+                  },
+                ],
+              }
+            : state
+        )
+      )
+    }
+
     markChanged()
   }
 
   const handleDeleteEndConnection = (sourceStateId: string) => {
+    // Remove from canvas metadata
     updateCanvasMetadata((current) => ({
       ...current,
       end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== sourceStateId),
     }))
+
+    // Remove the corresponding __end__ transition from the state
+    setStates((prev) =>
+      prev.map((state) =>
+        state.id === sourceStateId
+          ? {
+              ...state,
+              transitions: (state.transitions || []).filter((t) => t.target_state_id !== '__end__'),
+            }
+          : state
+      )
+    )
+
     markChanged()
   }
 
