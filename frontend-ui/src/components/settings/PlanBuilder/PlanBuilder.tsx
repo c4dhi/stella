@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
@@ -11,11 +11,14 @@ import type {
   PlanCanvasPosition,
   PlanState,
   StateTransition,
+  SessionContext,
+  AgentSpawnMode,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
 import PlanTransitionEditor from './PlanTransitionEditor'
+import PlanStartEditor from './PlanStartEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -121,6 +124,10 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
 }
 
 const hasMetadataContent = (metadata: PlanMetadata) => Object.keys(metadata).length > 0
+const extractSpawnMode = (metadata: PlanMetadata | undefined): AgentSpawnMode => {
+  const mode = metadata?.plan_builder?.start?.agent_spawn_mode
+  return mode === 'on_demand' ? 'on_demand' : 'immediate'
+}
 
 interface SelectedTransition {
   sourceStateId: string
@@ -132,6 +139,43 @@ interface TransitionRef {
   transitionIndex: number
 }
 
+const normalizeTransitionValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    const values = value.filter((item): item is string | number | boolean =>
+      typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
+    )
+    return `array:${values.map(String).sort().join(',')}`
+  }
+  if (typeof value === 'string') return `string:${value}`
+  if (typeof value === 'number') return `number:${String(value)}`
+  if (typeof value === 'boolean') return `boolean:${String(value)}`
+  return 'undefined:'
+}
+
+const getConditionSignature = (transition: StateTransition): string => {
+  const config = transition.condition_config || {}
+  const key = typeof config.key === 'string' ? config.key : ''
+  const valueSignature = normalizeTransitionValue((config as Record<string, unknown>).value)
+  return `${transition.condition_type}|${key}|${valueSignature}`
+}
+
+const isTransitionConditionIncomplete = (transition: StateTransition): boolean => {
+  const config = transition.condition_config || {}
+  const key = typeof config.key === 'string' ? config.key.trim() : ''
+  if (transition.condition_type === 'deliverable_exists') {
+    return key.length === 0
+  }
+  if (transition.condition_type === 'deliverable_value') {
+    if (key.length === 0) return true
+    const rawValue = (config as Record<string, unknown>).value
+    if (Array.isArray(rawValue)) return rawValue.length === 0
+    if (typeof rawValue === 'string') return rawValue.trim().length === 0
+    if (typeof rawValue === 'number' || typeof rawValue === 'boolean') return false
+    return true
+  }
+  return false
+}
+
 export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
@@ -141,6 +185,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
+  const [sessionContext, setSessionContext] = useState<SessionContext>(template?.content.session_context || { fields: [] })
+  const [agentSpawnMode, setAgentSpawnMode] = useState<AgentSpawnMode>(extractSpawnMode(template?.content.metadata))
   const [states, setStates] = useState<PlanState[]>(
     normalizePlanStates(template?.content.states || [])
   )
@@ -152,6 +198,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     template?.content.states?.length ? 0 : null
   )
   const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
+  const [selectedStartNode, setSelectedStartNode] = useState(false)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -184,16 +231,64 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     states.some((state) => state.id === stateId)
   )
   const endNodePosition = canvasMetadata.end_node_position
+  const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
+    const refs: TransitionRef[] = []
+    for (const state of states) {
+      const groups = new Map<string, number[]>()
+      ;(state.transitions || []).forEach((transition, transitionIndex) => {
+        const signature = getConditionSignature(transition)
+        const indices = groups.get(signature) || []
+        indices.push(transitionIndex)
+        groups.set(signature, indices)
+      })
+      for (const indices of groups.values()) {
+        if (indices.length < 2) continue
+        for (const transitionIndex of indices) {
+          refs.push({ sourceStateId: state.id, transitionIndex })
+        }
+      }
+    }
+    return refs
+  }, [states])
+  const ambiguousTransitionIdSet = useMemo(
+    () => new Set(ambiguousTransitionRefs.map((ref) => `${ref.sourceStateId}__${ref.transitionIndex}`)),
+    [ambiguousTransitionRefs]
+  )
+  const incompleteTransitionRefs = useMemo<TransitionRef[]>(() => {
+    const refs: TransitionRef[] = []
+    for (const state of states) {
+      ;(state.transitions || []).forEach((transition, transitionIndex) => {
+        if (isTransitionConditionIncomplete(transition)) {
+          refs.push({ sourceStateId: state.id, transitionIndex })
+        }
+      })
+    }
+    return refs
+  }, [states])
+  const incompleteTransitionIdSet = useMemo(
+    () => new Set(incompleteTransitionRefs.map((ref) => `${ref.sourceStateId}__${ref.transitionIndex}`)),
+    [incompleteTransitionRefs]
+  )
+  const transitionIssueIdSet = useMemo(() => {
+    const ids = new Set<string>(ambiguousTransitionIdSet)
+    for (const id of incompleteTransitionIdSet) ids.add(id)
+    return ids
+  }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
 
   const buildContent = (): PlanContent => ({
     states,
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
-    ...(hasMetadataContent(metadata)
+    ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
+    ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'
       ? {
           metadata: {
             ...metadata,
             plan_builder: {
               ...(metadata.plan_builder || {}),
+              start: {
+                ...(metadata.plan_builder?.start || {}),
+                agent_spawn_mode: agentSpawnMode,
+              },
               canvas: {
                 ...(metadata.plan_builder?.canvas || {}),
                 ...canvasMetadata,
@@ -213,6 +308,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setStates((prev) => [...prev, newState])
     setSelectedStateIndex(newIndex)
     setSelectedTransition(null)
+    setSelectedStartNode(false)
     setInitialStateId((current) => current || newState.id)
 
     updateCanvasMetadata((current) => ({
@@ -287,11 +383,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     const index = states.findIndex((state) => state.id === stateId)
     setSelectedStateIndex(index >= 0 ? index : null)
     setSelectedTransition(null)
+    setSelectedStartNode(false)
   }
 
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
     const sourceState = states.find((state) => state.id === sourceStateId)
     if (!sourceState) return
+    const createsAmbiguousDefault = (sourceState.transitions || []).some(
+      (transition) => transition.condition_type === 'all_tasks_complete'
+    )
 
     const nextTransition: StateTransition = {
       target_state_id: targetStateId,
@@ -312,32 +412,31 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       sourceStateId,
       transitionIndex: sourceState.transitions?.length ?? 0,
     })
+    if (createsAmbiguousDefault) {
+      addToast({
+        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "All tasks complete" transitions.`,
+        type: 'info',
+      })
+    }
     markChanged()
   }
 
   const handleSelectTransition = (sourceStateId: string, transitionIndex: number) => {
     setSelectedStateIndex(null)
     setSelectedTransition({ sourceStateId, transitionIndex })
+    setSelectedStartNode(false)
+  }
+
+  const handleSelectStartNode = () => {
+    setSelectedStateIndex(null)
+    setSelectedTransition(null)
+    setSelectedStartNode(true)
   }
 
   const handleInitialStateChange = (stateId: string) => {
     const exists = states.some((state) => state.id === stateId)
     if (!exists) return
-    if (initialStateId && initialStateId !== stateId) {
-      addToast({
-        message: 'Delete the current Start edge first, then connect Start to a new state.',
-        type: 'info',
-      })
-      return
-    }
     setInitialStateId(stateId)
-    setSelectedStateIndex(states.findIndex((state) => state.id === stateId))
-    setSelectedTransition(null)
-    markChanged()
-  }
-
-  const handleDeleteStartConnection = () => {
-    setInitialStateId(null)
     markChanged()
   }
 
@@ -476,8 +575,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
         setSelectedTransition(null)
+        setSelectedStartNode(false)
         setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
         setSystemPrompt(content.system_prompt || '')
+        setSessionContext(content.session_context || { fields: [] })
+        setAgentSpawnMode(extractSpawnMode((content.metadata as PlanMetadata) || {}))
         setMetadata((content.metadata as PlanMetadata) || {})
         setAutoFitKey((prev) => prev + 1)
 
@@ -517,6 +619,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     const startConnected = !!initialStateId && states.some((state) => state.id === initialStateId)
     if (!startConnected) {
       addToast({ message: 'Please connect Start to a state', type: 'error' })
+      return
+    }
+
+    if (transitionIssueIdSet.size > 0) {
+      addToast({
+        message: `Please resolve ${transitionIssueIdSet.size} transition condition issue(s) before saving.`,
+        type: 'error',
+      })
       return
     }
 
@@ -569,8 +679,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   useEffect(() => {
-    if (initialStateId && !states.some((state) => state.id === initialStateId)) {
+    if (states.length === 0) {
       setInitialStateId(null)
+      return
+    }
+    if (!initialStateId || !states.some((state) => state.id === initialStateId)) {
+      setInitialStateId(states[0].id)
     }
   }, [states, initialStateId])
 
@@ -593,6 +707,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const selectedTransitionTarget = selectedTransitionData
     ? states.find((state) => state.id === selectedTransitionData.target_state_id)
     : null
+  const selectedTransitionDeliverables = selectedTransitionState
+    ? selectedTransitionState.type === 'goal'
+      ? selectedTransitionState.goal?.deliverables || []
+      : selectedTransitionState.tasks.flatMap((task) => task.deliverables)
+    : []
 
   return (
     <div className="h-full flex flex-col">
@@ -760,26 +879,34 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   >
                     Add State
                   </button>
+                  {transitionIssueIdSet.size > 0 && (
+                    <div className={`px-2.5 py-1.5 rounded-lg text-caption font-medium ${
+                      isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      Transition issues: {transitionIssueIdSet.size}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex-1 min-h-0">
                 <PlanCanvas
                   states={states}
                   initialStateId={initialStateId}
+                  agentSpawnMode={agentSpawnMode}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
+                  selectedStartNode={selectedStartNode}
                   selectedTransition={selectedTransition}
                   statePositions={statePositions}
                   endNodePosition={endNodePosition}
                   showEndNode={showEndNode}
                   autoFitKey={autoFitKey}
                   isDark={isDark}
+                  onSelectStart={handleSelectStartNode}
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
-                  onSetInitialState={handleInitialStateChange}
                   endStateIds={endStateIds}
                   onConnectEndState={handleConnectEndState}
-                  onDeleteStartConnection={handleDeleteStartConnection}
                   onDeleteEndConnection={handleDeleteEndConnection}
                   onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
@@ -788,6 +915,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   onCanvasClick={() => {
                     setSelectedStateIndex(null)
                     setSelectedTransition(null)
+                    setSelectedStartNode(false)
                   }}
                 />
               </div>
@@ -834,10 +962,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                {selectedTransitionData ? 'Transition Editor' : 'State Editor'}
+                {selectedStartNode ? 'Start Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                {selectedTransitionData
+                {selectedStartNode
+                  ? 'Configure session start settings'
+                  : selectedTransitionData
                   ? 'Click an edge to edit condition and priority'
                   : 'Click a state node to edit details'}
               </p>
@@ -864,7 +994,26 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedTransitionData && selectedTransitionState ? (
+                {selectedStartNode ? (
+                  <motion.div
+                    key="start-node"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanStartEditor
+                      states={states}
+                      initialStateId={initialStateId}
+                      spawnMode={agentSpawnMode}
+                      sessionContext={sessionContext}
+                      onInitialStateChange={handleInitialStateChange}
+                      onSpawnModeChange={(mode) => { setAgentSpawnMode(mode); markChanged() }}
+                      onSessionContextChange={(context) => { setSessionContext(context); markChanged() }}
+                    />
+                  </motion.div>
+                ) : selectedTransitionData && selectedTransitionState ? (
                   <motion.div
                     key={`transition-${selectedTransitionState.id}-${selectedTransition?.transitionIndex ?? 0}`}
                     initial={{ opacity: 0, x: 20 }}
@@ -877,6 +1026,19 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
                       targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
                       transition={selectedTransitionData}
+                      availableDeliverables={selectedTransitionDeliverables}
+                      isAmbiguous={
+                        !!selectedTransition &&
+                        ambiguousTransitionIdSet.has(
+                          `${selectedTransition.sourceStateId}__${selectedTransition.transitionIndex}`
+                        )
+                      }
+                      isConditionIncomplete={
+                        !!selectedTransition &&
+                        incompleteTransitionIdSet.has(
+                          `${selectedTransition.sourceStateId}__${selectedTransition.transitionIndex}`
+                        )
+                      }
                       onChange={handleUpdateTransition}
                       onDelete={handleDeleteTransition}
                     />

@@ -716,9 +716,16 @@ export interface PlanCanvasMetadata {
   end_state_ids?: string[]
 }
 
+export type AgentSpawnMode = 'immediate' | 'on_demand'
+
+export interface PlanStartMetadata {
+  agent_spawn_mode?: AgentSpawnMode
+}
+
 export interface PlanMetadata {
   plan_builder?: {
     canvas?: PlanCanvasMetadata
+    start?: PlanStartMetadata
     [key: string]: unknown
   }
   [key: string]: unknown

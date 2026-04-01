@@ -19,7 +19,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import PlanCanvasNode from './PlanCanvasNode'
-import type { PlanState } from '../../../lib/api-types'
+import type { AgentSpawnMode, PlanState } from '../../../lib/api-types'
 import { getDefaultStatePosition } from './planCanvasLayout'
 
 interface CanvasPosition {
@@ -30,7 +30,9 @@ interface CanvasPosition {
 interface PlanCanvasProps {
   states: PlanState[]
   initialStateId: string | null
+  agentSpawnMode: AgentSpawnMode
   endStateIds: string[]
+  selectedStartNode: boolean
   selectedStateId: string | null
   selectedTransition: { sourceStateId: string; transitionIndex: number } | null
   statePositions: Record<string, CanvasPosition>
@@ -38,12 +40,11 @@ interface PlanCanvasProps {
   showEndNode: boolean
   autoFitKey: number
   isDark: boolean
+  onSelectStart: () => void
   onSelectState: (stateId: string) => void
   onSelectTransition: (sourceStateId: string, transitionIndex: number) => void
   onCreateTransition: (sourceStateId: string, targetStateId: string) => void
-  onSetInitialState: (stateId: string) => void
   onConnectEndState: (sourceStateId: string) => void
-  onDeleteStartConnection: () => void
   onDeleteEndConnection: (sourceStateId: string) => void
   onDeleteTransitions: (transitionRefs: Array<{ sourceStateId: string; transitionIndex: number }>) => void
   onDeleteState: (stateId: string) => void
@@ -59,6 +60,7 @@ interface TerminalNodeData {
   label: string
   isDark: boolean
   kind: 'start' | 'end'
+  isSelected?: boolean
 }
 
 interface TransitionEdgeData {
@@ -138,11 +140,25 @@ function TerminalNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="relative w-[96px] rounded-xl px-3 py-2 text-center"
+      className={`relative w-[96px] rounded-xl px-3 py-2 text-center transition-all ${
+        nodeData.kind === 'start' ? 'cursor-pointer' : ''
+      } ${
+        nodeData.isSelected
+          ? nodeData.isDark
+            ? 'shadow-[0_0_24px_rgba(139,92,246,0.15)]'
+            : 'shadow-[0_0_24px_rgba(139,92,246,0.1)]'
+          : ''
+      }`}
       style={{
-        border: `1px solid ${nodeData.isDark ? '#3f3f46' : '#e5e5e5'}`,
+        border: `2px solid ${
+          nodeData.isSelected
+            ? nodeData.isDark ? '#a78bfa' : '#6d28d9'
+            : nodeData.isDark ? '#3f3f46' : '#e5e5e5'
+        }`,
         color: nodeData.isDark ? '#71717a' : '#a3a3a3',
-        background: nodeData.isDark ? 'rgba(39,39,42,0.55)' : '#ffffff',
+        background: nodeData.isSelected
+          ? nodeData.isDark ? 'rgba(139,92,246,0.12)' : '#faf5ff'
+          : nodeData.isDark ? 'rgba(39,39,42,0.55)' : '#ffffff',
         fontSize: 11,
         fontWeight: 600,
         letterSpacing: '0.04em',
@@ -154,6 +170,7 @@ function TerminalNodeComponent({ data }: NodeProps) {
           type="source"
           position={Position.Right}
           id="out"
+          isConnectable={false}
           className="!w-4 !h-4 !rounded-full !border-2 !border-white dark:!border-zinc-900 !bg-zinc-400 dark:!bg-zinc-500"
         />
       )}
@@ -248,7 +265,9 @@ const getStateOrder = (states: PlanState[], initialStateId: string | null): stri
 export default function PlanCanvas({
   states,
   initialStateId,
+  agentSpawnMode,
   endStateIds,
+  selectedStartNode,
   selectedStateId,
   selectedTransition,
   statePositions,
@@ -256,12 +275,11 @@ export default function PlanCanvas({
   showEndNode,
   autoFitKey,
   isDark,
+  onSelectStart,
   onSelectState,
   onSelectTransition,
   onCreateTransition,
-  onSetInitialState,
   onConnectEndState,
-  onDeleteStartConnection,
   onDeleteEndConnection,
   onDeleteTransitions,
   onDeleteState,
@@ -293,7 +311,7 @@ export default function PlanCanvas({
       position: { x: 48, y: 220 },
       draggable: false,
       selectable: false,
-      data: { label: 'Start', isDark, kind: 'start' },
+      data: { label: 'Start', isDark, kind: 'start', isSelected: selectedStartNode },
     }
 
     const stateNodes: Node[] = states.map((state, index) => {
@@ -343,7 +361,7 @@ export default function PlanCanvas({
     }
 
     return nodes
-  }, [states, statePositions, selectedStateId, stateOrderMap, endNodePosition, isDark, onDeleteState, showEndNode])
+  }, [states, statePositions, selectedStartNode, selectedStateId, stateOrderMap, endNodePosition, isDark, onDeleteState, showEndNode])
 
   const [nodes, setNodes] = useState<Node[]>(builtNodes)
   const builtEdges = useMemo<Edge[]>(() => {
@@ -422,14 +440,35 @@ export default function PlanCanvas({
       : null
 
     if (validInitial) {
+      const spawnLabel = agentSpawnMode === 'on_demand' ? 'on demand' : 'immediate'
       edges.push({
         id: '__start_edge__',
         source: START_NODE_ID,
         target: validInitial,
+        label: spawnLabel,
         interactionWidth: 36,
         data: { kind: 'start' },
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: isDark ? '#71717a' : '#9ca3af' },
-        style: { stroke: isDark ? '#52525b' : '#9ca3af', strokeWidth: 1.8, strokeDasharray: '4 4' },
+        style: {
+          stroke: isDark ? '#52525b' : '#9ca3af',
+          strokeWidth: 1.8,
+          strokeDasharray: '4 4',
+          cursor: 'default',
+        },
+        labelStyle: {
+          fontSize: 10,
+          fontWeight: 500,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          fill: isDark ? '#a1a1aa' : '#6b7280',
+        },
+        labelBgPadding: [6, 3],
+        labelBgBorderRadius: 8,
+        labelBgStyle: {
+          fill: isDark ? 'rgba(24,24,27,0.88)' : 'rgba(255,255,255,0.95)',
+          stroke: isDark ? '#3f3f46' : '#e5e7eb',
+          strokeWidth: 1,
+        },
       })
     }
 
@@ -474,9 +513,6 @@ export default function PlanCanvas({
     if (sourceId === targetId) return
 
     if (sourceId === START_NODE_ID) {
-      if (targetId !== END_NODE_ID) {
-        onSetInitialState(targetId)
-      }
       return
     }
 
@@ -486,16 +522,12 @@ export default function PlanCanvas({
       return
     }
     onCreateTransition(sourceId, targetId)
-  }, [onCreateTransition, onSetInitialState, onConnectEndState])
+  }, [onCreateTransition, onConnectEndState])
 
   const handleEdgesDelete = useCallback((deletedEdges: Edge[]) => {
     const transitionsToDelete: Array<{ sourceStateId: string; transitionIndex: number }> = []
 
     for (const edge of deletedEdges) {
-      if (edge.data?.kind === 'start') {
-        onDeleteStartConnection()
-        continue
-      }
       if (edge.data?.kind === 'end' && typeof edge.data?.sourceStateId === 'string') {
         onDeleteEndConnection(edge.data.sourceStateId)
         continue
@@ -511,7 +543,7 @@ export default function PlanCanvas({
     if (transitionsToDelete.length > 0) {
       onDeleteTransitions(transitionsToDelete)
     }
-  }, [onDeleteEndConnection, onDeleteStartConnection, onDeleteTransitions])
+  }, [onDeleteEndConnection, onDeleteTransitions])
 
   const handleEdgesChange = useCallback((changes: EdgeChange<Edge>[]) => {
     const removedIds = changes
@@ -574,15 +606,16 @@ export default function PlanCanvas({
         onNodesChange={handleNodesChange}
         onConnect={handleConnect}
         onNodeClick={(_, node) => {
-          if (node.id === START_NODE_ID || node.id === END_NODE_ID) return
+          if (node.id === START_NODE_ID) {
+            onSelectStart()
+            return
+          }
+          if (node.id === END_NODE_ID) return
           onSelectState(node.id)
         }}
         onEdgeClick={(event, edge) => {
+          if (edge.data?.kind === 'start') return
           event.stopPropagation()
-          if (edge.data?.kind === 'start') {
-            onDeleteStartConnection()
-            return
-          }
           if (edge.data?.kind === 'end' && typeof edge.data?.sourceStateId === 'string') {
             onDeleteEndConnection(edge.data.sourceStateId)
             return
