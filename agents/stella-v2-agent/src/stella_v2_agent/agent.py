@@ -365,6 +365,20 @@ class StellaV2Agent(BaseAgent):
         )
         if task_verdict and task_verdict.raw_output:
             raw = task_verdict.raw_output
+
+            # Session termination: backend transitioned to __end__.
+            # Emit the farewell before the progress update, then flag the agent
+            # to stop accepting new turns (run_audio_loop checks _session_completed).
+            if raw.get("session_completed"):
+                farewell = raw.get("farewell_message")
+                if farewell:
+                    yield AgentOutput.text_final(session_id, farewell)
+                self._session_completed = True
+                logger.info(
+                    f"Session {session_id} completed — agent will exit after this turn"
+                )
+                # Fall through so the final progress update is still emitted.
+
             deliverables_set = raw.get("deliverables_set", [])
             tasks_done = raw.get("tasks_completed", [])
 

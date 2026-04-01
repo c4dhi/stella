@@ -199,6 +199,18 @@ class ExpertRunner:
                                 if t.get("task_id"):
                                     tasks_completed.append(t["task_id"])
 
+            # Check if any tool result signals that the plan reached __end__.
+            # We only need the first match — all tool calls within a turn share the same session.
+            session_completed = False
+            farewell_message: Optional[str] = None
+            summary_behavior: Optional[str] = None
+            for r in results:
+                if r.get("success") and r.get("data", {}).get("session_completed"):
+                    session_completed = True
+                    farewell_message = r["data"].get("farewell_message")
+                    summary_behavior = r["data"].get("summary_behavior")
+                    break
+
             latency_ms = (time.time() - start_time) * 1000
             verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"
 
@@ -206,6 +218,7 @@ class ExpertRunner:
                 f"Expert '{config.name}' tool mode: "
                 f"{len(tool_calls_made)} calls, {len(deliverables_set)} deliverables, "
                 f"{len(tasks_completed)} tasks in {latency_ms:.0f}ms"
+                + (", session_completed=True" if session_completed else "")
             )
 
             return ExpertVerdict(
@@ -221,6 +234,12 @@ class ExpertRunner:
                     "deliverables_set": deliverables_set,
                     "tasks_completed": tasks_completed,
                     "text_content": response.content or "",
+                    # Set when any tool triggered an __end__ transition.
+                    # _process_post_response in agent.py reads this to emit
+                    # the farewell and set _session_completed on the agent.
+                    "session_completed": session_completed,
+                    "farewell_message": farewell_message,
+                    "summary_behavior": summary_behavior,
                 },
             )
 
