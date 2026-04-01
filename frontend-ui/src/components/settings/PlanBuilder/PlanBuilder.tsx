@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
@@ -10,10 +10,12 @@ import type {
   PlanCanvasMetadata,
   PlanCanvasPosition,
   PlanState,
+  StateTransition,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
+import PlanTransitionEditor from './PlanTransitionEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -93,6 +95,11 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
     }
   }
 
+  const rawEndStateIds = canvas.end_state_ids
+  const parsedEndStateIds = Array.isArray(rawEndStateIds)
+    ? rawEndStateIds.filter((value): value is string => typeof value === 'string')
+    : undefined
+
   const endNodePosition = canvas.end_node_position
   const parsedEndNodePosition =
     endNodePosition &&
@@ -109,10 +116,21 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
     state_positions: parsedStatePositions,
     show_end_node: canvas.show_end_node === true,
     end_node_position: parsedEndNodePosition,
+    end_state_ids: parsedEndStateIds,
   }
 }
 
 const hasMetadataContent = (metadata: PlanMetadata) => Object.keys(metadata).length > 0
+
+interface SelectedTransition {
+  sourceStateId: string
+  transitionIndex: number
+}
+
+interface TransitionRef {
+  sourceStateId: string
+  transitionIndex: number
+}
 
 export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
@@ -126,10 +144,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [states, setStates] = useState<PlanState[]>(
     normalizePlanStates(template?.content.states || [])
   )
+  const [initialStateId, setInitialStateId] = useState<string | null>(
+    template?.content.initial_state_id || template?.content.states?.[0]?.id || null
+  )
   const [metadata, setMetadata] = useState<PlanMetadata>(template?.content.metadata || {})
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
   )
+  const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -158,10 +180,29 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const canvasMetadata = extractCanvasMetadata(metadata)
   const statePositions = canvasMetadata.state_positions || {}
   const showEndNode = canvasMetadata.show_end_node === true
+  const endStateIds = (canvasMetadata.end_state_ids || []).filter((stateId) =>
+    states.some((state) => state.id === stateId)
+  )
+  const endNodePosition = canvasMetadata.end_node_position
 
   const buildContent = (): PlanContent => ({
     states,
-    ...(hasMetadataContent(metadata) ? { metadata } : {}),
+    ...(initialStateId ? { initial_state_id: initialStateId } : {}),
+    ...(hasMetadataContent(metadata)
+      ? {
+          metadata: {
+            ...metadata,
+            plan_builder: {
+              ...(metadata.plan_builder || {}),
+              canvas: {
+                ...(metadata.plan_builder?.canvas || {}),
+                ...canvasMetadata,
+                end_state_ids: endStateIds,
+              },
+            },
+          },
+        }
+      : {}),
     ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
   })
 
@@ -171,6 +212,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
     setStates((prev) => [...prev, newState])
     setSelectedStateIndex(newIndex)
+    setSelectedTransition(null)
+    setInitialStateId((current) => current || newState.id)
 
     updateCanvasMetadata((current) => ({
       ...current,
@@ -193,7 +236,17 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     const stateToDelete = states[index]
     if (!stateToDelete) return
 
-    setStates((prev) => prev.filter((_, i) => i !== index))
+    const nextStates = states
+      .filter((_, i) => i !== index)
+      .map((state) => ({
+        ...state,
+        transitions: state.transitions?.filter((transition) => transition.target_state_id !== stateToDelete.id),
+      }))
+
+    setStates(nextStates)
+    if (initialStateId === stateToDelete.id) {
+      setInitialStateId(nextStates[0]?.id || null)
+    }
 
     if (selectedStateIndex === index) {
       setSelectedStateIndex(states.length > 1 ? Math.max(0, index - 1) : null)
@@ -207,7 +260,17 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       return {
         ...current,
         state_positions: nextPositions,
+        end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== stateToDelete.id),
       }
+    })
+
+    setSelectedTransition((current) => {
+      if (!current) return current
+      if (current.sourceStateId === stateToDelete.id) return null
+      const sourceState = nextStates.find((state) => state.id === current.sourceStateId)
+      if (!sourceState) return null
+      const stillExists = sourceState.transitions?.[current.transitionIndex]
+      return stillExists ? current : null
     })
 
     markChanged()
@@ -223,6 +286,150 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const handleSelectStateById = (stateId: string) => {
     const index = states.findIndex((state) => state.id === stateId)
     setSelectedStateIndex(index >= 0 ? index : null)
+    setSelectedTransition(null)
+  }
+
+  const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
+    const sourceState = states.find((state) => state.id === sourceStateId)
+    if (!sourceState) return
+
+    const nextTransition: StateTransition = {
+      target_state_id: targetStateId,
+      condition_type: 'all_tasks_complete',
+      priority: sourceState.transitions?.length ?? 0,
+    }
+
+    setStates((prev) =>
+      prev.map((state) =>
+        state.id === sourceStateId
+          ? { ...state, transitions: [...(state.transitions || []), nextTransition] }
+          : state
+      )
+    )
+
+    setSelectedStateIndex(null)
+    setSelectedTransition({
+      sourceStateId,
+      transitionIndex: sourceState.transitions?.length ?? 0,
+    })
+    markChanged()
+  }
+
+  const handleSelectTransition = (sourceStateId: string, transitionIndex: number) => {
+    setSelectedStateIndex(null)
+    setSelectedTransition({ sourceStateId, transitionIndex })
+  }
+
+  const handleInitialStateChange = (stateId: string) => {
+    const exists = states.some((state) => state.id === stateId)
+    if (!exists) return
+    if (initialStateId && initialStateId !== stateId) {
+      addToast({
+        message: 'Delete the current Start edge first, then connect Start to a new state.',
+        type: 'info',
+      })
+      return
+    }
+    setInitialStateId(stateId)
+    setSelectedStateIndex(states.findIndex((state) => state.id === stateId))
+    setSelectedTransition(null)
+    markChanged()
+  }
+
+  const handleDeleteStartConnection = () => {
+    setInitialStateId(null)
+    markChanged()
+  }
+
+  const handleConnectEndState = (sourceStateId: string) => {
+    if (!states.some((state) => state.id === sourceStateId)) return
+
+    updateCanvasMetadata((current) => {
+      const existing = current.end_state_ids || []
+      if (existing.includes(sourceStateId)) return current
+      return {
+        ...current,
+        end_state_ids: [...existing, sourceStateId],
+      }
+    })
+    markChanged()
+  }
+
+  const handleDeleteEndConnection = (sourceStateId: string) => {
+    updateCanvasMetadata((current) => ({
+      ...current,
+      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== sourceStateId),
+    }))
+    markChanged()
+  }
+
+  const handleDeleteTransitions = (transitionRefs: TransitionRef[]) => {
+    if (transitionRefs.length === 0) return
+
+    const grouped = transitionRefs.reduce<Record<string, number[]>>((acc, ref) => {
+      if (!acc[ref.sourceStateId]) acc[ref.sourceStateId] = []
+      acc[ref.sourceStateId].push(ref.transitionIndex)
+      return acc
+    }, {})
+
+    Object.values(grouped).forEach((indices) => indices.sort((a, b) => b - a))
+
+    setStates((prev) =>
+      prev.map((state) => {
+        const indices = grouped[state.id]
+        if (!indices || indices.length === 0) return state
+
+        const transitions = [...(state.transitions || [])]
+        for (const index of indices) {
+          if (index >= 0 && index < transitions.length) {
+            transitions.splice(index, 1)
+          }
+        }
+        return { ...state, transitions }
+      })
+    )
+
+    setSelectedTransition((current) => {
+      if (!current) return current
+      const deleted = transitionRefs.some(
+        (ref) =>
+          ref.sourceStateId === current.sourceStateId &&
+          ref.transitionIndex === current.transitionIndex
+      )
+      return deleted ? null : current
+    })
+
+    markChanged()
+  }
+
+  const handleUpdateTransition = (updatedTransition: StateTransition) => {
+    if (!selectedTransition) return
+    setStates((prev) =>
+      prev.map((state) => {
+        if (state.id !== selectedTransition.sourceStateId) return state
+        const transitions = [...(state.transitions || [])]
+        if (!transitions[selectedTransition.transitionIndex]) return state
+        transitions[selectedTransition.transitionIndex] = updatedTransition
+        return { ...state, transitions }
+      })
+    )
+    markChanged()
+  }
+
+  const handleDeleteTransition = () => {
+    if (!selectedTransition) return
+
+    setStates((prev) =>
+      prev.map((state) => {
+        if (state.id !== selectedTransition.sourceStateId) return state
+        return {
+          ...state,
+          transitions: (state.transitions || []).filter((_, index) => index !== selectedTransition.transitionIndex),
+        }
+      })
+    )
+    setSelectedTransition(null)
+    markChanged()
   }
 
   const handleStatePositionChange = (stateId: string, position: PlanCanvasPosition) => {
@@ -232,6 +439,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         ...(current.state_positions || {}),
         [stateId]: position,
       },
+    }))
+    markChanged()
+  }
+
+  const handleEndNodePositionChange = (position: PlanCanvasPosition) => {
+    updateCanvasMetadata((current) => ({
+      ...current,
+      end_node_position: position,
     }))
     markChanged()
   }
@@ -260,6 +475,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         const normalizedStates = normalizePlanStates(content.states as PlanStateWithLegacyType[])
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
+        setSelectedTransition(null)
+        setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
         setSystemPrompt(content.system_prompt || '')
         setMetadata((content.metadata as PlanMetadata) || {})
         setAutoFitKey((prev) => prev + 1)
@@ -297,6 +514,28 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       return
     }
 
+    const startConnected = !!initialStateId && states.some((state) => state.id === initialStateId)
+    if (!startConnected) {
+      addToast({ message: 'Please connect Start to a state', type: 'error' })
+      return
+    }
+
+    const endConnectedSet = new Set(showEndNode ? endStateIds : [])
+    const statesWithoutOutgoing = states.filter(
+      (state) => (state.transitions?.length ?? 0) === 0 && !endConnectedSet.has(state.id)
+    )
+    if (statesWithoutOutgoing.length > 0) {
+      const sampleTitles = statesWithoutOutgoing
+        .slice(0, 3)
+        .map((state) => state.title || 'Untitled state')
+        .join(', ')
+      const suffix = statesWithoutOutgoing.length > 3 ? ', ...' : ''
+      addToast({
+        message: `${statesWithoutOutgoing.length} state(s) have no outgoing transition and will end the conversation (${sampleTitles}${suffix}).`,
+        type: 'info',
+      })
+    }
+
     setIsSaving(true)
     try {
       const content = buildContent()
@@ -328,6 +567,32 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       setIsSaving(false)
     }
   }
+
+  useEffect(() => {
+    if (initialStateId && !states.some((state) => state.id === initialStateId)) {
+      setInitialStateId(null)
+    }
+  }, [states, initialStateId])
+
+  useEffect(() => {
+    if (!selectedTransition) return
+    const sourceState = states.find((state) => state.id === selectedTransition.sourceStateId)
+    if (!sourceState) {
+      setSelectedTransition(null)
+      return
+    }
+    if (!sourceState.transitions?.[selectedTransition.transitionIndex]) {
+      setSelectedTransition(null)
+    }
+  }, [selectedTransition, states])
+
+  const selectedTransitionState = selectedTransition
+    ? states.find((state) => state.id === selectedTransition.sourceStateId)
+    : null
+  const selectedTransitionData = selectedTransitionState?.transitions?.[selectedTransition?.transitionIndex ?? -1]
+  const selectedTransitionTarget = selectedTransitionData
+    ? states.find((state) => state.id === selectedTransitionData.target_state_id)
+    : null
 
   return (
     <div className="h-full flex flex-col">
@@ -500,14 +765,30 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               <div className="flex-1 min-h-0">
                 <PlanCanvas
                   states={states}
+                  initialStateId={initialStateId}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
+                  selectedTransition={selectedTransition}
                   statePositions={statePositions}
+                  endNodePosition={endNodePosition}
                   showEndNode={showEndNode}
                   autoFitKey={autoFitKey}
                   isDark={isDark}
                   onSelectState={handleSelectStateById}
+                  onSelectTransition={handleSelectTransition}
+                  onCreateTransition={handleCreateTransition}
+                  onSetInitialState={handleInitialStateChange}
+                  endStateIds={endStateIds}
+                  onConnectEndState={handleConnectEndState}
+                  onDeleteStartConnection={handleDeleteStartConnection}
+                  onDeleteEndConnection={handleDeleteEndConnection}
+                  onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
                   onStatePositionChange={handleStatePositionChange}
+                  onEndNodePositionChange={handleEndNodePositionChange}
+                  onCanvasClick={() => {
+                    setSelectedStateIndex(null)
+                    setSelectedTransition(null)
+                  }}
                 />
               </div>
               <div className={`p-4 border-t shrink-0 ${isDark ? 'border-zinc-700/80 bg-surface-dark' : 'border-neutral-200 bg-surface'}`}>
@@ -553,10 +834,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                State Editor
+                {selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-                Click a state node to edit details
+                {selectedTransitionData
+                  ? 'Click an edge to edit condition and priority'
+                  : 'Click a state node to edit details'}
               </p>
             </div>
 
@@ -581,7 +864,24 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedStateIndex !== null && states[selectedStateIndex] ? (
+                {selectedTransitionData && selectedTransitionState ? (
+                  <motion.div
+                    key={`transition-${selectedTransitionState.id}-${selectedTransition?.transitionIndex ?? 0}`}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanTransitionEditor
+                      sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
+                      targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
+                      transition={selectedTransitionData}
+                      onChange={handleUpdateTransition}
+                      onDelete={handleDeleteTransition}
+                    />
+                  </motion.div>
+                ) : selectedStateIndex !== null && states[selectedStateIndex] ? (
                   <motion.div
                     key={`state-${selectedStateIndex}`}
                     initial={{ opacity: 0, x: 20 }}
@@ -608,7 +908,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       isDark ? 'text-zinc-500' : 'text-neutral-400'
                     }`}
                   >
-                    Select a state from the canvas to edit it.
+                    Select a state or transition from the canvas to edit it.
                   </motion.div>
                 )}
               </AnimatePresence>
