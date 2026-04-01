@@ -407,12 +407,42 @@ class StellaV2Agent(BaseAgent):
                     completed_task_ids=tasks_done,
                 )
 
-        # Increment turn counter if no progress was made
-        if not deliverables_found and not tasks_completed:
-            await self.sm_client.increment_turn()
-
-        # Fetch updated full state and emit progress
+        # Fetch updated state once so we can:
+        # 1) detect fallback completion when backend moved to __end__
+        #    but tool payload did not set session_completed=true
+        # 2) avoid incrementing turn counters after session termination
         full_state = await self.sm_client.get_full_state()
+        reached_end_state = bool(full_state and full_state.get("current_state_id") == "__end__")
+
+        # Fallback completion path:
+        # If we reached __end__ but didn't receive session_completed in tool output,
+        # emit the configured farewell from the plan metadata and stop the agent.
+        if reached_end_state and not self._session_completed:
+            farewell = None
+            if task_verdict and task_verdict.raw_output:
+                farewell = task_verdict.raw_output.get("farewell_message")
+            if not farewell and self._plan_config:
+                farewell = (
+                    self._plan_config.get("metadata", {})
+                    .get("plan_builder", {})
+                    .get("canvas", {})
+                    .get("end_node_config", {})
+                    .get("farewell_message")
+                )
+            if farewell:
+                yield AgentOutput.text_final(session_id, farewell)
+            self._session_completed = True
+            logger.info(
+                f"Session {session_id} reached __end__ — fallback completion applied"
+            )
+
+        # Increment turn counter only when no progress was made and session is still active.
+        if not deliverables_found and not tasks_completed and not reached_end_state:
+            await self.sm_client.increment_turn()
+            # Refresh state after counter update so the published progress is current.
+            full_state = await self.sm_client.get_full_state()
+
+        # Emit final progress for this turn.
         if full_state:
             progress_state = ProgressAdapter.from_full_state_dict(
                 full_state, started_at=self._session_started_at
