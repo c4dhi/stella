@@ -1656,10 +1656,22 @@ export class StateMachineService {
         `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
       );
 
-      // End state reached: stop the loop and return completion signal with end_node_config.
+      // End state reached: mark the session CLOSED in the DB, then return the completion
+      // signal. We only update status/closedAt here — agent stopping and invitation
+      // cleanup happen later when the agent disconnects (room monitor handles it).
+      // The agent is still running at this point: it needs to read sessionCompleted,
+      // send the farewell message, then shut itself down.
       if (matchedTargetId === END_STATE_ID) {
         const endConfig = rawPlan.metadata?.plan_builder?.canvas?.end_node_config;
-        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — conversation terminated`);
+        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — marking CLOSED`);
+
+        // Close the session record so the dashboard and GetCurrentState callers
+        // immediately see the session as terminated.
+        await this.prisma.session.update({
+          where: { id: sessionId },
+          data: { status: 'CLOSED', closedAt: new Date() },
+        });
+
         return {
           transitioned: true,
           newStateId: END_STATE_ID,
