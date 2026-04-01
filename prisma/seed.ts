@@ -1,141 +1,58 @@
-import { PrismaClient, AgentValidationStatus, Prisma } from '@prisma/client'
+import { PrismaClient, Prisma } from '@prisma/client'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
+import * as dotenv from 'dotenv'
+import { parseAgentManifestYaml, type CanonicalAgentManifest } from '../src/agent-package/schemas/agent-manifest.schema'
+
+function resolveWorkspaceRoot(): string {
+  if (process.env.AGENT_WORKSPACE_ROOT) {
+    return process.env.AGENT_WORKSPACE_ROOT
+  }
+
+  // Support both compile layouts:
+  // - prisma/seed.js            -> __dirname ends with /prisma
+  // - prisma/prisma/seed.js     -> __dirname ends with /prisma/prisma
+  const candidates = [
+    path.resolve(__dirname, '..'),
+    path.resolve(__dirname, '..', '..'),
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'agents'))) {
+      return candidate
+    }
+  }
+
+  // Fall back to previous behavior for consistent error messaging downstream.
+  return path.resolve(__dirname, '..')
+}
+
+function loadSeedEnv(): void {
+  const workspaceRoot = resolveWorkspaceRoot()
+  const envPath = path.join(workspaceRoot, '.env')
+  const envLocalPath = path.join(workspaceRoot, '.env.local')
+
+  // Load .env first, then .env.local to allow local overrides.
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath })
+  }
+  if (fs.existsSync(envLocalPath)) {
+    dotenv.config({ path: envLocalPath, override: true })
+  }
+}
+
+loadSeedEnv()
 
 const prisma = new PrismaClient()
 
 // Directories to skip when scanning for agents
 const SKIP_DIRS = ['stella-ai-agent-sdk']
 
-// Validation constants (matching src/agent-package/agent-manifest.types.ts)
-const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/
-const VERSION_REGEX = /^\d+\.\d+\.\d+$/
-
-interface AgentManifest {
-  version: string
-  metadata: {
-    name: string
-    slug: string
-    version: string
-    description: string
-    author?: { name: string; email?: string }
-    icon?: string
-    tags?: string[]
-  }
-  capabilities?: string[]
-  image: {
-    dockerfile?: string
-    imageUrl?: string
-  }
-  resources?: {
-    memory?: { request?: string; limit?: string }
-    cpu?: { request?: string; limit?: string }
-    gpu?: boolean
-  }
-  configSchema?: Record<string, unknown>
-  defaultConfig?: Record<string, unknown>
-  pipelineSchema?: Record<string, unknown>
-  sdk?: { minVersion?: string }
-}
-
-interface ManifestValidationResult {
-  valid: boolean
-  errors: string[]
-  warnings: string[]
-  manifest?: AgentManifest
-}
+type AgentManifest = CanonicalAgentManifest
 
 interface BuiltinAgentInfo {
   manifest: AgentManifest
   directoryPath: string
-}
-
-/**
- * Validate an agent.yaml manifest.
- * Simplified version of ManifestValidator for standalone use.
- */
-function validateManifest(content: string): ManifestValidationResult {
-  const errors: string[] = []
-  const warnings: string[] = []
-
-  let manifest: AgentManifest
-  try {
-    manifest = yaml.load(content) as AgentManifest
-  } catch (error) {
-    return {
-      valid: false,
-      errors: [`Invalid YAML: ${(error as Error).message}`],
-      warnings: [],
-    }
-  }
-
-  if (!manifest || typeof manifest !== 'object') {
-    return {
-      valid: false,
-      errors: ['Manifest must be a valid YAML object'],
-      warnings: [],
-    }
-  }
-
-  // Validate version
-  if (!manifest.version) {
-    errors.push('Missing required field: version')
-  } else if (manifest.version !== '1.0') {
-    warnings.push(`Manifest version ${manifest.version} may not be fully supported`)
-  }
-
-  // Validate metadata
-  if (!manifest.metadata) {
-    errors.push('Missing required field: metadata')
-  } else {
-    if (!manifest.metadata.name) {
-      errors.push('Missing required field: metadata.name')
-    }
-    if (!manifest.metadata.slug) {
-      errors.push('Missing required field: metadata.slug')
-    } else if (!SLUG_REGEX.test(manifest.metadata.slug)) {
-      errors.push('Invalid slug: must start with a letter, contain only lowercase letters, numbers, and hyphens')
-    }
-    if (!manifest.metadata.version) {
-      errors.push('Missing required field: metadata.version')
-    } else if (!VERSION_REGEX.test(manifest.metadata.version)) {
-      errors.push('Invalid version format: must be semantic version (e.g., 1.0.0)')
-    }
-    if (!manifest.metadata.description) {
-      errors.push('Missing required field: metadata.description')
-    }
-  }
-
-  // Validate image configuration
-  if (!manifest.image) {
-    errors.push('Missing required field: image')
-  } else {
-    if (!manifest.image.dockerfile && !manifest.image.imageUrl) {
-      errors.push('Must specify either image.dockerfile or image.imageUrl')
-    }
-  }
-
-  // Validate capabilities
-  if (manifest.capabilities) {
-    if (!Array.isArray(manifest.capabilities)) {
-      errors.push('capabilities must be an array')
-    } else {
-      const validCapabilities = ['voice', 'text', 'progress', 'plans', 'experts']
-      for (const cap of manifest.capabilities) {
-        if (!validCapabilities.includes(cap)) {
-          warnings.push(`Unknown capability: ${cap}`)
-        }
-      }
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-    manifest: errors.length === 0 ? manifest : undefined,
-  }
 }
 
 /**
@@ -146,9 +63,7 @@ function validateManifest(content: string): ManifestValidationResult {
  * - Local dev: Uses relative path from prisma/ to agents/
  */
 function discoverBuiltinAgents(): BuiltinAgentInfo[] {
-  // In K8s, the project is mounted at AGENT_WORKSPACE_ROOT
-  // Locally, resolve relative to this file
-  const workspaceRoot = process.env.AGENT_WORKSPACE_ROOT || path.resolve(__dirname, '..')
+  const workspaceRoot = resolveWorkspaceRoot()
   const agentsDir = path.join(workspaceRoot, 'agents')
 
   if (!fs.existsSync(agentsDir)) {
@@ -178,9 +93,9 @@ function discoverBuiltinAgents(): BuiltinAgentInfo[] {
       )
     }
 
-    // Read and validate manifest
+    // Seed uses the same parser as package upload/runtime validation to avoid drift.
     const content = fs.readFileSync(manifestPath, 'utf-8')
-    const validation = validateManifest(content)
+    const validation = parseAgentManifestYaml(content)
 
     if (!validation.valid) {
       throw new Error(
@@ -240,11 +155,187 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
     resourceMemory: manifest.resources?.memory?.limit || '512Mi',
     resourceCpu: manifest.resources?.cpu?.limit || '250m',
     resourceGpu: manifest.resources?.gpu || false,
+    // Preserve null semantics expected by existing DB readers.
     configSchema: manifest.configSchema ? (manifest.configSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     defaultConfig: manifest.defaultConfig ? (manifest.defaultConfig as Prisma.InputJsonValue) : Prisma.JsonNull,
     pipelineSchema: manifest.pipelineSchema ? (manifest.pipelineSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     sdkMinVersion: manifest.sdk?.minVersion || null,
   }
+}
+
+function normalizeJsonForCompare(value: unknown): unknown {
+  // Prisma null sentinels (DbNull/JsonNull/AnyNull) should compare as null
+  // against values read back from the database.
+  if (value === Prisma.DbNull || value === Prisma.JsonNull || value === Prisma.AnyNull) {
+    return null
+  }
+
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    ['DbNull', 'JsonNull', 'AnyNull'].includes(
+      (value as { constructor?: { name?: string } }).constructor?.name ?? '',
+    )
+  ) {
+    return null
+  }
+
+  if (value === null || value === undefined) return null
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonForCompare)
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => [k, normalizeJsonForCompare(v)])
+    return Object.fromEntries(entries)
+  }
+  return value
+}
+
+function normalizedString(value: unknown): string {
+  return JSON.stringify(normalizeJsonForCompare(value))
+}
+
+function preview(value: unknown, max = 240): string {
+  const serialized = normalizedString(value)
+  if (serialized.length <= max) return serialized
+  return `${serialized.slice(0, max)}...<truncated ${serialized.length - max} chars>`
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Post-seed round-trip verification:
+ * Re-read persisted AgentType rows and assert key mapped fields still match source manifests.
+ * This protects against silent drift in mapping logic or Prisma null/JSON serialization behavior.
+ */
+async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
+  const mismatches: string[] = []
+
+  for (const { manifest } of agents) {
+    const expected = mapManifestToDbFields(manifest)
+    const actual = await prisma.agentType.findUnique({
+      where: { slug: manifest.metadata.slug },
+      select: {
+        slug: true,
+        name: true,
+        description: true,
+        icon: true,
+        version: true,
+        authorName: true,
+        authorEmail: true,
+        tags: true,
+        capabilities: true,
+        dockerfilePath: true,
+        imageUrl: true,
+        resourceMemory: true,
+        resourceCpu: true,
+        resourceGpu: true,
+        configSchema: true,
+        defaultConfig: true,
+        pipelineSchema: true,
+        sdkMinVersion: true,
+      },
+    })
+
+    if (!actual) {
+      mismatches.push(`[${manifest.metadata.slug}] missing persisted AgentType record`)
+      continue
+    }
+
+    // Compare deterministic scalar and array fields (including resource limits and capabilities).
+    const scalarChecks: Array<[field: string, expectedValue: unknown, actualValue: unknown]> = [
+      ['slug', expected.slug, actual.slug],
+      ['name', expected.name, actual.name],
+      ['description', expected.description, actual.description],
+      ['icon', expected.icon, actual.icon],
+      ['version', expected.version, actual.version],
+      ['authorName', expected.authorName, actual.authorName],
+      ['authorEmail', expected.authorEmail, actual.authorEmail],
+      ['dockerfilePath', expected.dockerfilePath, actual.dockerfilePath],
+      ['imageUrl', expected.imageUrl, actual.imageUrl],
+      ['resourceMemory', expected.resourceMemory, actual.resourceMemory],
+      ['resourceCpu', expected.resourceCpu, actual.resourceCpu],
+      ['resourceGpu', expected.resourceGpu, actual.resourceGpu],
+      ['sdkMinVersion', expected.sdkMinVersion, actual.sdkMinVersion],
+      ['capabilities', expected.capabilities, actual.capabilities],
+    ]
+
+    for (const [field, expectedValue, actualValue] of scalarChecks) {
+      if (normalizedString(expectedValue) !== normalizedString(actualValue)) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} mismatch (expected=${preview(expectedValue)}, actual=${preview(actualValue)})`,
+        )
+      }
+    }
+
+    // Explicit shape checks catch malformed JSON writes before deep comparison.
+    if (manifest.configSchema && !isPlainObject(actual.configSchema)) {
+      mismatches.push(
+        `[${manifest.metadata.slug}] configSchema malformed in DB (expected object, got ${typeof actual.configSchema})`,
+      )
+    }
+
+    if (manifest.defaultConfig && !isPlainObject(actual.defaultConfig)) {
+      mismatches.push(
+        `[${manifest.metadata.slug}] defaultConfig malformed in DB (expected object, got ${typeof actual.defaultConfig})`,
+      )
+    }
+
+    if (manifest.pipelineSchema) {
+      if (!isPlainObject(actual.pipelineSchema)) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] pipelineSchema malformed in DB (expected object, got ${typeof actual.pipelineSchema})`,
+        )
+      } else {
+        const nodes = (actual.pipelineSchema as Record<string, unknown>).nodes
+        const edges = (actual.pipelineSchema as Record<string, unknown>).edges
+        const thresholds = (actual.pipelineSchema as Record<string, unknown>).thresholds
+        if (!Array.isArray(nodes) || !Array.isArray(edges) || !Array.isArray(thresholds)) {
+          mismatches.push(
+            `[${manifest.metadata.slug}] pipelineSchema malformed in DB (nodes/edges/thresholds must be arrays)`,
+          )
+        }
+      }
+    }
+
+    // Compare JSON fields with null-safe canonicalization to avoid ordering/shape noise.
+    const jsonChecks: Array<[field: string, expectedValue: unknown, actualValue: unknown]> = [
+      ['tags', expected.tags, actual.tags],
+      ['configSchema', expected.configSchema, actual.configSchema],
+      ['defaultConfig', expected.defaultConfig, actual.defaultConfig],
+      ['pipelineSchema', expected.pipelineSchema, actual.pipelineSchema],
+    ]
+
+    for (const [field, expectedValue, actualValue] of jsonChecks) {
+      const expectedNormalized = normalizedString(expectedValue)
+      const actualNormalized = normalizedString(actualValue)
+
+      // Length comparison is a simple guardrail for silent truncation.
+      if (expectedNormalized.length !== actualNormalized.length) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} possible truncation (expected length=${expectedNormalized.length}, actual length=${actualNormalized.length})`,
+        )
+      }
+
+      if (expectedNormalized !== actualNormalized) {
+        mismatches.push(
+          `[${manifest.metadata.slug}] ${field} JSON mismatch (expected=${preview(expectedValue)}, actual=${preview(actualValue)})`,
+        )
+      }
+    }
+  }
+
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Post-seed round-trip verification failed:\n  - ${mismatches.join('\n  - ')}`,
+    )
+  }
+
+  console.log(`Round-trip verification passed for ${agents.length} agent types`)
 }
 
 async function main() {
@@ -286,12 +377,15 @@ async function main() {
       create: {
         ...dbFields,
         isBuiltIn: true,
-        validationStatus: AgentValidationStatus.APPROVED,
+        // Use literal to avoid hard dependency on generated enum export names.
+        validationStatus: 'APPROVED',
       },
     })
 
     console.log(`  - ${result.name} (${result.slug}) [${result.id}]`)
   }
+
+  await verifySeedRoundTrip(agents)
 
   console.log('Seeding complete!')
 }

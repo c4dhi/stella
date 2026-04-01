@@ -11,6 +11,8 @@ export interface AgentOptionalEnvVar {
 export interface ConfigSchemaExtensions {
   'x-stella-env-vars'?: string[]
   'x-stella-optional-env-vars'?: AgentOptionalEnvVar[]
+  'x-stella-supports-configurator'?: boolean
+  'x-stella-requires-plan'?: boolean
 }
 
 export interface AgentManifest {
