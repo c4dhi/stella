@@ -709,11 +709,21 @@ export interface PlanCanvasPosition {
   y: number
 }
 
+/**
+ * Configuration for the End node, stored in PlanCanvasMetadata.
+ * Consumed by the backend when the state machine transitions to the end state.
+ */
+export interface EndNodeConfig {
+  farewell_message?: string            // Final message the agent sends before the session closes
+  summary_behavior?: 'none' | 'brief' | 'full'  // Whether to summarize the conversation on exit
+}
+
 export interface PlanCanvasMetadata {
   state_positions?: Record<string, PlanCanvasPosition>
   show_end_node?: boolean
   end_node_position?: PlanCanvasPosition
-  end_state_ids?: string[]
+  end_state_ids?: string[]             // State IDs that have an edge connecting to the End node
+  end_node_config?: EndNodeConfig
 }
 
 export type AgentSpawnMode = 'immediate' | 'on_demand'

@@ -13,12 +13,14 @@ import type {
   StateTransition,
   SessionContext,
   AgentSpawnMode,
+  EndNodeConfig,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
 import PlanTransitionEditor from './PlanTransitionEditor'
 import PlanStartEditor from './PlanStartEditor'
+import PlanEndEditor from './PlanEndEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -115,11 +117,28 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
         }
       : undefined
 
+  // Validate end_node_config shape to guard against stale/corrupted persisted values.
+  const rawEndNodeConfig = canvas.end_node_config
+  const parsedEndNodeConfig =
+    rawEndNodeConfig && typeof rawEndNodeConfig === 'object'
+      ? {
+          farewell_message: typeof (rawEndNodeConfig as { farewell_message?: unknown }).farewell_message === 'string'
+            ? (rawEndNodeConfig as { farewell_message: string }).farewell_message
+            : undefined,
+          summary_behavior: (['none', 'brief', 'full'] as const).includes(
+            (rawEndNodeConfig as { summary_behavior?: unknown }).summary_behavior as 'none' | 'brief' | 'full'
+          )
+            ? (rawEndNodeConfig as { summary_behavior: 'none' | 'brief' | 'full' }).summary_behavior
+            : undefined,
+        }
+      : undefined
+
   return {
     state_positions: parsedStatePositions,
     show_end_node: canvas.show_end_node === true,
     end_node_position: parsedEndNodePosition,
     end_state_ids: parsedEndStateIds,
+    end_node_config: parsedEndNodeConfig,
   }
 }
 
@@ -199,6 +218,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   )
   const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
   const [selectedStartNode, setSelectedStartNode] = useState(false)
+  const [selectedEndNode, setSelectedEndNode] = useState(false)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -231,6 +251,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     states.some((state) => state.id === stateId)
   )
   const endNodePosition = canvasMetadata.end_node_position
+  const endNodeConfig: EndNodeConfig = canvasMetadata.end_node_config || {}
   const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
     const refs: TransitionRef[] = []
     for (const state of states) {
@@ -384,6 +405,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(index >= 0 ? index : null)
     setSelectedTransition(null)
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
@@ -425,12 +447,27 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(null)
     setSelectedTransition({ sourceStateId, transitionIndex })
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleSelectStartNode = () => {
     setSelectedStateIndex(null)
     setSelectedTransition(null)
     setSelectedStartNode(true)
+    setSelectedEndNode(false)
+  }
+
+  // Selects the End node, deselecting everything else so the sidebar shows PlanEndEditor.
+  const handleSelectEndNode = () => {
+    setSelectedStateIndex(null)
+    setSelectedTransition(null)
+    setSelectedStartNode(false)
+    setSelectedEndNode(true)
+  }
+
+  const handleEndNodeConfigChange = (config: EndNodeConfig) => {
+    updateCanvasMetadata((current) => ({ ...current, end_node_config: config }))
+    markChanged()
   }
 
   const handleInitialStateChange = (stateId: string) => {
@@ -555,6 +592,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       ...current,
       show_end_node: !showEndNode,
     }))
+    if (showEndNode) setSelectedEndNode(false)
     setAutoFitKey((prev) => prev + 1)
     markChanged()
   }
@@ -895,6 +933,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   agentSpawnMode={agentSpawnMode}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
                   selectedStartNode={selectedStartNode}
+                  selectedEndNode={selectedEndNode}
                   selectedTransition={selectedTransition}
                   statePositions={statePositions}
                   endNodePosition={endNodePosition}
@@ -902,6 +941,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   autoFitKey={autoFitKey}
                   isDark={isDark}
                   onSelectStart={handleSelectStartNode}
+                  onSelectEnd={handleSelectEndNode}
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
@@ -916,6 +956,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                     setSelectedStateIndex(null)
                     setSelectedTransition(null)
                     setSelectedStartNode(false)
+                    setSelectedEndNode(false)
                   }}
                 />
               </div>
@@ -962,11 +1003,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                {selectedStartNode ? 'Start Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
+                {selectedStartNode ? 'Start Node' : selectedEndNode ? 'End Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                 {selectedStartNode
                   ? 'Configure session start settings'
+                  : selectedEndNode
+                  ? 'Configure conversation end behavior'
                   : selectedTransitionData
                   ? 'Click an edge to edit condition and priority'
                   : 'Click a state node to edit details'}
@@ -994,7 +1037,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedStartNode ? (
+                {selectedEndNode ? (
+                  <motion.div
+                    key="end-node"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanEndEditor
+                      config={endNodeConfig}
+                      onChange={handleEndNodeConfigChange}
+                    />
+                  </motion.div>
+                ) : selectedStartNode ? (
                   <motion.div
                     key="start-node"
                     initial={{ opacity: 0, x: 20 }}
