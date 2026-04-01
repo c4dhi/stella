@@ -144,6 +144,7 @@ class StellaAgent(BaseAgent):
         """
         self._is_processing = True
         t_pipeline_start = time.perf_counter()
+        turn_id = getattr(self._audio_pipeline, '_turn_id', None) or "" if hasattr(self, '_audio_pipeline') else ""
 
         try:
             # Fetch conversation history from database (stateless - no in-memory storage)
@@ -183,6 +184,7 @@ class StellaAgent(BaseAgent):
                 input.session_id,
                 stage="input_gate",
                 timing_ms=(time.perf_counter() - t_gate_start) * 1000,
+                turn_id=turn_id,
             )
 
             # Get gate result
@@ -210,6 +212,15 @@ class StellaAgent(BaseAgent):
                 reasoning=gate_result.reasoning,
                 state_transition=gate_result.state_transition,
                 deliverables_detected=list(gate_result.deliverables.keys()) if gate_result.deliverables else []
+            )
+
+            # Analytics: safety routing decision
+            yield AgentOutput.analytics(
+                input.session_id, stage="safety_routing", timing_ms=0,
+                route=gate_result.route.value,
+                experts_consulted=gate_result.experts_to_consult,
+                confidence=gate_result.confidence,
+                turn_id=turn_id,
             )
 
             # Step 2: Handle routing
@@ -284,6 +295,13 @@ class StellaAgent(BaseAgent):
                     # Ensure expert task is complete
                     await expert_task
 
+                    # Analytics: bridge generation (interim message fired while experts ran)
+                    yield AgentOutput.analytics(
+                        input.session_id, stage="bridge_generation",
+                        timing_ms=(time.perf_counter() - t_experts_start) * 1000,
+                        bridge_fired=True, turn_id=turn_id,
+                    )
+
                     # Get expert results
                     expert_results = self.expert_pool.last_results
                     yield AgentOutput.analytics(
@@ -291,6 +309,7 @@ class StellaAgent(BaseAgent):
                         stage="expert_pool",
                         timing_ms=(time.perf_counter() - t_experts_start) * 1000,
                         expert_count=len(expert_results),
+                        turn_id=turn_id,
                     )
 
                     print(f"[StellaAgent] Got {len(expert_results)} expert results")
@@ -317,6 +336,7 @@ class StellaAgent(BaseAgent):
                         input.session_id,
                         stage="aggregator",
                         timing_ms=(time.perf_counter() - t_agg_start) * 1000,
+                        turn_id=turn_id,
                     )
 
                     # Get aggregator result (used for verification, response already streamed)
@@ -383,6 +403,14 @@ class StellaAgent(BaseAgent):
                                 completed_tasks=result.completed_tasks
                             )
 
+                            # Analytics: state transition
+                            yield AgentOutput.analytics(
+                                input.session_id, stage="state_transition", timing_ms=0,
+                                from_state=old_state_id, to_state=new_state_id,
+                                transition_reason=result.transition_reason or "all_tasks_complete",
+                                was_expected=True, turn_id=turn_id,
+                            )
+
                 # Emit deliverables via SDK
                 for key, value in gate_result.deliverables.items():
                     yield AgentOutput.deliverable(
@@ -436,6 +464,14 @@ class StellaAgent(BaseAgent):
                                 completed_tasks=gate_result.completed_tasks
                             )
 
+                            # Analytics: state transition (explicit completion)
+                            yield AgentOutput.analytics(
+                                input.session_id, stage="state_transition", timing_ms=0,
+                                from_state=old_state_id, to_state=new_state_id,
+                                transition_reason="explicit_task_completion",
+                                was_expected=True, turn_id=turn_id,
+                            )
+
             # No deliverables or completed tasks - increment turn counter
             if not gate_result.deliverables and not gate_result.completed_tasks:
                 if self.state_machine.is_initialized:
@@ -467,6 +503,7 @@ class StellaAgent(BaseAgent):
                 input.session_id,
                 stage="total",
                 timing_ms=(time.perf_counter() - t_pipeline_start) * 1000,
+                turn_id=turn_id,
             )
 
         except Exception as e:
@@ -659,6 +696,26 @@ class StellaAgent(BaseAgent):
             # Add state machine summary if initialized (legacy mode)
             todo_list = self.state_machine.get_todo_list()
             if todo_list:
+                # Analytics: plan completion
+                total = todo_list.total_items
+                completed = todo_list.completed_items
+                rate = (completed / total) if total > 0 else 0.0
+                reached_end = todo_list.progress_percentage >= 100.0
+
+                if self.has_audio:
+                    try:
+                        await self.audio._room.publish_data({
+                            "type": "analytics",
+                            "data": {
+                                "stage": "plan_completion", "timing_ms": 0,
+                                "total_tasks": total, "completed_tasks": completed,
+                                "completion_rate": rate, "plan_reached_end": reached_end,
+                                "plan_id": todo_list.plan_id,
+                            }
+                        })
+                    except Exception:
+                        pass  # Room may be closing
+
                 summary["state_machine"] = {
                     "plan_id": todo_list.plan_id,
                     "plan_title": todo_list.plan_title,

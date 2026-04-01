@@ -12,9 +12,10 @@ import AgentLibrarySection from '../components/settings/AgentLibrarySection'
 import InboxSection from '../components/settings/InboxSection'
 import AdminDashboardSection from '../components/settings/AdminDashboardSection'
 import AgentConfigSection from '../components/settings/AgentConfigSection'
+import AnalyticsSection from '../components/settings/AnalyticsSection'
 import { useAuthStore } from '../store/authStore'
 
-const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'agent-configs', 'env-vars', 'agent-library', 'inbox', 'admin']
+const validSections: SettingsSection[] = ['profile', 'preferences', 'plan-builder', 'agent-configs', 'env-vars', 'agent-library', 'inbox', 'analytics', 'admin']
 
 // Animation variants for page transitions
 const pageVariants = {
@@ -56,7 +57,7 @@ export default function SettingsPage() {
     if (!validSections.includes(section as SettingsSection)) {
       return 'profile'
     }
-    if (section === 'admin' && !isSystemAdmin) {
+    if ((section === 'admin' || section === 'analytics') && !isSystemAdmin) {
       return 'profile'
     }
     return section as SettingsSection
@@ -86,6 +87,8 @@ export default function SettingsPage() {
         return <AgentLibrarySection />
       case 'inbox':
         return <InboxSection />
+      case 'analytics':
+        return isSystemAdmin ? <AnalyticsSection /> : <ProfileSection />
       case 'admin':
         return isSystemAdmin ? <AdminDashboardSection /> : <ProfileSection />
       default:
@@ -127,7 +130,7 @@ export default function SettingsPage() {
                 initial="initial"
                 animate="animate"
                 exit="exit"
-                className="h-full"
+                className="h-full pb-8"
               >
                 {renderContent()}
               </motion.div>

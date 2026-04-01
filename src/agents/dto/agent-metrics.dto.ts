@@ -8,6 +8,42 @@ export class StageLatencyDto {
   max_ms: number;
 }
 
+export class OutlierStageDto {
+  stage: string;
+  sessionMean_ms: number;
+  globalP50_ms: number;
+}
+
+export class OutlierSessionDto {
+  sessionId: string;
+  sessionName: string;
+  createdAt: string;
+  outlierStages: OutlierStageDto[];
+}
+
+export class MetricsSummaryDto {
+  planCompletion: {
+    totalSessions: number;
+    completedPlans: number;
+    avgCompletionRate: number;
+  } | null;
+  safetyRouting: {
+    totalTurns: number;
+    safeTurns: number;
+    unsafeTurns: number;
+    interceptionRate: number;
+  } | null;
+  stateTransitions: {
+    totalTransitions: number;
+    expectedTransitions: number;
+    accuracy: number;
+  } | null;
+  bridgeGeneration: {
+    totalBridges: number;
+    avgBridgeDuration_ms: number;
+  } | null;
+}
+
 export class AgentMetricsResponseDto {
   agentSlug: string;
   projectId: string;
@@ -15,4 +51,13 @@ export class AgentMetricsResponseDto {
   totalSessions: number;
   totalTurns: number;
   stages: StageLatencyDto[];
+  outlierSessions: OutlierSessionDto[];
+  summary: MetricsSummaryDto;
+}
+
+export class SessionAnalyticsResponseDto {
+  sessionId: string;
+  totalTurns: number;
+  stages: StageLatencyDto[];
+  summary: MetricsSummaryDto;
 }

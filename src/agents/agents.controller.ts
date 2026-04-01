@@ -127,4 +127,31 @@ export class AgentsController {
     const toDate = to ? new Date(to) : new Date();
     return this.agentsService.getAgentMetrics(projectId, agentSlug, fromDate, toDate);
   }
+
+  /**
+   * Get raw TTFAB data points over time for a live timeline chart.
+   *
+   * Query params:
+   *   - since: ISO date string (defaults to 1 hour ago)
+   *   - stage: stage name to filter (defaults to 'ttfab')
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/timeline')
+  @UseGuards(ProjectAccessGuard)
+  async getMetricsTimeline(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('since') since?: string,
+    @Query('stage') stage?: string,
+  ) {
+    const sinceDate = since ? new Date(since) : new Date(Date.now() - 3600000);
+    return this.agentsService.getMetricsTimeline(projectId, agentSlug, sinceDate, stage || 'ttfab');
+  }
+
+  /**
+   * Get per-stage latency analytics for a single session.
+   */
+  @Get('sessions/:sessionId/analytics')
+  async getSessionAnalytics(@Param('sessionId') sessionId: string) {
+    return this.agentsService.getSessionAnalytics(sessionId);
+  }
 }

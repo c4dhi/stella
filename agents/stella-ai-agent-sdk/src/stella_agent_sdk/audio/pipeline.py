@@ -143,6 +143,13 @@ class AudioPipeline:
         self._speech_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
         self._speech_worker_task: Optional[asyncio.Task] = None
 
+        # Per-turn analytics timing state
+        self._turn_stt_end_ts: float = 0
+        self._turn_first_text_ts: float = 0
+        self._turn_first_audio_ts: float = 0
+        self._turn_id: Optional[str] = None
+        self._turn_first_audio_captured: bool = False
+
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
 
@@ -417,6 +424,12 @@ class AudioPipeline:
             # partials are allowed through (lighter turn management).
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
+
+                # Capture turn timing for TTFAB measurement
+                self._turn_stt_end_ts = time.perf_counter()
+                self._turn_id = getattr(event, 'transcript_id', None)
+                self._turn_first_audio_captured = False
+                self._turn_first_text_ts = 0
 
                 if self._transcript_gate_closed:
                     logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
@@ -851,6 +864,11 @@ class AudioPipeline:
                         logger.info("TTS interrupted mid-sentence")
                         return  # Don't retry if intentionally interrupted
 
+                    # Capture first audio byte timestamp for TTFAB
+                    if not self._turn_first_audio_captured:
+                        self._turn_first_audio_ts = time.perf_counter()
+                        self._turn_first_audio_captured = True
+
                     await self._room.publish_audio(chunk.audio_data)
 
                 # Success - exit retry loop
@@ -933,6 +951,8 @@ class AudioPipeline:
         has spoken every queued sentence or is interrupted.
         """
         if self._speech_worker_task is None or self._speech_worker_task.done():
+            # Even without TTS work, emit analytics if we have timing data
+            await self._emit_turn_analytics()
             return
 
         # Send sentinel to tell worker there are no more sentences
@@ -944,6 +964,44 @@ class AudioPipeline:
             pass
         finally:
             self._speech_worker_task = None
+            await self._emit_turn_analytics()
+
+    async def _emit_turn_analytics(self) -> None:
+        """Emit per-turn analytics measurements and reset turn state."""
+        try:
+            turn_id = self._turn_id or ""
+
+            # TTFAB: STT end -> first audio byte (only when TTS produced audio)
+            if self._turn_stt_end_ts > 0 and self._turn_first_audio_captured:
+                ttfab_ms = (self._turn_first_audio_ts - self._turn_stt_end_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "ttfab", "timing_ms": round(ttfab_ms, 2), "turn_id": turn_id}
+                })
+
+            # TTS first byte: first text from agent -> first audio chunk
+            if self._turn_first_text_ts > 0 and self._turn_first_audio_captured:
+                tts_ms = (self._turn_first_audio_ts - self._turn_first_text_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "tts_first_byte", "timing_ms": round(tts_ms, 2), "turn_id": turn_id}
+                })
+
+            # Agent TTFT: STT end -> first text chunk from agent
+            if self._turn_first_text_ts > 0 and self._turn_stt_end_ts > 0:
+                agent_ttft_ms = (self._turn_first_text_ts - self._turn_stt_end_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "agent_ttft", "timing_ms": round(agent_ttft_ms, 2), "turn_id": turn_id}
+                })
+        except Exception as e:
+            logger.warning(f"[ANALYTICS] Failed to emit turn analytics: {e}")
+        finally:
+            # Reset turn state
+            self._turn_stt_end_ts = 0
+            self._turn_first_text_ts = 0
+            self._turn_first_audio_ts = 0
+            self._turn_first_audio_captured = False
 
     async def _speech_worker(self) -> None:
         """Background worker that speaks queued sentences sequentially.

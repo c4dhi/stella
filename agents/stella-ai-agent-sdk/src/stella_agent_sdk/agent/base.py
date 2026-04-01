@@ -542,6 +542,8 @@ class BaseAgent(ABC):
                             # Get or create transcript_id for this response stream
                             if current_transcript_id is None:
                                 current_transcript_id = output.transcript_id or f"response_{uuid.uuid4().hex[:8]}"
+                                # Capture first-text timestamp for TTFT measurement
+                                self.audio._turn_first_text_ts = time.perf_counter()
 
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
