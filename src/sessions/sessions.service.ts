@@ -783,7 +783,8 @@ export class SessionsService {
       sessionId,
       sessionStatus: session.status,
       listener: {
-        isMonitoring: session.status === 'ACTIVE',
+        // Recorder should keep monitoring while session is transitioning to CLOSED.
+        isMonitoring: session.status === 'ACTIVE' || session.status === 'CLOSING',
         isConnected: isConnected && !isStale,
         roomState: isConnected && !isStale ? 'connected' : 'not_connected',
         service: 'python-message-recorder',
@@ -815,7 +816,8 @@ export class SessionsService {
         sessionId: session.id,
         sessionStatus: session.status,
         listener: {
-          isMonitoring: session.status === 'ACTIVE',
+          // Recorder should keep monitoring while session is transitioning to CLOSED.
+          isMonitoring: session.status === 'ACTIVE' || session.status === 'CLOSING',
           isConnected: isConnected && !isStale,
           roomState: isConnected && !isStale ? 'connected' : 'not_connected',
           service: 'python-message-recorder',
@@ -844,9 +846,9 @@ export class SessionsService {
 
   // Get global monitoring status
   async getMonitoringStatus() {
-    // Get all ACTIVE sessions from database
+    // Get all sessions that should still be monitored by recorder.
     const activeSessions = await this.prisma.session.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: { in: ['ACTIVE', 'CLOSING'] } },
       select: {
         id: true,
         status: true,
@@ -967,13 +969,13 @@ export class SessionsService {
 
   /**
    * Find all active sessions that need monitoring.
-   * Returns sessions in ACTIVE status with their room information.
+   * Returns sessions still expected to have recorder monitoring.
    * Used by Python message recorder to discover which rooms to join.
    */
   async findActiveSessions() {
     const sessions = await this.prisma.session.findMany({
       where: {
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'CLOSING'] },
       },
       include: {
         room: true,
@@ -995,7 +997,7 @@ export class SessionsService {
   /**
    * Find rooms that the message recorder should join.
    * Used by smart sync mode - only joins rooms with actual participants.
-   * Returns sessions where recorderShouldJoin = true.
+   * Returns sessions where recorderShouldJoin = true and shutdown is not finalized.
    */
   async findRoomsToJoin(): Promise<{
     sessionId: string;
@@ -1005,7 +1007,7 @@ export class SessionsService {
   }[]> {
     const sessions = await this.prisma.session.findMany({
       where: {
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'CLOSING'] },
         recorderShouldJoin: true,
       },
       include: {
