@@ -342,9 +342,9 @@ class AudioPipeline:
                 if not self._is_listening:
                     logger.info("Pipeline stopped listening, ending audio generator")
                     break
-                # Mute audio to STT while gate is closed (with TTS enabled).
-                if self._transcript_gate_closed and self._tts_enabled:
-                    continue
+                # [GATE DISABLED] AEC handles echo cancellation at audio level
+                # if self._transcript_gate_closed and self._tts_enabled:
+                #     continue
                 chunk_count += 1
                 if chunk_count == 1:
                     logger.info(f"First audio chunk received ({len(audio_data)} bytes)")
@@ -365,12 +365,11 @@ class AudioPipeline:
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
-            # Suppress all transcript events while gate is closed (with TTS).
-            # When TTS disabled, only finals are discarded (step 3 below).
-            if self._transcript_gate_closed and self._tts_enabled:
-                if event.speech_started:
-                    self._current_utterance_speaker = self._room.current_audio_speaker
-                continue
+            # [GATE DISABLED] AEC handles echo cancellation at audio level
+            # if self._transcript_gate_closed and self._tts_enabled:
+            #     if event.speech_started:
+            #         self._current_utterance_speaker = self._room.current_audio_speaker
+            #     continue
 
             # 1. Publish ALL transcripts to LiveKit for frontend display
             # Include speaker attribution so frontend knows this is user speech
@@ -418,9 +417,10 @@ class AudioPipeline:
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
 
-                if self._transcript_gate_closed:
-                    logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
-                    continue
+                # [GATE DISABLED] AEC handles echo cancellation at audio level
+                # if self._transcript_gate_closed:
+                #     logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
+                #     continue
 
                 # Apply debouncing to aggregate rapid successive finals
                 if self._debounce_window_ms > 0:
@@ -438,10 +438,10 @@ class AudioPipeline:
         self._current_utterance_speaker = self._room.current_audio_speaker
         logger.debug(f"Speech started detected - locked speaker: {self._current_utterance_speaker}")
 
-        # In "none" mode, ignore barge-in while gate is closed
-        if self._interrupt_mode == "none" and self._transcript_gate_closed:
-            logger.debug("[GATE] speech_started during closed gate (mode=none) - skipping callbacks")
-            return
+        # [GATE DISABLED] AEC handles echo cancellation at audio level
+        # if self._interrupt_mode == "none" and self._transcript_gate_closed:
+        #     logger.debug("[GATE] speech_started during closed gate (mode=none) - skipping callbacks")
+        #     return
 
         # Fire all registered callbacks
         for callback in self._speech_started_callbacks:
@@ -655,17 +655,8 @@ class AudioPipeline:
                     timeout=1.0,
                 )
 
-                # Close gate before yielding — no more finals until consumer
-                # resumes the iterator (i.e., finishes processing this turn).
-                # This is SDK-level turn management: every agent using audio_in()
-                # gets gating automatically, even with custom run_audio_loop().
-                self.close_transcript_gate()
-                try:
-                    yield event
-                finally:
-                    # Re-open gate when consumer comes back for next event
-                    # (or if consumer breaks/errors out of the loop)
-                    self.open_transcript_gate()
+                # [GATE DISABLED] AEC handles echo cancellation at audio level
+                yield event
 
             except asyncio.TimeoutError:
                 # No event available, continue waiting

@@ -416,7 +416,7 @@ class RoomManager:
         processed_frames = []
         try:
             # Get audio data as numpy array
-            audio_int16 = np.array(frame.data, dtype=np.int16)
+            audio_int16 = np.frombuffer(frame.data, dtype=np.int16)
             sample_rate = frame.sample_rate
 
             # Calculate 10ms chunk size for this sample rate
