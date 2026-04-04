@@ -33,6 +33,7 @@ interface PlanCanvasProps {
   agentSpawnMode: AgentSpawnMode
   endStateIds: string[]
   selectedStartNode: boolean
+  selectedEndNode: boolean             // Drives isSelected highlight on the End node
   selectedStateId: string | null
   selectedTransition: { sourceStateId: string; transitionIndex: number } | null
   statePositions: Record<string, CanvasPosition>
@@ -41,6 +42,7 @@ interface PlanCanvasProps {
   autoFitKey: number
   isDark: boolean
   onSelectStart: () => void
+  onSelectEnd: () => void              // Opens End node config panel in sidebar
   onSelectState: (stateId: string) => void
   onSelectTransition: (sourceStateId: string, transitionIndex: number) => void
   onCreateTransition: (sourceStateId: string, targetStateId: string) => void
@@ -268,6 +270,7 @@ export default function PlanCanvas({
   agentSpawnMode,
   endStateIds,
   selectedStartNode,
+  selectedEndNode,
   selectedStateId,
   selectedTransition,
   statePositions,
@@ -276,6 +279,7 @@ export default function PlanCanvas({
   autoFitKey,
   isDark,
   onSelectStart,
+  onSelectEnd,
   onSelectState,
   onSelectTransition,
   onCreateTransition,
@@ -356,12 +360,12 @@ export default function PlanCanvas({
         position: endNodePosition || autoEndNodePosition,
         draggable: true,
         selectable: false,
-        data: { label: 'End', isDark, kind: 'end' },
+        data: { label: 'End', isDark, kind: 'end', isSelected: selectedEndNode },
       })
     }
 
     return nodes
-  }, [states, statePositions, selectedStartNode, selectedStateId, stateOrderMap, endNodePosition, isDark, onDeleteState, showEndNode])
+  }, [states, statePositions, selectedStartNode, selectedEndNode, selectedStateId, stateOrderMap, endNodePosition, isDark, onDeleteState, showEndNode])
 
   const [nodes, setNodes] = useState<Node[]>(builtNodes)
   const builtEdges = useMemo<Edge[]>(() => {
@@ -610,7 +614,10 @@ export default function PlanCanvas({
             onSelectStart()
             return
           }
-          if (node.id === END_NODE_ID) return
+          if (node.id === END_NODE_ID) {
+            onSelectEnd()
+            return
+          }
           onSelectState(node.id)
         }}
         onEdgeClick={(event, edge) => {
