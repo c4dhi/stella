@@ -743,8 +743,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           audio: {
             channelCount: 1,           // Mono
             sampleRate: 48000,         // High quality input
-            echoCancellation: false,   // Disable browser AEC - agent handles this or user disables via DISABLE_AEC
-            noiseSuppression: false,   // Disable browser NS - was too aggressive
+            echoCancellation: true,    // Browser AEC required to cancel agent audio from mic
+            noiseSuppression: true,    // Browser NS helps filter residual echo
             autoGainControl: true,     // Enable AGC to boost quiet audio
           }
         })

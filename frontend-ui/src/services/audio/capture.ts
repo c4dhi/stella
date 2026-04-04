@@ -8,8 +8,8 @@ export async function startMicWithVu(audioContext: AudioContext, transport?: Pee
     audio: {
       channelCount: 1,
       sampleRate: 48000, // Use high quality input, we'll downsample
-      echoCancellation: false,  // Disable browser AEC - agent handles this or user disables via DISABLE_AEC
-      noiseSuppression: false,  // Disable browser NS - was too aggressive
+      echoCancellation: true,   // Browser AEC required to cancel agent audio from mic
+      noiseSuppression: true,   // Browser NS helps filter residual echo
       autoGainControl: true     // Enable AGC to boost quiet audio
     }
   })
