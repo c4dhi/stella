@@ -67,6 +67,64 @@ When enabled, connecting a state to End adds that state ID to:
 }
 ```
 
+## End Node Behavior
+
+The End node is a visual way to mark terminal exits in your flow. It helps you and other developers see where a conversation is expected to finish.
+
+When you connect a state to End in the canvas, the builder stores that relationship in:
+
+- `metadata.plan_builder.canvas.end_state_ids`
+
+The End node itself is UI metadata. Your runtime plan logic still comes from state transitions and terminal states.
+
+### End Node Properties
+
+| Property | Location in JSON | Description |
+|----------|------------------|-------------|
+| `show_end_node` | `metadata.plan_builder.canvas.show_end_node` | Whether the End node is visible in the canvas |
+| `end_node_position` | `metadata.plan_builder.canvas.end_node_position` | End node coordinates on the canvas |
+| `end_state_ids` | `metadata.plan_builder.canvas.end_state_ids` | IDs of states connected to End in the visual builder |
+
+### End Node Example
+
+```json
+{
+  "metadata": {
+    "plan_builder": {
+      "canvas": {
+        "show_end_node": true,
+        "end_node_position": { "x": 1240, "y": 240 },
+        "end_state_ids": ["state_farewell", "state_handoff"]
+      }
+    }
+  }
+}
+```
+
+## Conversation Termination Flow
+
+In practice, a conversation ends when execution reaches a terminal point in the plan. The End node helps visualize that intent, while the state machine and session lifecycle handle the shutdown.
+
+Typical flow:
+
+1. The user reaches a terminal state (for example, a farewell or handoff state).
+2. Required tasks in that state are completed.
+3. There is no further transition path to continue the plan.
+4. The session moves through termination handling and closes.
+
+### Practical Modeling Pattern
+
+Use this pattern for predictable endings:
+
+1. Route into a dedicated `farewell` state.
+2. In that state, keep one clear closing task (thank the user, summarize, next step).
+3. Do not add onward transitions from `farewell` unless you intentionally want the conversation to continue.
+4. Optionally connect `farewell` to the End node in the canvas so the terminal path is explicit to readers.
+
+### Validation Note
+
+During save, the builder warns if a state has no outgoing transition and is not connected to End. This helps catch accidental dead-ends while still allowing intentional terminal states.
+
 ## Start Node Configuration
 
 The Start node decides how a session begins. In practice, this is where you choose the entry point state, decide when the agent should spawn, and define what participant data should be collected before the conversation starts.
@@ -183,7 +241,7 @@ Selecting an edge opens transition configuration for the source → target pair.
 
 ## Condition Types in the Builder UI
 
-The current visual editor supports:
+The current visual editor supports:                                                                                           
 
 - `all_tasks_complete`
 - `deliverable_exists`
@@ -203,7 +261,7 @@ Transitions when required tasks in the current state are complete.
 
 ### `deliverable_exists`
 
-Transitions when a deliverable key is present.
+Transitions when a deliverable key is present.                              
 
 ```json
 {
