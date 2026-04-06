@@ -22,6 +22,10 @@ Core interactions:
 - Click an edge label to edit condition and priority
 - Drag nodes to save their canvas positions
 
+The screenshot below shows the default visual layout: Start on the left, states in the middle, and End on the right. This is the mental model to keep while editing.
+
+![Plan Builder canvas overview](../../assets/img/plan-builder-canvas-overview.png)
+
 ## Node Types
 
 ### Start Node
@@ -49,6 +53,10 @@ State node cards display:
 - State title
 - Task count
 
+When you click a state node, the right panel switches to the state editor. This is where you edit the state title, execution mode, tasks, and transitions.
+
+![State node editor](../../assets/img/plan-builder-state-node-editor.png)
+
 ### End Node
 
 The End node is optional and can be toggled on or off in the builder.
@@ -66,6 +74,10 @@ When enabled, connecting a state to End adds that state ID to:
   }
 }
 ```
+
+This screenshot shows a state connected to End. Use this to make terminal paths explicit in the visual plan.
+
+![End node connection](../../assets/img/plan-builder-end-node-connection.png)
 
 ## End Node Behavior
 
@@ -129,6 +141,10 @@ During save, the builder warns if a state has no outgoing transition and is not 
 
 The Start node decides how a session begins. In practice, this is where you choose the entry point state, decide when the agent should spawn, and define what participant data should be collected before the conversation starts.
 
+In this view, Start is selected and the right panel shows all session entry settings in one place.
+
+![Start node configuration](../../assets/img/plan-builder-start-node-config.png)
+
 ### Start Properties
 
 | Property | Location in JSON | Required | Description |
@@ -172,6 +188,10 @@ The Start node decides how a session begins. In practice, this is where you choo
 ## Session Context Fields
 
 Session context fields are short questions asked before the plan starts. They are useful for collecting basics like name, language, role, or any information you want available from turn one.
+
+This screenshot shows a populated session-context editor, including a `select` field with options.
+
+![Session context fields](../../assets/img/plan-builder-session-context-fields.png)
 
 ### Field Properties
 
@@ -229,6 +249,10 @@ Session context fields are short questions asked before the plan starts. They ar
 ## Edge Configuration
 
 Selecting an edge opens transition configuration for the source → target pair.
+
+For simple sequential flow, use `all_tasks_complete`. The screenshot below shows the edge editor with condition type and priority configured.
+
+![Edge editor - all tasks complete](../../assets/img/plan-builder-edge-all-tasks-complete.png)
 
 ## Transition Properties
 
@@ -290,11 +314,19 @@ Transitions when a deliverable key matches an expected value.
 }
 ```
 
+When using deliverable-based routing, select the deliverable key first, then set the expected value. This screenshot shows a typical conditional edge setup.
+
+![Edge editor - deliverable condition](../../assets/img/plan-builder-edge-deliverable-condition.png)
+
 ## Priority and Route Selection
 
 When multiple transitions are true, the transition with the lowest `priority` value wins.
 
 Use explicit priority spacing for readability (for example `1`, `10`, `20`) to keep room for future routes.
+
+This example canvas shows a branching flow with multiple outgoing transitions from one state. Use this pattern when the plan should route to different states based on user input.
+
+![Branching flow example](../../assets/img/plan-builder-branching-flow.png)
 
 ## Builder Validation Rules
 
