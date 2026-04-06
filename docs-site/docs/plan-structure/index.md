@@ -159,6 +159,7 @@ agents/stella-ai-agent-sdk/src/stella_agent_sdk/plan/types.py
 
 ## Next Steps
 
+- [Plan Builder](/docs/plan-structure/plan-builder) — Configure Start node behavior, session context fields, and canvas wiring
 - [States](/docs/plan-structure/states) — Learn about conversation phases and transitions
 - [Tasks](/docs/plan-structure/tasks) — Understand task execution and configuration
 - [Deliverables](/docs/plan-structure/deliverables) — Configure data collection
