@@ -1073,8 +1073,10 @@ deploy_services() {
     kubectl apply -f k8s/01-postgres-config.yaml >/dev/null 2>&1 || true
     kubectl apply -f k8s/01-postgres.yaml >/dev/null 2>&1
 
-    # Wait for PostgreSQL with spinner
-    kubectl wait --for=condition=ready pod -l app=postgres -n ai-agents --timeout=120s >/dev/null 2>&1 &
+    # Wait for PostgreSQL with spinner.
+    # Use deployment rollout status instead of pod label wait:
+    # label-based waits can include old Completed pods that will never become Ready.
+    kubectl rollout status deployment/postgres -n ai-agents --timeout=120s >/dev/null 2>&1 &
     local pg_pid=$!
 
     local spinner_idx=0
