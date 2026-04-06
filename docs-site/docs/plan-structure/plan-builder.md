@@ -67,6 +67,107 @@ When enabled, connecting a state to End adds that state ID to:
 }
 ```
 
+## Start Node Configuration
+
+The Start node decides how a session begins. In practice, this is where you choose the entry point state, decide when the agent should spawn, and define what participant data should be collected before the conversation starts.
+
+### Start Properties
+
+| Property | Location in JSON | Required | Description |
+|----------|------------------|----------|-------------|
+| `initial_state_id` | Root plan field | Yes | First state the agent enters |
+| `agent_spawn_mode` | `metadata.plan_builder.start.agent_spawn_mode` | No | Agent startup behavior (`immediate` or `on_demand`) |
+| `session_context.fields` | `session_context.fields` | No | Form fields shown before the session |
+
+### `agent_spawn_mode` Options
+
+| Mode | What it does | Typical use case |
+|------|---------------|------------------|
+| `immediate` | Agent starts as soon as the session starts | Standard guided interviews |
+| `on_demand` | Agent starts when the conversation actually begins | Flows where users may wait before interacting |
+
+### Start Node Example
+
+```json
+{
+  "initial_state_id": "intro",
+  "session_context": {
+    "fields": [
+      {
+        "id": "participant_name",
+        "label": "Your Name",
+        "type": "string",
+        "required": true
+      }
+    ]
+  },
+  "metadata": {
+    "plan_builder": {
+      "start": {
+        "agent_spawn_mode": "immediate"
+      }
+    }
+  }
+}
+```
+
+## Session Context Fields
+
+Session context fields are short questions asked before the plan starts. They are useful for collecting basics like name, language, role, or any information you want available from turn one.
+
+### Field Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | `string` | Yes | Stable key used in plan/session data |
+| `label` | `string` | Yes | User-facing field label |
+| `type` | `string` | Yes | `string`, `number`, `boolean`, or `select` |
+| `required` | `boolean` | Yes | Whether the user must fill this field |
+| `description` | `string` | No | Helper text shown with the field |
+| `options` | `string[]` | For `select` | Allowed options for dropdown fields |
+| `default_value` | `string \| number \| boolean` | No | Optional default value in plan JSON |
+
+### Field Types
+
+| Type | Input behavior | Example |
+|------|----------------|---------|
+| `string` | Free text | Name, company, city |
+| `number` | Numeric input | Years of experience, age |
+| `boolean` | True/false toggle | Consent, prior participation |
+| `select` | Dropdown | Preferred language, support tier |
+
+### Session Context Example
+
+```json
+{
+  "session_context": {
+    "fields": [
+      {
+        "id": "participant_name",
+        "label": "Your Name",
+        "type": "string",
+        "required": true,
+        "description": "Please enter your full name"
+      },
+      {
+        "id": "years_experience",
+        "label": "Years of Experience",
+        "type": "number",
+        "required": false
+      },
+      {
+        "id": "preferred_language",
+        "label": "Preferred Language",
+        "type": "select",
+        "required": true,
+        "options": ["English", "German", "French"],
+        "default_value": "English"
+      }
+    ]
+  }
+}
+```
+
 ## Edge Configuration
 
 Selecting an edge opens transition configuration for the source → target pair.
@@ -179,6 +280,12 @@ Canvas metadata fields:
   }
 }
 ```
+
+In short:
+
+- Start behavior is stored in `metadata.plan_builder.start`
+- Session context questions are stored in `session_context.fields`
+- Canvas-only layout data stays in `metadata.plan_builder.canvas`
 
 ## Next Steps
 
