@@ -642,10 +642,23 @@ export interface PlanTask {
   deliverables: PlanDeliverable[]
 }
 
-/**
- * State transition definition.
- */
 // Keep this union aligned with backend StateTransition.condition_type in state-machine.service.ts.
+/**
+ * Supported transition condition types for state routing.
+ *
+ * Condition config reference:
+ * - all_tasks_complete: no config required
+ * - turn_count_exceeded: { turns: number, scope: "without_progress" | "total" }
+ * - deliverable_value: { key: string, value: string | number | boolean }
+ * - deliverable_value_in: { key: string, values: Array<string | number | boolean> }
+ * - deliverable_value_numeric:
+ *   - { key: string, operator: "gt"|"gte"|"lt"|"lte"|"eq"|"neq", value: number }
+ *   - { key: string, operator: "between", min: number, max: number, inclusive?: boolean }
+ * - deliverable_exists: { key: string }
+ * - all_of: { conditions: Array<{ condition_type, condition_config }> }
+ * - any_of: { conditions: Array<{ condition_type, condition_config }> }
+ * - compound: { operator: "and" | "or", conditions: Array<{ condition_type, condition_config }> }
+ */
 export type StateTransitionConditionType =
   | 'all_tasks_complete'
   | 'turn_count_exceeded'
@@ -657,11 +670,19 @@ export type StateTransitionConditionType =
   | 'any_of'
   | 'deliverable_exists'
 
+/**
+ * One outgoing transition from a source state to a target state.
+ *
+ * Evaluation behavior:
+ * - Transitions are checked by ascending `priority` (lower number first).
+ * - First matched condition wins.
+ * - `priority` defaults to backend behavior when omitted.
+ */
 export interface StateTransition {
-  target_state_id: string
+  target_state_id: string          // Destination state ID
   condition_type: StateTransitionConditionType
-  priority?: number
-  condition_config?: Record<string, unknown>
+  priority?: number                // Lower value = higher precedence
+  condition_config?: Record<string, unknown> // Shape depends on condition_type
 }
 
 /**
@@ -689,7 +710,13 @@ export interface PlanState {
   goal?: StateGoal                 // Only used when type === 'goal'
 }
 
-// Session context field for collecting participant information
+/**
+ * One pre-session input field shown before the conversation starts.
+ *
+ * Notes:
+ * - `options` applies only when `type === "select"`.
+ * - `default_value` uses snake_case for SDK compatibility.
+ */
 export interface SessionContextField {
   id: string
   label: string
@@ -704,24 +731,53 @@ export interface SessionContext {
   fields: SessionContextField[]
 }
 
+/**
+ * Absolute node position in the Plan Builder canvas.
+ */
 export interface PlanCanvasPosition {
   x: number
   y: number
 }
 
+/**
+ * Visual metadata persisted by the Plan Builder canvas.
+ *
+ * Stored at: `metadata.plan_builder.canvas`
+ *
+ * Notes:
+ * - `state_positions` and `end_node_position` are UI layout only.
+ * - `end_state_ids` marks states connected to the visual End node.
+ */
 export interface PlanCanvasMetadata {
-  state_positions?: Record<string, PlanCanvasPosition>
-  show_end_node?: boolean
-  end_node_position?: PlanCanvasPosition
-  end_state_ids?: string[]
+  state_positions?: Record<string, PlanCanvasPosition> // Per-state canvas coordinates
+  show_end_node?: boolean                               // Whether End node is visible
+  end_node_position?: PlanCanvasPosition                // End node canvas coordinates
+  end_state_ids?: string[]                              // State IDs connected to End node in UI
 }
 
+/**
+ * Determines when the agent is started for a session.
+ * - immediate: start at session creation/start
+ * - on_demand: start when interaction begins
+ */
 export type AgentSpawnMode = 'immediate' | 'on_demand'
 
+/**
+ * Start-node metadata persisted by the Plan Builder.
+ *
+ * Stored at: `metadata.plan_builder.start`
+ */
 export interface PlanStartMetadata {
   agent_spawn_mode?: AgentSpawnMode
 }
 
+/**
+ * Optional plan metadata container.
+ *
+ * Known Plan Builder keys:
+ * - `plan_builder.canvas`: visual node/edge layout metadata
+ * - `plan_builder.start`: start-node behavior metadata
+ */
 export interface PlanMetadata {
   plan_builder?: {
     canvas?: PlanCanvasMetadata
@@ -737,6 +793,13 @@ export interface PlanMetadata {
  * Note: id, title, description, initial_state_id are optional here because
  * they may come from the parent PlanTemplate when stored in the database.
  * When passed to the agent, these should be populated from PlanTemplate fields.
+ *
+ * Execution-focused fields:
+ * - `states`, `initial_state_id`, `system_prompt`, `session_context`
+ *
+ * Builder metadata:
+ * - `metadata.plan_builder.start` for start-node behavior
+ * - `metadata.plan_builder.canvas` for visual canvas state
  */
 export interface PlanContent {
   id?: string                      // Plan identifier (optional, from template)
