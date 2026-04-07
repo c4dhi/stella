@@ -344,12 +344,20 @@ export class AgentsService {
         throw new Error('Missing LIVEKIT_API_KEY or LIVEKIT_API_SECRET');
       }
 
+      // Resolve env vars once here, before touching K8s.
+      // Decrypts the template (if any), merges manual overrides on top, and returns the final map.
+      // KubernetesService receives only the merged plaintext — no business logic leaks into infrastructure.
+      const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+        createAgentDto.envVarTemplateId,
+        userId,
+        createAgentDto.envVars,
+      );
+
       // Create K8s pod - agent connects directly to LiveKit via SDK
       const { podName, secretName } = await this.k8s.createAgentPod({
         agentId,
         sessionId: session.id,
         projectId: session.projectId,
-        userId,
         agentName: sanitizedName,
         agentIcon: createAgentDto.icon || '🤖',
         agentType,
@@ -360,8 +368,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: sanitizedConfig,
         forceRebuild: createAgentDto.forceRebuild,
-        envVarTemplateId: createAgentDto.envVarTemplateId,
-        envVars: createAgentDto.envVars,  // Pass additional env vars to merge with template
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
@@ -874,19 +881,26 @@ export class AgentsService {
       select: { resourceCpu: true, resourceMemory: true },
     });
 
-    // Decrypt the manual env vars that were stored at deploy time so the restarted pod gets
-    // the same custom values without requiring the user to re-enter them.
-    const restoredManualEnvVars = agent.manualEnvVarsEncrypted
+    // Decrypt the stored manual vars so they can be re-merged through the same resolution
+    // path as the original deploy — template vars decrypted + manual vars merged on top.
+    const storedManualVars = agent.manualEnvVarsEncrypted
       ? this.encryptionService.decrypt(agent.manualEnvVarsEncrypted)
       : undefined;
+
+    // Re-resolve env vars using the same code path as create() to guarantee the restarted pod
+    // gets an identical secret to the original deployment.
+    const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+      agent.envVarTemplateId ?? undefined,
+      projectMembership?.userId ?? undefined,
+      storedManualVars,
+    );
 
     // Recreate Kubernetes pod with SAME agent ID
     try {
       const { podName, secretName } = await this.k8s.createAgentPod({
-        agentId: id, // SAME ID - this ensures pod/secret are unique to this agent
+        agentId: id, // SAME ID - pod/secret names are deterministic from agentId
         sessionId: agent.sessionId,
         projectId: agent.session.projectId,
-        userId: projectMembership?.userId || '', // Get user from project for env var access
         agentName: agent.name,
         agentIcon: agent.icon || '🤖',
         roomName: agent.session.room.livekitRoomName,
@@ -896,9 +910,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType,
-        envVarTemplateId: agent.envVarTemplateId || undefined,  // Pass stored env var template for API keys
-        // Reapply decrypted manual env vars so pod secret matches the original deployment config.
-        envVars: restoredManualEnvVars,
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
