@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AgentsService } from '../agents/agents.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { LiveKitService } from '../livekit/livekit.service';
+import { EncryptionService } from '../env-var-templates/encryption.service';
 
 interface ParticipantJoinedEvent {
   roomName: string;
@@ -37,6 +38,8 @@ export class WebhooksService {
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
     private livekitService: LiveKitService,
+    // Used to decrypt manualEnvVarsEncrypted when recreating an agent from lastAgentConfig.
+    private encryptionService: EncryptionService,
     @Inject(forwardRef(() => AgentsService))
     private agentsService: AgentsService,
     @Inject(forwardRef(() => SessionsService))
@@ -345,7 +348,7 @@ export class WebhooksService {
 
     if (!session) return;
 
-    // Save the first agent's config for respawning later
+    // Save the first agent's config so spawnOrResumeAgent() can recreate it later.
     const firstAgent = session.agents[0];
     if (firstAgent) {
       const agentConfig = {
@@ -354,9 +357,10 @@ export class WebhooksService {
         agentType: firstAgent.agentType,
         agentConfig: firstAgent.agentConfig,
         envVarTemplateId: firstAgent.envVarTemplateId,
-        // Preserve previously stored manual env vars for on_demand resume.
-        // AgentInstance doesn't persist envVars separately, so keep them in session.lastAgentConfig.
-        envVars: (session.lastAgentConfig as any)?.envVars || {},
+        // Store the encrypted manual vars from AgentInstance rather than plain JSON.
+        // spawnOrResumeAgent() will decrypt this before calling agentsService.create(),
+        // closing the gap where manual env vars were previously persisted as plaintext.
+        manualEnvVarsEncrypted: firstAgent.manualEnvVarsEncrypted || null,
       };
 
       await this.prisma.session.update({
@@ -438,6 +442,14 @@ export class WebhooksService {
           return;
         }
 
+        // Recover manual env vars for the new agent:
+        // - If paused via pauseAgents(), manualEnvVarsEncrypted is the ciphertext from AgentInstance.
+        // - If set via startJoinPublicProject(), envVars is plain JSON from publicAgentConfig (not yet encrypted).
+        // Either way, agentsService.create() will re-encrypt whatever we pass as envVars.
+        const manualEnvVars = config.manualEnvVarsEncrypted
+          ? this.encryptionService.decrypt(config.manualEnvVarsEncrypted)
+          : config.envVars || {};
+
         const agent = await this.agentsService.create(
           session.id,
           {
@@ -446,7 +458,7 @@ export class WebhooksService {
             agentType: config.agentType || 'stella-agent',
             config: config.agentConfig || {},
             envVarTemplateId: config.envVarTemplateId,
-            envVars: config.envVars || {},
+            envVars: manualEnvVars,
           },
           projectMembership.userId,
         );
