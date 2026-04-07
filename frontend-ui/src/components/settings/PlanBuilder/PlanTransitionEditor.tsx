@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useThemeStore } from '../../../store/themeStore'
-import type { PlanDeliverable, StateTransition, StateTransitionConditionType } from '../../../lib/api-types'
+import type { PlanDeliverable, StateTransition, StateTransitionConditionType, StateType } from '../../../lib/api-types'
 
 interface PlanTransitionEditorProps {
   sourceStateTitle: string
+  sourceStateType: StateType
   targetStateTitle: string
   transition: StateTransition
   availableDeliverables: PlanDeliverable[]
@@ -13,12 +14,6 @@ interface PlanTransitionEditorProps {
   onDelete: () => void
 }
 
-const SUPPORTED_CONDITIONS: StateTransitionConditionType[] = [
-  'all_tasks_complete',
-  'deliverable_exists',
-  'deliverable_value',
-]
-
 const toNumberOrUndefined = (value: string): number | undefined => {
   if (!value.trim()) return undefined
   const parsed = Number(value)
@@ -27,6 +22,7 @@ const toNumberOrUndefined = (value: string): number | undefined => {
 
 export default function PlanTransitionEditor({
   sourceStateTitle,
+  sourceStateType,
   targetStateTitle,
   transition,
   availableDeliverables,
@@ -38,7 +34,6 @@ export default function PlanTransitionEditor({
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const [optionsOpen, setOptionsOpen] = useState(false)
-  const isSupported = SUPPORTED_CONDITIONS.includes(transition.condition_type)
   const conditionConfig = transition.condition_config || {}
   const keyValue = typeof conditionConfig.key === 'string' ? conditionConfig.key : ''
   const valueValue = conditionConfig.value
@@ -64,9 +59,12 @@ export default function PlanTransitionEditor({
         : selectedDeliverable?.type === 'enum'
           ? 'Options'
           : 'Text'
+  const conditionOptions: StateTransitionConditionType[] = sourceStateType === 'goal'
+    ? ['goal_achieved', 'deliverable_exists', 'deliverable_value']
+    : ['all_tasks_complete', 'deliverable_exists', 'deliverable_value']
 
   const handleConditionChange = (conditionType: StateTransitionConditionType) => {
-    if (conditionType === 'all_tasks_complete') {
+    if (conditionType === 'all_tasks_complete' || conditionType === 'goal_achieved') {
       onChange({
         ...transition,
         condition_type: conditionType,
@@ -137,16 +135,24 @@ export default function PlanTransitionEditor({
           onChange={(e) => handleConditionChange(e.target.value as StateTransitionConditionType)}
           className="input-field w-full"
         >
-          {!isSupported && (
-            <option value={transition.condition_type}>
-              {transition.condition_type.replace(/_/g, ' ')} (Existing)
+          {conditionOptions.map((condition) => (
+            <option key={condition} value={condition}>
+              {condition === 'all_tasks_complete' && 'All tasks complete'}
+              {condition === 'goal_achieved' && 'Goal achieved'}
+              {condition === 'deliverable_exists' && 'Deliverable exists'}
+              {condition === 'deliverable_value' && 'Deliverable value'}
             </option>
-          )}
-          <option value="all_tasks_complete">All tasks complete</option>
-          <option value="deliverable_exists">Deliverable exists</option>
-          <option value="deliverable_value">Deliverable value</option>
+          ))}
         </select>
       </div>
+
+      {transition.condition_type === 'goal_achieved' && (
+        <div className={`rounded-xl border px-3 py-2 text-caption ${
+          isDark ? 'border-blue-500/40 bg-blue-500/10 text-blue-300' : 'border-blue-300 bg-blue-50 text-blue-800'
+        }`}>
+          This transition happens automatically when the conversation goal is met. No additional setup is needed.
+        </div>
+      )}
 
       {(transition.condition_type === 'deliverable_exists' || transition.condition_type === 'deliverable_value') && (
         <div>
