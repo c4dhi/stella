@@ -19,6 +19,7 @@ import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import SupportModal from './SupportModal'
 import SessionCompletedOverlay from './SessionCompletedOverlay'
+import SessionTimeoutOverlay from './SessionTimeoutOverlay'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
@@ -85,6 +86,10 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [isSupportOpen, setIsSupportOpen] = useState(false)
   const [sessionCompleted, setSessionCompleted] = useState(false)
   const sessionCompletedRef = useRef(false)
+  const [sessionTimedOut, setSessionTimedOut] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const sessionTimerStartedRef = useRef(false)
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
@@ -145,6 +150,11 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         room.disconnect()
       }
       cleanupAudio()
+      // Clear session timer
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current)
+        sessionTimerRef.current = null
+      }
     }
   }, [sessionData.connectionInfo])
 
@@ -411,7 +421,38 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           console.log('[Participant] Session completed signal received')
           sessionCompletedRef.current = true
           setSessionCompleted(true)
+          // Cancel session timer — completed normally
+          if (sessionTimerRef.current) {
+            clearInterval(sessionTimerRef.current)
+            sessionTimerRef.current = null
+          }
           return
+        }
+
+        // Start session timer on first agent message
+        if (!sessionTimerStartedRef.current && (envelope.type === 'transcript' || envelope.type === 'agent_text')) {
+          const msgData = envelope.data
+          const source = msgData?.source as string | undefined
+          const speakerName = msgData?.speaker_name || ''
+          // Only start on agent messages, not user speech
+          if (envelope.type === 'agent_text' || source === 'agent' || speakerName.startsWith('agent')) {
+            const SESSION_TIMEOUT_SECONDS = 7 * 60 // 7 minutes
+            sessionTimerStartedRef.current = true
+            sessionTimerRef.current = setInterval(() => {
+              setElapsedSeconds(prev => {
+                const next = prev + 1
+                if (next >= SESSION_TIMEOUT_SECONDS && !sessionCompletedRef.current) {
+                  setSessionTimedOut(true)
+                  if (sessionTimerRef.current) {
+                    clearInterval(sessionTimerRef.current)
+                    sessionTimerRef.current = null
+                  }
+                }
+                return next
+              })
+            }, 1000)
+            console.log(`[Participant] Session timer started on first agent message (${SESSION_TIMEOUT_SECONDS}s limit)`)
+          }
         }
 
         // Handle transcript, transcript_chunk, AND agent_text (like PeerTransport)
@@ -571,11 +612,11 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   // Handle room disconnection
   const handleDisconnected = useCallback(() => {
     cleanupAudio()
-    // Don't show error if session completed normally
-    if (!sessionCompletedRef.current) {
+    // Don't show error if session completed or timed out
+    if (!sessionCompletedRef.current && !sessionTimedOut) {
       setConnectionError('Disconnected from session')
     }
-  }, [])
+  }, [sessionTimedOut])
 
   // Handle participant joined (for real-time notifications)
   const handleParticipantConnected = useCallback((participant: RemoteParticipant) => {
@@ -844,9 +885,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     remoteAudioTrackRef.current = null
   }
 
-  // Mute microphone when session completes
+  // Mute microphone when session completes or times out
   useEffect(() => {
-    if (sessionCompleted && !isMuted && room) {
+    if ((sessionCompleted || sessionTimedOut) && !isMuted && room) {
       // Unpublish audio track
       if (publishedAudioTrackRef.current?.track) {
         room.localParticipant.unpublishTrack(publishedAudioTrackRef.current.track)
@@ -858,7 +899,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
       }
       setIsMuted(true)
     }
-  }, [sessionCompleted, isMuted, room])
+  }, [sessionCompleted, sessionTimedOut, isMuted, room])
 
   // Handle mouse movement to show/hide controls
   useEffect(() => {
@@ -1222,18 +1263,26 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         </div>
       </motion.div>
 
-      {/* Participant name badge */}
+      {/* Participant name badge with session timer */}
       <motion.div
         className={`absolute bottom-4 right-6 z-40 transition-opacity duration-300 ${
           showControls && !isGalleryOpen && !isChatOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-full px-4 py-2 text-white/70 text-sm">
-          {sessionData.participantName}
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-full px-4 py-2 text-white/70 text-sm flex items-center gap-2">
+          <span>{sessionData.participantName}</span>
+          {sessionTimerStartedRef.current && (
+            <span className="text-white/40 font-mono text-xs">
+              {String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:{String(elapsedSeconds % 60).padStart(2, '0')}
+            </span>
+          )}
         </div>
       </motion.div>
       {/* Session Completed Overlay */}
       <SessionCompletedOverlay isVisible={sessionCompleted} participantName={sessionData.participantName} />
+
+      {/* Session Timeout Overlay */}
+      <SessionTimeoutOverlay isVisible={sessionTimedOut && !sessionCompleted} failureCode={`f-${sessionData.participantName}`} />
 
       </div>{/* End fullscreen container wrapper */}
     </motion.div>

@@ -415,7 +415,7 @@ export const useStore = create<
     })
 
     try {
-      const result = await apiClient.getSessionMessages(sessionId, { limit: 50 })
+      const result = await apiClient.getSessionMessages(sessionId, { limit: 50, includeDebug: true })
 
       // If no messages returned, stop pagination
       const hasMore = result.messages.length > 0 ? result.hasMore : false
@@ -447,6 +447,7 @@ export const useStore = create<
       const result = await apiClient.getSessionMessages(sessionId, {
         cursor: historyCursor,
         limit: 50,
+        includeDebug: true,
       })
 
       // If no messages returned, stop pagination
