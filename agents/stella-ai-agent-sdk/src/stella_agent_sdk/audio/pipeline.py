@@ -989,6 +989,26 @@ class AudioPipeline:
                     "data": {"stage": stage_name, "timing_ms": round(ttfab_ms, 2), "turn_id": turn_id}
                 })
 
+            # Bridge duration: first bridge audio -> last bridge audio
+            if (
+                self._turn_first_audio_source == "bridge"
+                and self._turn_bridge_last_audio_ts > 0
+                and self._turn_first_audio_ts > 0
+            ):
+                bridge_dur_ms = (self._turn_bridge_last_audio_ts - self._turn_first_audio_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "bridge_duration", "timing_ms": round(bridge_dur_ms, 2), "turn_id": turn_id}
+                })
+
+            # Time to first response audio: STT end -> first response (non-bridge) audio
+            if self._turn_stt_end_ts > 0 and self._turn_response_first_audio_captured:
+                ttfr_ms = (self._turn_response_first_audio_ts - self._turn_stt_end_ts) * 1000
+                await self._room.publish_data({
+                    "type": "analytics",
+                    "data": {"stage": "ttfr", "timing_ms": round(ttfr_ms, 2), "turn_id": turn_id}
+                })
+
             # Bridge-to-response gap (silence between bridge end and response start)
             if self._turn_bridge_last_audio_ts > 0 and self._turn_response_first_audio_captured:
                 gap_ms = (self._turn_response_first_audio_ts - self._turn_bridge_last_audio_ts) * 1000

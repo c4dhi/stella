@@ -1011,7 +1011,9 @@ export class AgentsService {
     const safetyMessages: Array<{ route: string }> = [];
     const transitionMessages: Array<{ wasExpected: boolean }> = [];
     const planMessages: Array<{ sessionId: string; completionRate: number; reachedEnd: boolean }> = [];
-    const bridgeTimings: number[] = [];
+    const ttfabTimings: number[] = [];
+    const bridgeDurationTimings: number[] = [];
+    const ttfrTimings: number[] = [];
 
     for (const msg of messages) {
       const data = this.extractFullMetadata(msg.metadata);
@@ -1035,9 +1037,20 @@ export class AgentsService {
             });
           }
           break;
-        case 'bridge_generation':
+        case 'ttfab_bridge':
+        case 'ttfab_direct':
           if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
-            bridgeTimings.push(data.timing_ms);
+            ttfabTimings.push(data.timing_ms);
+          }
+          break;
+        case 'bridge_duration':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            bridgeDurationTimings.push(data.timing_ms);
+          }
+          break;
+        case 'ttfr':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            ttfrTimings.push(data.timing_ms);
           }
           break;
       }
@@ -1047,9 +1060,9 @@ export class AgentsService {
       safetyRouting: safetyMessages.length > 0 ? {
         totalTurns: safetyMessages.length,
         safeTurns: safetyMessages.filter((m) => m.route === 'SAFE').length,
-        unsafeTurns: safetyMessages.filter((m) => m.route === 'UNSAFE').length,
+        unsafeTurns: safetyMessages.filter((m) => m.route !== 'SAFE').length,
         interceptionRate: Math.round(
-          (safetyMessages.filter((m) => m.route === 'UNSAFE').length / safetyMessages.length) * 10000,
+          (safetyMessages.filter((m) => m.route !== 'SAFE').length / safetyMessages.length) * 10000,
         ) / 10000,
       } : null,
 
@@ -1074,10 +1087,24 @@ export class AgentsService {
         };
       })() : null,
 
-      bridgeGeneration: bridgeTimings.length > 0 ? {
-        totalBridges: bridgeTimings.length,
+      bridgeGeneration: ttfabTimings.length > 0 ? {
+        totalBridges: ttfabTimings.length,
         avgBridgeDuration_ms: Math.round(
-          (bridgeTimings.reduce((s, v) => s + v, 0) / bridgeTimings.length) * 100,
+          (ttfabTimings.reduce((s, v) => s + v, 0) / ttfabTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      bridgeDuration: bridgeDurationTimings.length > 0 ? {
+        count: bridgeDurationTimings.length,
+        avg_ms: Math.round(
+          (bridgeDurationTimings.reduce((s, v) => s + v, 0) / bridgeDurationTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      ttfr: ttfrTimings.length > 0 ? {
+        count: ttfrTimings.length,
+        avg_ms: Math.round(
+          (ttfrTimings.reduce((s, v) => s + v, 0) / ttfrTimings.length) * 100,
         ) / 100,
       } : null,
     };
@@ -1132,6 +1159,8 @@ export class AgentsService {
           safetyRouting: null,
           stateTransitions: null,
           bridgeGeneration: null,
+          bridgeDuration: null,
+          ttfr: null,
         },
       };
     }

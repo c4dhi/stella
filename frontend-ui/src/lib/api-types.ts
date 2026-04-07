@@ -1162,6 +1162,8 @@ export interface MetricsSummary {
   safetyRouting: { totalTurns: number; safeTurns: number; unsafeTurns: number; interceptionRate: number } | null
   stateTransitions: { totalTransitions: number; expectedTransitions: number; accuracy: number } | null
   bridgeGeneration: { totalBridges: number; avgBridgeDuration_ms: number } | null
+  bridgeDuration: { count: number; avg_ms: number } | null
+  ttfr: { count: number; avg_ms: number } | null
 }
 
 export interface AgentMetricsResponse {

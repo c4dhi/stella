@@ -108,6 +108,8 @@ class StellaV2Agent(BaseAgent):
         self._plan_config: Optional[Dict[str, Any]] = None  # stored for context building
         self._custom_history_limit: int = 20  # overridable via pipeline_config thresholds
         self._last_state_id: Optional[str] = None  # for detecting state transitions between turns
+        self._last_post_response_state_id: Optional[str] = None  # for analytics emission
+        self._turn_counter: int = 0  # monotonic turn counter for analytics
 
         logger.info(
             f"Initialized with {self.expert_registry.enabled_count} experts"
@@ -124,6 +126,8 @@ class StellaV2Agent(BaseAgent):
         deliverables, progress updates.
         """
         self._is_processing = True
+        self._turn_counter += 1
+        turn_id = f"turn_{self._turn_counter}"
 
         try:
             # Fetch context
@@ -157,6 +161,10 @@ class StellaV2Agent(BaseAgent):
 
             # On gate failure: ignore bridge, send hardcoded message, skip all downstream stages
             if gate_result.failed:
+                yield AgentOutput.analytics(
+                    input.session_id, stage="safety_routing", timing_ms=0,
+                    route="UNSAFE", experts_consulted=[], turn_id=turn_id,
+                )
                 yield AgentOutput.text_chunk(
                     input.session_id, _DEFAULT_GATE_FAILURE_MESSAGE, is_final=True
                 )
@@ -215,6 +223,14 @@ class StellaV2Agent(BaseAgent):
                 f"Arbitration: tone={arb_result.directive.tone}, favored={arb_result.favored_expert}",
                 component="arbitration",
                 **arb_result.to_debug_dict(),
+            )
+
+            # Analytics: safety/routing decision for this turn
+            yield AgentOutput.analytics(
+                input.session_id, stage="safety_routing", timing_ms=0,
+                route="INTERCEPTED" if arb_result.directive.short_circuit else "SAFE",
+                experts_consulted=list(gate_result.experts),
+                turn_id=turn_id,
             )
 
             # Short-circuit: noise_detection override (ask user to repeat)
@@ -425,6 +441,32 @@ class StellaV2Agent(BaseAgent):
             await self.sm_client.increment_turn()
             # Refresh state after counter update so the published progress is current.
             full_state = await self.sm_client.get_full_state()
+
+        # ── Analytics emissions ──
+        if full_state:
+            current_state_id = full_state.get("current_state_id")
+
+            # Analytics: state transition (if state changed during this turn)
+            if (
+                self._last_post_response_state_id is not None
+                and current_state_id != self._last_post_response_state_id
+            ):
+                yield AgentOutput.analytics(
+                    session_id, stage="state_transition", timing_ms=0,
+                    from_state=self._last_post_response_state_id,
+                    to_state=current_state_id,
+                    was_expected=True,
+                )
+            self._last_post_response_state_id = current_state_id
+
+            # Analytics: plan completion snapshot (emitted each turn for dashboard)
+            # progress is int 0-100 from gRPC; convert to 0-1 ratio
+            yield AgentOutput.analytics(
+                session_id, stage="plan_completion", timing_ms=0,
+                completion_rate=full_state.get("progress", 0) / 100,
+                plan_reached_end=reached_end_state,
+                plan_id=full_state.get("plan_id"),
+            )
 
         # Emit final progress for this turn.
         if full_state:

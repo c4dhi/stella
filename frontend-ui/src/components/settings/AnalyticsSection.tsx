@@ -205,57 +205,93 @@ export default function AnalyticsSection() {
             <ResponseTimeTimeline points={timelinePoints} />
           </motion.div>
 
-          {/* CUI paper metrics summary */}
+          {/* Pipeline metrics summary */}
           {data.summary && (
-            <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatsCard
-                title="Safety Interception"
-                value={data.summary.safetyRouting ? Math.round(data.summary.safetyRouting.interceptionRate * 100) : 0}
-                subtitle={data.summary.safetyRouting ? `${data.summary.safetyRouting.unsafeTurns}/${data.summary.safetyRouting.totalTurns} turns` : 'No data'}
-                color="orange"
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                  </svg>
-                }
-              />
-              <StatsCard
-                title="Plan Completion"
-                value={data.summary.planCompletion ? Math.round(data.summary.planCompletion.avgCompletionRate * 100) : 0}
-                subtitle={data.summary.planCompletion ? `${data.summary.planCompletion.completedPlans}/${data.summary.planCompletion.totalSessions} plans` : 'No data'}
-                color="green"
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                    <polyline points="22 4 12 14.01 9 11.01" />
-                  </svg>
-                }
-              />
-              <StatsCard
-                title="Transition Accuracy"
-                value={data.summary.stateTransitions ? Math.round(data.summary.stateTransitions.accuracy * 100) : 0}
-                subtitle={data.summary.stateTransitions ? `${data.summary.stateTransitions.expectedTransitions}/${data.summary.stateTransitions.totalTransitions}` : 'No data'}
-                color="blue"
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <polyline points="9 11 12 14 22 4" />
-                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                  </svg>
-                }
-              />
-              <StatsCard
-                title="Bridge Avg Duration"
-                value={data.summary.bridgeGeneration ? Math.round(data.summary.bridgeGeneration.avgBridgeDuration_ms) : 0}
-                subtitle={data.summary.bridgeGeneration ? `${data.summary.bridgeGeneration.totalBridges} bridges` : 'No data'}
-                color="cyan"
-                icon={
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M5 9l4-4 4 4" />
-                    <path d="M9 5v12a4 4 0 0 0 4 4h6" />
-                  </svg>
-                }
-              />
-            </motion.div>
+            <>
+              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatsCard
+                  title="Safety Interception"
+                  value={data.summary.safetyRouting ? Math.round(data.summary.safetyRouting.interceptionRate * 100) : 0}
+                  suffix="%"
+                  subtitle={data.summary.safetyRouting ? `${data.summary.safetyRouting.unsafeTurns}/${data.summary.safetyRouting.totalTurns} turns` : 'No interceptions'}
+                  color="orange"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                  }
+                />
+                <StatsCard
+                  title="Plan Completion"
+                  value={data.summary.planCompletion ? Math.round(data.summary.planCompletion.avgCompletionRate * 100) : 0}
+                  suffix="%"
+                  subtitle={data.summary.planCompletion ? `${data.summary.planCompletion.completedPlans}/${data.summary.planCompletion.totalSessions} plans` : 'No plans yet'}
+                  color="green"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                      <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                  }
+                />
+                <StatsCard
+                  title="Transition Accuracy"
+                  value={data.summary.stateTransitions ? Math.round(data.summary.stateTransitions.accuracy * 100) : 0}
+                  suffix="%"
+                  subtitle={data.summary.stateTransitions ? `${data.summary.stateTransitions.expectedTransitions}/${data.summary.stateTransitions.totalTransitions}` : 'No transitions yet'}
+                  color="blue"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <polyline points="9 11 12 14 22 4" />
+                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                    </svg>
+                  }
+                />
+              </motion.div>
+
+              {/* Bridge / latency metrics row */}
+              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatsCard
+                  title="Avg Time to Bridge"
+                  value={data.summary.bridgeGeneration ? Math.round(data.summary.bridgeGeneration.avgBridgeDuration_ms) : 0}
+                  suffix="ms"
+                  subtitle={data.summary.bridgeGeneration ? `VAD → first audio · ${data.summary.bridgeGeneration.totalBridges} turns` : 'No data yet'}
+                  color="cyan"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M5 9l4-4 4 4" />
+                      <path d="M9 5v12a4 4 0 0 0 4 4h6" />
+                    </svg>
+                  }
+                />
+                <StatsCard
+                  title="Avg Bridge Duration"
+                  value={data.summary.bridgeDuration ? Math.round(data.summary.bridgeDuration.avg_ms) : 0}
+                  suffix="ms"
+                  subtitle={data.summary.bridgeDuration ? `${data.summary.bridgeDuration.count} bridges` : 'No data yet'}
+                  color="purple"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M5 12h14" />
+                      <path d="M12 5l7 7-7 7" />
+                    </svg>
+                  }
+                />
+                <StatsCard
+                  title="Avg Time to Response"
+                  value={data.summary.ttfr ? Math.round(data.summary.ttfr.avg_ms) : 0}
+                  suffix="ms"
+                  subtitle={data.summary.ttfr ? `VAD → first response audio · ${data.summary.ttfr.count} turns` : 'No data yet'}
+                  color="green"
+                  icon={
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                  }
+                />
+              </motion.div>
+            </>
           )}
 
           {/* Stage latency chart */}

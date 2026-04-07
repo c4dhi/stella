@@ -42,6 +42,14 @@ export class MetricsSummaryDto {
     totalBridges: number;
     avgBridgeDuration_ms: number;
   } | null;
+  bridgeDuration: {
+    count: number;
+    avg_ms: number;
+  } | null;
+  ttfr: {
+    count: number;
+    avg_ms: number;
+  } | null;
 }
 
 export class AgentMetricsResponseDto {

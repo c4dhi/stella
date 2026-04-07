@@ -201,7 +201,6 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
         if task_keys_just_collected:
             # Don't show the instruction — it would tell the LLM to ask for
             # something the user already provided this turn.
-            # Check if the entire state is completing
             all_pending_keys = {
                 d["key"] for d in sm_context.get("deliverables", [])
                 if d.get("status") == "pending"
@@ -209,7 +208,6 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
             state_completing = all_pending_keys.issubset(collected_keys)
 
             if state_completing:
-                # Look up next state from the plan to guide the transition
                 next_hint, hinted_task_id, hinted_task_has_deliverables = _get_next_state_hint(sm_context)
                 note = (
                     "NOTE: The user just provided all the information needed. "
@@ -219,8 +217,6 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
                     note += f" Transition to: {next_hint}"
                 parts.append(note)
 
-                # Track if the transition hint included a no-deliverable task
-                # so auto-complete can fire for it in _process_post_response.
                 if hinted_task_id and not hinted_task_has_deliverables:
                     sm_context["_hinted_task_id"] = hinted_task_id
             else:
