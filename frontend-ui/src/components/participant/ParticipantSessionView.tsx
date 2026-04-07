@@ -10,12 +10,14 @@ import {
   Minimize2,
   Subtitles,
   Loader2,
+  HelpCircle,
 } from 'lucide-react'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication, RemoteParticipant, LocalTrackPublication } from 'livekit-client'
 import TranscriptOverlay from '../face/TranscriptOverlay'
 import VisualizerGallery from '../face/VisualizerGallery'
 import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
+import SupportModal from './SupportModal'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
@@ -79,6 +81,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [showSubtitles, setShowSubtitles] = useState(true)
   const [showControls, setShowControls] = useState(true)
   const [audioEnabled, setAudioEnabled] = useState(false)  // Tracks if user has enabled audio via interaction
+  const [isSupportOpen, setIsSupportOpen] = useState(false)
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
@@ -1102,6 +1105,17 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           </motion.button>
         )}
 
+        {/* Support Button */}
+        <motion.button
+          onClick={() => setIsSupportOpen(true)}
+          className="p-3 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white transition-all duration-300 hover:bg-white/20 hover:scale-110"
+          title="Help & Support"
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <HelpCircle className="w-5 h-5" />
+        </motion.button>
+
         {/* Fullscreen Button */}
         <motion.button
           onClick={toggleFullscreen}
@@ -1117,6 +1131,13 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           )}
         </motion.button>
       </motion.div>
+
+      {/* Support Modal */}
+      <SupportModal
+        isOpen={isSupportOpen}
+        onClose={() => setIsSupportOpen(false)}
+        participantName={sessionData.participantName}
+      />
 
       {/* Visualizer Gallery */}
       {!sessionData.visualizerLocked && (

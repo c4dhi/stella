@@ -128,7 +128,7 @@ class ResponseGenerator:
         if bridge:
             messages.insert(1, LLMMessage(
                 role="system",
-                content=f'You already said "{bridge}" out loud. Continue naturally from there — do NOT repeat it, do NOT re-greet, do NOT add another acknowledgment. Just pick up mid-thought as if you already started talking.',
+                content=f'You already said "{bridge}" out loud as a brief acknowledgment. Now continue with your actual response. The combined output (bridge + your continuation) will be spoken as one seamless utterance, so it MUST flow naturally as a single thought.\n\nRules:\n- Do NOT repeat or rephrase the bridge\n- Do NOT comment on the bridge (no "I\'m glad to hear that", no "That said...")\n- Do NOT add another greeting or acknowledgment\n- Your continuation should read as a natural second half of a sentence or a smooth follow-on\n- Example: bridge "Great question." → you continue with "The main difference is..." → spoken together: "Great question. The main difference is..."\n- Example: bridge "I hear you." → you continue with "What kind of exercise have you been doing?" → spoken together: "I hear you. What kind of exercise have you been doing?"',
             ))
             messages.append(LLMMessage(role="assistant", content=bridge))
 
