@@ -189,11 +189,13 @@ export class WebhooksService {
         this.logger.log(`Human joined session ${sessionId}: ${participantIdentity}`);
       }
 
-      // Auto-resume agent for any session with saved config (not just on_demand)
-      // This handles both on_demand spawn and auto-restart after inactivity pause
+      // Auto-spawn/resume agent only for PARTICIPANTS (not organizers viewing the dashboard).
+      // Participants join with identity "participant-*" (from invitation accept).
+      // Organizers join with identity "human" or their user ID — they should NOT trigger agent spawn.
+      const isParticipant = participantIdentity.startsWith('participant-');
       const hasRunningAgent = session.agents.length > 0;
-      if (!hasRunningAgent && session.lastAgentConfig) {
-        this.logger.log(`Auto-resume triggered for session ${sessionId} (human joined)`);
+      if (isParticipant && !hasRunningAgent && session.lastAgentConfig) {
+        this.logger.log(`Auto-resume triggered for session ${sessionId} (participant joined: ${participantIdentity})`);
         await this.spawnOrResumeAgent(session);
       }
     }
