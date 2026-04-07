@@ -107,6 +107,7 @@ class StellaV2Agent(BaseAgent):
         self._plan_system_prompt: Optional[str] = None
         self._plan_config: Optional[Dict[str, Any]] = None  # stored for context building
         self._custom_history_limit: int = 20  # overridable via pipeline_config thresholds
+        self._last_state_id: Optional[str] = None  # for detecting state transitions between turns
 
         logger.info(
             f"Initialized with {self.expert_registry.enabled_count} experts"
@@ -174,18 +175,20 @@ class StellaV2Agent(BaseAgent):
                     is_final=False,
                 )
 
-            # ── Stage 2: Expert Pool (foreground + background) ──
-            # Foreground experts (probing, safety, etc.) block until done — needed for arbitration.
-            # Background experts (task_extraction) launch concurrently, collected after response.
+            # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
+            # All experts run in parallel and block until done. task_extraction
+            # updates the state machine via tool calls (set_deliverable, etc.),
+            # but we keep the ORIGINAL sm_context for response generation so
+            # the agent still performs task instructions before advancing.
 
             experts_to_run = list(gate_result.experts)
 
             logger.info(f"Stage 2: Expert Pool — {experts_to_run}")
-            fg_verdicts, bg_task = await self.expert_pool.run_foreground(
+            all_verdicts = await self.expert_pool.run(
                 experts_to_run, input.text, history, sm_context
             )
 
-            for v in fg_verdicts:
+            for v in all_verdicts:
                 yield AgentOutput.debug(
                     input.session_id,
                     f"Expert '{v.expert_name}': {v.verdict} ({v.confidence:.2f}) in {v.latency_ms:.0f}ms",
@@ -193,9 +196,19 @@ class StellaV2Agent(BaseAgent):
                     **v.to_debug_dict(),
                 )
 
-            # ── Stage 3: Deterministic Arbitration (foreground verdicts only) ──
+            # Determine which deliverables were just collected by task_extraction
+            # by comparing state machine before/after. This is more reliable than
+            # reading deliverables_set from the runner's raw_output (which may
+            # under-report due to batch_update result parsing issues).
+            collected_keys: list = []
+            if self.sm_client:
+                pre_collected = set(sm_context.get("collected_deliverables", {}).keys())
+                post_collected = await self.sm_client.get_collected_deliverables()
+                collected_keys = [k for k in post_collected if k not in pre_collected]
+
+            # ── Stage 3: Deterministic Arbitration (original context) ──
             logger.info("Stage 3: Arbitration")
-            arb_result = self.arbitration.resolve(fg_verdicts)
+            arb_result = self.arbitration.resolve(all_verdicts)
 
             yield AgentOutput.debug(
                 input.session_id,
@@ -204,24 +217,8 @@ class StellaV2Agent(BaseAgent):
                 **arb_result.to_debug_dict(),
             )
 
-            # Emit deliverable signals as a dedicated debug message
-            if arb_result.directive.deliverable_signals:
-                signals = arb_result.directive.deliverable_signals
-                yield AgentOutput.debug(
-                    input.session_id,
-                    f"Deliverable signals detected: {', '.join(signals)}",
-                    component="deliverable_signals",
-                    stage="pre_response",
-                    signals=signals,
-                    source="probing",
-                    note="Response will acknowledge these. Validated extraction runs in background.",
-                )
-
             # Short-circuit: noise_detection override (ask user to repeat)
             if arb_result.directive.short_circuit:
-                # Cancel background task — not needed
-                if bg_task:
-                    bg_task.cancel()
                 yield AgentOutput.text_chunk(
                     input.session_id,
                     arb_result.directive.redirect_message or _DEFAULT_GATE_FAILURE_MESSAGE,
@@ -229,71 +226,16 @@ class StellaV2Agent(BaseAgent):
                 )
                 return
 
-            # ── Stage 4: Response + Background Extraction (concurrent) ──
-            # Response streams to user while task_extraction finishes in background.
-            # As soon as extraction completes, deliverables and progress updates
-            # are emitted immediately — the frontend todo list updates in real-time.
+            # ── Stage 4: Response Generator (original context + collected keys filtered) ──
+            # Pass collected keys so the response prompt filters them from "still need to collect",
+            # preventing the agent from asking about deliverables the user already provided.
             logger.info("Stage 4: Response Generator (streaming)")
             yield AgentOutput.status(
                 input.session_id, "Generating response...", StatusSubtype.PROCESSING
             )
 
-            pre_signals = arb_result.directive.deliverable_signals
-            bg_queue: asyncio.Queue = asyncio.Queue()
+            sm_context["_collected_keys"] = collected_keys
 
-            # Background task: collect extraction results → process → push to queue
-            async def _bg_extract_and_process():
-                try:
-                    bg_verdicts = await self.expert_pool.collect_background(bg_task)
-
-                    # Debug: emit each background verdict
-                    for v in bg_verdicts:
-                        await bg_queue.put(AgentOutput.debug(
-                            input.session_id,
-                            f"Expert '{v.expert_name}': {v.verdict} ({v.confidence:.2f}) in {v.latency_ms:.0f}ms",
-                            component=f"expert:{v.expert_name}",
-                            **v.to_debug_dict(),
-                        ))
-
-                    # Debug: validation — compare probing signals vs tool extraction
-                    task_v = next(
-                        (v for v in bg_verdicts if v.expert_name == "task_extraction" and v.success),
-                        None,
-                    )
-                    extracted_keys = task_v.raw_output.get("deliverables_set", []) if task_v and task_v.raw_output else []
-                    if pre_signals or extracted_keys:
-                        await bg_queue.put(AgentOutput.debug(
-                            input.session_id,
-                            f"Extraction validation: signals={pre_signals}, extracted={extracted_keys}",
-                            component="deliverable_validation",
-                            stage="post_response",
-                            probing_signals=pre_signals,
-                            extraction_result=extracted_keys,
-                            match=set(pre_signals) == set(extracted_keys) if pre_signals else None,
-                        ))
-
-                    # Process deliverables → state machine updates → emit immediately
-                    all_verdicts = fg_verdicts + bg_verdicts
-                    async for output in self._process_post_response(
-                        input.session_id, all_verdicts, gate_result
-                    ):
-                        await bg_queue.put(output)
-
-                except Exception as e:
-                    logger.error(f"Background extraction error: {e}")
-                    await bg_queue.put(AgentOutput.debug(
-                        input.session_id,
-                        f"Background extraction error: {str(e)[:200]}",
-                        component="bg_extraction",
-                        level="error",
-                    ))
-                finally:
-                    await bg_queue.put(None)  # sentinel: bg is done
-
-            bg_processing = asyncio.create_task(_bg_extract_and_process())
-
-            # Stream response tokens, interleaving background outputs as they arrive
-            bg_done = False
             async for output in self.response_generator.generate(
                 session_id=input.session_id,
                 user_input=input.text,
@@ -305,21 +247,15 @@ class StellaV2Agent(BaseAgent):
                 transcript_id=transcript_id,
             ):
                 yield output
-                # Drain any background outputs that arrived while streaming
-                while not bg_queue.empty():
-                    bg_output = bg_queue.get_nowait()
-                    if bg_output is None:
-                        bg_done = True
-                        break
-                    yield bg_output
 
-            # Response done — drain remaining background outputs (skip if sentinel already consumed)
-            if not bg_done:
-                while True:
-                    bg_output = await bg_queue.get()
-                    if bg_output is None:
-                        break
-                    yield bg_output
+            # ── Stage 5: Post-response processing ──
+            # Process extraction results, auto-complete no-deliverable tasks,
+            # emit progress updates, and handle session completion.
+            logger.info("Stage 5: Post-response processing")
+            async for output in self._process_post_response(
+                input.session_id, all_verdicts, gate_result
+            ):
+                yield output
 
         except Exception as e:
             logger.error(f"Processing error: {e}")
@@ -406,6 +342,25 @@ class StellaV2Agent(BaseAgent):
                     component="post_response",
                     completed_task_ids=tasks_done,
                 )
+
+        # Auto-complete no-deliverable tasks after the response has been generated.
+        # The agent just performed the task instruction; mark it done so the state
+        # machine can advance.  Only fires when task_extraction didn't already
+        # complete something this turn (prevents double-completion).
+        if not tasks_completed and not deliverables_found:
+            pending_tasks = await self.sm_client.get_pending_tasks()
+            for task in pending_tasks:
+                if not task.get("has_deliverables") and not task.get("is_preview"):
+                    await self.sm_client.complete_task(
+                        task["id"], "Task instruction performed by agent response"
+                    )
+                    tasks_completed = True
+                    yield AgentOutput.debug(
+                        session_id,
+                        f"Auto-completed no-deliverable task: {task.get('description', task['id'])}",
+                        component="post_response",
+                    )
+                    break  # one task per turn
 
         # Fetch updated state once so we can:
         # 1) detect fallback completion when backend moved to __end__
@@ -787,6 +742,13 @@ class StellaV2Agent(BaseAgent):
 
         state_type = current_state.get("state_type", "loose")
 
+        # Detect state transitions between turns
+        state_just_changed = (
+            self._last_state_id is not None
+            and current_state_id != self._last_state_id
+        )
+        self._last_state_id = current_state_id
+
         return {
             "full_plan": full_plan,
             "state": {
@@ -812,7 +774,7 @@ class StellaV2Agent(BaseAgent):
                     "turns_without_progress", 0
                 ),
             },
-            "state_just_changed": False,
+            "state_just_changed": state_just_changed,
             "collected_deliverables": collected,
         }
 

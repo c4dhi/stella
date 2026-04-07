@@ -76,14 +76,11 @@ class BaseAgent(ABC):
         self._last_progress_payload: Optional[Dict[str, Any]] = None
         # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
         self._sentence_buffer: str = ""
-<<<<<<< HEAD
         # Set to True by the agent when the plan reaches __end__.
         # run_audio_loop checks this after each turn and exits cleanly.
         self._session_completed: bool = False
-=======
         # Current sentence source for analytics ("bridge" or "response")
         self._current_sentence_source: str = "response"
->>>>>>> 133-feature-metrics-aggregation-api
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""

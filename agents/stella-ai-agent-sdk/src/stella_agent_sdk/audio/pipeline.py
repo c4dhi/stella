@@ -428,22 +428,16 @@ class AudioPipeline:
             if event.is_final and event.text.strip():
                 logger.info(f"Final transcript: '{event.text}'")
 
-<<<<<<< HEAD
-                # [GATE DISABLED] AEC handles echo cancellation at audio level
-                # if self._transcript_gate_closed:
-                #     logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
-                #     continue
-=======
                 # Capture turn timing for TTFAB measurement
                 self._turn_stt_end_ts = time.perf_counter()
                 self._turn_id = getattr(event, 'transcript_id', None)
                 self._turn_first_audio_captured = False
                 self._turn_first_text_ts = 0
 
-                if self._transcript_gate_closed:
-                    logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
-                    continue
->>>>>>> 133-feature-metrics-aggregation-api
+                # [GATE DISABLED] AEC handles echo cancellation at audio level
+                # if self._transcript_gate_closed:
+                #     logger.info(f"[GATE] Discarding final (gate closed): '{event.text}'")
+                #     continue
 
                 # Apply debouncing to aggregate rapid successive finals
                 if self._debounce_window_ms > 0:

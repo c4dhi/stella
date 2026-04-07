@@ -54,32 +54,51 @@ class ProgressAdapter:
             is_active = state.get("status") == "active"
 
             for task in state.get("tasks", []):
-                for d in task.get("deliverables", []):
-                    status_str = d.get("status", "pending")
-                    is_discovered = d.get("discovered", False)
+                task_deliverables = task.get("deliverables", [])
+                if task_deliverables:
+                    for d in task_deliverables:
+                        status_str = d.get("status", "pending")
+                        is_discovered = d.get("discovered", False)
+                        item = ProgressItem(
+                            id=d.get("key"),
+                            label=d.get("description"),
+                            status=cls.deliverable_status_to_item_status(status_str),
+                            description=f"Task: {task.get('description', '')}",
+                            required=False if is_discovered else d.get("required", True),
+                            value=d.get("value"),
+                            confidence=d.get("confidence"),
+                            collected_at=d.get("collected_at"),
+                            metadata={
+                                "task_id": task.get("id"),
+                                "task_description": task.get("description"),
+                                "deliverable_type": d.get("type", "string"),
+                                "acceptance_criteria": d.get("acceptance_criteria"),
+                                "reasoning": d.get("reasoning"),
+                                "discovered": is_discovered,
+                            },
+                        )
+                        items.append(item)
+
+                        # Track first pending item in the active state
+                        if is_active and status_str == "pending" and not current_item_id:
+                            current_item_id = d.get("key")
+                else:
+                    # Task with no deliverables — represent as a single item
+                    # so the frontend can display it
+                    task_status = task.get("status", "pending")
                     item = ProgressItem(
-                        id=d.get("key"),
-                        label=d.get("description"),
-                        status=cls.deliverable_status_to_item_status(status_str),
-                        description=f"Task: {task.get('description', '')}",
-                        required=False if is_discovered else d.get("required", True),
-                        value=d.get("value"),
-                        confidence=d.get("confidence"),
-                        collected_at=d.get("collected_at"),
+                        id=f"task_{task.get('id', 'unknown')}",
+                        label=task.get("description", "Task"),
+                        status=cls.deliverable_status_to_item_status(task_status),
+                        description=task.get("instruction", ""),
+                        required=task.get("required", True),
                         metadata={
                             "task_id": task.get("id"),
                             "task_description": task.get("description"),
-                            "deliverable_type": d.get("type", "string"),
-                            "acceptance_criteria": d.get("acceptance_criteria"),
-                            "reasoning": d.get("reasoning"),
-                            "discovered": is_discovered,
+                            "is_task_item": True,
                         },
                     )
                     items.append(item)
-
-                    # Track first pending item in the active state
-                    if is_active and status_str == "pending" and not current_item_id:
-                        current_item_id = d.get("key")
 
             # Determine group status
             all_completed = items and all(

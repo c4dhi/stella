@@ -462,6 +462,21 @@ export default function SessionView() {
 
           // Convert map to array of tasks
           return Array.from(taskMap.values()).map(task => {
+            // Check if this is a task-level item (no deliverables)
+            const isTaskItem = task.deliverables.length === 1 && task.deliverables[0].metadata?.is_task_item
+
+            if (isTaskItem) {
+              const item = task.deliverables[0]
+              return {
+                id: task.id,
+                description: task.description,
+                instruction: item.description || '',
+                required: item.required,
+                status: item.status as TaskStatus,
+                deliverables: [],
+              }
+            }
+
             // Determine task status based on deliverables
             const allCompleted = task.deliverables.every(d => d.status === 'completed' || d.status === 'skipped')
             const anyInProgress = task.deliverables.some(d => d.status === 'in_progress')
