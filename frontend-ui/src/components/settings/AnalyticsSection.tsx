@@ -1,13 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
-import { useAgentMetrics, useMetricsTimeline } from '../../hooks/useAgentMetrics'
+import { useAgentMetrics } from '../../hooks/useAgentMetrics'
+import { useStageDataPoints } from '../../hooks/useStageDataPoints'
 import { apiClient } from '../../services/ApiClient'
-import StatsCard from './admin/StatsCard'
-import LatencyStageChart from './analytics/LatencyStageChart'
-import ResponseTimeTimeline from './analytics/ResponseTimeTimeline'
+import StageTimeline from './analytics/StageTimeline'
+import SessionAnalyticsModal from '../modals/SessionAnalyticsModal'
 import type { ProjectWithCounts, AgentType } from '../../lib/api-types'
-import { useNavigate } from 'react-router-dom'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -32,7 +31,6 @@ const DAY_OPTIONS = [7, 30, 90] as const
 export default function AnalyticsSection() {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
-  const navigate = useNavigate()
 
   // Selector state
   const [projects, setProjects] = useState<ProjectWithCounts[]>([])
@@ -40,6 +38,12 @@ export default function AnalyticsSection() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [selectedAgentSlug, setSelectedAgentSlug] = useState<string | null>(null)
   const [days, setDays] = useState<number>(30)
+
+  // Timeline drill-down state
+  const [selectedStage, setSelectedStage] = useState<string | null>(null)
+
+  // Session analytics modal state
+  const [modalSessionId, setModalSessionId] = useState<string | null>(null)
 
   // Fetch projects and agent types on mount
   useEffect(() => {
@@ -55,21 +59,35 @@ export default function AnalyticsSection() {
 
   const { data, isLoading, error } = useAgentMetrics(selectedProjectId, selectedAgentSlug, days)
 
-  // Pick best stage for live timeline: prefer bridge TTFAB, then direct, then total
-  const timelineStage = data?.stages.find(s => s.stage === 'ttfab_bridge')
-    ? 'ttfab_bridge'
-    : data?.stages.find(s => s.stage === 'ttfab_direct')
-      ? 'ttfab_direct'
-      : data?.stages.find(s => s.stage === 'total')
-        ? 'total'
-        : data?.stages[0]?.stage || 'ttfab_bridge'
-  const { points: timelinePoints } = useMetricsTimeline(selectedProjectId, selectedAgentSlug, timelineStage)
+  // Date range for drill-down
+  const dateRange = useMemo(() => {
+    const to = new Date().toISOString()
+    const from = new Date(Date.now() - days * 86400000).toISOString()
+    return { from, to }
+  }, [days])
+
+  // Lazy-load raw data points when a stage is selected
+  const { points: stageDataPoints } = useStageDataPoints(
+    selectedProjectId,
+    selectedAgentSlug,
+    selectedStage,
+    dateRange.from,
+    dateRange.to,
+  )
+
+  // Reset selected stage when changing agent/project/days
+  useEffect(() => {
+    setSelectedStage(null)
+  }, [selectedProjectId, selectedAgentSlug, days])
 
   const selectClass = `rounded-lg px-3 py-2 text-sm ${
     isDark
       ? 'bg-surface-dark-tertiary text-content-inverse border border-border-dark'
       : 'bg-white text-content border border-neutral-200'
   }`
+
+  // Plan completion data from summary
+  const planCompletion = data?.summary?.planCompletion
 
   return (
     <motion.div
@@ -127,6 +145,12 @@ export default function AnalyticsSection() {
             </button>
           ))}
         </div>
+
+        {data && (
+          <span className={`text-xs tabular-nums ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+            {data.totalSessions} session{data.totalSessions !== 1 ? 's' : ''} · {data.totalTurns} turn{data.totalTurns !== 1 ? 's' : ''}
+          </span>
+        )}
       </motion.div>
 
       {/* Loading / Error */}
@@ -142,221 +166,62 @@ export default function AnalyticsSection() {
         </motion.div>
       )}
 
-      {/* Stats cards */}
       {data && !isLoading && (
         <>
-          {(() => {
-            const ttfabBridge = data.stages.find(s => s.stage === 'ttfab_bridge')
-            const ttfabDirect = data.stages.find(s => s.stage === 'ttfab_direct')
-            const bridgeGap = data.stages.find(s => s.stage === 'bridge_response_gap')
-            return (
-              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatsCard
-                  title="Total Sessions"
-                  value={data.totalSessions}
-                  color="purple"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                      <path d="M16 3h-8v4h8V3z" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Total Turns"
-                  value={data.totalTurns}
-                  color="blue"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Bridge TTFAB P50"
-                  value={ttfabBridge ? Math.round(ttfabBridge.p50_ms) : (ttfabDirect ? Math.round(ttfabDirect.p50_ms) : 0)}
-                  subtitle={ttfabBridge ? `P95: ${Math.round(ttfabBridge.p95_ms)}ms` : (ttfabDirect ? `Direct P95: ${Math.round(ttfabDirect.p95_ms)}ms` : 'No data')}
-                  color="orange"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Bridge-Response Gap"
-                  value={bridgeGap ? Math.round(bridgeGap.p50_ms) : 0}
-                  subtitle={bridgeGap ? `P95: ${Math.round(bridgeGap.p95_ms)}ms` : 'No data'}
-                  color="green"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M5 9l4-4 4 4" />
-                      <path d="M9 5v12a4 4 0 0 0 4 4h6" />
-                    </svg>
-                  }
-                />
-              </motion.div>
-            )
-          })()}
-
-          {/* Live response time timeline */}
+          {/* Pipeline Timeline */}
           <motion.div variants={itemVariants}>
-            <ResponseTimeTimeline points={timelinePoints} />
+            <StageTimeline
+              stages={data.stages}
+              mode="aggregate"
+              selectedStage={selectedStage}
+              onStageSelect={setSelectedStage}
+              selectedStagePoints={stageDataPoints}
+              onSessionClick={setModalSessionId}
+            />
           </motion.div>
 
-          {/* Pipeline metrics summary */}
-          {data.summary && (
-            <>
-              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <StatsCard
-                  title="Safety Interception"
-                  value={data.summary.safetyRouting ? Math.round(data.summary.safetyRouting.interceptionRate * 100) : 0}
-                  suffix="%"
-                  subtitle={data.summary.safetyRouting ? `${data.summary.safetyRouting.unsafeTurns}/${data.summary.safetyRouting.totalTurns} turns` : 'No interceptions'}
-                  color="orange"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Plan Completion"
-                  value={data.summary.planCompletion ? Math.round(data.summary.planCompletion.avgCompletionRate * 100) : 0}
-                  suffix="%"
-                  subtitle={data.summary.planCompletion ? `${data.summary.planCompletion.completedPlans}/${data.summary.planCompletion.totalSessions} plans` : 'No plans yet'}
-                  color="green"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                      <polyline points="22 4 12 14.01 9 11.01" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Transition Accuracy"
-                  value={data.summary.stateTransitions ? Math.round(data.summary.stateTransitions.accuracy * 100) : 0}
-                  suffix="%"
-                  subtitle={data.summary.stateTransitions ? `${data.summary.stateTransitions.expectedTransitions}/${data.summary.stateTransitions.totalTransitions}` : 'No transitions yet'}
-                  color="blue"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <polyline points="9 11 12 14 22 4" />
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                    </svg>
-                  }
-                />
-              </motion.div>
-
-              {/* Bridge / latency metrics row */}
-              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <StatsCard
-                  title="Avg Time to Bridge"
-                  value={data.summary.bridgeGeneration ? Math.round(data.summary.bridgeGeneration.avgBridgeDuration_ms) : 0}
-                  suffix="ms"
-                  subtitle={data.summary.bridgeGeneration ? `VAD → first audio · ${data.summary.bridgeGeneration.totalBridges} turns` : 'No data yet'}
-                  color="cyan"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M5 9l4-4 4 4" />
-                      <path d="M9 5v12a4 4 0 0 0 4 4h6" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Avg Bridge Duration"
-                  value={data.summary.bridgeDuration ? Math.round(data.summary.bridgeDuration.avg_ms) : 0}
-                  suffix="ms"
-                  subtitle={data.summary.bridgeDuration ? `${data.summary.bridgeDuration.count} bridges` : 'No data yet'}
-                  color="purple"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M5 12h14" />
-                      <path d="M12 5l7 7-7 7" />
-                    </svg>
-                  }
-                />
-                <StatsCard
-                  title="Avg Time to Response"
-                  value={data.summary.ttfr ? Math.round(data.summary.ttfr.avg_ms) : 0}
-                  suffix="ms"
-                  subtitle={data.summary.ttfr ? `VAD → first response audio · ${data.summary.ttfr.count} turns` : 'No data yet'}
-                  color="green"
-                  icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                  }
-                />
-              </motion.div>
-            </>
-          )}
-
-          {/* Stage latency chart */}
-          <motion.div variants={itemVariants}>
-            <LatencyStageChart stages={data.stages} />
-          </motion.div>
-
-          {/* Outlier sessions */}
-          <motion.div variants={itemVariants}>
-            <div className={`rounded-xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200'}`}>
-              <div className={`flex items-center gap-2 px-5 py-3 border-b ${isDark ? 'border-border-dark' : 'border-neutral-200'}`}>
-                <h3 className={`text-sm font-semibold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                  Outlier Sessions
-                </h3>
-                {data.outlierSessions.length > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-600">
-                    {data.outlierSessions.length}
-                  </span>
-                )}
-              </div>
-              <div className="p-5">
-                {data.outlierSessions.length === 0 ? (
-                  <p className={`text-sm ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                    No outlier sessions detected (threshold: 2x global P50)
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {data.outlierSessions.map((session) => (
-                      <button
-                        key={session.sessionId}
-                        onClick={() => navigate(`/session/${session.sessionId}`)}
-                        className={`w-full text-left rounded-lg p-3 transition-colors ${
-                          isDark
-                            ? 'bg-surface-dark-tertiary hover:bg-surface-dark-tertiary/80'
-                            : 'bg-neutral-50 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className={`text-sm font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                            {session.sessionName}
-                          </span>
-                          <span className={`text-xs ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                            {new Date(session.createdAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {session.outlierStages.map((os) => (
-                            <span
-                              key={os.stage}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-amber-500/10 text-amber-600"
-                            >
-                              {os.stage}: {os.sessionMean_ms.toFixed(0)}ms
-                              <span className="opacity-60">vs {os.globalP50_ms.toFixed(0)}ms p50</span>
-                            </span>
-                          ))}
-                        </div>
-                      </button>
-                    ))}
+          {/* Plan Completion */}
+          {planCompletion && (
+            <motion.div variants={itemVariants}>
+              <div className={`rounded-xl overflow-hidden ${isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200'}`}>
+                <div className={`px-5 py-3 border-b ${isDark ? 'border-border-dark' : 'border-neutral-200'}`}>
+                  <h3 className={`text-sm font-semibold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                    Plan Completion
+                  </h3>
+                </div>
+                <div className="p-5">
+                  <div className="flex items-center gap-6">
+                    {/* Completion rate bar */}
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-2xl font-bold tabular-nums ${isDark ? 'text-content-inverse' : 'text-content'}`}>
+                          {Math.round(planCompletion.avgCompletionRate * 100)}%
+                        </span>
+                        <span className={`text-xs ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                          {planCompletion.completedPlans}/{planCompletion.totalSessions} plans completed
+                        </span>
+                      </div>
+                      <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-surface-dark-tertiary' : 'bg-neutral-100'}`}>
+                        <div
+                          className="h-full rounded-full bg-green-500 transition-all duration-500"
+                          style={{ width: `${Math.round(planCompletion.avgCompletionRate * 100)}%` }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
         </>
       )}
+
+      {/* Session Analytics Modal */}
+      <SessionAnalyticsModal
+        isOpen={modalSessionId != null}
+        onClose={() => setModalSessionId(null)}
+        sessionId={modalSessionId || ''}
+      />
     </motion.div>
   )
 }

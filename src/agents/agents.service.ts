@@ -9,6 +9,8 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import {
   AgentMetricsResponseDto,
   StageLatencyDto,
+  StageDataPointDto,
+  SessionStagePointDto,
   OutlierSessionDto,
   OutlierStageDto,
   SessionAnalyticsResponseDto,
@@ -985,15 +987,21 @@ export class AgentsService {
     for (const [stage, timings] of stageTimings) {
       const sorted = timings.slice().sort((a, b) => a - b);
       const sum = sorted.reduce((acc, v) => acc + v, 0);
+      const mean = sum / sorted.length;
+      const variance = sorted.reduce((acc, v) => acc + (v - mean) ** 2, 0) / sorted.length;
 
       stages.push({
         stage,
         count: sorted.length,
-        mean_ms: Math.round((sum / sorted.length) * 100) / 100,
+        mean_ms: Math.round(mean * 100) / 100,
+        p5_ms: percentile(sorted, 5),
+        p25_ms: percentile(sorted, 25),
         p50_ms: percentile(sorted, 50),
+        p75_ms: percentile(sorted, 75),
         p95_ms: percentile(sorted, 95),
         min_ms: sorted[0],
         max_ms: sorted[sorted.length - 1],
+        stddev_ms: Math.round(Math.sqrt(variance) * 100) / 100,
       });
     }
 
@@ -1283,7 +1291,7 @@ export class AgentsService {
   async getSessionAnalytics(sessionId: string): Promise<SessionAnalyticsResponseDto> {
     const analyticsMessages = await this.prisma.message.findMany({
       where: { sessionId, messageType: 'analytics' },
-      select: { sessionId: true, metadata: true },
+      select: { sessionId: true, metadata: true, timestamp: true },
     });
 
     const totalTurns = await this.prisma.message.count({
@@ -1295,6 +1303,8 @@ export class AgentsService {
     });
 
     const stageTimings = new Map<string, number[]>();
+    const rawPoints: SessionStagePointDto[] = [];
+
     for (const msg of analyticsMessages) {
       const parsed = this.extractStageTiming(msg.metadata as any);
       if (!parsed || parsed.timing_ms === 0) continue;
@@ -1302,6 +1312,11 @@ export class AgentsService {
         stageTimings.set(parsed.stage, []);
       }
       stageTimings.get(parsed.stage)!.push(parsed.timing_ms);
+      rawPoints.push({
+        stage: parsed.stage,
+        timing_ms: parsed.timing_ms,
+        timestamp: msg.timestamp.toISOString(),
+      });
     }
 
     return {
@@ -1309,6 +1324,7 @@ export class AgentsService {
       totalTurns,
       stages: this.computeStageStats(stageTimings),
       summary: this.computeMetricsSummary(analyticsMessages),
+      rawPoints,
     };
   }
 
@@ -1370,6 +1386,93 @@ export class AgentsService {
           sessionId: msg.sessionId,
         });
       }
+    }
+
+    return { points };
+  }
+
+  /**
+   * Get per-session average timing for a specific stage.
+   * Returns one data point per session (avg of all measurements in that session).
+   */
+  async getStageDataPoints(
+    projectId: string,
+    agentSlug: string,
+    stageName: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ points: StageDataPointDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { points: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { points: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Group by session, compute per-session average
+    const sessionData = new Map<string, { timings: number[]; lastTimestamp: Date }>();
+
+    for (const msg of messages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (!parsed || parsed.stage !== stageName || parsed.timing_ms === 0) continue;
+
+      if (!sessionData.has(msg.sessionId)) {
+        sessionData.set(msg.sessionId, { timings: [], lastTimestamp: msg.timestamp });
+      }
+      const entry = sessionData.get(msg.sessionId)!;
+      entry.timings.push(parsed.timing_ms);
+      entry.lastTimestamp = msg.timestamp;
+    }
+
+    // Fetch session names for all sessions that have data
+    const sessionIdsWithData = Array.from(sessionData.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const points: StageDataPointDto[] = [];
+    for (const [sessionId, { timings, lastTimestamp }] of sessionData) {
+      const avg = timings.reduce((s, v) => s + v, 0) / timings.length;
+      points.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        avg_timing_ms: Math.round(avg * 100) / 100,
+        count: timings.length,
+        timestamp: lastTimestamp.toISOString(),
+      });
     }
 
     return { points };

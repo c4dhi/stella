@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useSessionAnalytics } from '../../hooks/useSessionAnalytics'
-import LatencyStageChart from '../settings/analytics/LatencyStageChart'
+import StageTimeline from '../settings/analytics/StageTimeline'
+import SummaryCards from '../settings/analytics/SummaryCards'
 
 interface SessionAnalyticsModalProps {
   isOpen: boolean
@@ -14,10 +15,12 @@ export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: Se
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const { data, isLoading, error, fetch } = useSessionAnalytics()
+  const [selectedStage, setSelectedStage] = useState<string | null>(null)
 
   useEffect(() => {
     if (isOpen && sessionId) {
       fetch(sessionId)
+      setSelectedStage(null)
     }
   }, [isOpen, sessionId, fetch])
 
@@ -37,7 +40,7 @@ export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: Se
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className={`rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto ${
+            className={`rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto ${
               isDark ? 'bg-surface-dark-secondary' : 'bg-white border border-neutral-200'
             }`}
             onClick={(e) => e.stopPropagation()}
@@ -67,7 +70,7 @@ export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: Se
             </div>
 
             {/* Body */}
-            <div className="p-6">
+            <div className="p-6 space-y-5">
               {isLoading && (
                 <p className={`text-center text-sm ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
                   Loading analytics...
@@ -82,35 +85,17 @@ export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: Se
 
               {data && !isLoading && (
                 <>
-                  {(() => {
-                    const ttfabBridge = data.stages.find(s => s.stage === 'ttfab_bridge')
-                    const ttfabDirect = data.stages.find(s => s.stage === 'ttfab_direct')
-                    const bridgeGap = data.stages.find(s => s.stage === 'bridge_response_gap')
-                    const ttfab = ttfabBridge || ttfabDirect
-                    return ttfab ? (
-                      <div className={`flex gap-6 justify-center mb-5 py-3 rounded-lg ${isDark ? 'bg-surface-dark-tertiary' : 'bg-neutral-50'}`}>
-                        <div className="text-center">
-                          <span className={`text-2xl font-bold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                            {ttfab.p50_ms.toFixed(0)}ms
-                          </span>
-                          <span className={`text-xs ml-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                            {ttfabBridge ? 'Bridge' : 'Direct'} TTFAB
-                          </span>
-                        </div>
-                        {bridgeGap && (
-                          <div className="text-center">
-                            <span className={`text-2xl font-bold ${isDark ? 'text-content-inverse' : 'text-content'}`}>
-                              {bridgeGap.p50_ms.toFixed(0)}ms
-                            </span>
-                            <span className={`text-xs ml-1 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
-                              Bridge-Response Gap
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ) : null
-                  })()}
-                  <LatencyStageChart stages={data.stages} />
+                  <StageTimeline
+                    stages={data.stages}
+                    mode="session"
+                    selectedStage={selectedStage}
+                    onStageSelect={setSelectedStage}
+                    sessionPoints={data.rawPoints}
+                  />
+
+                  {data.summary && (
+                    <SummaryCards summary={data.summary} />
+                  )}
                 </>
               )}
             </div>

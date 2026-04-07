@@ -1138,10 +1138,14 @@ export interface StageLatency {
   stage: string
   count: number
   mean_ms: number
+  p5_ms: number
+  p25_ms: number
   p50_ms: number
+  p75_ms: number
   p95_ms: number
   min_ms: number
   max_ms: number
+  stddev_ms: number
 }
 
 export interface OutlierStage {
@@ -1177,10 +1181,30 @@ export interface AgentMetricsResponse {
   summary: MetricsSummary
 }
 
+export interface StageDataPoint {
+  sessionId: string
+  sessionName: string
+  avg_timing_ms: number
+  count: number
+  timestamp: string
+}
+
+export interface StageDataPointsResponse {
+  points: StageDataPoint[]
+}
+
+export interface SessionStagePoint {
+  stage: string
+  timing_ms: number
+  timestamp: string
+}
+
 export interface SessionAnalyticsResponse {
   sessionId: string
   totalTurns: number
   stages: StageLatency[]
+  summary: MetricsSummary
+  rawPoints: SessionStagePoint[]
 }
 
 export interface MetricsTimelinePoint {

@@ -1596,6 +1596,12 @@ class SessionManagementClient {
     return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/sessions/${sessionId}/analytics`)
   }
 
+  async getStageDataPoints(projectId: string, agentSlug: string, stageName: string, from: string, to: string): Promise<import('../lib/api-types').StageDataPointsResponse> {
+    return this.get<import('../lib/api-types').StageDataPointsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/stages/${encodeURIComponent(stageName)}/points?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
   async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {
     const params = `since=${encodeURIComponent(since)}${stage ? `&stage=${encodeURIComponent(stage)}` : ''}`
     return this.get<import('../lib/api-types').MetricsTimelineResponse>(
