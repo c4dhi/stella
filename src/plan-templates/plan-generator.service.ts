@@ -206,7 +206,7 @@ The structure must follow this exact schema:
         "transitions": [
           {
             "target_state_id": "state_<target_id>",
-            "condition_type": "all_tasks_complete" | "turn_count_exceeded" | "deliverable_value" | "deliverable_value_in" | "deliverable_value_numeric" | "deliverable_exists" | "all_of" | "any_of" | "compound",
+            "condition_type": "all_tasks_complete" | "goal_achieved" | "turn_count_exceeded" | "deliverable_value" | "deliverable_value_in" | "deliverable_value_numeric" | "deliverable_exists" | "all_of" | "any_of" | "compound",
             "priority": 1,
             "condition_config": {}
           }
@@ -551,12 +551,16 @@ Guidelines:
     - Always include transitions for each non-terminal state.
     - Always set an explicit numeric priority.
     - Lower priority number is evaluated first.
-    - Keep fallback transitions last (typically "all_tasks_complete" with a high priority value).
+    - For goal states, use ONLY "goal_achieved", "deliverable_exists", or "deliverable_value".
+    - Never use "all_tasks_complete" for goal states.
+    - For strict/loose states, never use "goal_achieved".
+    - Keep fallback transitions last (typically "all_tasks_complete" with a high priority value for strict/loose states).
 13. CONDITION CONFIG PATTERNS:
     - "deliverable_value": { "key": "...", "value": ... }
     - "deliverable_value_in": { "key": "...", "values": [ ... ] }
     - "deliverable_value_numeric": { "key": "...", "operator": "gt|gte|lt|lte|eq|neq|between", "value": n } OR { "key": "...", "operator": "between", "min": n, "max": n, "inclusive": true|false }
     - "deliverable_exists": { "key": "..." }
+    - "goal_achieved": {} (no config required, goal states only)
     - "turn_count_exceeded": { "turns": n, "scope": "without_progress" | "total" }
     - "all_of": { "conditions": [ { "condition_type": "...", "condition_config": { ... } }, ... ] }
     - "any_of": { "conditions": [ { "condition_type": "...", "condition_config": { ... } }, ... ] }
@@ -670,7 +674,7 @@ Respond ONLY with valid JSON matching the schema above.`;
         transitions: [
           {
             target_state_id: nextStateId,
-            condition_type: 'all_tasks_complete',
+            condition_type: state.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete',
             priority: 1,
           },
         ],
