@@ -175,7 +175,7 @@ The structure must follow this exact schema:
 {
   "content": {
     "id": "plan_<unique_id>",
-    "title": "Human-readable plan name",
+    "title": "Plan name",
     "description": "Brief description of the plan purpose",
     "initial_state_id": "state_<first_state_id>",
     "states": [
@@ -529,6 +529,125 @@ EXAMPLE 3 — Conditional branching transitions:
   "suggestedDescription": "Routes users by issue category and urgency."
 }
 
+EXAMPLE 4 — Branching with explicit fallback path:
+
+{
+  "content": {
+    "id": "plan_intake_router",
+    "title": "Onboarding Intake Router",
+    "description": "Route users into onboarding, escalation, or standard follow-up based on responses",
+    "initial_state_id": "state_initial_assessment",
+    "states": [
+      {
+        "id": "state_initial_assessment",
+        "title": "Initial Assessment",
+        "type": "loose",
+        "description": "Collect account status, intent, and urgency",
+        "tasks": [
+          {
+            "id": "task_account_status",
+            "description": "Capture account status",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "account_status",
+                "description": "Current customer account state",
+                "type": "enum",
+                "required": true,
+                "enum_values": ["new", "active", "blocked"],
+                "acceptance_criteria": "Must resolve to one of: new, active, blocked. Reject unclear answers like 'kind of active' without clarification."
+              }
+            ]
+          },
+          {
+            "id": "task_request_intent",
+            "description": "Capture request intent",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "intent",
+                "description": "What the user wants to do",
+                "type": "enum",
+                "required": true,
+                "enum_values": ["setup_help", "technical_issue", "billing_question"],
+                "acceptance_criteria": "Must map to setup_help, technical_issue, or billing_question."
+              }
+            ]
+          },
+          {
+            "id": "task_urgency",
+            "description": "Capture urgency score",
+            "required": true,
+            "deliverables": [
+              {
+                "key": "urgency_score",
+                "description": "Urgency from 1 to 10",
+                "type": "number",
+                "required": true,
+                "acceptance_criteria": "Integer from 1 to 10. Reject values outside range."
+              }
+            ]
+          }
+        ],
+        "transitions": [
+          {
+            "target_state_id": "state_escalation",
+            "condition_type": "any_of",
+            "priority": 1,
+            "condition_config": {
+              "conditions": [
+                {
+                  "condition_type": "deliverable_value",
+                  "condition_config": { "key": "account_status", "value": "blocked" }
+                },
+                {
+                  "condition_type": "deliverable_value_numeric",
+                  "condition_config": { "key": "urgency_score", "operator": "gte", "value": 8 }
+                }
+              ]
+            }
+          },
+          {
+            "target_state_id": "state_guided_onboarding",
+            "condition_type": "deliverable_value",
+            "priority": 5,
+            "condition_config": { "key": "account_status", "value": "new" }
+          },
+          {
+            "target_state_id": "state_standard_followup",
+            "condition_type": "all_tasks_complete",
+            "priority": 99
+          }
+        ]
+      },
+      {
+        "id": "state_escalation",
+        "title": "Escalation",
+        "type": "strict",
+        "description": "Collect details and route to senior support",
+        "tasks": []
+      },
+      {
+        "id": "state_guided_onboarding",
+        "title": "Guided Onboarding",
+        "type": "strict",
+        "description": "Help new users complete setup confidently",
+        "tasks": []
+      },
+      {
+        "id": "state_standard_followup",
+        "title": "Standard Follow-up",
+        "type": "strict",
+        "description": "Handle normal requests with standard workflow",
+        "tasks": []
+      }
+    ],
+    "system_prompt": "You are a practical onboarding specialist. Ask clear questions, classify intent accurately, and route users to the right next step without over-talking."
+  },
+  "suggestedName": "Onboarding Intake Router",
+  "suggestedDescription": "Routes users to escalation, onboarding, or standard flow using explicit branching transitions."
+}
+
 Guidelines:
 1. REQUIRED FIELDS: Always include id, title, description, and initial_state_id in content
 2. STATES = conversation phases (typically 2-4 states)
@@ -551,6 +670,8 @@ Guidelines:
     - Always include transitions for each non-terminal state.
     - Always set an explicit numeric priority.
     - Lower priority number is evaluated first.
+    - For branching plans, include at least one state with 2+ outgoing transitions that have distinct priorities.
+    - For branching plans, include an explicit fallback path (usually "all_tasks_complete" with high priority like 99).
     - Keep fallback transitions last (typically "all_tasks_complete" with a high priority value).
 13. CONDITION CONFIG PATTERNS:
     - "deliverable_value": { "key": "...", "value": ... }
