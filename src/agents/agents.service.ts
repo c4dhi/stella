@@ -9,6 +9,7 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 import { EncryptionService } from '../env-var-templates/encryption.service';
+import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 
 /**
  * AgentsService - Manages agent lifecycle.
@@ -26,8 +27,10 @@ export class AgentsService {
     private prisma: PrismaService,
     private k8s: KubernetesService,
     private configService: ConfigService,
-    // Reuse the existing encryption service to avoid storing manual env vars as plaintext.
+    // Used for encrypting manual env vars at persist time and decrypting them on restart.
     private readonly encryptionService: EncryptionService,
+    // Used for resolving env vars (template decrypt + manual merge) before K8s pod creation.
+    private readonly envVarTemplatesService: EnvVarTemplatesService,
     private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
@@ -67,40 +70,31 @@ export class AgentsService {
   }
 
   /**
-   * Encrypt manually entered env vars before persisting them on the agent record.
-   * Returns null when no manual values were provided.
-   */
-  private encryptManualEnvVarsForStorage(envVars?: Record<string, string>): string | null {
-    // Only persist non-empty maps so we do not store noise or placeholder objects.
-    if (!envVars || Object.keys(envVars).length === 0) {
-      return null;
-    }
-    try {
-      return this.encryptionService.encrypt(envVars);
-    } catch (error) {
-      this.logger.error(`Failed to encrypt manual env vars for storage: ${error.message}`);
-      throw new BadRequestException('Unable to store manual environment variables');
-    }
-  }
-
-  /**
-   * Decrypt persisted manual env vars so restart can recreate the same secret values.
-   */
-  private decryptManualEnvVarsForRestart(encryptedEnvVars: string, agentId: string): Record<string, string> {
-    try {
-      return this.encryptionService.decrypt(encryptedEnvVars);
-    } catch (error) {
-      this.logger.error(`Failed to decrypt manual env vars for agent ${agentId}: ${error.message}`);
-      throw new BadRequestException('Unable to restore manual environment variables for restart');
-    }
-  }
-
-  /**
    * Security: Sanitize agent config to prevent injection attacks.
    * Delegates to shared utility in common/utils/sanitize-config.ts
    */
   private sanitizeAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
     return sanitizeAgentConfig(config);
+  }
+
+  /**
+   * Validate that the agent config satisfies requirements for the given agent type.
+   * Called on every create() path so no entry point can skip type-specific validation.
+   *
+   * Currently enforced: stella-v2-agent requires a pipeline_config object.
+   */
+  private validateRuntimeConfigForAgentType(
+    agentTypeSlug: string,
+    runtimeConfig: Record<string, unknown>,
+  ): void {
+    if (agentTypeSlug !== 'stella-v2-agent') return;
+
+    const pipelineConfig = runtimeConfig.pipeline_config;
+    if (!pipelineConfig || typeof pipelineConfig !== 'object' || Array.isArray(pipelineConfig)) {
+      throw new BadRequestException(
+        'stella-v2-agent requires a pipeline configuration (config.pipeline_config).',
+      );
+    }
   }
 
   /**
@@ -270,8 +264,17 @@ export class AgentsService {
 
     // Security: Validate and sanitize agent config
     const agentConfig = this.sanitizeAgentConfig(createAgentDto.config || {});
-    // Persist manual env vars encrypted so restart can reapply them without asking user again.
-    const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
+
+    // Validate type-specific config requirements for ALL creation paths.
+    // (Previously this only ran for public-project flows in PublicProjectsService.)
+    this.validateRuntimeConfigForAgentType(agentType, agentConfig);
+
+    // Encrypt manual env vars now so they are persisted before the async pod creation.
+    // This guarantees restart() can recover them even if the pod creation fails.
+    const manualEnvVarsEncrypted =
+      createAgentDto.envVars && Object.keys(createAgentDto.envVars).length > 0
+        ? this.encryptionService.encrypt(createAgentDto.envVars)
+        : null;
 
     // 1. Create agent record (status=STARTING, no podName yet)
     const agent = await this.prisma.agentInstance.create({
@@ -420,8 +423,11 @@ export class AgentsService {
 
     // Determine agent type (default to stella-agent)
     const agentType = createAgentDto.agentType || 'stella-agent';
-    // Persist manual env vars encrypted so standalone agents have the same restart behavior.
-    const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
+    // Encrypt manual env vars so standalone agents have the same restart behavior as regular agents.
+    const manualEnvVarsEncrypted =
+      createAgentDto.envVars && Object.keys(createAgentDto.envVars).length > 0
+        ? this.encryptionService.encrypt(createAgentDto.envVars)
+        : null;
 
     // Create agent record with gRPC address
     const agent = await this.prisma.agentInstance.create({
@@ -868,9 +874,10 @@ export class AgentsService {
       select: { resourceCpu: true, resourceMemory: true },
     });
 
-    // Restore manual env vars captured at deploy time so restart keeps one-time manual values.
+    // Decrypt the manual env vars that were stored at deploy time so the restarted pod gets
+    // the same custom values without requiring the user to re-enter them.
     const restoredManualEnvVars = agent.manualEnvVarsEncrypted
-      ? this.decryptManualEnvVarsForRestart(agent.manualEnvVarsEncrypted, id)
+      ? this.encryptionService.decrypt(agent.manualEnvVarsEncrypted)
       : undefined;
 
     // Recreate Kubernetes pod with SAME agent ID
