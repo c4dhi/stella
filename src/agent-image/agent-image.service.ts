@@ -202,8 +202,15 @@ export class AgentImageService {
       return existingBuild;
     }
 
-    // Build the image and return the image name when done
+    // Build the image and return the image name when done.
+    // Optimization: if the :latest image is already in the runtime (pre-built
+    // during deployment), tag it directly instead of running a full docker
+    // build + docker save + ctr import (~950MB round-trip).
     const buildPromise = (async (): Promise<string> => {
+      if (!forceRebuild) {
+        const tagged = await this.tryTagFromLatest(config, fullImageName);
+        if (tagged) return fullImageName;
+      }
       await this.buildAndImportImage(config, fullImageName, forceRebuild);
       return fullImageName;
     })();
@@ -301,6 +308,56 @@ export class AgentImageService {
         this.logger.error(`Build stderr: ${execError.stderr}`);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Try to create the cfg-tagged image by tagging the existing :latest image.
+   * On K3s, tags directly in containerd to avoid the expensive docker save/import.
+   * Returns true if successful, false if caller should fall back to full build.
+   */
+  private async tryTagFromLatest(
+    config: AgentImageConfig,
+    fullImageName: string,
+  ): Promise<boolean> {
+    const latestImage = `${config.imageName}:${config.tag}`;
+
+    try {
+      // Tag in Docker (instant — same layers)
+      const dockerHasLatest = await (async () => {
+        try {
+          const { stdout } = await execAsync(`docker images -q ${latestImage}`, { timeout: 5000 });
+          return stdout.trim().length > 0;
+        } catch { return false; }
+      })();
+
+      if (!dockerHasLatest) {
+        this.logger.debug(`Fast tag: ${latestImage} not found in Docker, skipping`);
+        return false;
+      }
+
+      await execAsync(`docker tag ${latestImage} ${fullImageName}`, { timeout: 10000 });
+
+      if (this.isProduction) {
+        // Tag directly in K3s containerd (avoids 950MB save/import round-trip)
+        const latestRef = `docker.io/library/${latestImage}`;
+        const cfgRef = `docker.io/library/${fullImageName}`;
+
+        try {
+          await execAsync(`k3s ctr images tag ${latestRef} ${cfgRef}`, { timeout: 10000 });
+        } catch {
+          await execAsync(
+            `ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images tag ${latestRef} ${cfgRef}`,
+            { timeout: 10000 },
+          );
+        }
+      }
+
+      this.logger.log(`Fast-tagged ${fullImageName} from ${latestImage} (skipped full build)`);
+      return true;
+    } catch (error) {
+      this.logger.warn(`Fast tag failed, falling back to full build: ${error.message}`);
+      return false;
     }
   }
 
