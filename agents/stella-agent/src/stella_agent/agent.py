@@ -14,6 +14,7 @@ Supports both:
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 import uuid
@@ -142,6 +143,8 @@ class StellaAgent(BaseAgent):
             AgentOutput messages (status updates, text chunks, debug, errors)
         """
         self._is_processing = True
+        t_pipeline_start = time.perf_counter()
+        turn_id = getattr(self._audio_pipeline, '_turn_id', None) or "" if hasattr(self, '_audio_pipeline') else ""
 
         try:
             # Fetch conversation history from database (stateless - no in-memory storage)
@@ -168,6 +171,7 @@ class StellaAgent(BaseAgent):
             print(f"[StellaAgent] Running InputGate for: '{input.text}'")
 
             # Pass state machine context to input gate
+            t_gate_start = time.perf_counter()
             async for output in self.input_gate.process(
                 session_id=input.session_id,
                 user_input=input.text,
@@ -176,6 +180,12 @@ class StellaAgent(BaseAgent):
                 state_machine_context=sm_context
             ):
                 yield output
+            yield AgentOutput.analytics(
+                input.session_id,
+                stage="input_gate",
+                timing_ms=(time.perf_counter() - t_gate_start) * 1000,
+                turn_id=turn_id,
+            )
 
             # Get gate result
             gate_result = self.input_gate.last_result
@@ -204,6 +214,15 @@ class StellaAgent(BaseAgent):
                 deliverables_detected=list(gate_result.deliverables.keys()) if gate_result.deliverables else []
             )
 
+            # Analytics: safety routing decision
+            yield AgentOutput.analytics(
+                input.session_id, stage="safety_routing", timing_ms=0,
+                route=gate_result.route.value,
+                experts_consulted=gate_result.experts_to_consult,
+                confidence=gate_result.confidence,
+                turn_id=turn_id,
+            )
+
             # Step 2: Handle routing
             if gate_result.route == GateRoute.SAFE:
                 # SAFE route - InputGate already streamed the response
@@ -225,6 +244,7 @@ class StellaAgent(BaseAgent):
                     )
 
                     # Start expert pool IMMEDIATELY in background (don't wait for interim message)
+                    t_experts_start = time.perf_counter()
                     expert_outputs_queue: asyncio.Queue = asyncio.Queue()
 
                     async def run_experts_background():
@@ -275,8 +295,22 @@ class StellaAgent(BaseAgent):
                     # Ensure expert task is complete
                     await expert_task
 
+                    # Analytics: bridge generation (interim message fired while experts ran)
+                    yield AgentOutput.analytics(
+                        input.session_id, stage="bridge_generation",
+                        timing_ms=(time.perf_counter() - t_experts_start) * 1000,
+                        bridge_fired=True, turn_id=turn_id,
+                    )
+
                     # Get expert results
                     expert_results = self.expert_pool.last_results
+                    yield AgentOutput.analytics(
+                        input.session_id,
+                        stage="expert_pool",
+                        timing_ms=(time.perf_counter() - t_experts_start) * 1000,
+                        expert_count=len(expert_results),
+                        turn_id=turn_id,
+                    )
 
                     print(f"[StellaAgent] Got {len(expert_results)} expert results")
 
@@ -288,6 +322,7 @@ class StellaAgent(BaseAgent):
                     )
 
                     # Step 2b: Run Aggregator
+                    t_agg_start = time.perf_counter()
                     async for output in self.aggregator.synthesize(
                         session_id=input.session_id,
                         user_input=input.text,
@@ -297,6 +332,12 @@ class StellaAgent(BaseAgent):
                         state_machine_context=sm_context  # Pass plan context for deliverable-focused responses
                     ):
                         yield output
+                    yield AgentOutput.analytics(
+                        input.session_id,
+                        stage="aggregator",
+                        timing_ms=(time.perf_counter() - t_agg_start) * 1000,
+                        turn_id=turn_id,
+                    )
 
                     # Get aggregator result (used for verification, response already streamed)
                     agg_result = self.aggregator.last_result
@@ -362,6 +403,14 @@ class StellaAgent(BaseAgent):
                                 completed_tasks=result.completed_tasks
                             )
 
+                            # Analytics: state transition
+                            yield AgentOutput.analytics(
+                                input.session_id, stage="state_transition", timing_ms=0,
+                                from_state=old_state_id, to_state=new_state_id,
+                                transition_reason=result.transition_reason or "all_tasks_complete",
+                                was_expected=True, turn_id=turn_id,
+                            )
+
                 # Emit deliverables via SDK
                 for key, value in gate_result.deliverables.items():
                     yield AgentOutput.deliverable(
@@ -415,6 +464,14 @@ class StellaAgent(BaseAgent):
                                 completed_tasks=gate_result.completed_tasks
                             )
 
+                            # Analytics: state transition (explicit completion)
+                            yield AgentOutput.analytics(
+                                input.session_id, stage="state_transition", timing_ms=0,
+                                from_state=old_state_id, to_state=new_state_id,
+                                transition_reason="explicit_task_completion",
+                                was_expected=True, turn_id=turn_id,
+                            )
+
             # No deliverables or completed tasks - increment turn counter
             if not gate_result.deliverables and not gate_result.completed_tasks:
                 if self.state_machine.is_initialized:
@@ -440,6 +497,14 @@ class StellaAgent(BaseAgent):
                         agent_name=self.agent_name,
                         agent_icon="🤖"
                     )
+
+            # Emit total pipeline timing
+            yield AgentOutput.analytics(
+                input.session_id,
+                stage="total",
+                timing_ms=(time.perf_counter() - t_pipeline_start) * 1000,
+                turn_id=turn_id,
+            )
 
         except Exception as e:
             print(f"[StellaAgent] Processing error: {e}")
@@ -631,6 +696,26 @@ class StellaAgent(BaseAgent):
             # Add state machine summary if initialized (legacy mode)
             todo_list = self.state_machine.get_todo_list()
             if todo_list:
+                # Analytics: plan completion
+                total = todo_list.total_items
+                completed = todo_list.completed_items
+                rate = (completed / total) if total > 0 else 0.0
+                reached_end = todo_list.progress_percentage >= 100.0
+
+                if self.has_audio:
+                    try:
+                        await self.audio._room.publish_data({
+                            "type": "analytics",
+                            "data": {
+                                "stage": "plan_completion", "timing_ms": 0,
+                                "total_tasks": total, "completed_tasks": completed,
+                                "completion_rate": rate, "plan_reached_end": reached_end,
+                                "plan_id": todo_list.plan_id,
+                            }
+                        })
+                    except Exception:
+                        pass  # Room may be closing
+
                 summary["state_machine"] = {
                     "plan_id": todo_list.plan_id,
                     "plan_title": todo_list.plan_title,

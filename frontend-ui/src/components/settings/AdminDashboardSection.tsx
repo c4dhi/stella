@@ -346,7 +346,7 @@ export default function AdminDashboardSection() {
                   isDark ? 'text-content-inverse' : 'text-content'
                 }`}
               >
-                Admin Dashboard
+                Resource Dashboard
               </h2>
               {connectionIndicator}
             </div>
@@ -394,7 +394,7 @@ export default function AdminDashboardSection() {
                 isDark ? 'text-content-inverse' : 'text-content'
               }`}
             >
-              Admin Dashboard
+              Resource Dashboard
             </h2>
             <div className="flex items-center gap-4">
               <p

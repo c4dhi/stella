@@ -1579,6 +1579,27 @@ class SessionManagementClient {
       body: JSON.stringify({ isAdmin }),
     })
   }
+
+  // ============================================================================
+  // Agent Analytics API
+  // ============================================================================
+
+  async getAgentMetrics(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').AgentMetricsResponse> {
+    return this.get<import('../lib/api-types').AgentMetricsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getSessionAnalytics(sessionId: string): Promise<import('../lib/api-types').SessionAnalyticsResponse> {
+    return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/sessions/${sessionId}/analytics`)
+  }
+
+  async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {
+    const params = `since=${encodeURIComponent(since)}${stage ? `&stage=${encodeURIComponent(stage)}` : ''}`
+    return this.get<import('../lib/api-types').MetricsTimelineResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/timeline?${params}`
+    )
+  }
 }
 
 // Export singleton instance

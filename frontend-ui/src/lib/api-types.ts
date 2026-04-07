@@ -1131,6 +1131,67 @@ export interface TranscriptExport {
 }
 
 // ============================================================================
+// Agent Analytics Types
+// ============================================================================
+
+export interface StageLatency {
+  stage: string
+  count: number
+  mean_ms: number
+  p50_ms: number
+  p95_ms: number
+  min_ms: number
+  max_ms: number
+}
+
+export interface OutlierStage {
+  stage: string
+  sessionMean_ms: number
+  globalP50_ms: number
+}
+
+export interface OutlierSession {
+  sessionId: string
+  sessionName: string
+  createdAt: string
+  outlierStages: OutlierStage[]
+}
+
+export interface MetricsSummary {
+  planCompletion: { totalSessions: number; completedPlans: number; avgCompletionRate: number } | null
+  safetyRouting: { totalTurns: number; safeTurns: number; unsafeTurns: number; interceptionRate: number } | null
+  stateTransitions: { totalTransitions: number; expectedTransitions: number; accuracy: number } | null
+  bridgeGeneration: { totalBridges: number; avgBridgeDuration_ms: number } | null
+}
+
+export interface AgentMetricsResponse {
+  agentSlug: string
+  projectId: string
+  dateRange: { from: string; to: string }
+  totalSessions: number
+  totalTurns: number
+  stages: StageLatency[]
+  outlierSessions: OutlierSession[]
+  summary: MetricsSummary
+}
+
+export interface SessionAnalyticsResponse {
+  sessionId: string
+  totalTurns: number
+  stages: StageLatency[]
+}
+
+export interface MetricsTimelinePoint {
+  timestamp: string
+  timing_ms: number
+  sessionId: string
+}
+
+export interface MetricsTimelineResponse {
+  points: MetricsTimelinePoint[]
+}
+
+// ============================================================================
 // Admin Dashboard Types
 // ============================================================================
 
