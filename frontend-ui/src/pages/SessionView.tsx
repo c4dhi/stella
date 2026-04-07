@@ -935,6 +935,7 @@ export default function SessionView() {
               listenerStatus={listenerStatus}
               onShowLogs={() => setShowLogsModal(true)}
               sessionId={sessionId}
+              sessionStatus={session?.status}
               viewerIdentity="human"
               viewerName={user?.name}
             />

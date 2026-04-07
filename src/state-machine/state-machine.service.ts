@@ -1656,18 +1656,14 @@ export class StateMachineService {
         `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
       );
 
-      // End state reached: mark the session CLOSING first, then return completion.
-      // CLOSED is now finalized later when the agent disconnects, which prevents
-      // cleanup logic from racing while farewell TTS is still in progress.
+      // End state reached: return completion metadata but do NOT mark session
+      // as CLOSING yet. The agent will send a "session_completed" data message
+      // to the frontend (triggering the completion overlay), then disconnect.
+      // The session stays ACTIVE so the participant remains connected and can
+      // see the overlay. Session cleanup happens when the participant disconnects.
       if (matchedTargetId === END_STATE_ID) {
         const endConfig = rawPlan.metadata?.plan_builder?.canvas?.end_node_config;
-        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — marking CLOSING`);
-
-        // Keep closedAt null until shutdown is confirmed and final CLOSED is written.
-        await this.prisma.session.update({
-          where: { id: sessionId },
-          data: { status: 'CLOSING', closedAt: null },
-        });
+        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — agent will handle shutdown`);
 
         return {
           transitioned: true,

@@ -73,7 +73,7 @@ class WhisperSession(STTSession):
         self.silence_duration_ms = config.get('silence_duration_ms', 500)
         self.continuation_window_ms = config.get('continuation_window_ms', 600)
         self.max_endpointing_delay_ms = config.get('max_endpointing_delay_ms', 2000)
-        self.min_speech_samples = config.get('min_speech_samples', 8000)  # 0.5s @ 16kHz
+        self.min_speech_samples = config.get('min_speech_samples', 3200)  # 0.2s @ 16kHz (was 0.5s — too long for "yes"/"no")
         self.max_speech_duration_ms = config.get('max_speech_duration_ms', 30000)
         self.partial_interval_ms = config.get('partial_interval_ms', 1000)
         self.audio_inactivity_timeout_ms = config.get('audio_inactivity_timeout_ms', 1500)

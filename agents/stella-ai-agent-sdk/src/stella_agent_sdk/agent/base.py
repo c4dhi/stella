@@ -732,6 +732,20 @@ class BaseAgent(ABC):
                 # If the plan reached __end__ during this turn, stop accepting new input.
                 # The farewell has already been spoken; exit the loop cleanly.
                 if self._session_completed:
+                    # Wait for any remaining TTS audio to finish playing on the
+                    # client before sending the completion signal and disconnecting.
+                    # flush_speech_queue (in the finally block above) ensures all
+                    # sentences are synthesized, but the client needs extra time
+                    # to play the audio through speakers.
+                    await asyncio.sleep(3)
+
+                    # Notify frontend that session is complete (triggers completion overlay).
+                    await self.audio._room.publish_data({
+                        "type": "session_completed",
+                        "data": {}
+                    })
+                    # Brief delay to ensure the data message is delivered before disconnect.
+                    await asyncio.sleep(1)
                     logger.info("Session completed — exiting audio loop")
                     break
 

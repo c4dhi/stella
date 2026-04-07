@@ -841,15 +841,74 @@ export const useStore = create<
 
   // Task timeline actions for time machine feature
   buildTaskUpdateTimeline: (messages) => {
-    // Extract all task update messages and build chronological timeline
+    // Extract all task update messages and build chronological timeline.
+    // Handles both stella-v1 (complete_todo_list) and stella-v2 (progress_update) formats.
     const taskUpdates = messages
       .filter(msg => {
+        if (!msg.metadata) return false
         const envelope = msg.metadata?.envelope
-        return envelope?.type === 'complete_todo_list'
+        // stella-v1: complete_todo_list envelope
+        if (envelope?.type === 'complete_todo_list') return true
+        // stella-v2: progress_update envelope (stored with full envelope wrapper)
+        if (envelope?.type === 'progress_update') return true
+        return false
       })
       .map(msg => {
         const envelope = msg.metadata.envelope
         const data = envelope.data || envelope
+
+        if (envelope.type === 'progress_update') {
+          // stella-v2: convert ProgressUpdateMessage to TodoList-compatible format
+          // Use the raw progress data — the frontend's handleProgressUpdate logic
+          // will convert it when applied via applyLatestTaskState
+          return {
+            timestamp: new Date(msg.timestamp).getTime(),
+            messageId: msg.id,
+            agentId: msg.metadata.participant_id || data.metadata?.agent_id || 'unknown',
+            agentName: data.metadata?.agent_name,
+            todoList: {
+              initialized: true,
+              states: data.groups?.map((group: any) => ({
+                id: group.id,
+                title: group.label,
+                type: group.metadata?.state_type || (group.execution_mode === 'sequential' ? 'sequential' : 'flexible'),
+                description: group.description || '',
+                status: group.status,
+                is_current: group.is_current,
+                completed_at: group.completed_at,
+                tasks: (group.items || []).map((item: any) => ({
+                  id: item.metadata?.task_id || item.id,
+                  description: item.metadata?.task_description || item.label,
+                  instruction: item.metadata?.is_task_item ? item.description : '',
+                  required: item.required,
+                  status: item.metadata?.is_task_item ? item.status : (
+                    // Derive task status from items grouped by task_id
+                    item.status === 'completed' || item.status === 'skipped' ? 'completed' : item.status
+                  ),
+                  deliverables: item.metadata?.is_task_item ? [] : [{
+                    key: item.id,
+                    description: item.label,
+                    type: item.metadata?.deliverable_type || 'string',
+                    required: item.required,
+                    status: item.status,
+                    value: item.value,
+                    collected_at: item.collected_at,
+                    confidence: item.confidence,
+                    reasoning: item.metadata?.reasoning,
+                    acceptance_criteria: item.metadata?.acceptance_criteria,
+                    discovered: item.metadata?.discovered || false,
+                  }],
+                })),
+              })) || [],
+              progress_percentage: data.progress_percentage || 0,
+              current_state: null,
+              current_task: null,
+              agentIcon: data.metadata?.agent_icon || '🧠',
+            } as any,
+          }
+        }
+
+        // stella-v1: complete_todo_list format
         return {
           timestamp: new Date(msg.timestamp).getTime(),
           messageId: msg.id,

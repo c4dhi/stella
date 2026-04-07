@@ -16,6 +16,7 @@ interface ChatViewProps {
   listenerStatus?: ListenerStatus | null
   onShowLogs?: () => void
   sessionId?: string
+  sessionStatus?: string   // Session status ('ACTIVE', 'CLOSING', 'CLOSED')
   viewerIdentity?: string  // Identity of current viewer (default: 'human' for organizer)
   viewerName?: string      // Display name of current viewer
 }
@@ -24,6 +25,7 @@ export default function ChatView({
   listenerStatus,
   onShowLogs,
   sessionId: propSessionId,
+  sessionStatus,
   viewerIdentity = 'human',  // Default to organizer identity
   viewerName
 }: ChatViewProps) {
@@ -435,10 +437,11 @@ export default function ChatView({
           <div className="flex items-center gap-3">
             <ProcessingToggle />
 
-            {/* Recording Indicator - Clickable Button */}
+            {/* Recording Indicator / Transcript Button */}
             {(() => {
               const isRecording = listenerStatus?.listener?.isConnected
               const isReconnecting = listenerStatus?.listener?.roomState === 'reconnecting'
+              const isClosed = sessionStatus === 'CLOSED'
 
               return (
                 <button
@@ -449,26 +452,30 @@ export default function ChatView({
                       : 'bg-surface-secondary border-border hover:bg-zinc-100 hover:border-border-secondary'
                   }`}
                   title={
-                    isRecording
-                      ? 'Recording active - Click to view logs'
-                      : isReconnecting
-                        ? 'Reconnecting to recorder - Click to view logs'
-                        : 'Not recording - Click to view logs'
+                    isClosed
+                      ? 'View transcript and logs'
+                      : isRecording
+                        ? 'Recording active - Click to view logs'
+                        : isReconnecting
+                          ? 'Reconnecting to recorder - Click to view logs'
+                          : 'Not recording - Click to view logs'
                   }
                 >
                   <div
                     className={`status-dot ${
-                      isRecording
-                        ? 'status-dot-error animate-pulse'
-                        : isReconnecting
-                          ? 'status-dot-warning'
-                          : 'status-dot-neutral'
+                      isClosed
+                        ? 'status-dot-neutral'
+                        : isRecording
+                          ? 'status-dot-error animate-pulse'
+                          : isReconnecting
+                            ? 'status-dot-warning'
+                            : 'status-dot-neutral'
                     }`}
                   />
                   <span className={`text-label uppercase ${
                     isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                   }`}>
-                    {isRecording ? 'RECORDING' : isReconnecting ? 'RECONNECTING' : 'IDLE'}
+                    {isClosed ? 'TRANSCRIPT' : isRecording ? 'RECORDING' : isReconnecting ? 'RECONNECTING' : 'IDLE'}
                   </span>
                   <svg
                     width="12"

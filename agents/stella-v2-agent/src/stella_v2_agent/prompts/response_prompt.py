@@ -54,15 +54,16 @@ def build_response_system_prompt(
     else:
         sections.append(_conversation_guidelines())
 
-    # 3. State machine context
-    sm_section = _state_machine_section(sm_context)
-    if sm_section:
-        sections.append(sm_section)
-
-    # 4. Arbitration directive (expert guidance)
+    # 3. Arbitration directive (expert guidance) — placed BEFORE state context
+    #    so the LLM reads it first and treats it as a priority instruction.
     directive_section = directive.to_prompt_section()
     if directive_section:
         sections.append(directive_section)
+
+    # 4. State machine context
+    sm_section = _state_machine_section(sm_context)
+    if sm_section:
+        sections.append(sm_section)
 
     return "\n\n".join(sections)
 
@@ -190,15 +191,17 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
     if current_task:
         parts.append(f"Current task: {current_task.get('description', '')}")
         instruction = current_task.get("instruction", "")
-        if instruction:
-            parts.append(f"Instruction: {instruction}")
 
-        # If all deliverables for this task were just collected, tell the LLM
-        # to perform the instruction but NOT re-ask for the deliverables.
+        # If any deliverables for this task were just collected, suppress the
+        # instruction (which typically says "ask the user...") to prevent
+        # re-asking about information already provided.
         task_del_keys = set(current_task.get("deliverable_keys", []))
-        if task_del_keys and task_del_keys.issubset(collected_keys):
-            # Check if ALL pending deliverables in the state are now collected
-            # (i.e., the entire state is completing, not just this task)
+        task_keys_just_collected = task_del_keys & collected_keys
+
+        if task_keys_just_collected:
+            # Don't show the instruction — it would tell the LLM to ask for
+            # something the user already provided this turn.
+            # Check if the entire state is completing
             all_pending_keys = {
                 d["key"] for d in sm_context.get("deliverables", [])
                 if d.get("status") == "pending"
@@ -207,21 +210,27 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
 
             if state_completing:
                 # Look up next state from the plan to guide the transition
-                next_state_hint = _get_next_state_hint(sm_context)
+                next_hint, hinted_task_id, hinted_task_has_deliverables = _get_next_state_hint(sm_context)
                 note = (
-                    "NOTE: The user already provided everything needed for this task. "
-                    "Perform the instruction above but do NOT ask questions about information "
-                    "the user already gave you."
+                    "NOTE: The user just provided all the information needed. "
+                    "Do NOT re-ask or confirm what they said — simply acknowledge naturally and move on."
                 )
-                if next_state_hint:
-                    note += f" After this, transition to: {next_state_hint}"
+                if next_hint:
+                    note += f" Transition to: {next_hint}"
                 parts.append(note)
+
+                # Track if the transition hint included a no-deliverable task
+                # so auto-complete can fire for it in _process_post_response.
+                if hinted_task_id and not hinted_task_has_deliverables:
+                    sm_context["_hinted_task_id"] = hinted_task_id
             else:
                 parts.append(
-                    "NOTE: The user already provided everything needed for this task. "
-                    "Perform the instruction above but do NOT ask questions about information "
-                    "the user already gave you. After this, move on to the next topic."
+                    "NOTE: The user just provided information for this task. "
+                    "Do NOT re-ask or confirm what they said — acknowledge naturally and move to the next topic."
                 )
+        elif instruction:
+            # No deliverables just collected — show the instruction normally
+            parts.append(f"Instruction: {instruction}")
 
     # Filter out just-collected deliverables from the pending list.
     deliverables = sm_context.get("deliverables", [])
@@ -256,31 +265,38 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _get_next_state_hint(sm_context: Dict[str, Any]) -> str:
+def _get_next_state_hint(sm_context: Dict[str, Any]) -> tuple:
     """Look up the next state from the full plan to guide transitions.
 
     Includes the first task's full instruction so the agent can ask
     the right question immediately without waiting for the next turn.
+
+    Returns:
+        Tuple of (hint_text, first_task_id, first_task_has_deliverables).
     """
     full_plan = sm_context.get("full_plan", [])
     current_state = sm_context.get("state", {})
     current_id = current_state.get("id")
 
     if not full_plan or not current_id:
-        return ""
+        return "", None, False
 
     for i, state in enumerate(full_plan):
         if state.get("id") == current_id and i + 1 < len(full_plan):
             next_state = full_plan[i + 1]
             title = next_state.get("title", "")
             if not title:
-                return ""
+                return "", None, False
             tasks = next_state.get("tasks", [])
             if tasks:
                 first_task = tasks[0]
+                task_id = first_task.get("id")
+                has_deliverables = first_task.get("has_deliverables", len(first_task.get("deliverables", [])) > 0)
                 instruction = first_task.get("instruction", "")
                 if instruction:
-                    return f"{title}. Your first task: {first_task.get('description', '')} — {instruction}"
-                return f"{title}. First task: {first_task.get('description', '')}"
-            return title
-    return ""
+                    hint = f"{title}. Your first task: {first_task.get('description', '')} — {instruction}"
+                else:
+                    hint = f"{title}. First task: {first_task.get('description', '')}"
+                return hint, task_id, has_deliverables
+            return title, None, False
+    return "", None, False

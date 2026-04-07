@@ -18,6 +18,7 @@ import VisualizerGallery from '../face/VisualizerGallery'
 import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
 import SupportModal from './SupportModal'
+import SessionCompletedOverlay from './SessionCompletedOverlay'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
@@ -82,6 +83,8 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [showControls, setShowControls] = useState(true)
   const [audioEnabled, setAudioEnabled] = useState(false)  // Tracks if user has enabled audio via interaction
   const [isSupportOpen, setIsSupportOpen] = useState(false)
+  const [sessionCompleted, setSessionCompleted] = useState(false)
+  const sessionCompletedRef = useRef(false)
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
@@ -403,6 +406,14 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         const decoder = new TextDecoder()
         const envelope = JSON.parse(decoder.decode(payload))
 
+        // Handle session completed signal from agent
+        if (envelope.type === 'session_completed') {
+          console.log('[Participant] Session completed signal received')
+          sessionCompletedRef.current = true
+          setSessionCompleted(true)
+          return
+        }
+
         // Handle transcript, transcript_chunk, AND agent_text (like PeerTransport)
         if (envelope.type === 'transcript' || envelope.type === 'transcript_chunk' || envelope.type === 'agent_text') {
           const msgData = envelope.data  // Access nested data
@@ -559,8 +570,11 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
   // Handle room disconnection
   const handleDisconnected = useCallback(() => {
-    setConnectionError('Disconnected from session')
     cleanupAudio()
+    // Don't show error if session completed normally
+    if (!sessionCompletedRef.current) {
+      setConnectionError('Disconnected from session')
+    }
   }, [])
 
   // Handle participant joined (for real-time notifications)
@@ -829,6 +843,22 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     // Clear remote track reference
     remoteAudioTrackRef.current = null
   }
+
+  // Mute microphone when session completes
+  useEffect(() => {
+    if (sessionCompleted && !isMuted && room) {
+      // Unpublish audio track
+      if (publishedAudioTrackRef.current?.track) {
+        room.localParticipant.unpublishTrack(publishedAudioTrackRef.current.track)
+        publishedAudioTrackRef.current = null
+      }
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop())
+        localStreamRef.current = null
+      }
+      setIsMuted(true)
+    }
+  }, [sessionCompleted, isMuted, room])
 
   // Handle mouse movement to show/hide controls
   useEffect(() => {
@@ -1202,6 +1232,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           {sessionData.participantName}
         </div>
       </motion.div>
+      {/* Session Completed Overlay */}
+      <SessionCompletedOverlay isVisible={sessionCompleted} participantName={sessionData.participantName} />
+
       </div>{/* End fullscreen container wrapper */}
     </motion.div>
   )
