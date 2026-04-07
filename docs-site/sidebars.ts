@@ -97,6 +97,7 @@ const sidebars: SidebarsConfig = {
         'plan-structure/tasks',
         'plan-structure/deliverables',
         'plan-structure/examples',
+        'plan-structure/json-schema-reference',
       ],
     },
     {
