@@ -23,7 +23,7 @@ import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
 import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpdateMessage, TodoList } from '../lib/types'
-import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
+import { progressUpdateToTodoList, resolveStateType } from '../lib/progressConversion'
 import { generateUUID } from '../lib/uuid'
 
 export default function SessionView() {
@@ -433,155 +433,8 @@ export default function SessionView() {
           current_group: data.current_group_id,
         })
 
-        // Helper to reconstruct tasks from items by grouping on task_id metadata
-        const reconstructTasksFromItems = (items: typeof data.groups[0]['items']) => {
-          if (!items || items.length === 0) return []
-
-          // Group items by task_id from metadata
-          const taskMap = new Map<string, {
-            id: string
-            description: string
-            instruction: string
-            deliverables: typeof items
-          }>()
-
-          for (const item of items) {
-            const taskId = item.metadata?.task_id || 'default_task'
-            const taskDescription = item.metadata?.task_description || item.description || 'Task'
-
-            if (!taskMap.has(taskId)) {
-              taskMap.set(taskId, {
-                id: taskId,
-                description: taskDescription,
-                instruction: '',
-                deliverables: []
-              })
-            }
-            taskMap.get(taskId)!.deliverables.push(item)
-          }
-
-          // Convert map to array of tasks
-          return Array.from(taskMap.values()).map(task => {
-            // Check if this is a task-level item (no deliverables)
-            const isTaskItem = task.deliverables.length === 1 && task.deliverables[0].metadata?.is_task_item
-
-            if (isTaskItem) {
-              const item = task.deliverables[0]
-              return {
-                id: task.id,
-                description: task.description,
-                instruction: item.description || '',
-                required: item.required,
-                status: item.status as TaskStatus,
-                deliverables: [],
-              }
-            }
-
-            // Determine task status based on deliverables
-            const allCompleted = task.deliverables.every(d => d.status === 'completed' || d.status === 'skipped')
-            const anyInProgress = task.deliverables.some(d => d.status === 'in_progress')
-            const taskStatus: TaskStatus = allCompleted ? TaskStatus.COMPLETED :
-                                           anyInProgress ? TaskStatus.IN_PROGRESS : TaskStatus.PENDING
-
-            return {
-              id: task.id,
-              description: task.description,
-              instruction: task.instruction,
-              required: task.deliverables.some(d => d.required),
-              status: taskStatus,
-              deliverables: task.deliverables.map(item => ({
-                key: item.id,
-                description: item.label,
-                type: item.metadata?.deliverable_type || 'string',
-                required: item.required,
-                status: item.status as DeliverableStatus,
-                value: item.value,
-                collected_at: item.collected_at,
-                confidence: item.confidence,
-                reasoning: item.metadata?.reasoning,
-                acceptance_criteria: item.metadata?.acceptance_criteria,
-                discovered: item.metadata?.discovered || false,
-              }))
-            }
-          })
-        }
-
-        // Resolve state type from metadata (preserves 'goal') with execution_mode fallback
-        const resolveStateType = (group: any): StateType => {
-          const metaType = group.metadata?.state_type
-          // Migration compatibility: backend may still emit legacy "strict"
-          if (metaType === 'strict') {
-            return 'sequential' as StateType
-          }
-          // Migration compatibility: backend may still emit legacy "loose"
-          if (metaType === 'loose') {
-            return 'flexible' as StateType
-          }
-          if (metaType === 'goal' || metaType === 'sequential' || metaType === 'flexible') {
-            return metaType as StateType
-          }
-          return group.execution_mode === 'sequential' ? 'sequential' as StateType : 'flexible' as StateType
-        }
-
-        // Convert generic SDK ProgressState to TodoList format
-        const todoList: TodoList = {
-          initialized: true,
-          first_state_activated_at: data.started_at || new Date().toISOString(),
-          total_states: data.groups?.length || 0,
-          current_state_index: data.groups?.findIndex(g => g.id === data.current_group_id) ?? 0,
-          completed_states: data.groups?.filter(g => g.status === 'completed').length || 0,
-          remaining_states: data.groups?.filter(g => g.status !== 'completed').length || 0,
-          progress_percentage: data.progress_percentage || 0,
-          agentIcon: data.metadata?.agent_icon || '🤖',
-          current_state: data.current_group_id ? (() => {
-            const group = data.groups?.find(g => g.id === data.current_group_id)
-            if (!group) return null
-            return {
-              id: group.id,
-              title: group.label,
-              type: resolveStateType(group),
-              description: group.description || '',
-              status: group.status as StateStatus,
-              state_number: data.groups?.findIndex(g => g.id === data.current_group_id) + 1 || 1,
-              is_complete: group.status === 'completed',
-            }
-          })() : null,
-          current_task: null,
-          states: data.groups?.map((group) => {
-            const tasks = reconstructTasksFromItems(group.items)
-            return {
-              id: group.id,
-              title: group.label,
-              type: resolveStateType(group),
-              description: group.description || '',
-              status: group.status as StateStatus,
-              is_current: group.is_current,
-              completed_at: group.completed_at || undefined,
-              tasks: tasks,
-            }
-          }) || [],
-          tasks_summary: {
-            total_tasks: data.groups?.reduce((sum, g) => {
-              // Count unique tasks from items metadata
-              const taskIds = new Set(g.items?.map(i => i.metadata?.task_id || 'default') || [])
-              return sum + taskIds.size
-            }, 0) || 0,
-            completed_tasks: data.groups?.reduce((sum, g) => {
-              const tasks = reconstructTasksFromItems(g.items)
-              return sum + tasks.filter(t => t.status === 'completed').length
-            }, 0) || 0,
-            pending_tasks: data.groups?.reduce((sum, g) => {
-              const tasks = reconstructTasksFromItems(g.items)
-              return sum + tasks.filter(t => t.status === 'pending').length
-            }, 0) || 0,
-            current_tasks: data.groups?.reduce((sum, g) => {
-              const tasks = reconstructTasksFromItems(g.items)
-              return sum + tasks.filter(t => t.status === 'in_progress').length
-            }, 0) || 0,
-          },
-          conversation_age_minutes: data.elapsed_minutes || 0,
-          last_updated: data.last_updated || new Date().toISOString(),
-        }
+        // Convert using shared utility (same logic used for historical replay)
+        const todoList = progressUpdateToTodoList(data)
 
         // Extract agent info from metadata
         const agentId = data.metadata?.agent_id || 'default-agent'

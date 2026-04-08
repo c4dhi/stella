@@ -1602,6 +1602,12 @@ class SessionManagementClient {
     )
   }
 
+  async getPlanCompletionSessions(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').PlanCompletionSessionsResponse> {
+    return this.get<import('../lib/api-types').PlanCompletionSessionsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/plan-completion/sessions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
   async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {
     const params = `since=${encodeURIComponent(since)}${stage ? `&stage=${encodeURIComponent(stage)}` : ''}`
     return this.get<import('../lib/api-types').MetricsTimelineResponse>(

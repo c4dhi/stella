@@ -334,8 +334,10 @@ class RoomManager:
                 should_store = True
                 print(f"   ✅ Storing analytics message")
 
-            elif message_type in ('complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'):
+            elif message_type in ('complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification', 'progress_update'):
                 # STORE: Task and plan updates (for task panel replay)
+                # Includes both stella-v1 (complete_todo_list, plan_progress_update) and
+                # stella-v2 SDK format (progress_update) for historical replay and time machine
                 should_store = True
                 print(f"   ✅ Storing task/plan message: {message_type}")
 

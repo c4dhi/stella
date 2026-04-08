@@ -169,6 +169,26 @@ export class AgentsController {
   }
 
   /**
+   * Get per-session plan completion data for drill-down.
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/plan-completion/sessions')
+  @UseGuards(ProjectAccessGuard)
+  async getPlanCompletionSessions(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getPlanCompletionSessions(projectId, agentSlug, fromDate, toDate);
+  }
+
+  /**
    * Get per-stage latency analytics for a single session.
    */
   @Get('sessions/:sessionId/analytics')

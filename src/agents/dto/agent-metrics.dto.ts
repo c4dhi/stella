@@ -88,3 +88,11 @@ export class SessionAnalyticsResponseDto {
   summary: MetricsSummaryDto;
   rawPoints: SessionStagePointDto[];
 }
+
+export class PlanCompletionSessionDto {
+  sessionId: string;
+  sessionName: string;
+  completionRate: number;
+  reachedEnd: boolean;
+  timestamp: string;
+}

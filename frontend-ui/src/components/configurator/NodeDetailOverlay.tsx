@@ -184,6 +184,57 @@ interface NodeDetailOverlayProps {
   arbitrationOrder?: string[]
 }
 
+/** Collapsible grouped settings card for model/temp/tokens.
+ *  Extracted to module level so React preserves its identity (and open state)
+ *  across parent re-renders triggered by config edits. */
+function SettingsGrid({ children, isDark }: { children: React.ReactNode; isDark: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className={`rounded-xl border ${
+      isDark ? 'bg-zinc-800/30 border-zinc-700/40' : 'bg-neutral-50/50 border-neutral-200/40'
+    }`}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`w-full flex items-center gap-2 px-4 py-3 text-left transition-colors rounded-xl ${
+          isDark ? 'hover:bg-zinc-800/60' : 'hover:bg-neutral-100/60'
+        }`}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+        </svg>
+        <span className={`flex-1 text-[11px] font-semibold tracking-wide uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+          Model Settings
+        </span>
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`transition-transform duration-200 ${open ? 'rotate-90' : ''} ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-2 gap-4 px-4 pb-4">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 export default function NodeDetailOverlay({
   node,
   configuration,
@@ -344,55 +395,6 @@ export default function NodeDetailOverlay({
     </div>
   )
 
-  /** Collapsible grouped settings card for model/temp/tokens */
-  const SettingsGrid = ({ children }: { children: React.ReactNode }) => {
-    const [open, setOpen] = useState(false)
-    return (
-      <div className={`rounded-xl border ${
-        isDark ? 'bg-zinc-800/30 border-zinc-700/40' : 'bg-neutral-50/50 border-neutral-200/40'
-      }`}>
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className={`w-full flex items-center gap-2 px-4 py-3 text-left transition-colors rounded-xl ${
-            isDark ? 'hover:bg-zinc-800/60' : 'hover:bg-neutral-100/60'
-          }`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
-          >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-          </svg>
-          <span className={`flex-1 text-[11px] font-semibold tracking-wide uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-            Model Settings
-          </span>
-          <svg
-            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''} ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="grid grid-cols-2 gap-4 px-4 pb-4">
-                {children}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    )
-  }
-
   // Per-stage content renderers
   const renderInputGate = () => {
     const systemPromptValue = getSlotValue('system_prompt')
@@ -416,7 +418,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 20, max: 500, step: 10 })}
@@ -526,7 +528,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1.5, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 50, max: 1000, step: 10 })}
@@ -556,7 +558,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 10, max: 100, step: 5 })}

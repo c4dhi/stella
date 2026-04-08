@@ -12,6 +12,7 @@ import type {
   StateChangeNotification,
 } from '../lib/types'
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
+import { progressUpdateToTodoList } from '../lib/progressConversion'
 import { apiClient } from '../services/ApiClient'
 import { PeerTransport } from '../services/PeerTransport'
 
@@ -844,74 +845,47 @@ export const useStore = create<
   buildTaskUpdateTimeline: (messages) => {
     // Extract all task update messages and build chronological timeline.
     // Handles both stella-v1 (complete_todo_list) and stella-v2 (progress_update) formats.
+    // Messages may be stored by either the Python recorder (messageType = envelope type,
+    // metadata.envelope = full envelope) or Node.js room monitor (messageType = 'task_update',
+    // metadata.envelope = full envelope for progress_update).
     const taskUpdates = messages
       .filter(msg => {
         if (!msg.metadata) return false
         const envelope = msg.metadata?.envelope
-        // stella-v1: complete_todo_list envelope
+        // Check envelope type (works for both recorder paths)
         if (envelope?.type === 'complete_todo_list') return true
-        // stella-v2: progress_update envelope (stored with full envelope wrapper)
         if (envelope?.type === 'progress_update') return true
+        // Fallback: check messageType for Python recorder path where envelope may be nested differently
+        if (msg.messageType === 'progress_update') return true
+        if (msg.messageType === 'complete_todo_list') return true
         return false
       })
       .map(msg => {
-        const envelope = msg.metadata.envelope
+        // Resolve envelope: prefer metadata.envelope, fallback to reconstructing from metadata
+        const envelope = msg.metadata.envelope || { type: msg.messageType, data: msg.metadata }
         const data = envelope.data || envelope
 
+        // Use the envelope's original timestamp for accuracy, fall back to DB timestamp
+        const envelopeTs = data.timestamp || envelope.timestamp
+        const ts = envelopeTs ? new Date(envelopeTs).getTime() : new Date(msg.timestamp).getTime()
+        // Guard against invalid dates
+        const timestamp = isNaN(ts) ? new Date(msg.timestamp).getTime() : ts
+
         if (envelope.type === 'progress_update') {
-          // stella-v2: convert ProgressUpdateMessage to TodoList-compatible format
-          // Use the raw progress data — the frontend's handleProgressUpdate logic
-          // will convert it when applied via applyLatestTaskState
+          // stella-v2: convert ProgressUpdateMessage to TodoList using shared conversion
+          // This uses the same logic as the live handleProgressUpdate in SessionView
           return {
-            timestamp: new Date(msg.timestamp).getTime(),
+            timestamp,
             messageId: msg.id,
             agentId: msg.metadata.participant_id || data.metadata?.agent_id || 'unknown',
             agentName: data.metadata?.agent_name,
-            todoList: {
-              initialized: true,
-              states: data.groups?.map((group: any) => ({
-                id: group.id,
-                title: group.label,
-                type: group.metadata?.state_type || (group.execution_mode === 'sequential' ? 'sequential' : 'flexible'),
-                description: group.description || '',
-                status: group.status,
-                is_current: group.is_current,
-                completed_at: group.completed_at,
-                tasks: (group.items || []).map((item: any) => ({
-                  id: item.metadata?.task_id || item.id,
-                  description: item.metadata?.task_description || item.label,
-                  instruction: item.metadata?.is_task_item ? item.description : '',
-                  required: item.required,
-                  status: item.metadata?.is_task_item ? item.status : (
-                    // Derive task status from items grouped by task_id
-                    item.status === 'completed' || item.status === 'skipped' ? 'completed' : item.status
-                  ),
-                  deliverables: item.metadata?.is_task_item ? [] : [{
-                    key: item.id,
-                    description: item.label,
-                    type: item.metadata?.deliverable_type || 'string',
-                    required: item.required,
-                    status: item.status,
-                    value: item.value,
-                    collected_at: item.collected_at,
-                    confidence: item.confidence,
-                    reasoning: item.metadata?.reasoning,
-                    acceptance_criteria: item.metadata?.acceptance_criteria,
-                    discovered: item.metadata?.discovered || false,
-                  }],
-                })),
-              })) || [],
-              progress_percentage: data.progress_percentage || 0,
-              current_state: null,
-              current_task: null,
-              agentIcon: data.metadata?.agent_icon || '🧠',
-            } as any,
+            todoList: progressUpdateToTodoList(data),
           }
         }
 
         // stella-v1: complete_todo_list format
         return {
-          timestamp: new Date(msg.timestamp).getTime(),
+          timestamp,
           messageId: msg.id,
           agentId: envelope.participant_id || data.participant_id || 'unknown',
           agentName: msg.metadata?.participant_name,

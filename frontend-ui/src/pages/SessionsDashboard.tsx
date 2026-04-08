@@ -558,7 +558,7 @@ export default function SessionsDashboard() {
                         <span className={`font-medium ${isDark ? 'text-content-inverse' : 'text-content'}`}>
                           {session._count.messages}
                         </span>{' '}
-                        messages
+                        user messages
                       </div>
                     </div>
 

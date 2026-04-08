@@ -1207,6 +1207,18 @@ export interface SessionAnalyticsResponse {
   rawPoints: SessionStagePoint[]
 }
 
+export interface PlanCompletionSession {
+  sessionId: string
+  sessionName: string
+  completionRate: number
+  reachedEnd: boolean
+  timestamp: string
+}
+
+export interface PlanCompletionSessionsResponse {
+  sessions: PlanCompletionSession[]
+}
+
 export interface MetricsTimelinePoint {
   timestamp: string
   timing_ms: number

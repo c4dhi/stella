@@ -15,6 +15,7 @@ import {
   OutlierStageDto,
   SessionAnalyticsResponseDto,
   MetricsSummaryDto,
+  PlanCompletionSessionDto,
 } from './dto/agent-metrics.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
@@ -1496,6 +1497,93 @@ export class AgentsService {
     }
 
     return { points };
+  }
+
+  /**
+   * Get per-session plan completion data for drill-down.
+   * Returns one row per session with final completion rate and whether the plan reached end.
+   */
+  async getPlanCompletionSessions(
+    projectId: string,
+    agentSlug: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ sessions: PlanCompletionSessionDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { sessions: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { sessions: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Deduplicate by session (take last plan_completion message per session)
+    const bySession = new Map<string, { completionRate: number; reachedEnd: boolean; timestamp: Date }>();
+
+    for (const msg of messages) {
+      const data = this.extractFullMetadata(msg.metadata);
+      if (!data || data.stage !== 'plan_completion' || typeof data.completion_rate !== 'number') continue;
+
+      bySession.set(msg.sessionId, {
+        completionRate: data.completion_rate,
+        reachedEnd: data.plan_reached_end === true,
+        timestamp: msg.timestamp,
+      });
+    }
+
+    // Fetch session names
+    const sessionIdsWithData = Array.from(bySession.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const result: PlanCompletionSessionDto[] = [];
+    for (const [sessionId, { completionRate, reachedEnd, timestamp }] of bySession) {
+      result.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        completionRate: Math.round(completionRate * 10000) / 10000,
+        reachedEnd,
+        timestamp: timestamp.toISOString(),
+      });
+    }
+
+    // Sort by completion rate ascending (lowest first for easy outlier spotting)
+    result.sort((a, b) => a.completionRate - b.completionRate);
+
+    return { sessions: result };
   }
 }
 

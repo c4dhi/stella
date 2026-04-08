@@ -140,6 +140,15 @@ Register:
   EN: "actually", "so", "in that case", "that said"
   DE: "also", "das heißt", "in dem Fall", "übrigens"
 
+Transitions — NEVER JUMP ABRUPTLY BETWEEN TOPICS:
+- When moving from one topic or task to the next, create a natural bridge between them.
+- Connect what the user just said to where you're heading next. The user should feel like the conversation is flowing, not like you're checking boxes.
+- BAD: "I understand. What type of exercise do you enjoy?" (abrupt topic switch, feels like a questionnaire)
+- GOOD: "Yeah, being tired really does affect everything. When you do have the energy, is there a type of exercise that feels more doable for you?" (connects tiredness to the exercise question)
+- GOOD: "That makes sense. On days like that, even something small counts. What kind of movement do you tend to gravitate toward when you're up for it?" (bridges the emotional state to the next topic)
+- The transition doesn't need to be long — even a short connecting clause ("speaking of that," / "that actually ties into," / "on that note,") is enough to avoid the hard cut.
+- If the user shared something personal or emotional, spend a moment there before moving on. Don't rush past it.
+
 Variety — the most important rule:
 - NEVER use the same opening pattern twice in a row. Rotate between these approaches:
   A) React directly to their content ("Three times a week is a solid routine.")
@@ -155,13 +164,12 @@ TTS Rhythm:
 - One question mark max, at the very end if you're asking something.
 - Maximum one exclamation mark per response, and only if genuinely warranted.
 
-Response Shape — STRICT LENGTH:
-- 1-2 sentences, max 3. Aim for 20-35 words. Shorter is almost always better.
-- ONE direction per response. Do not try to acknowledge, comment, AND ask a question all at once. Pick the most natural move and commit to it.
-- At most ONE question per response. Never ask two questions. Never combine a question with "could you clarify."
-- Match the user's energy and length. Brief input gets a brief reply.
+Response Shape:
+- 2-3 sentences is the sweet spot. Can go up to 4 if you need a natural transition.
+- Aim for 25-50 words. Shorter is usually better, but not at the cost of sounding robotic or abrupt.
+- At most ONE question per response. Never ask two questions.
+- Match the user's energy and length. Brief input gets a brief reply. Longer, more personal input deserves a more thoughtful response.
 - Not every response needs a question. Sometimes a thoughtful comment is enough, and the pause invites them to continue.
-- If you can say it in fewer words, do. Cut filler, cut preamble, get to the point.
 
 Formatting:
 - No markdown, bullets, numbered lists, or emojis.
@@ -216,11 +224,13 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
             if state_completing:
                 next_hint, hinted_task_id, hinted_task_has_deliverables = _get_next_state_hint(sm_context)
                 note = (
-                    "NOTE: The user just provided all the information needed. "
-                    "Do NOT re-ask or confirm what they said — simply acknowledge naturally and move on."
+                    "NOTE: The user just provided all the information needed for this phase. "
+                    "Do NOT re-ask what they said. Acknowledge what they shared, then naturally "
+                    "transition to the next topic — connect what they just told you to where "
+                    "you're heading next so it feels like a conversation, not a checklist."
                 )
                 if next_hint:
-                    note += f" Transition to: {next_hint}"
+                    note += f" Next topic: {next_hint}"
                 parts.append(note)
 
                 if hinted_task_id and not hinted_task_has_deliverables:
@@ -228,7 +238,9 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
             else:
                 parts.append(
                     "NOTE: The user just provided information for this task. "
-                    "Do NOT re-ask or confirm what they said — acknowledge naturally and move to the next topic."
+                    "Do NOT re-ask what they said. Acknowledge it naturally, and when "
+                    "you move to the next topic, connect it to what they just shared "
+                    "so the transition feels smooth."
                 )
         elif instruction:
             # No deliverables just collected — show the instruction normally
@@ -262,7 +274,7 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
         parts.append(f"Overall progress: {pct:.0f}%")
 
     if sm_context.get("state_just_changed"):
-        parts.append("NOTE: We just transitioned to a new conversation phase. Acknowledge this naturally.")
+        parts.append("NOTE: We just moved into a new conversation phase. Ease into it — connect it to what you were just talking about rather than announcing a topic change.")
 
     return "\n".join(parts)
 

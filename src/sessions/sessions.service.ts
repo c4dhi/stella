@@ -121,7 +121,7 @@ export class SessionsService {
           select: {
             agents: true,
             participants: true,
-            messages: true,
+            messages: { where: { role: 'user' } },
           },
         },
       },
@@ -169,7 +169,7 @@ export class SessionsService {
             select: {
               agents: true,
               participants: true,
-              messages: true,
+              messages: { where: { role: 'user' } },
             },
           },
         },
@@ -213,7 +213,7 @@ export class SessionsService {
           },
           _count: {
             select: {
-              messages: true,
+              messages: { where: { role: 'user' } },
               events: true,
             },
           },
@@ -713,7 +713,7 @@ export class SessionsService {
       'debug', 'decision_stream', 'expert_status', 'prompt_execution',
       'safety_check', 'plan_progress_update', 'plan_deliverable_update',
       'state_change_notification', 'complete_todo_list', 'llm_config',
-      'task_progress_update', 'progress_update'
+      'task_progress_update', 'progress_update', 'task_update'
     ];
 
     const messageTypes = options.includeDebug
@@ -1137,6 +1137,14 @@ export class SessionsService {
       speaker_id: nestedSpeakerId || participantIdentity,
     };
 
+    // Use the envelope's original timestamp for accurate chronological ordering.
+    // Falls back to now() if not present (matches @default(now()) behavior).
+    const envelopeTimestamp = messageEnvelope.timestamp
+      || (typeof nestedData === 'object' ? nestedData.timestamp : undefined);
+    const messageTimestamp = envelopeTimestamp ? new Date(envelopeTimestamp) : new Date();
+    // Guard against invalid dates
+    const validTimestamp = isNaN(messageTimestamp.getTime()) ? new Date() : messageTimestamp;
+
     const message = await this.prisma.message.create({
       data: {
         sessionId,
@@ -1145,6 +1153,7 @@ export class SessionsService {
         status: 'final',
         messageType,
         metadata: completeMetadata,
+        timestamp: validTimestamp,
       },
     });
 
@@ -1553,7 +1562,7 @@ export class SessionsService {
       'debug', 'decision_stream', 'expert_status', 'prompt_execution',
       'safety_check', 'plan_progress_update', 'plan_deliverable_update',
       'state_change_notification', 'complete_todo_list', 'llm_config',
-      'task_progress_update', 'progress_update'
+      'task_progress_update', 'progress_update', 'task_update'
     ];
 
     const messageTypes = options.includeDebug
