@@ -152,12 +152,10 @@ export class SessionsService {
     }
 
     if (query.search) {
-      where.room = {
-        livekitRoomName: {
-          contains: query.search,
-          mode: 'insensitive',
-        },
-      };
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { room: { livekitRoomName: { contains: query.search, mode: 'insensitive' } } },
+      ];
     }
 
     const [sessions, total] = await Promise.all([
@@ -720,11 +718,13 @@ export class SessionsService {
       ? [...chatMessageTypes, ...debugMessageTypes]
       : chatMessageTypes;
 
+    // Cursor is now a timestamp (ISO string) instead of a UUID.
+    // UUID-based cursoring (`id < cursor`) is broken for random UUIDs (non-sequential).
     const where: Prisma.MessageWhereInput = {
       sessionId,
       messageType: { in: messageTypes },
       ...(options.before && { timestamp: { lt: new Date(options.before) } }),
-      ...(options.cursor && { id: { lt: options.cursor } }),
+      ...(options.cursor && { timestamp: { lt: new Date(options.cursor) } }),
     };
 
     // Fetch one extra to determine if there are more messages
@@ -737,10 +737,16 @@ export class SessionsService {
     const hasMore = messages.length > limit;
     const results = hasMore ? messages.slice(0, -1) : messages;
 
+    // Cursor is the oldest message's timestamp for the next page
+    const oldestResult = results[results.length - 1];
+    const nextCursor = hasMore && oldestResult
+      ? oldestResult.timestamp.toISOString()
+      : null;
+
     return {
       messages: results.reverse(), // Return in ascending order (oldest first)
       hasMore,
-      nextCursor: hasMore ? results[results.length - 1].id : null,
+      nextCursor,
     };
   }
 
@@ -1138,11 +1144,15 @@ export class SessionsService {
     };
 
     // Use the envelope's original timestamp for accurate chronological ordering.
+    // Only trust ISO string timestamps (not numeric Unix epochs which could be seconds vs ms).
     // Falls back to now() if not present (matches @default(now()) behavior).
-    const envelopeTimestamp = messageEnvelope.timestamp
-      || (typeof nestedData === 'object' ? nestedData.timestamp : undefined);
+    const envelopeTimestamp = typeof messageEnvelope.timestamp === 'string'
+      ? messageEnvelope.timestamp
+      : (typeof nestedData === 'object' && typeof nestedData.timestamp === 'string'
+        ? nestedData.timestamp
+        : undefined);
     const messageTimestamp = envelopeTimestamp ? new Date(envelopeTimestamp) : new Date();
-    // Guard against invalid dates
+    // Guard against invalid dates (e.g., malformed ISO strings)
     const validTimestamp = isNaN(messageTimestamp.getTime()) ? new Date() : messageTimestamp;
 
     const message = await this.prisma.message.create({

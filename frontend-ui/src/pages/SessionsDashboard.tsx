@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Users } from 'lucide-react'
@@ -42,12 +42,18 @@ export default function SessionsDashboard() {
   const [isPublicLinkModalOpen, setIsPublicLinkModalOpen] = useState(false)
   const [isShareModalOpen, setIsShareModalOpen] = useState(false)
 
+  // Pagination state
+  const [totalSessions, setTotalSessions] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const scrollSentinelRef = useRef<HTMLDivElement>(null)
+
   // Initialize theme on mount
   useEffect(() => {
     initializeTheme()
   }, [initializeTheme])
 
-  // Load project and sessions
+  // Load project and sessions (initial page)
   const loadData = async () => {
     if (!projectId) return
 
@@ -61,17 +67,59 @@ export default function SessionsDashboard() {
         apiClient.listSessions(projectId, {
           status: filterStatus === 'ALL' ? undefined : filterStatus,
           search: searchQuery || undefined,
+          skip: 0,
         }),
       ])
 
       setProject(projectData)
       setSessions(sessionsData.data)
+      setTotalSessions(sessionsData.total)
+      setHasMore(sessionsData.data.length < sessionsData.total)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load sessions')
     } finally {
       setIsLoading(false)
     }
   }
+
+  // Load next page of sessions
+  const loadMore = useCallback(async () => {
+    if (!projectId || isLoadingMore || !hasMore) return
+
+    setIsLoadingMore(true)
+    try {
+      const result = await apiClient.listSessions(projectId, {
+        status: filterStatus === 'ALL' ? undefined : filterStatus,
+        search: searchQuery || undefined,
+        skip: sessions.length,
+      })
+
+      setSessions(prev => [...prev, ...result.data])
+      setHasMore(sessions.length + result.data.length < result.total)
+    } catch (err) {
+      console.error('Failed to load more sessions:', err)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [projectId, isLoadingMore, hasMore, filterStatus, searchQuery, sessions.length])
+
+  // Infinite scroll: observe sentinel element at bottom of list
+  useEffect(() => {
+    const sentinel = scrollSentinelRef.current
+    if (!sentinel) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingMore) {
+          loadMore()
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, isLoadingMore, loadMore])
 
   useEffect(() => {
     loadData()
@@ -505,7 +553,7 @@ export default function SessionsDashboard() {
               },
             }}
           >
-            {sessions.map((session) => (
+            {sessions.map((session, index) => (
               <motion.div
                 key={session.id}
                 variants={{
@@ -680,6 +728,20 @@ export default function SessionsDashboard() {
                 </div>
               </motion.div>
             ))}
+
+            {/* Infinite scroll sentinel + loading indicator */}
+            <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+              {isLoadingMore && (
+                <span className={`text-sm ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+                  Loading more sessions...
+                </span>
+              )}
+              {!hasMore && sessions.length > 0 && totalSessions > 20 && (
+                <span className={`text-xs ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                  All {totalSessions} sessions loaded
+                </span>
+              )}
+            </div>
           </motion.div>
         )}
       </main>

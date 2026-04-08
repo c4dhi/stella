@@ -416,7 +416,7 @@ export const useStore = create<
     })
 
     try {
-      const result = await apiClient.getSessionMessages(sessionId, { limit: 50, includeDebug: true })
+      const result = await apiClient.getSessionMessages(sessionId, { limit: 200, includeDebug: true })
 
       // If no messages returned, stop pagination
       const hasMore = result.messages.length > 0 ? result.hasMore : false
@@ -447,7 +447,7 @@ export const useStore = create<
     try {
       const result = await apiClient.getSessionMessages(sessionId, {
         cursor: historyCursor,
-        limit: 50,
+        limit: 200,
         includeDebug: true,
       })
 
@@ -865,8 +865,11 @@ export const useStore = create<
         const envelope = msg.metadata.envelope || { type: msg.messageType, data: msg.metadata }
         const data = envelope.data || envelope
 
-        // Use the envelope's original timestamp for accuracy, fall back to DB timestamp
-        const envelopeTs = data.timestamp || envelope.timestamp
+        // Use the envelope's original ISO string timestamp for accuracy, fall back to DB timestamp.
+        // Only trust string timestamps (not numeric Unix epochs which could be seconds vs ms).
+        const envelopeTs = typeof data.timestamp === 'string' ? data.timestamp
+          : typeof envelope.timestamp === 'string' ? envelope.timestamp
+          : null
         const ts = envelopeTs ? new Date(envelopeTs).getTime() : new Date(msg.timestamp).getTime()
         // Guard against invalid dates
         const timestamp = isNaN(ts) ? new Date(msg.timestamp).getTime() : ts
