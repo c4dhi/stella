@@ -6,7 +6,8 @@ import type { StageLatency, StageDataPoint, SessionStagePoint } from '../../../l
 // Stages that are ratios/summaries or non-latency events — excluded from timeline.
 // These are handled by SummaryCards instead (safety_routing, state_transition have
 // timing_ms=0 and no meaningful position on the latency timeline).
-const EXCLUDED_STAGES = new Set(['plan_completion', 'safety_routing', 'state_transition'])
+// Anchors and non-latency events excluded from the timeline visualization
+const EXCLUDED_STAGES = new Set(['plan_completion', 'safety_routing', 'vad_trigger', 'stt_end'])
 
 const LANE_COLORS = [
   '#8B5CF6', // purple

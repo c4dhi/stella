@@ -189,14 +189,30 @@ export class WebhooksService {
         this.logger.log(`Human joined session ${sessionId}: ${participantIdentity}`);
       }
 
-      // Auto-spawn/resume agent only for PARTICIPANTS (not organizers viewing the dashboard).
-      // Participants join with identity "participant-*" (from invitation accept).
-      // Organizers join with identity "human" or their user ID — they should NOT trigger agent spawn.
+      // Agent spawn/resume logic:
+      // - Participants (participant-*): can spawn new agents OR resume paused ones
+      // - Organizers (human/user ID): can only RESUME paused agents, never spawn new ones
       const isParticipant = participantIdentity.startsWith('participant-');
       const hasRunningAgent = session.agents.length > 0;
-      if (isParticipant && !hasRunningAgent && session.lastAgentConfig) {
-        this.logger.log(`Auto-resume triggered for session ${sessionId} (participant joined: ${participantIdentity})`);
-        await this.spawnOrResumeAgent(session);
+
+      if (!hasRunningAgent && session.lastAgentConfig && session.status !== 'CLOSED') {
+        // Check if there's a paused agent that can be resumed
+        const hasPausedAgent = await this.prisma.agentInstance.findFirst({
+          where: {
+            sessionId,
+            pausedAt: { not: null },
+          },
+        });
+
+        if (hasPausedAgent) {
+          // Anyone can resume a paused agent (organizer or participant)
+          this.logger.log(`Auto-resume paused agent for session ${sessionId} (${participantIdentity} joined)`);
+          await this.spawnOrResumeAgent(session);
+        } else if (isParticipant) {
+          // Only participants can trigger spawning a NEW agent
+          this.logger.log(`Auto-spawn triggered for session ${sessionId} (participant joined: ${participantIdentity})`);
+          await this.spawnOrResumeAgent(session);
+        }
       }
     }
   }

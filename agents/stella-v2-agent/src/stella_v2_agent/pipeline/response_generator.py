@@ -155,7 +155,7 @@ class ResponseGenerator:
             )
         )
 
-        # If bridge was emitted, include it in accumulated so chunks contain full text
+        # Prepend bridge text so TTS speaks bridge + response as one seamless utterance
         accumulated = (bridge + " ") if bridge else ""
         try:
             while True:

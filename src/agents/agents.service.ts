@@ -965,15 +965,16 @@ export class AgentsService {
   }
 
   /**
-   * Extract stage name and timing_ms from an analytics message's metadata.
-   * Handles multiple envelope nesting formats.
+   * Extract stage name and timing value from an analytics message's metadata.
+   * Supports both old format (timing_ms) and new event format (elapsed_ms).
    */
-  private extractStageTiming(metadata: any): { stage: string; timing_ms: number; sessionId?: string } | null {
+  private extractStageTiming(metadata: any): { stage: string; timing_ms: number; isTimelineEvent: boolean } | null {
     const data = this.extractFullMetadata(metadata);
     const stage = data?.stage;
-    const timingMs = data?.timing_ms;
+    const hasElapsed = typeof data?.elapsed_ms === 'number';
+    const timingMs = hasElapsed ? data.elapsed_ms : data?.timing_ms;
     if (typeof stage === 'string' && typeof timingMs === 'number') {
-      return { stage, timing_ms: timingMs };
+      return { stage, timing_ms: timingMs, isTimelineEvent: hasElapsed };
     }
     return null;
   }
@@ -1033,9 +1034,7 @@ export class AgentsService {
             safetyMessages.push({ route: data.route });
           }
           break;
-        case 'state_transition':
-          transitionMessages.push({ wasExpected: data.was_expected === true });
-          break;
+        // state_transition removed — not tracked for stella v2
         case 'plan_completion':
           if (typeof data.completion_rate === 'number') {
             planMessages.push({
@@ -1045,6 +1044,7 @@ export class AgentsService {
             });
           }
           break;
+        // Old format (timing_ms)
         case 'ttfab_bridge':
         case 'ttfab_direct':
           if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
@@ -1059,6 +1059,22 @@ export class AgentsService {
         case 'ttfr':
           if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
             ttfrTimings.push(data.timing_ms);
+          }
+          break;
+        // New format (elapsed_ms) — elapsed values are direct timeline positions
+        case 'bridge_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfabTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'bridge_tts_done':
+          if (typeof data.elapsed_ms === 'number') {
+            bridgeDurationTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'response_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfrTimings.push(data.elapsed_ms);
           }
           break;
       }
@@ -1201,8 +1217,12 @@ export class AgentsService {
       const parsed = this.extractStageTiming(msg.metadata as any);
       if (!parsed) continue;
 
-      // Skip non-latency stages (timing_ms=0) from the stages/outlier aggregation
-      if (parsed.timing_ms === 0) continue;
+      // Skip non-timeline events (old format with timing_ms=0, e.g. safety_routing)
+      // Timeline events with elapsed_ms=0 (stt_end) are valid and should pass through
+      if (parsed.timing_ms === 0 && !parsed.isTimelineEvent) continue;
+
+      // Skip anchor events — these are reference points, not pipeline stages
+      if (parsed.stage === 'vad_trigger' || parsed.stage === 'stt_end') continue;
 
       // Global
       if (!globalTimings.has(parsed.stage)) {
@@ -1307,7 +1327,7 @@ export class AgentsService {
 
     for (const msg of analyticsMessages) {
       const parsed = this.extractStageTiming(msg.metadata as any);
-      if (!parsed || parsed.timing_ms === 0) continue;
+      if (!parsed || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
       if (!stageTimings.has(parsed.stage)) {
         stageTimings.set(parsed.stage, []);
       }
@@ -1443,7 +1463,7 @@ export class AgentsService {
 
     for (const msg of messages) {
       const parsed = this.extractStageTiming(msg.metadata as any);
-      if (!parsed || parsed.stage !== stageName || parsed.timing_ms === 0) continue;
+      if (!parsed || parsed.stage !== stageName || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
 
       if (!sessionData.has(msg.sessionId)) {
         sessionData.set(msg.sessionId, { timings: [], lastTimestamp: msg.timestamp });

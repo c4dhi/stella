@@ -646,9 +646,9 @@ class WhisperProvider(STTProvider):
         self.silence_duration_ms = int(os.getenv("VAD_SILENCE_DURATION_MS", "800"))
         self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "1000"))
         self.max_endpointing_delay_ms = int(os.getenv("VAD_MAX_ENDPOINTING_DELAY_MS", "2000"))
-        self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "500"))
+        self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
         self.max_speech_duration_ms = int(os.getenv("VAD_MAX_SPEECH_DURATION_MS", "30000"))
-        self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
+        self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "500"))
         self.audio_inactivity_timeout_ms = int(os.getenv("VAD_AUDIO_INACTIVITY_TIMEOUT_MS", "1500"))
         # RMS energy gate - filters quiet background noise before VAD
         # 0.008 = -42dB (permissive), 0.01 = -40dB (moderate), 0.02 = -34dB (strict)

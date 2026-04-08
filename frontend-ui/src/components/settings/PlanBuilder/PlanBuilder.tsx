@@ -296,8 +296,42 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     return ids
   }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
 
+  // Sort states by transition order: follow the chain from initialStateId,
+  // then append any states not reachable via transitions.
+  const sortStatesByTransitionOrder = (unsorted: PlanState[]): PlanState[] => {
+    if (unsorted.length <= 1) return unsorted
+
+    const stateMap = new Map(unsorted.map(s => [s.id, s]))
+    const ordered: PlanState[] = []
+    const visited = new Set<string>()
+
+    // Walk the transition chain from the initial state
+    let currentId: string | null = initialStateId || unsorted[0]?.id || null
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId)
+      const state = stateMap.get(currentId)
+      if (!state) break
+      ordered.push(state)
+
+      // Follow the first transition (primary/default path)
+      const nextTransition = state.transitions?.find(
+        t => t.target_state_id && t.target_state_id !== '__end__'
+      )
+      currentId = nextTransition?.target_state_id || null
+    }
+
+    // Append any states not reached by the transition chain
+    for (const state of unsorted) {
+      if (!visited.has(state.id)) {
+        ordered.push(state)
+      }
+    }
+
+    return ordered
+  }
+
   const buildContent = (): PlanContent => ({
-    states,
+    states: sortStatesByTransitionOrder(states),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
     ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
     ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'

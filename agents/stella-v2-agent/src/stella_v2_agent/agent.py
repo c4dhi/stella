@@ -18,6 +18,7 @@ Key differences from V1:
 import asyncio
 import json
 import os
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -116,6 +117,16 @@ class StellaV2Agent(BaseAgent):
         )
 
     # ─────────────────────────────────────────────────────────────────────
+    # Analytics helpers
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _elapsed_ms(self) -> float:
+        """Milliseconds since stt_end for the current turn (analytics ground zero)."""
+        if not self.has_audio or self.audio.turn_anchor_ts == 0:
+            return 0.0
+        return (time.perf_counter() - self.audio.turn_anchor_ts) * 1000
+
+    # ─────────────────────────────────────────────────────────────────────
     # Main processing pipeline
     # ─────────────────────────────────────────────────────────────────────
 
@@ -147,6 +158,9 @@ class StellaV2Agent(BaseAgent):
 
             # ── Stage 1: Input Gate + Bridge Generator (parallel) ──
             logger.info(f"Stage 1: Input Gate + Bridge for: '{input.text}'")
+            yield AgentOutput.analytics_event(
+                input.session_id, "bridge_start", turn_id, self._elapsed_ms(),
+            )
             gate_result, bridge = await asyncio.gather(
                 self.input_gate.classify(input.text, history, sm_context),
                 self.bridge_generator.generate(input.text, history),
@@ -170,18 +184,24 @@ class StellaV2Agent(BaseAgent):
                 )
                 return
 
-            # Generate a shared transcript_id so bridge and response share it
+            # Shared transcript_id for bridge + response (one seamless utterance)
             transcript_id = f"response_{uuid.uuid4().hex[:8]}"
 
             # Emit bridge immediately for early TTS synthesis
             if bridge:
                 logger.info(f"Bridge: '{bridge}'")
-                yield AgentOutput.text_chunk(
+                yield AgentOutput.analytics_event(
+                    input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
+                    bridge_text=bridge,
+                )
+                bridge_output = AgentOutput.text_chunk(
                     input.session_id,
                     bridge,
                     transcript_id=transcript_id,
                     is_final=False,
                 )
+                bridge_output.metadata["tts_source"] = "bridge"
+                yield bridge_output
 
             # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
             # All experts run in parallel and block until done. task_extraction
@@ -249,9 +269,13 @@ class StellaV2Agent(BaseAgent):
             yield AgentOutput.status(
                 input.session_id, "Generating response...", StatusSubtype.PROCESSING
             )
+            yield AgentOutput.analytics_event(
+                input.session_id, "response_start", turn_id, self._elapsed_ms(),
+            )
 
             sm_context["_collected_keys"] = collected_keys
 
+            first_token_emitted = False
             async for output in self.response_generator.generate(
                 session_id=input.session_id,
                 user_input=input.text,
@@ -262,7 +286,16 @@ class StellaV2Agent(BaseAgent):
                 bridge=bridge,
                 transcript_id=transcript_id,
             ):
+                if not first_token_emitted and output.type.value == "text_chunk":
+                    yield AgentOutput.analytics_event(
+                        input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
+                    )
+                    first_token_emitted = True
                 yield output
+
+            yield AgentOutput.analytics_event(
+                input.session_id, "response_done", turn_id, self._elapsed_ms(),
+            )
 
             # ── Stage 5: Post-response processing ──
             # Process extraction results, auto-complete no-deliverable tasks,
@@ -447,16 +480,6 @@ class StellaV2Agent(BaseAgent):
             current_state_id = full_state.get("current_state_id")
 
             # Analytics: state transition (if state changed during this turn)
-            if (
-                self._last_post_response_state_id is not None
-                and current_state_id != self._last_post_response_state_id
-            ):
-                yield AgentOutput.analytics(
-                    session_id, stage="state_transition", timing_ms=0,
-                    from_state=self._last_post_response_state_id,
-                    to_state=current_state_id,
-                    was_expected=True,
-                )
             self._last_post_response_state_id = current_state_id
 
             # Analytics: plan completion snapshot (emitted each turn for dashboard)

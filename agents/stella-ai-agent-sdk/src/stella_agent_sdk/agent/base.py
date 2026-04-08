@@ -547,11 +547,13 @@ class BaseAgent(ABC):
                             # Get or create transcript_id for this response stream
                             if current_transcript_id is None:
                                 current_transcript_id = output.transcript_id or f"response_{uuid.uuid4().hex[:8]}"
-                                # Capture first-text timestamp for TTFT measurement
-                                self.audio._turn_first_text_ts = time.perf_counter()
-                                # Detect bridge vs response from transcript_id prefix
+                                # Detect bridge vs response from transcript_id prefix (legacy)
                                 tid = current_transcript_id
-                                self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_")) else "response"
+                                self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_") or tid.startswith("bridge_")) else "response"
+
+                            # Explicit tts_source metadata overrides prefix detection
+                            if output.metadata.get("tts_source"):
+                                self._current_sentence_source = output.metadata["tts_source"]
 
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
@@ -588,6 +590,9 @@ class BaseAgent(ABC):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
                                     self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    # After bridge sentence dispatched, revert to "response" for subsequent text
+                                    if self._current_sentence_source == "bridge":
+                                        self._current_sentence_source = "response"
 
                             if output.is_final:
                                 # Flush any remaining partial sentence to TTS
