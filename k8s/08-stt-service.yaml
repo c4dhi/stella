@@ -202,17 +202,47 @@ spec:
               name: stella-ai-config
               key: VAD_THRESHOLD
               optional: true
+        - name: VAD_SILENCE_DURATION_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_SILENCE_DURATION_MS
+              optional: true
+        - name: VAD_CONTINUATION_WINDOW_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_CONTINUATION_WINDOW_MS
+              optional: true
+        - name: VAD_MAX_ENDPOINTING_DELAY_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_MAX_ENDPOINTING_DELAY_MS
+              optional: true
         - name: VAD_MIN_SPEECH_MS
           valueFrom:
             configMapKeyRef:
               name: stella-ai-config
               key: VAD_MIN_SPEECH_MS
               optional: true
-        - name: VAD_MIN_SILENCE_MS
+        - name: VAD_MAX_SPEECH_DURATION_MS
           valueFrom:
             configMapKeyRef:
               name: stella-ai-config
-              key: VAD_MIN_SILENCE_MS
+              key: VAD_MAX_SPEECH_DURATION_MS
+              optional: true
+        - name: VAD_AUDIO_INACTIVITY_TIMEOUT_MS
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_AUDIO_INACTIVITY_TIMEOUT_MS
+              optional: true
+        - name: VAD_RMS_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VAD_RMS_THRESHOLD
               optional: true
         - name: PARTIAL_INTERVAL_MS
           valueFrom:
