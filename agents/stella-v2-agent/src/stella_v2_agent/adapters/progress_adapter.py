@@ -25,6 +25,18 @@ class ProgressAdapter:
     """Converts gRPC state machine state to generic SDK ProgressState."""
 
     @staticmethod
+    def _priority_value(value: Any) -> int:
+        """Normalize transition priority (supports int-like strings)."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return 100
+        return 100
+
+    @staticmethod
     def deliverable_status_to_item_status(status: str) -> ItemStatus:
         mapping = {
             "pending": ItemStatus.PENDING,
@@ -39,6 +51,8 @@ class ProgressAdapter:
         cls,
         full_state: Dict[str, Any],
         started_at: Optional[str] = None,
+        plan: Optional[Dict[str, Any]] = None,
+        last_transition: Optional[Dict[str, Any]] = None,
     ) -> ProgressState:
         """Build ProgressState from a gRPC get_full_state() response dict.
 
@@ -48,6 +62,28 @@ class ProgressAdapter:
         groups: List[ProgressGroup] = []
         current_group_id: Optional[str] = None
         current_item_id: Optional[str] = None
+
+        transitions_by_state: Dict[str, List[Dict[str, Any]]] = {}
+        if plan and isinstance(plan.get("states"), list):
+            for plan_state in plan.get("states", []):
+                state_id = plan_state.get("id")
+                if not state_id:
+                    continue
+                transitions_by_state[state_id] = []
+                for transition in plan_state.get("transitions", []) or []:
+                    target = transition.get("target_state_id")
+                    if not target:
+                        continue
+                    transitions_by_state[state_id].append({
+                        "target_state_id": target,
+                        "condition_type": transition.get("condition_type", "all_tasks_complete"),
+                        "priority": transition.get("priority"),
+                        "condition_config": transition.get("condition_config", {}),
+                    })
+
+                transitions_by_state[state_id].sort(
+                    key=lambda t: cls._priority_value(t.get("priority"))
+                )
 
         for state in full_state.get("states", []):
             items: List[ProgressItem] = []
@@ -99,7 +135,10 @@ class ProgressAdapter:
                 else ExecutionMode.FLEXIBLE
             )
 
-            group_metadata: Dict[str, Any] = {"state_type": state_type}
+            group_metadata: Dict[str, Any] = {
+                "state_type": state_type,
+                "transitions": transitions_by_state.get(state.get("id"), []),
+            }
             if state_type == "goal":
                 group_metadata["goal_objective"] = state.get("goal_objective", "")
                 group_metadata["goal_context"] = state.get("goal_context", "")
@@ -151,5 +190,6 @@ class ProgressAdapter:
                     "turns_without_progress", 0
                 ),
                 "architecture": "stella_v2_pipeline",
+                "last_transition": last_transition,
             },
         )

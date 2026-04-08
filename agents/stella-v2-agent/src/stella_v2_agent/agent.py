@@ -107,6 +107,7 @@ class StellaV2Agent(BaseAgent):
         self._plan_system_prompt: Optional[str] = None
         self._plan_config: Optional[Dict[str, Any]] = None  # stored for context building
         self._custom_history_limit: int = 20  # overridable via pipeline_config thresholds
+        self._last_known_state_id: Optional[str] = None
 
         logger.info(
             f"Initialized with {self.expert_registry.enabled_count} experts"
@@ -400,8 +401,18 @@ class StellaV2Agent(BaseAgent):
         # Fetch updated full state and emit progress
         full_state = await self.sm_client.get_full_state()
         if full_state:
+            current_state_id = full_state.get("current_state_id")
+            last_transition = self._build_last_transition_metadata(
+                from_state_id=self._last_known_state_id,
+                to_state_id=current_state_id,
+            )
+            self._last_known_state_id = current_state_id
+
             progress_state = ProgressAdapter.from_full_state_dict(
-                full_state, started_at=self._session_started_at
+                full_state,
+                started_at=self._session_started_at,
+                plan=self._plan_config,
+                last_transition=last_transition,
             )
             yield AgentOutput.progress_update(
                 session_id,
@@ -490,8 +501,11 @@ class StellaV2Agent(BaseAgent):
         if self.sm_client:
             full_state = await self.sm_client.get_full_state()
             if full_state:
+                self._last_known_state_id = full_state.get("current_state_id")
                 progress_state = ProgressAdapter.from_full_state_dict(
-                    full_state, started_at=self._session_started_at,
+                    full_state,
+                    started_at=self._session_started_at,
+                    plan=self._plan_config,
                 )
                 yield AgentOutput.progress_update(
                     session_id,
@@ -569,6 +583,7 @@ class StellaV2Agent(BaseAgent):
 
         self.config = {}
         self._plan_config = None
+        self._last_known_state_id = None
         logger.info(f"Session ended: {session_id}")
         return summary
 
@@ -636,6 +651,65 @@ class StellaV2Agent(BaseAgent):
 
         logger.warning(f"Plan '{plan_id}' not found")
         return None
+
+    def _build_last_transition_metadata(
+        self,
+        from_state_id: Optional[str],
+        to_state_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Build transition metadata for frontend explanation in task sidebar."""
+        if not from_state_id or not to_state_id or from_state_id == to_state_id:
+            return None
+
+        states = (self._plan_config or {}).get("states", [])
+        if not isinstance(states, list):
+            return {
+                "from_state_id": from_state_id,
+                "to_state_id": to_state_id,
+            }
+
+        source_state = next((s for s in states if s.get("id") == from_state_id), None)
+        if not source_state:
+            return {
+                "from_state_id": from_state_id,
+                "to_state_id": to_state_id,
+            }
+
+        transitions = source_state.get("transitions", []) or []
+        matching = [
+            t for t in transitions
+            if t.get("target_state_id") == to_state_id
+        ]
+
+        # No direct matching transition means this update likely skipped across
+        # multiple states in one turn; avoid emitting misleading branch metadata.
+        if not matching:
+            return None
+
+        matching.sort(
+            key=lambda t: self._priority_value(t.get("priority"))
+        )
+        winner = matching[0]
+
+        return {
+            "from_state_id": from_state_id,
+            "to_state_id": to_state_id,
+            "condition_type": winner.get("condition_type"),
+            "condition_config": winner.get("condition_config", {}),
+            "priority": winner.get("priority"),
+        }
+
+    @staticmethod
+    def _priority_value(value: Any) -> int:
+        """Normalize transition priority (supports int-like strings)."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return 100
+        return 100
 
     def _find_config_file(self, relative_path: str) -> Optional[str]:
         """Find a config file by trying multiple locations."""
