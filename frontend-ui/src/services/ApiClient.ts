@@ -748,10 +748,11 @@ class SessionManagementClient {
       cursor?: string
       limit?: number
       before?: string
+      includeDebug?: boolean
     } = {}
   ): Promise<MessagesResponse> {
     // Create unique key for request deduplication
-    const requestKey = `messages-${sessionId}-${options.cursor || 'initial'}-${options.limit || 50}`
+    const requestKey = `messages-${sessionId}-${options.cursor || 'initial'}-${options.limit || 50}-${options.includeDebug ? 'debug' : 'nodebug'}`
 
     // Return existing pending request if one exists
     if (this.pendingRequests.has(requestKey)) {
@@ -764,6 +765,7 @@ class SessionManagementClient {
     if (options.cursor) params.append('cursor', options.cursor)
     if (options.limit) params.append('limit', options.limit.toString())
     if (options.before) params.append('before', options.before)
+    if (options.includeDebug) params.append('include_debug', 'true')
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/messages${queryString ? `?${queryString}` : ''}`
