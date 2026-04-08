@@ -124,6 +124,7 @@ export default function AgentTaskCard({ agentId, agentName, todoList, isHistoryM
             states={states}
             currentStateId={todoList.current_state?.id || null}
             deliverables={{}}
+            lastTransition={todoList.last_transition || null}
           />
         </div>
 
