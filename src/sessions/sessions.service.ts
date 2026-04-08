@@ -1626,7 +1626,7 @@ export class SessionsService {
 
       // Attach deliverables to user messages using collectedAt timestamps
       const userMessages = messages.filter(
-        (m) => m.role === 'user' && (m.messageType === 'transcript' || m.messageType === 'user_text'),
+        (m) => m.role === 'user' && (m.messageType === 'transcript' || m.messageType === 'transcript_chunk' || m.messageType === 'user_text'),
       );
       for (const [key, del] of Object.entries(collected)) {
         if (!del.collectedAt || userMessages.length === 0) continue;
