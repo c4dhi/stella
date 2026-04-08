@@ -1,14 +1,29 @@
 import { useThemeStore } from '../../../store/themeStore'
-import type { AgentSpawnMode, PlanState, SessionContext, SessionContextField } from '../../../lib/api-types'
+import type {
+  AgentSpawnMode,
+  PlanState,
+  SessionContext,
+  SessionContextField,
+  ParticipantEventMessageConfig,
+} from '../../../lib/api-types'
+import {
+  JOIN_MESSAGE_PLACEHOLDER,
+  LEFT_MESSAGE_PLACEHOLDER,
+  PARTICIPANT_EVENT_TOKEN_OPTIONS,
+} from './participantEventConfig'
 
 interface PlanStartEditorProps {
   states: PlanState[]
   initialStateId: string | null
   spawnMode: AgentSpawnMode
   sessionContext: SessionContext
+  onParticipantJoin: ParticipantEventMessageConfig
+  onParticipantLeft: ParticipantEventMessageConfig
   onInitialStateChange: (stateId: string) => void
   onSpawnModeChange: (mode: AgentSpawnMode) => void
   onSessionContextChange: (context: SessionContext) => void
+  onParticipantJoinChange: (config: ParticipantEventMessageConfig) => void
+  onParticipantLeftChange: (config: ParticipantEventMessageConfig) => void
 }
 
 const createField = (): SessionContextField => ({
@@ -23,13 +38,110 @@ export default function PlanStartEditor({
   initialStateId,
   spawnMode,
   sessionContext,
+  onParticipantJoin,
+  onParticipantLeft,
   onInitialStateChange,
   onSpawnModeChange,
   onSessionContextChange,
+  onParticipantJoinChange,
+  onParticipantLeftChange,
 }: PlanStartEditorProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const fields = sessionContext.fields || []
+
+  const renderPreview = (template: string) =>
+    template
+      .split('{participant_name}').join('Alex')
+      .split('{agent_name}').join('Stella')
+
+  const insertToken = (
+    current: ParticipantEventMessageConfig,
+    token: string,
+    onChange: (config: ParticipantEventMessageConfig) => void,
+  ) => {
+    const base = current.message_template || ''
+    const spacer = base.endsWith(' ') || base.length === 0 ? '' : ' '
+    onChange({
+      ...current,
+      message_template: `${base}${spacer}${token}`,
+    })
+  }
+
+  const renderMessageEditor = ({
+    title,
+    value,
+    enabled,
+    placeholder,
+    onEnabledChange,
+    onTemplateChange,
+  }: {
+    title: string
+    value: string
+    enabled: boolean
+    placeholder: string
+    onEnabledChange: (enabled: boolean) => void
+    onTemplateChange: (value: string) => void
+  }) => (
+    <div className={`rounded-lg border p-4 space-y-3 ${isDark ? 'border-zinc-700 bg-zinc-900/30' : 'border-neutral-200 bg-white'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <label className={`text-caption font-medium ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'}`}>
+          {title}
+        </label>
+        <label className="flex items-center gap-2 text-caption">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => onEnabledChange(e.target.checked)}
+          />
+          Enabled
+        </label>
+      </div>
+
+      <div className="space-y-2">
+        <div className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+          Message
+        </div>
+        <textarea
+          value={value}
+          onChange={(e) => onTemplateChange(e.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          className="input-field w-full"
+        />
+      </div>
+
+        <div className="space-y-2">
+          <div className={`text-caption ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+            Insert Dynamic Value
+          </div>
+          <div className="flex flex-wrap gap-2">
+          {PARTICIPANT_EVENT_TOKEN_OPTIONS.map((option) => (
+            <button
+              key={option.token}
+              type="button"
+              onClick={() => insertToken(
+                { message_template: value, enabled },
+                option.token,
+                (cfg) => onTemplateChange(cfg.message_template || ''),
+              )}
+              className={`px-2.5 py-1 rounded-md text-caption border transition-colors ${
+                isDark
+                  ? 'border-zinc-600 text-zinc-200 hover:bg-zinc-800'
+                  : 'border-neutral-300 text-neutral-700 hover:bg-neutral-100'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+          </div>
+      </div>
+
+      <div className={`rounded-md px-3 py-2 text-caption ${isDark ? 'bg-zinc-800 text-zinc-200' : 'bg-neutral-50 text-neutral-700'}`}>
+        Preview: {renderPreview(value || placeholder)}
+      </div>
+    </div>
+  )
 
   return (
     <div className="p-6 space-y-6">
@@ -64,6 +176,24 @@ export default function PlanStartEditor({
           <option value="on_demand">On demand</option>
         </select>
       </div>
+
+      {renderMessageEditor({
+        title: 'On Participant Joined',
+        value: onParticipantJoin.message_template || '',
+        enabled: onParticipantJoin.enabled === true,
+        placeholder: JOIN_MESSAGE_PLACEHOLDER,
+        onEnabledChange: (enabled) => onParticipantJoinChange({ ...onParticipantJoin, enabled }),
+        onTemplateChange: (message_template) => onParticipantJoinChange({ ...onParticipantJoin, message_template }),
+      })}
+
+      {renderMessageEditor({
+        title: 'On Participant Left',
+        value: onParticipantLeft.message_template || '',
+        enabled: onParticipantLeft.enabled === true,
+        placeholder: LEFT_MESSAGE_PLACEHOLDER,
+        onEnabledChange: (enabled) => onParticipantLeftChange({ ...onParticipantLeft, enabled }),
+        onTemplateChange: (message_template) => onParticipantLeftChange({ ...onParticipantLeft, message_template }),
+      })}
 
       <div>
         <div className="flex items-center justify-between mb-2">
