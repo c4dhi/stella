@@ -710,7 +710,6 @@ export interface PlanCanvasPosition {
 }
 
 export interface PlanCanvasMetadata {
-  state_positions?: Record<string, PlanCanvasPosition>
   show_end_node?: boolean
   end_node_position?: PlanCanvasPosition
   end_state_ids?: string[]
@@ -723,6 +722,7 @@ export interface PlanStartMetadata {
 }
 
 export interface PlanMetadata {
+  nodePositions?: Record<string, PlanCanvasPosition>
   plan_builder?: {
     canvas?: PlanCanvasMetadata
     start?: PlanStartMetadata
