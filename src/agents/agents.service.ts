@@ -1198,6 +1198,7 @@ export class AgentsService {
         timestamp: { gte: from, lte: to },
       },
       select: { sessionId: true, metadata: true },
+      orderBy: { timestamp: 'asc' },
     });
 
     // 4. Count user turns for context
