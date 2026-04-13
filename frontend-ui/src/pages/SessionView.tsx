@@ -992,6 +992,7 @@ export default function SessionView() {
       <SessionAnalyticsModal
         isOpen={showAnalyticsModal}
         onClose={() => setShowAnalyticsModal(false)}
+        projectId={session?.projectId || ''}
         sessionId={sessionId}
       />
 

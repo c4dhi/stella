@@ -7,11 +7,11 @@ export function useSessionAnalytics() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const fetch = useCallback(async (sessionId: string) => {
+  const fetch = useCallback(async (projectId: string, sessionId: string) => {
     try {
       setIsLoading(true)
       setError(null)
-      const result = await apiClient.getSessionAnalytics(sessionId)
+      const result = await apiClient.getSessionAnalytics(projectId, sessionId)
       setData(result)
     } catch (err) {
       setError('Failed to load session analytics')

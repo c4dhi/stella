@@ -150,8 +150,12 @@ export class AgentsController {
   /**
    * Get per-stage latency analytics for a single session.
    */
-  @Get('sessions/:sessionId/analytics')
-  async getSessionAnalytics(@Param('sessionId') sessionId: string) {
-    return this.agentsService.getSessionAnalytics(sessionId);
+  @Get('projects/:projectId/sessions/:sessionId/analytics')
+  @UseGuards(ProjectAccessGuard)
+  async getSessionAnalytics(
+    @Param('projectId') projectId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.agentsService.getSessionAnalytics(sessionId, projectId);
   }
 }

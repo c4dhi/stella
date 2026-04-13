@@ -1102,7 +1102,9 @@ export class AgentsService {
       throw new NotFoundException(`Agent type '${agentSlug}' not found`);
     }
 
-    // 2. Find sessions that used this agent type within the date range
+    // 2. Find sessions that used this agent type (scoped by project + agent type,
+    //    not by createdAt — filtering by instance creation date would exclude agents
+    //    created outside the range that still have in-range messages)
     const agentInstances = await this.prisma.agentInstance.findMany({
       where: {
         session: { projectId },
@@ -1110,7 +1112,6 @@ export class AgentsService {
           { agentTypeId: agentType.id },
           { agentType: agentSlug },
         ],
-        createdAt: { gte: from, lte: to },
       },
       select: { sessionId: true },
       distinct: ['sessionId'],
@@ -1251,7 +1252,18 @@ export class AgentsService {
   /**
    * Get per-stage latency analytics for a single session.
    */
-  async getSessionAnalytics(sessionId: string): Promise<SessionAnalyticsResponseDto> {
+  async getSessionAnalytics(sessionId: string, projectId?: string): Promise<SessionAnalyticsResponseDto> {
+    // Verify the session belongs to the requested project
+    if (projectId) {
+      const session = await this.prisma.session.findFirst({
+        where: { id: sessionId, projectId },
+        select: { id: true },
+      });
+      if (!session) {
+        throw new NotFoundException(`Session '${sessionId}' not found in project`);
+      }
+    }
+
     const analyticsMessages = await this.prisma.message.findMany({
       where: { sessionId, messageType: 'analytics' },
       select: { sessionId: true, metadata: true },

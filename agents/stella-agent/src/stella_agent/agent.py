@@ -270,6 +270,7 @@ class StellaAgent(BaseAgent):
                     words = interim_message.split()
                     accumulated = ""
 
+                    t_bridge_start = time.perf_counter()
                     for i, word in enumerate(words):
                         accumulated += word + " "
                         is_final = (i == len(words) - 1)
@@ -284,6 +285,7 @@ class StellaAgent(BaseAgent):
                         # Small delay for natural streaming feel
                         if not is_final:
                             await asyncio.sleep(0.02)
+                    t_bridge_end = time.perf_counter()
 
                     # Now yield expert outputs as they complete (experts may already be done)
                     while True:
@@ -295,10 +297,10 @@ class StellaAgent(BaseAgent):
                     # Ensure expert task is complete
                     await expert_task
 
-                    # Analytics: bridge generation (interim message fired while experts ran)
+                    # Analytics: bridge generation (interim message only, excludes expert runtime)
                     yield AgentOutput.analytics(
                         input.session_id, stage="bridge_generation",
-                        timing_ms=(time.perf_counter() - t_experts_start) * 1000,
+                        timing_ms=(t_bridge_end - t_bridge_start) * 1000,
                         bridge_fired=True, turn_id=turn_id,
                     )
 

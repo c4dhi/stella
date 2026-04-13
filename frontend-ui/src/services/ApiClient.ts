@@ -1590,8 +1590,8 @@ class SessionManagementClient {
     )
   }
 
-  async getSessionAnalytics(sessionId: string): Promise<import('../lib/api-types').SessionAnalyticsResponse> {
-    return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/sessions/${sessionId}/analytics`)
+  async getSessionAnalytics(projectId: string, sessionId: string): Promise<import('../lib/api-types').SessionAnalyticsResponse> {
+    return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/projects/${projectId}/sessions/${sessionId}/analytics`)
   }
 
   async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {

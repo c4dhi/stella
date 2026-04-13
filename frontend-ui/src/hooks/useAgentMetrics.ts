@@ -67,9 +67,9 @@ export function useMetricsTimeline(
         lastTimestampRef.current = result.points[result.points.length - 1].timestamp
 
         setPoints((prev) => {
-          // Deduplicate by timestamp
-          const existingTimestamps = new Set(prev.map((p) => p.timestamp))
-          const newPoints = result.points.filter((p) => !existingTimestamps.has(p.timestamp))
+          // Deduplicate by timestamp + sessionId to avoid dropping real points from different sessions
+          const existingKeys = new Set(prev.map((p) => `${p.timestamp}|${p.sessionId}`))
+          const newPoints = result.points.filter((p) => !existingKeys.has(`${p.timestamp}|${p.sessionId}`))
           if (newPoints.length === 0) return prev
 
           // Append and cap at MAX_POINTS

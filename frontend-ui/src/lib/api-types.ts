@@ -1169,6 +1169,7 @@ export interface SessionAnalyticsResponse {
   sessionId: string
   totalTurns: number
   stages: StageLatency[]
+  summary: MetricsSummary
 }
 
 export interface MetricsTimelinePoint {

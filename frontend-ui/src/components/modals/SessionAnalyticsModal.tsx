@@ -7,19 +7,20 @@ import LatencyStageChart from '../settings/analytics/LatencyStageChart'
 interface SessionAnalyticsModalProps {
   isOpen: boolean
   onClose: () => void
+  projectId: string
   sessionId: string
 }
 
-export default function SessionAnalyticsModal({ isOpen, onClose, sessionId }: SessionAnalyticsModalProps) {
+export default function SessionAnalyticsModal({ isOpen, onClose, projectId, sessionId }: SessionAnalyticsModalProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
   const { data, isLoading, error, fetch } = useSessionAnalytics()
 
   useEffect(() => {
-    if (isOpen && sessionId) {
-      fetch(sessionId)
+    if (isOpen && sessionId && projectId) {
+      fetch(projectId, sessionId)
     }
-  }, [isOpen, sessionId, fetch])
+  }, [isOpen, projectId, sessionId, fetch])
 
   return (
     <AnimatePresence>
