@@ -31,7 +31,6 @@ interface PlanCanvasProps {
   states: PlanState[]
   initialStateId: string | null
   agentSpawnMode: AgentSpawnMode
-  endStateIds: string[]
   selectedStartNode: boolean
   selectedEndNode: boolean             // Drives isSelected highlight on the End node
   selectedStateId: string | null
@@ -47,7 +46,6 @@ interface PlanCanvasProps {
   onSelectTransition: (sourceStateId: string, transitionIndex: number) => void
   onCreateTransition: (sourceStateId: string, targetStateId: string) => void
   onConnectEndState: (sourceStateId: string) => void
-  onDeleteEndConnection: (sourceStateId: string) => void
   onDeleteTransitions: (transitionRefs: Array<{ sourceStateId: string; transitionIndex: number }>) => void
   onDeleteState: (stateId: string) => void
   onStatePositionChange: (stateId: string, position: CanvasPosition) => void
@@ -268,7 +266,6 @@ export default function PlanCanvas({
   states,
   initialStateId,
   agentSpawnMode,
-  endStateIds,
   selectedStartNode,
   selectedEndNode,
   selectedStateId,
@@ -284,7 +281,6 @@ export default function PlanCanvas({
   onSelectTransition,
   onCreateTransition,
   onConnectEndState,
-  onDeleteEndConnection,
   onDeleteTransitions,
   onDeleteState,
   onStatePositionChange,
@@ -370,11 +366,13 @@ export default function PlanCanvas({
   const [nodes, setNodes] = useState<Node[]>(builtNodes)
   const builtEdges = useMemo<Edge[]>(() => {
     const stateIds = new Set(states.map((state) => state.id))
+    const edgeTargetExists = (targetStateId: string) =>
+      stateIds.has(targetStateId) || (showEndNode && targetStateId === END_NODE_ID)
     const parallelGroups = new Map<string, number[]>()
     for (const state of states) {
       for (let index = 0; index < (state.transitions || []).length; index += 1) {
         const transition = state.transitions![index]
-        if (!stateIds.has(transition.target_state_id)) continue
+        if (!edgeTargetExists(transition.target_state_id)) continue
         const key = `${state.id}__${transition.target_state_id}`
         const bucket = parallelGroups.get(key) || []
         bucket.push(index)
@@ -385,7 +383,7 @@ export default function PlanCanvas({
     const transitionEdges = states.flatMap((state) =>
       (state.transitions || [])
         .map((transition, index): Edge | null => {
-          const targetExists = stateIds.has(transition.target_state_id)
+          const targetExists = edgeTargetExists(transition.target_state_id)
           if (!targetExists) return null
 
           const group = parallelGroups.get(`${state.id}__${transition.target_state_id}`) || [index]
@@ -401,7 +399,7 @@ export default function PlanCanvas({
             id: edgeId,
             type: 'planTransition',
             source: state.id,
-            target: transition.target_state_id,
+            target: transition.target_state_id === END_NODE_ID ? END_NODE_ID : transition.target_state_id,
             interactionWidth: 36,
             data: {
               kind: 'transition',
@@ -476,23 +474,8 @@ export default function PlanCanvas({
       })
     }
 
-    if (showEndNode) {
-      for (const endSourceStateId of endStateIds) {
-        if (!stateIds.has(endSourceStateId)) continue
-        edges.push({
-          id: `__end_edge__${endSourceStateId}`,
-          source: endSourceStateId,
-          target: END_NODE_ID,
-          interactionWidth: 36,
-          data: { kind: 'end', sourceStateId: endSourceStateId },
-          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: isDark ? '#71717a' : '#9ca3af' },
-          style: { stroke: isDark ? '#52525b' : '#9ca3af', strokeWidth: 1.8, strokeDasharray: '4 4' },
-        })
-      }
-    }
-
     return edges
-  }, [states, initialStateId, showEndNode, selectedTransition, endStateIds, isDark, edgeControls, flowInstance, onSelectTransition])
+  }, [states, initialStateId, showEndNode, selectedTransition, isDark, edgeControls, flowInstance, onSelectTransition])
 
   useEffect(() => {
     setNodes(builtNodes)
@@ -532,10 +515,6 @@ export default function PlanCanvas({
     const transitionsToDelete: Array<{ sourceStateId: string; transitionIndex: number }> = []
 
     for (const edge of deletedEdges) {
-      if (edge.data?.kind === 'end' && typeof edge.data?.sourceStateId === 'string') {
-        onDeleteEndConnection(edge.data.sourceStateId)
-        continue
-      }
       if (edge.data?.kind === 'transition' && typeof edge.data?.sourceStateId === 'string' && typeof edge.data?.transitionIndex === 'number') {
         transitionsToDelete.push({
           sourceStateId: edge.data.sourceStateId,
@@ -547,7 +526,7 @@ export default function PlanCanvas({
     if (transitionsToDelete.length > 0) {
       onDeleteTransitions(transitionsToDelete)
     }
-  }, [onDeleteEndConnection, onDeleteTransitions])
+  }, [onDeleteTransitions])
 
   const handleEdgesChange = useCallback((changes: EdgeChange<Edge>[]) => {
     const removedIds = changes
@@ -623,10 +602,6 @@ export default function PlanCanvas({
         onEdgeClick={(event, edge) => {
           if (edge.data?.kind === 'start') return
           event.stopPropagation()
-          if (edge.data?.kind === 'end' && typeof edge.data?.sourceStateId === 'string') {
-            onDeleteEndConnection(edge.data.sourceStateId)
-            return
-          }
           if (edge.data?.kind !== 'transition') return
           const sourceStateId = typeof edge.data?.sourceStateId === 'string' ? edge.data.sourceStateId : edge.source
           const transitionIndex =
