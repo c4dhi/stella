@@ -139,6 +139,9 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
+        # TTS language (resolved once from env, used by all TTS paths)
+        self._tts_language = os.getenv("TTS_LANGUAGE", None) or None
+
         # Sentence-level streaming TTS queue (tuple of sentence text + source label)
         self._speech_queue: asyncio.Queue = asyncio.Queue()
         self._speech_worker_task: Optional[asyncio.Task] = None
@@ -825,9 +828,9 @@ class AudioPipeline:
             logger.debug("TTS not available, skipping speak()")
             return
 
-        # Resolve language: explicit param > env var > None (provider default)
+        # Resolve language: explicit param > instance default (from env) > None (provider default)
         if language is None:
-            language = os.getenv("TTS_LANGUAGE", None)
+            language = self._tts_language
 
         logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
@@ -1034,7 +1037,7 @@ class AudioPipeline:
                     logger.info("[TTS] Speech worker: interrupted, skipping remaining")
                     break
 
-                await self._speak_sentence(sentence, source=source)
+                await self._speak_sentence(sentence, language=self._tts_language, source=source)
 
                 # Emit tts_done events after each sentence completes
                 if self.turn_anchor_ts > 0:

@@ -49,14 +49,20 @@ EXAMPLES (user → bridge):
 - "hello" → "Hey."
 - "yes" → "Okay."
 - "I don't know, I guess I just haven't had the motivation lately and work has been really stressful" → "Yeah, okay, I get that, it's been a lot."
+- "Ich laufe dreimal die Woche" → "Oh schön, okay."
+- "Nee, ich war ziemlich faul" → "Ja, kein Ding."
+- "Ich hab mir letzten Monat das Knie verletzt" → "Oh okay, ja, das ist echt blöd."
+- "hallo" → "Hey."
+- "ja" → "Okay."
+- "Ich weiß nicht, ich hatte einfach keine Motivation und die Arbeit war echt stressig" → "Ja, okay, das kann ich verstehen."
 
-LANGUAGE: Always match the user's language.
+LANGUAGE: Always match the user's language. If the user speaks German, your bridge MUST be in German. If the user speaks English, your bridge MUST be in English.
 
 Output ONLY the bridge. No quotes, no labels, no explanation."""
 
 # Short fallback bridges used when LLM generation fails or is rejected.
 # Ensures every turn gets a bridge for consistent perceived latency.
-FALLBACK_BRIDGES = [
+FALLBACK_BRIDGES_EN = [
     "Okay, yeah.",
     "Right, okay.",
     "Got it.",
@@ -67,15 +73,53 @@ FALLBACK_BRIDGES = [
     "Yeah, gotcha.",
 ]
 
+FALLBACK_BRIDGES_DE = [
+    "Ja, okay.",
+    "Okay, verstehe.",
+    "Ja, alles klar.",
+    "Okay, moment.",
+    "Ja, ich verstehe.",
+    "Alles klar.",
+    "Okay, mal schauen.",
+    "Ja, genau.",
+]
+
 # Greeting-specific fallbacks for when user says hello/hi/hey.
-GREETING_FALLBACKS = [
+GREETING_FALLBACKS_EN = [
     "Hey.",
     "Hi there.",
     "Hello.",
     "Hey, hi.",
 ]
 
-_GREETING_WORDS = {"hello", "hi", "hey", "hallo", "hei", "greetings", "good morning", "good evening", "good afternoon"}
+GREETING_FALLBACKS_DE = [
+    "Hey.",
+    "Hallo.",
+    "Hi.",
+    "Hey, hallo.",
+]
+
+_GREETING_WORDS = {"hello", "hi", "hey", "hallo", "hei", "greetings", "good morning", "good evening", "good afternoon",
+                   "guten morgen", "guten tag", "guten abend", "moin", "servus", "grüß gott"}
+
+# German words/patterns for quick language detection on user input
+_GERMAN_INDICATORS = {
+    "ich", "du", "er", "sie", "wir", "ihr", "mein", "dein", "sein",
+    "ist", "bin", "bist", "sind", "hat", "habe", "hatte", "war",
+    "und", "oder", "aber", "weil", "dass", "nicht", "kein", "keine",
+    "ja", "nein", "nee", "doch", "schon", "noch", "auch", "sehr",
+    "das", "die", "der", "den", "dem", "des", "ein", "eine", "einem",
+    "mit", "für", "von", "auf", "aus", "bei", "nach", "über", "unter",
+    "hallo", "danke", "bitte", "tschüss", "genau", "okay",
+}
+
+
+def _detect_german(text: str) -> bool:
+    """Quick heuristic: is this text likely German?"""
+    words = set(text.lower().split())
+    german_count = len(words & _GERMAN_INDICATORS)
+    # If at least 2 German indicator words, or the text is short and has 1
+    return german_count >= 2 or (len(words) <= 3 and german_count >= 1)
 
 
 class BridgeGenerator:
@@ -168,10 +212,11 @@ class BridgeGenerator:
 
     @staticmethod
     def _pick_fallback(user_input: str) -> str:
-        """Pick a context-appropriate fallback bridge."""
+        """Pick a context-appropriate fallback bridge, matching the user's language."""
+        is_german = _detect_german(user_input)
         if user_input.strip().lower().rstrip("!.,") in _GREETING_WORDS:
-            return random.choice(GREETING_FALLBACKS)
-        return random.choice(FALLBACK_BRIDGES)
+            return random.choice(GREETING_FALLBACKS_DE if is_german else GREETING_FALLBACKS_EN)
+        return random.choice(FALLBACK_BRIDGES_DE if is_german else FALLBACK_BRIDGES_EN)
 
     @staticmethod
     def _validate_bridge(raw: str) -> str:
