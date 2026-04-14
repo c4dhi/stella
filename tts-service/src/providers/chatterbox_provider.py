@@ -101,6 +101,18 @@ class ChatterBoxProvider(TTSProvider):
             except Exception as e:
                 print(f"[ChatterBox] Warning: Could not patch attn_implementation: {e}")
 
+            # Patch resemble-perth watermarker if its native extension failed to load.
+            # The watermarker adds an inaudible watermark and is non-essential for TTS.
+            try:
+                import perth
+                if not callable(getattr(perth, 'PerthImplicitWatermarker', None)):
+                    class _NoOpWatermarker:
+                        def apply(self, wav, sr): return wav
+                    perth.PerthImplicitWatermarker = _NoOpWatermarker
+                    print("[ChatterBox] Patched non-functional perth watermarker with no-op stub")
+            except ImportError:
+                pass
+
             # Patch torch.load to always map to the selected device
             # This fixes loading CUDA-saved models on CPU-only machines
             device = torch.device(self._device)
