@@ -74,6 +74,34 @@ const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[
     } as PlanState)
   )
 
+const ensureEndTransitionsForCanvasConnections = (
+  inputStates: PlanState[],
+  metadata: PlanMetadata | undefined,
+): PlanState[] => {
+  const canvas = extractCanvasMetadata(metadata)
+  const endStateIds = new Set(canvas.end_state_ids || [])
+  if (endStateIds.size === 0) return inputStates
+
+  return inputStates.map((state) => {
+    if (!endStateIds.has(state.id)) return state
+    const transitions = state.transitions || []
+    const hasEndTransition = transitions.some((transition) => transition.target_state_id === '__end__')
+    if (hasEndTransition) return state
+
+    return {
+      ...state,
+      transitions: [
+        ...transitions,
+        {
+          target_state_id: '__end__',
+          condition_type: 'all_tasks_complete',
+          priority: transitions.length,
+        },
+      ],
+    }
+  })
+}
+
 const createEmptyTask = (): PlanTask => ({
   id: crypto.randomUUID(),
   description: '',
@@ -217,19 +245,22 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const initialMetadata = template?.content.metadata || {}
+  const initialStates = ensureEndTransitionsForCanvasConnections(
+    normalizePlanStates(template?.content.states || []),
+    initialMetadata,
+  )
 
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
   const [sessionContext, setSessionContext] = useState<SessionContext>(template?.content.session_context || { fields: [] })
   const [agentSpawnMode, setAgentSpawnMode] = useState<AgentSpawnMode>(extractSpawnMode(template?.content.metadata))
-  const [states, setStates] = useState<PlanState[]>(
-    normalizePlanStates(template?.content.states || [])
-  )
+  const [states, setStates] = useState<PlanState[]>(initialStates)
   const [initialStateId, setInitialStateId] = useState<string | null>(
     template?.content.initial_state_id || template?.content.states?.[0]?.id || null
   )
-  const [metadata, setMetadata] = useState<PlanMetadata>(template?.content.metadata || {})
+  const [metadata, setMetadata] = useState<PlanMetadata>(initialMetadata)
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
   )
@@ -264,11 +295,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const canvasMetadata = extractCanvasMetadata(metadata)
   const statePositions = canvasMetadata.state_positions || {}
   const showEndNode = canvasMetadata.show_end_node === true
-  const endStateIds = (canvasMetadata.end_state_ids || []).filter((stateId) =>
-    states.some((state) => state.id === stateId)
-  )
   const endNodePosition = canvasMetadata.end_node_position
   const endNodeConfig: EndNodeConfig = canvasMetadata.end_node_config || {}
+  const endTransitionStateIds = useMemo(
+    () =>
+      states
+        .filter((state) => (state.transitions || []).some((transition) => transition.target_state_id === '__end__'))
+        .map((state) => state.id),
+    [states]
+  )
   const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
     const refs: TransitionRef[] = []
     for (const state of states) {
@@ -364,7 +399,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
               canvas: {
                 ...(metadata.plan_builder?.canvas || {}),
                 ...canvasMetadata,
-                end_state_ids: endStateIds,
+                end_state_ids: endTransitionStateIds,
               },
             },
           },
@@ -545,46 +580,19 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
     // Also write the actual transition into the plan so the backend can act on it.
     // Without this the connection is purely cosmetic — the state machine never sees __end__.
-    const alreadyHasEndTransition = (sourceState.transitions || []).some(
-      (t) => t.target_state_id === '__end__'
-    )
-    if (!alreadyHasEndTransition) {
-      setStates((prev) =>
-        prev.map((state) =>
-          state.id === sourceStateId
-            ? {
-                ...state,
-                transitions: [
-                  ...(state.transitions || []),
-                  {
-                    target_state_id: '__end__',
-                    condition_type: 'all_tasks_complete' as const,
-                    priority: state.transitions?.length ?? 0,
-                  },
-                ],
-              }
-            : state
-        )
-      )
-    }
-
-    markChanged()
-  }
-
-  const handleDeleteEndConnection = (sourceStateId: string) => {
-    // Remove from canvas metadata
-    updateCanvasMetadata((current) => ({
-      ...current,
-      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== sourceStateId),
-    }))
-
-    // Remove the corresponding __end__ transition from the state
     setStates((prev) =>
       prev.map((state) =>
         state.id === sourceStateId
           ? {
               ...state,
-              transitions: (state.transitions || []).filter((t) => t.target_state_id !== '__end__'),
+              transitions: [
+                ...(state.transitions || []),
+                {
+                  target_state_id: '__end__',
+                  condition_type: 'all_tasks_complete' as const,
+                  priority: state.transitions?.length ?? 0,
+                },
+              ],
             }
           : state
       )
@@ -703,7 +711,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           throw new Error('Invalid plan structure')
         }
 
-        const normalizedStates = normalizePlanStates(content.states as PlanStateWithLegacyType[])
+        const importedMetadata = (content.metadata as PlanMetadata) || {}
+        const normalizedStates = ensureEndTransitionsForCanvasConnections(
+          normalizePlanStates(content.states as PlanStateWithLegacyType[]),
+          importedMetadata,
+        )
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
         setSelectedTransition(null)
@@ -711,8 +723,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
         setSystemPrompt(content.system_prompt || '')
         setSessionContext(content.session_context || { fields: [] })
-        setAgentSpawnMode(extractSpawnMode((content.metadata as PlanMetadata) || {}))
-        setMetadata((content.metadata as PlanMetadata) || {})
+        setAgentSpawnMode(extractSpawnMode(importedMetadata))
+        setMetadata(importedMetadata)
         setAutoFitKey((prev) => prev + 1)
 
         markChanged()
@@ -762,7 +774,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       return
     }
 
-    const endConnectedSet = new Set(showEndNode ? endStateIds : [])
+    const endConnectedSet = new Set(showEndNode ? endTransitionStateIds : [])
     const statesWithoutOutgoing = states.filter(
       (state) => (state.transitions?.length ?? 0) === 0 && !endConnectedSet.has(state.id)
     )
@@ -839,6 +851,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const selectedTransitionTarget = selectedTransitionData
     ? states.find((state) => state.id === selectedTransitionData.target_state_id)
     : null
+  const selectedTransitionTargetTitle = selectedTransitionData?.target_state_id === '__end__'
+    ? 'End'
+    : selectedTransitionTarget?.title || 'Unknown state'
   const selectedTransitionDeliverables = selectedTransitionState
     ? selectedTransitionState.type === 'goal'
       ? selectedTransitionState.goal?.deliverables || []
@@ -1039,9 +1054,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
-                  endStateIds={endStateIds}
                   onConnectEndState={handleConnectEndState}
-                  onDeleteEndConnection={handleDeleteEndConnection}
                   onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
                   onStatePositionChange={handleStatePositionChange}
