@@ -41,7 +41,7 @@
     "@livekit/rtc-node": "^0.10.4",
     "@nestjs/common": "^11.1.17",
     "@nestjs/config": "^4.0.3",
-    "@nestjs/core": "^11.0.1",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/microservices": "^11.1.9",
