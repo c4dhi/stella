@@ -81,6 +81,7 @@ export interface StateTransition {
    *
    * Simple:
    *   all_tasks_complete       – all required tasks/deliverables in the state are done
+   *   goal_achieved           – __goal_achieved__ deliverable is truthy
    *   deliverable_value        – a deliverable key equals a specific value (loose equality)
    *   deliverable_value_in     – a deliverable key matches any value in an array
    *   deliverable_value_numeric – a deliverable key satisfies a numeric comparison
@@ -94,6 +95,7 @@ export interface StateTransition {
    */
   condition_type:
     | 'all_tasks_complete'
+    | 'goal_achieved'
     | 'turn_count_exceeded'
     | 'deliverable_value'
     | 'deliverable_value_in'
@@ -245,9 +247,18 @@ export class StateMachineService {
    */
   private ensureTransitions(plan: PlanData): PlanData {
     const statesWithTransitions = plan.states.map((state, index) => {
+      const normalizedExistingTransitions = (state.transitions || []).map((transition) =>
+        state.type === 'goal' && transition.condition_type === 'all_tasks_complete'
+          ? { ...transition, condition_type: 'goal_achieved' as const, condition_config: undefined }
+          : transition,
+      );
+
       // If state already has transitions, keep them
-      if (state.transitions && state.transitions.length > 0) {
-        return state;
+      if (normalizedExistingTransitions.length > 0) {
+        return {
+          ...state,
+          transitions: normalizedExistingTransitions,
+        };
       }
 
       // If this is the last state, no transition needed
@@ -257,6 +268,8 @@ export class StateMachineService {
 
       // Generate default transition to next state
       const nextStateId = plan.states[index + 1].id;
+      const defaultConditionType: StateTransition['condition_type'] =
+        state.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete';
       this.logger.log(
         `Auto-generating transition for state '${state.id}' -> '${nextStateId}'`,
       );
@@ -266,7 +279,7 @@ export class StateMachineService {
         transitions: [
           {
             target_state_id: nextStateId,
-            condition_type: 'all_tasks_complete' as const,
+            condition_type: defaultConditionType,
             priority: 1,
           },
         ],
@@ -476,8 +489,13 @@ export class StateMachineService {
         },
       });
 
+      const transitionResult = await this.evaluateAndTransition(sessionId);
+
       return {
         success: true,
+        transitioned: transitionResult.transitioned,
+        newStateId: transitionResult.newStateId,
+        newStateTitle: transitionResult.newStateTitle,
         progress: await this.calculateProgress(sessionId, {
           ...state,
           deliverables: deliverables as unknown as Prisma.JsonValue,
@@ -658,12 +676,15 @@ export class StateMachineService {
 
       const allDeliverableKeys = [...new Set([...taskDeliverableKeys, ...goalDeliverableKeys])];
 
-      if (allDeliverableKeys.length === 0 && pendingTasks.length === 0) return [];
-
       return [{
         id: '__goal__',
         description: currentState.goal?.objective || currentState.description || currentState.title || 'Complete this phase',
-        instruction: currentState.goal?.depth_guidance,
+        instruction: [
+          currentState.goal?.depth_guidance,
+          currentState.goal?.success_description
+            ? `Mark this goal as achieved when this success criteria is met: ${currentState.goal.success_description}\nWhen met, call setDeliverable("__goal_achieved__", true).`
+            : 'Mark this goal as achieved when the objective is met.\nWhen met, call setDeliverable("__goal_achieved__", true).',
+        ].filter(Boolean).join('\n\n'),
         required: true,
         hasDeliverables: true,
         deliverableKeys: allDeliverableKeys,
@@ -882,14 +903,6 @@ export class StateMachineService {
 
       const taskDeliverables = task.deliverables || [];
       if (taskDeliverables.length === 0) {
-        if (stateType === 'goal') {
-          // In goal mode, deliverable-less tasks are auto-considered complete.
-          // Goal mode focuses on information gathering (deliverables), not actions.
-          this.logger.log(
-            `[isCurrentStateComplete] Task '${task.id}' has no deliverables — auto-complete in goal mode`,
-          );
-          continue;
-        }
         // Task without deliverables - check if completed
         if (!state.completedTasks.includes(task.id)) {
           this.logger.log(
@@ -1015,6 +1028,16 @@ export class StateMachineService {
     return actual === expected;
   }
 
+  private isGoalAchievedValue(raw: unknown): boolean {
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    if (typeof raw === 'string') {
+      const normalized = this.normalizeStringValue(raw);
+      return ['true', 'yes', '1', 'done', 'completed', 'complete', 'achieved', 'met'].includes(normalized);
+    }
+    return false;
+  }
+
   /**
    * Map operator strings (including symbolic aliases) to canonical keys.
    * Returns null when the operator is unrecognised, so callers can fail-closed.
@@ -1059,6 +1082,7 @@ export class StateMachineService {
   private validateConditionConfig(
     conditionType: string,
     conditionConfig: Record<string, unknown> | undefined,
+    currentState: PlanState,
     depth = 0,
   ): { valid: boolean; error?: string } {
     if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
@@ -1070,6 +1094,14 @@ export class StateMachineService {
 
     switch (conditionType) {
       case 'all_tasks_complete':
+        if ((currentState.type || 'loose') === 'goal') {
+          return { valid: false, error: `'all_tasks_complete' is not supported for goal states` };
+        }
+        return { valid: true };
+      case 'goal_achieved':
+        if ((currentState.type || 'loose') !== 'goal') {
+          return { valid: false, error: `'goal_achieved' is only supported for goal states` };
+        }
         return { valid: true };
 
       case 'turn_count_exceeded': {
@@ -1153,14 +1185,14 @@ export class StateMachineService {
       // Composite conditions — delegate child validation recursively.
       case 'all_of':
       case 'any_of':
-        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+        return this.validateCompositeConditionConfig(conditionConfig, currentState, depth + 1);
 
       case 'compound': {
         const operator = String(conditionConfig?.operator || '').toLowerCase();
         if (operator !== 'and' && operator !== 'or') {
           return { valid: false, error: `'operator' must be 'and' or 'or' for compound` };
         }
-        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+        return this.validateCompositeConditionConfig(conditionConfig, currentState, depth + 1);
       }
 
       default:
@@ -1174,6 +1206,7 @@ export class StateMachineService {
    */
   private validateCompositeConditionConfig(
     conditionConfig: Record<string, unknown> | undefined,
+    currentState: PlanState,
     depth: number,
   ): { valid: boolean; error?: string } {
     const conditions = conditionConfig?.conditions;
@@ -1201,7 +1234,12 @@ export class StateMachineService {
           ? (childConfigRaw as Record<string, unknown>)
           : undefined;
 
-      const childResult = this.validateConditionConfig(childType, childConfig, depth);
+      const childResult = this.validateConditionConfig(
+        childType,
+        childConfig,
+        currentState,
+        depth,
+      );
       if (!childResult.valid) {
         return {
           valid: false,
@@ -1216,7 +1254,7 @@ export class StateMachineService {
   /**
    * Evaluate a single condition node against the current session state.
    *
-   * Handles all 9 condition types including recursive composite conditions
+   * Handles all 10 condition types including recursive composite conditions
    * (all_of / any_of / compound).  The depth parameter guards against
    * infinite recursion from malformed plans.
    *
@@ -1242,8 +1280,23 @@ export class StateMachineService {
 
     switch (conditionType) {
       case 'all_tasks_complete':
+        if ((currentState.type || 'loose') === 'goal') {
+          this.warnInvalidCondition(
+            `'all_tasks_complete' is not supported for goal states; use 'goal_achieved' or deliverable-based conditions`,
+          );
+          return false;
+        }
         // Delegates to the existing helper that checks required tasks & deliverables.
         return this.isCurrentStateComplete(state, currentState);
+      case 'goal_achieved': {
+        if ((currentState.type || 'loose') !== 'goal') {
+          this.warnInvalidCondition(
+            `'goal_achieved' is only supported for goal states`,
+          );
+          return false;
+        }
+        return this.isGoalAchievedValue(deliverables.__goal_achieved__?.value);
+      }
 
       case 'turn_count_exceeded': {
         // Supports two scopes:
@@ -1537,6 +1590,7 @@ export class StateMachineService {
         const validation = this.validateConditionConfig(
           transition.condition_type,
           transition.condition_config,
+          currentState,
         );
         if (!validation.valid) {
           this.warnInvalidCondition(

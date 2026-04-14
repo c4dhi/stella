@@ -648,6 +648,7 @@ export interface PlanTask {
 // Keep this union aligned with backend StateTransition.condition_type in state-machine.service.ts.
 export type StateTransitionConditionType =
   | 'all_tasks_complete'
+  | 'goal_achieved'
   | 'turn_count_exceeded'
   | 'deliverable_value'
   | 'deliverable_value_in'
