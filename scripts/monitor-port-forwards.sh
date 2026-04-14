@@ -13,10 +13,16 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-PID_DIR="/tmp/stella-ai-k8s"
+# Configuration (inherit from environment or use defaults)
+NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+_ns_suffix=""
+[[ "$NAMESPACE" != "ai-agents" ]] && _ns_suffix="-${NAMESPACE}"
+PID_DIR="${STELLA_AI_TEMP_DIR:-/tmp}/stella-ai-k8s${_ns_suffix}"
 LOG_FILE="$PID_DIR/monitor.log"
 CHECK_INTERVAL=30  # Check every 30 seconds
+_FRONTEND_PORT="${FRONTEND_PORT:-8080}"
+_BACKEND_PORT="${BACKEND_PORT:-3000}"
+_POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 # Change to script directory
 cd "$(dirname "$0")/.."
@@ -48,7 +54,7 @@ start_port_forward() {
 
     log "Starting port-forward: $service -> localhost:$port"
 
-    nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/$service $port:$port > "$PID_DIR/pf-$service.log" 2>&1 &
+    nohup kubectl port-forward -n "$NAMESPACE" --address 127.0.0.1 svc/$service $port:$port > "$PID_DIR/pf-$service.log" 2>&1 &
     local pid=$!
 
     # Wait a moment and verify it started
@@ -82,14 +88,14 @@ restart_port_forwards() {
     NODE_ENV=$(get_cluster_node_env)
 
     # Start new port-forwards
-    PF_FRONTEND=$(start_port_forward "frontend-ui" "8080")
-    PF_BACKEND=$(start_port_forward "session-management-server" "3000")
+    PF_FRONTEND=$(start_port_forward "frontend-ui" "$_FRONTEND_PORT")
+    PF_BACKEND=$(start_port_forward "session-management-server" "$_BACKEND_PORT")
     PF_LIVEKIT=$(start_port_forward "livekit" "7880")
 
     # Postgres: Use different local port in production (nginx uses 5432)
     if [ "$NODE_ENV" = "production" ]; then
         log "Starting port-forward: postgres -> localhost:15432"
-        nohup kubectl port-forward -n ai-agents --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
+        nohup kubectl port-forward -n "$NAMESPACE" --address 127.0.0.1 svc/postgres 15432:5432 > "$PID_DIR/pf-postgres.log" 2>&1 &
         PF_POSTGRES=$!
         sleep 2
         if ps -p $PF_POSTGRES > /dev/null 2>&1; then
@@ -99,7 +105,7 @@ restart_port_forwards() {
             PF_POSTGRES=""
         fi
     else
-        PF_POSTGRES=$(start_port_forward "postgres" "5432")
+        PF_POSTGRES=$(start_port_forward "postgres" "$_POSTGRES_PORT")
     fi
 
     # Save PIDs
@@ -114,7 +120,7 @@ restart_port_forwards() {
 
 get_cluster_node_env() {
     local env_value
-    env_value=$(kubectl get configmap stella-ai-config -n ai-agents -o jsonpath='{.data.NODE_ENV}' 2>/dev/null || true)
+    env_value=$(kubectl get configmap stella-ai-config -n "$NAMESPACE" -o jsonpath='{.data.NODE_ENV}' 2>/dev/null || true)
 
     if [ -z "$env_value" ]; then
         env_value="local"
@@ -184,11 +190,11 @@ case "${1:-}" in
         echo "===================="
         if [ -f "$PID_DIR/port-forwards.pid" ]; then
             # Set postgres port based on environment
-            POSTGRES_PORT="5432"
+            _pg_display_port="$_POSTGRES_PORT"
             if [ "$NODE_ENV" = "production" ]; then
-                POSTGRES_PORT="15432"
+                _pg_display_port="15432"
             fi
-            services=("frontend-ui:8080" "backend:3000" "livekit:7880" "postgres:$POSTGRES_PORT")
+            services=("frontend-ui:$_FRONTEND_PORT" "backend:$_BACKEND_PORT" "livekit:7880" "postgres:$_pg_display_port")
             index=0
             while read pid; do
                 if [ ! -z "$pid" ]; then
