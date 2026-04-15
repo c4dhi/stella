@@ -287,6 +287,10 @@ class ChatterBoxProvider(TTSProvider):
                 audio_data = audio_data / max_val
 
             sample_rate = self._model.sr  # 24000
+
+            # Trim trailing hallucinated audio/silence from the model output
+            audio_data = self._trim_trailing_artifacts(audio_data, sample_rate)
+
             return audio_data, sample_rate
 
         except Exception as e:
@@ -364,6 +368,56 @@ class ChatterBoxProvider(TTSProvider):
 
         print(f"[ChatterBox] Synthesized {len(final_audio)} samples ({len(chunks)} chunks), lang={language_id}")
         return (final_audio, sample_rate)
+
+    def _trim_trailing_artifacts(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Trim trailing silence and hallucinated artifacts from model output.
+
+        ChatterBox's autoregressive decoder often generates extra phonemes or
+        noise past the actual speech content. This uses an energy-based approach:
+        walk backwards from the end to find where real speech stops, then keep
+        a short tail for natural decay.
+        """
+        if len(audio) == 0:
+            return audio
+
+        # Use a window of 20ms for energy calculation
+        window_size = int(0.02 * sample_rate)  # 480 samples at 24kHz
+        if len(audio) < window_size * 2:
+            return audio
+
+        # Calculate RMS energy in sliding windows from the end
+        # Find the last window with significant energy (speech)
+        speech_threshold = 0.01  # RMS threshold for "speech present"
+        tail_padding_ms = 100   # Keep 100ms after last detected speech for natural decay
+        tail_padding_samples = int(tail_padding_ms / 1000 * sample_rate)
+
+        last_speech_sample = len(audio)
+        for i in range(len(audio) - window_size, 0, -window_size):
+            window = audio[i:i + window_size]
+            rms = np.sqrt(np.mean(window ** 2))
+            if rms > speech_threshold:
+                last_speech_sample = i + window_size
+                break
+
+        # Add natural tail padding, but don't exceed original length
+        trim_point = min(last_speech_sample + tail_padding_samples, len(audio))
+
+        if trim_point < len(audio):
+            trimmed = trim_point
+            original = len(audio)
+            removed_ms = (original - trimmed) / sample_rate * 1000
+            if removed_ms > 50:  # Only log if we trimmed more than 50ms
+                print(f"[ChatterBox] Trimmed {removed_ms:.0f}ms trailing artifacts "
+                      f"({original} -> {trimmed} samples)")
+            audio = audio[:trim_point]
+
+            # Apply short fade-out to avoid click at trim point (10ms)
+            fade_samples = min(int(0.01 * sample_rate), len(audio))
+            if fade_samples > 0:
+                fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+                audio[-fade_samples:] *= fade
+
+        return audio
 
     def _normalize_audio(self, audio: np.ndarray) -> np.ndarray:
         """Normalize audio to -3dB peak."""

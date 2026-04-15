@@ -491,6 +491,15 @@ class StellaV2Agent(BaseAgent):
                 plan_id=full_state.get("plan_id"),
             )
 
+        # Build transition metadata if the state changed during this turn.
+        last_transition = None
+        if full_state:
+            current_state_id = full_state.get("current_state_id")
+            if current_state_id and current_state_id != self._last_post_response_state_id:
+                last_transition = self._build_last_transition_metadata(
+                    self._last_post_response_state_id, current_state_id
+                )
+
         # Emit final progress for this turn.
         if full_state:
             progress_state = ProgressAdapter.from_full_state_dict(
