@@ -63,30 +63,22 @@ FROM final-${ENABLE_GPU} AS final
 
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# TTS_PROVIDER build arg controls which dependencies are installed.
+# "all" (default) installs everything for maximum flexibility.
+# "piper" installs only Piper + ONNX (lightest, ~60MB model, fastest build).
+# "chatterbox" installs ChatterBox + PyTorch + ONNX (heavy, ~2GB model).
+# "kokoro" installs Kokoro + ONNX (medium).
+ARG TTS_PROVIDER=all
+
+# Copy requirements and install base Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install ChatterBox TTS dependencies explicitly, then ChatterBox itself with --no-deps
-# This avoids the numpy conflict (chatterbox pins numpy<1.26, kokoro needs numpy>=2.0)
-# ChatterBox works fine with newer numpy, the pin is overly conservative
-RUN pip install --no-cache-dir \
-    conformer \
-    diffusers \
-    librosa \
-    omegaconf \
-    pykakasi \
-    pyloudnorm \
-    resemble-perth \
-    s3tokenizer \
-    safetensors \
-    spacy-pkuseg \
-    transformers
-RUN pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6
-
-# Install ONNX Runtime (GPU or CPU based on build arg)
+# Install ONNX Runtime (needed by piper and kokoro)
 ARG ENABLE_GPU
-RUN if [ "$ENABLE_GPU" = "true" ]; then \
+RUN if [ "$TTS_PROVIDER" = "chatterbox" ]; then \
+        echo "[TTS] Skipping ONNX Runtime (not needed for chatterbox-only)"; \
+    elif [ "$ENABLE_GPU" = "true" ]; then \
         echo "[TTS] Installing onnxruntime-gpu..." && \
         pip install --no-cache-dir onnxruntime-gpu>=1.16.0; \
     else \
@@ -94,13 +86,37 @@ RUN if [ "$ENABLE_GPU" = "true" ]; then \
         pip install --no-cache-dir onnxruntime>=1.16.0; \
     fi
 
-# Install PyTorch (GPU or CPU based on build arg, needed for ChatterBox)
-RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[TTS] Installing PyTorch with CUDA..." && \
-        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+# Install ChatterBox dependencies (only when provider is chatterbox or all)
+RUN if [ "$TTS_PROVIDER" = "chatterbox" ] || [ "$TTS_PROVIDER" = "all" ]; then \
+        echo "[TTS] Installing ChatterBox dependencies..." && \
+        pip install --no-cache-dir \
+            conformer \
+            diffusers \
+            librosa \
+            omegaconf \
+            pykakasi \
+            pyloudnorm \
+            resemble-perth \
+            s3tokenizer \
+            safetensors \
+            spacy-pkuseg \
+            transformers && \
+        pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6; \
     else \
-        echo "[TTS] Installing PyTorch (CPU)..." && \
-        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+        echo "[TTS] Skipping ChatterBox dependencies (TTS_PROVIDER=$TTS_PROVIDER)"; \
+    fi
+
+# Install PyTorch (needed by ChatterBox only)
+RUN if [ "$TTS_PROVIDER" = "chatterbox" ] || [ "$TTS_PROVIDER" = "all" ]; then \
+        if [ "$ENABLE_GPU" = "true" ]; then \
+            echo "[TTS] Installing PyTorch with CUDA..." && \
+            pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+        else \
+            echo "[TTS] Installing PyTorch (CPU)..." && \
+            pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+        fi; \
+    else \
+        echo "[TTS] Skipping PyTorch (TTS_PROVIDER=$TTS_PROVIDER)"; \
     fi
 
 # Model download scripts (models are downloaded at runtime via init container)
@@ -121,6 +137,9 @@ RUN python -m grpc_tools.protoc \
 
 # Copy source code
 COPY src/ ./src/
+
+# Copy voice prompts for ChatterBox voice cloning (if any exist)
+COPY voice_prompt[s]/ /app/voice_prompts/
 
 # Environment defaults
 ENV TTS_PROVIDER=piper

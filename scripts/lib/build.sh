@@ -971,7 +971,8 @@ build_images() {
     # Core services
     start_parallel_build "session-management-server" "session-management-server:latest" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:latest" "./stt-service" "$gpu_args"
-    start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$gpu_args"
+    local tts_args="$gpu_args --build-arg TTS_PROVIDER=${TTS_PROVIDER:-all}"
+    start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$tts_args"
     start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
 

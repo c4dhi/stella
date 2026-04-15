@@ -87,6 +87,11 @@ generate_configmap() {
         -e "s|\${PUBLIC_DB_PORT}|${PUBLIC_DB_PORT:-}|g" \
         -e "s|\${STT_PROVIDER}|${STT_PROVIDER:-sherpa}|g" \
         -e "s|\${TTS_PROVIDER}|${TTS_PROVIDER:-piper}|g" \
+        -e "s|\${TTS_LANGUAGE}|${TTS_LANGUAGE:-}|g" \
+        -e "s|\${CHATTERBOX_LANGUAGE}|${CHATTERBOX_LANGUAGE:-en}|g" \
+        -e "s|\${CHATTERBOX_AUDIO_PROMPT}|${CHATTERBOX_AUDIO_PROMPT:-}|g" \
+        -e "s|\${PIPER_VOICE}|${PIPER_VOICE:-en_US-lessac-medium}|g" \
+        -e "s|\${PIPER_SPEAKER_ID}|${PIPER_SPEAKER_ID:-}|g" \
         -e "s|\${WHISPER_MODEL}|${WHISPER_MODEL:-base.en}|g" \
         -e "s|\${WHISPER_DEVICE}|${WHISPER_DEVICE:-cpu}|g" \
         -e "s|\${WHISPER_COMPUTE_TYPE}|${WHISPER_COMPUTE_TYPE:-int8}|g" \

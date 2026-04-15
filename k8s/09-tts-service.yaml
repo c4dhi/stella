@@ -116,6 +116,12 @@ spec:
               name: stella-ai-config
               key: TTS_PROVIDER
               optional: true
+        - name: PIPER_VOICE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PIPER_VOICE
+              optional: true
         volumeMounts:
         - name: model-cache
           mountPath: /models
@@ -158,6 +164,36 @@ spec:
             configMapKeyRef:
               name: stella-ai-config
               key: ONNX_PROVIDER
+              optional: true
+        - name: TTS_LANGUAGE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: TTS_LANGUAGE
+              optional: true
+        - name: CHATTERBOX_LANGUAGE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: CHATTERBOX_LANGUAGE
+              optional: true
+        - name: CHATTERBOX_AUDIO_PROMPT
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: CHATTERBOX_AUDIO_PROMPT
+              optional: true
+        - name: PIPER_VOICE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PIPER_VOICE
+              optional: true
+        - name: PIPER_SPEAKER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PIPER_SPEAKER_ID
               optional: true
         - name: KOKORO_CACHE_DIR
           value: "/root/.cache/kokoro"

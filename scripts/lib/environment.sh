@@ -357,6 +357,13 @@ set_defaults() {
         fi
     fi
 
+    # TTS Language Configuration
+    export TTS_LANGUAGE="${TTS_LANGUAGE:-}"
+    export CHATTERBOX_LANGUAGE="${CHATTERBOX_LANGUAGE:-en}"
+    export CHATTERBOX_AUDIO_PROMPT="${CHATTERBOX_AUDIO_PROMPT:-}"
+    export PIPER_VOICE="${PIPER_VOICE:-en_US-lessac-medium}"
+    export PIPER_SPEAKER_ID="${PIPER_SPEAKER_ID:-}"
+
     # TURN Configuration
     export LIVEKIT_TURN_ENABLED="${LIVEKIT_TURN_ENABLED:-false}"
     export LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-localhost}"

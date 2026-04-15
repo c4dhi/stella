@@ -10,10 +10,12 @@ from .base import TTSProvider
 # Check if piper is available
 try:
     from piper.voice import PiperVoice
+    from piper.config import SynthesisConfig
     PIPER_AVAILABLE = True
 except ImportError:
     PIPER_AVAILABLE = False
     PiperVoice = None
+    SynthesisConfig = None
 
 try:
     import scipy.signal
@@ -40,6 +42,10 @@ class PiperProvider(TTSProvider):
         self._voice: Optional[object] = None
         self._default_voice = os.getenv('PIPER_VOICE', 'en_US-lessac-medium')
         self._cache_dir = os.getenv('PIPER_CACHE_DIR', os.path.expanduser('~/.cache/piper'))
+        # Speaker ID for multi-speaker models (e.g., de_DE-mls-medium has many speakers)
+        # Accepts either internal ID (int) or speaker name (string from config's speaker_id_map)
+        self._speaker_id_raw = os.getenv('PIPER_SPEAKER_ID', None)
+        self._speaker_id = None  # Resolved after model load
 
     @property
     def name(self) -> str:
@@ -87,8 +93,27 @@ class PiperProvider(TTSProvider):
                 lambda: PiperVoice.load(model_path, config_path=config_path)
             )
 
+            # Resolve speaker ID from name or direct int
+            if self._speaker_id_raw is not None:
+                speaker_map = {}
+                if hasattr(self._voice, 'config') and hasattr(self._voice.config, 'speaker_id_map'):
+                    speaker_map = self._voice.config.speaker_id_map or {}
+
+                if self._speaker_id_raw in speaker_map:
+                    # It's a speaker name — look up the internal ID
+                    self._speaker_id = speaker_map[self._speaker_id_raw]
+                    print(f"[Piper] Resolved speaker name '{self._speaker_id_raw}' to internal ID {self._speaker_id}")
+                else:
+                    # Try as direct integer ID
+                    try:
+                        self._speaker_id = int(self._speaker_id_raw)
+                    except ValueError:
+                        print(f"[Piper] Warning: speaker '{self._speaker_id_raw}' not found in model, using default")
+                        self._speaker_id = None
+
             self._initialized = True
-            print(f"[Piper] Initialized successfully with voice: {self._default_voice}")
+            speaker_info = f", speaker_id={self._speaker_id}" if self._speaker_id is not None else ""
+            print(f"[Piper] Initialized successfully with voice: {self._default_voice}{speaker_info}")
             return True
 
         except Exception as e:
@@ -161,7 +186,11 @@ class PiperProvider(TTSProvider):
             audio_chunks = []
             sample_rate = self._voice.config.sample_rate or self.PIPER_SAMPLE_RATE
 
-            for audio_chunk in self._voice.synthesize(text):
+            synth_config = None
+            if self._speaker_id is not None and SynthesisConfig is not None:
+                synth_config = SynthesisConfig(speaker_id=self._speaker_id)
+
+            for audio_chunk in self._voice.synthesize(text, syn_config=synth_config):
                 # synthesize() yields AudioChunk objects with audio_float_array
                 # already in float32 [-1, 1] range
                 audio_chunks.append(audio_chunk.audio_float_array)

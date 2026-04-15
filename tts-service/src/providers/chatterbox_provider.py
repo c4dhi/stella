@@ -54,7 +54,14 @@ class ChatterBoxProvider(TTSProvider):
         self._default_language = os.getenv('CHATTERBOX_LANGUAGE', DEFAULT_LANGUAGE)
         self._exaggeration = float(os.getenv('CHATTERBOX_EXAGGERATION', '0.5'))
         self._cfg_weight = float(os.getenv('CHATTERBOX_CFG_WEIGHT', '0.5'))
-        self._audio_prompt_path = os.getenv('CHATTERBOX_AUDIO_PROMPT', None)
+        _prompt_path = os.getenv('CHATTERBOX_AUDIO_PROMPT', None)
+        if _prompt_path and os.path.isfile(_prompt_path):
+            self._audio_prompt_path = _prompt_path
+            print(f"[ChatterBox] Voice cloning prompt: {_prompt_path}")
+        else:
+            self._audio_prompt_path = None
+            if _prompt_path:
+                print(f"[ChatterBox] Warning: CHATTERBOX_AUDIO_PROMPT set to '{_prompt_path}' but file not found, using default voice")
 
     @property
     def name(self) -> str:
