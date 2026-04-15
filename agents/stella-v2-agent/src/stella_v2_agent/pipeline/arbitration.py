@@ -38,7 +38,7 @@ _DEFAULT_FLAGGING_VERDICTS: Dict[str, set] = {
     "timekeeper": {"slowing", "stuck", "force_advance"},
 }
 
-_DEFAULT_GATE_FAILURE_MESSAGE = "I'm sorry, I didn't quite catch that. Could you say that again?"
+_DEFAULT_GATE_FAILURE_MESSAGE = "Entschuldigung, das hab ich leider nicht verstanden. Könntest du das nochmal sagen?"
 
 
 class Arbitration:

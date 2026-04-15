@@ -530,6 +530,20 @@ class BaseAgent(ABC):
 
         async for event in self.audio.audio_in():
             if event.is_final and event.text.strip():
+                # Drain any stacked transcripts — only process the latest one.
+                # This prevents message pileup when the user speaks while the
+                # agent is still responding (transcripts queued during gate-open window).
+                latest_event = event
+                while not self.audio._transcript_queue.empty():
+                    try:
+                        next_event = self.audio._transcript_queue.get_nowait()
+                        if next_event.is_final and next_event.text.strip():
+                            logger.info(f"[DRAIN] Discarding stacked transcript: '{latest_event.text[:50]}'")
+                            latest_event = next_event
+                    except asyncio.QueueEmpty:
+                        break
+                event = latest_event
+
                 # Create AgentInput and route through process()
                 input_msg = AgentInput.text_input(self._session_id or "", event.text)
 
