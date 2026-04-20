@@ -144,6 +144,14 @@ parse_args() {
             --config)
                 CONFIG_MODE=true
                 ;;
+            --namespace)
+                shift
+                KUBERNETES_NAMESPACE="$1"
+                ;;
+            --port-offset)
+                shift
+                PORT_OFFSET="$1"
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -162,6 +170,7 @@ parse_args() {
     export DAEMON_MODE STOP_MODE RESTART_MODE REBUILD_MODE RESET_DB_MODE
     export SKIP_BUILD_MODE DRY_RUN_MODE VERBOSE_MODE ENV_FLAG
     export SETUP_MODE CONFIG_MODE
+    export KUBERNETES_NAMESPACE PORT_OFFSET
 }
 
 show_help() {
@@ -174,6 +183,10 @@ show_help() {
     echo "Environment Options:"
     echo "  --local         Run in local development mode (default)"
     echo "  --production    Run in production mode"
+    echo ""
+    echo "Namespace Options:"
+    echo "  --namespace NS  K8s namespace (default: ai-agents). Non-default auto-offsets ports +100"
+    echo "  --port-offset N Override local port offset (default: 0, or 100 for non-default namespace)"
     echo ""
     echo "Deployment Options:"
     echo "  --rebuild       Force rebuild all Docker images"
@@ -198,6 +211,10 @@ show_help() {
     echo "  $0 --rebuild              # Force rebuild everything"
     echo "  $0 --restart -d           # Restart services, run in background"
     echo "  $0 --dry-run --verbose    # Preview with details"
+    echo ""
+    echo "Parallel Instance Examples:"
+    echo "  $0 --namespace ai-agents-review   # Review instance (ports +100)"
+    echo "  $0 --namespace ai-agents-review --stop  # Stop only review instance"
 }
 
 # =============================================================================

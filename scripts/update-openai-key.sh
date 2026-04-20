@@ -11,6 +11,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+
 echo -e "${BLUE}======================================${NC}"
 echo -e "${BLUE}Update OpenAI API Key in Agent Secrets${NC}"
 echo -e "${BLUE}======================================${NC}"
@@ -66,10 +68,10 @@ if ! minikube status | grep -q "Running" 2>/dev/null; then
 fi
 
 # Get all agent secrets
-SECRETS=$(kubectl get secrets -n ai-agents -o name 2>/dev/null | grep "agent-secret-" || echo "")
+SECRETS=$(kubectl get secrets -n "$NAMESPACE" -o name 2>/dev/null | grep "agent-secret-" || echo "")
 
 if [ -z "$SECRETS" ]; then
-    echo -e "${YELLOW}No agent secrets found in ai-agents namespace${NC}"
+    echo -e "${YELLOW}No agent secrets found in $NAMESPACE namespace${NC}"
     echo "This is normal if no agents have been created yet."
     exit 0
 fi
@@ -97,13 +99,13 @@ for secret in $SECRETS; do
     echo -e "  Updating ${SECRET_NAME}..."
 
     # Get existing secret data
-    SECRET_DATA=$(kubectl get secret $SECRET_NAME -n ai-agents -o json)
+    SECRET_DATA=$(kubectl get secret $SECRET_NAME -n "$NAMESPACE" -o json)
 
     # Update OPENAI_API_KEY (base64 encode)
     ENCODED_KEY=$(echo -n "$OPENAI_API_KEY" | base64)
 
     # Patch the secret
-    kubectl patch secret $SECRET_NAME -n ai-agents \
+    kubectl patch secret $SECRET_NAME -n "$NAMESPACE" \
         --type='json' \
         -p="[{'op': 'replace', 'path': '/data/OPENAI_API_KEY', 'value': '$ENCODED_KEY'}]" \
         2>/dev/null || echo -e "${YELLOW}    Warning: Failed to update $SECRET_NAME${NC}"
@@ -114,10 +116,10 @@ echo -e "${GREEN}✅ Update complete!${NC}"
 echo ""
 echo -e "${BLUE}Next steps:${NC}"
 echo "1. Restart session-management-server to use the new key:"
-echo -e "   ${YELLOW}kubectl rollout restart deployment session-management-server -n ai-agents${NC}"
+echo -e "   ${YELLOW}kubectl rollout restart deployment session-management-server -n "$NAMESPACE"${NC}"
 echo ""
 echo "2. Restart any running agents to use the new key:"
-echo -e "   ${YELLOW}kubectl delete pod -n ai-agents -l app=conversational-ai-agent${NC}"
+echo -e "   ${YELLOW}kubectl delete pod -n "$NAMESPACE" -l app=conversational-ai-agent${NC}"
 echo ""
 echo "3. Or run the full deployment script:"
 echo -e "   ${YELLOW}./scripts/start-k8s.sh${NC}"
