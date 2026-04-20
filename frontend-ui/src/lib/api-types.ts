@@ -38,6 +38,9 @@ export interface Project {
   createdAt: string
   updatedAt: string
   agentInactivityTimeoutMinutes?: number | null
+  // Session auto-end configuration (issue #198) — adjustable per project in the UI
+  sessionInactivityEndMinutes?: number | null
+  sessionMaxDurationMinutes?: number | null
 }
 
 export interface ProjectWithCounts extends Project {
@@ -201,6 +204,8 @@ export interface Timeline {
 export interface CreateProjectDto {
   name: string // 1-255 characters
   agentInactivityTimeoutMinutes?: number | null
+  sessionInactivityEndMinutes?: number | null
+  sessionMaxDurationMinutes?: number | null
 }
 
 export interface CreateSessionDto {

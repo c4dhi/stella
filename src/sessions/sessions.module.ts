@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { SessionsService } from './sessions.service';
+import { SessionTimeoutService } from './session-timeout.service';
 import { SessionsController } from './sessions.controller';
 import { LiveKitModule } from '../livekit/livekit.module';
 import { AgentsModule } from '../agents/agents.module';
@@ -9,7 +10,7 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [LiveKitModule, forwardRef(() => AgentsModule), MessageRecorderModule, AuthModule],
   controllers: [SessionsController],
-  providers: [SessionsService],
-  exports: [SessionsService],
+  providers: [SessionsService, SessionTimeoutService],
+  exports: [SessionsService, SessionTimeoutService],
 })
 export class SessionsModule {}

@@ -84,6 +84,10 @@ export default function ProjectModal({
   const [customTimeout, setCustomTimeout] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
 
+  // Session auto-end (issue #198) — adjustable from the UI. null = disabled.
+  const [sessionInactivityEndMinutes, setSessionInactivityEndMinutes] = useState<number | null>(null)
+  const [sessionMaxDurationMinutes, setSessionMaxDurationMinutes] = useState<number | null>(null)
+
   // Agent selection (AgentGalleryStep manages its own loading/fetching)
   const [selectedAgentType, setSelectedAgentType] = useState<AgentType | null>(null)
 
@@ -175,6 +179,8 @@ export default function ProjectModal({
         } else {
           setCustomTimeout('')
         }
+        setSessionInactivityEndMinutes(project.sessionInactivityEndMinutes ?? null)
+        setSessionMaxDurationMinutes(project.sessionMaxDurationMinutes ?? null)
       } else {
         // Create mode - reset to defaults
         setName('')
@@ -182,6 +188,8 @@ export default function ProjectModal({
         setAgentInactivityTimeout(5)
         setCustomTimeout('')
         setShowCustomInput(false)
+        setSessionInactivityEndMinutes(null)
+        setSessionMaxDurationMinutes(null)
         setSelectedAgentType(null)
         setAgentName('')
         setAgentIcon('🤖')
@@ -263,7 +271,9 @@ export default function ProjectModal({
           // In edit mode, check if there are changes
           const hasChanges =
             name !== project?.name ||
-            agentInactivityTimeout !== (project?.agentInactivityTimeoutMinutes ?? null)
+            agentInactivityTimeout !== (project?.agentInactivityTimeoutMinutes ?? null) ||
+            sessionInactivityEndMinutes !== (project?.sessionInactivityEndMinutes ?? null) ||
+            sessionMaxDurationMinutes !== (project?.sessionMaxDurationMinutes ?? null)
           return name.trim().length > 0 && name.length <= 255 && hasChanges
         }
         return name.trim().length > 0 && name.length <= 255
@@ -293,7 +303,7 @@ export default function ProjectModal({
       default:
         return false
     }
-  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedConfiguration, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars, isEditMode, project, agentInactivityTimeout])
+  }, [step, name, selectedAgentType, agentName, selectedPlan, selectedConfiguration, selectedEnvVarTemplate, agentRequirements.requiredEnvVars, envVars, isEditMode, project, agentInactivityTimeout, sessionInactivityEndMinutes, sessionMaxDurationMinutes])
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -319,6 +329,8 @@ export default function ProjectModal({
         const updatedProject = await apiClient.updateProject(project.id, {
           name: name !== project.name ? name : undefined,
           agentInactivityTimeoutMinutes: agentInactivityTimeout,
+          sessionInactivityEndMinutes,
+          sessionMaxDurationMinutes,
         })
         onProjectUpdated?.(updatedProject)
         onClose()
@@ -327,6 +339,8 @@ export default function ProjectModal({
         const newProject = await apiClient.createProject({
           name,
           agentInactivityTimeoutMinutes: agentInactivityTimeout,
+          sessionInactivityEndMinutes,
+          sessionMaxDurationMinutes,
         })
 
         // If public, update the public config
@@ -794,6 +808,70 @@ export default function ProjectModal({
                         When enabled, agents will automatically stop after the timeout period when all users leave the session.
                         Agents will automatically restart when a user rejoins.
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Session Auto-End (issue #198) */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Clock className={`w-4 h-4 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`} />
+                      <label className={`text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-zinc-400' : 'text-neutral-500'
+                      }`}>
+                        Session Auto-End
+                      </label>
+                    </div>
+
+                    <p className={`text-sm mb-4 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+                      Automatically close the session after inactivity or when it reaches a maximum runtime. Leave blank to disable.
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                          Inactivity (minutes)
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={sessionInactivityEndMinutes ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setSessionInactivityEndMinutes(v === '' ? null : parseInt(v, 10))
+                          }}
+                          disabled={isSubmitting}
+                          placeholder="Disabled"
+                          className={`px-3 py-2 rounded-lg text-sm focus:outline-none
+                            ${isDark
+                              ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder-zinc-500'
+                              : 'bg-white border border-neutral-300 text-neutral-900 placeholder-neutral-400'}
+                          `}
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className={`text-xs ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                          Max duration (minutes)
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={sessionMaxDurationMinutes ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setSessionMaxDurationMinutes(v === '' ? null : parseInt(v, 10))
+                          }}
+                          disabled={isSubmitting}
+                          placeholder="Disabled"
+                          className={`px-3 py-2 rounded-lg text-sm focus:outline-none
+                            ${isDark
+                              ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder-zinc-500'
+                              : 'bg-white border border-neutral-300 text-neutral-900 placeholder-neutral-400'}
+                          `}
+                        />
+                      </label>
                     </div>
                   </div>
                 </motion.div>

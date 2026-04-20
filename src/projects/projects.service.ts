@@ -54,6 +54,8 @@ export class ProjectsService {
         publicToken: true,
         publicEnabled: true,
         agentInactivityTimeoutMinutes: true,
+        sessionInactivityEndMinutes: true,
+        sessionMaxDurationMinutes: true,
         memberships: {
           where: { role: 'OWNER' },
           select: { userId: true },
@@ -99,6 +101,8 @@ export class ProjectsService {
           publicToken: project.publicToken,
           publicEnabled: project.publicEnabled,
           agentInactivityTimeoutMinutes: project.agentInactivityTimeoutMinutes,
+          sessionInactivityEndMinutes: project.sessionInactivityEndMinutes,
+          sessionMaxDurationMinutes: project.sessionMaxDurationMinutes,
           ownerId,
           isOwner: ownerId === userId,
           activeSessions,

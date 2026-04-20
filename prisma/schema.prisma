@@ -63,6 +63,10 @@ model Project {
   // Agent inactivity auto-stop configuration
   agentInactivityTimeoutMinutes Int?  // null = disabled (default)
 
+  // Session auto-end configuration (WIP, issue #198)
+  sessionInactivityEndMinutes Int?  // null = disabled. End session after no participant activity for N minutes.
+  sessionMaxDurationMinutes   Int?  // null = disabled. Hard cap on session runtime from createdAt.
+
   // Public Project Configuration
   isPublic               Boolean    @default(false)
   publicToken            String?    @unique @default(uuid())
@@ -120,6 +124,10 @@ model Session {
   agentSpawnMode                String    @default("immediate")  // 'immediate' | 'on_demand'
   lastAgentConfig               Json?                            // Stored config for respawning paused agents
   agentInactivityTimeoutMinutes Int?                             // Inherited from project at creation
+
+  // Session auto-end configuration (WIP, issue #198), inherited from project at creation
+  sessionInactivityEndMinutes Int?
+  sessionMaxDurationMinutes   Int?
 
   @@index([projectId])
   @@index([status])

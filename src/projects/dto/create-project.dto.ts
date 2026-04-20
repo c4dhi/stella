@@ -13,4 +13,18 @@ export class CreateProjectDto {
   @Min(1)
   @Max(1440)
   agentInactivityTimeoutMinutes?: number | null;
+
+  @IsOptional()
+  @ValidateIf((o) => o.sessionInactivityEndMinutes !== null)
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  sessionInactivityEndMinutes?: number | null;
+
+  @IsOptional()
+  @ValidateIf((o) => o.sessionMaxDurationMinutes !== null)
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  sessionMaxDurationMinutes?: number | null;
 }

@@ -7,6 +7,7 @@ import { LiveKitService } from '../livekit/livekit.service';
 import { AgentsService } from '../agents/agents.service';
 import { RoomMonitorService, type LogEntry } from '../message-recorder/room-monitor.service';
 import { AuthService } from '../auth/auth.service';
+import { SessionTimeoutService } from './session-timeout.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { CreateTokenDto } from './dto/create-token.dto';
@@ -85,16 +86,22 @@ export class SessionsService {
     private agentsService: AgentsService,
     private roomMonitor: RoomMonitorService,
     private authService: AuthService,
+    @Inject(forwardRef(() => SessionTimeoutService))
+    private sessionTimeoutService: SessionTimeoutService,
   ) {}
 
   async create(projectId: string, createSessionDto: CreateSessionDto) {
     // Generate unique room name
     const roomName = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    // Fetch project to inherit agentInactivityTimeoutMinutes
+    // Fetch project to inherit timeout settings
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { agentInactivityTimeoutMinutes: true },
+      select: {
+        agentInactivityTimeoutMinutes: true,
+        sessionInactivityEndMinutes: true,
+        sessionMaxDurationMinutes: true,
+      },
     });
 
     const session = await this.prisma.session.create({
@@ -108,6 +115,9 @@ export class SessionsService {
         agentSpawnMode: createSessionDto.agentSpawnMode || 'immediate',
         // Inherit agent inactivity timeout from project
         agentInactivityTimeoutMinutes: project?.agentInactivityTimeoutMinutes ?? null,
+        // Inherit session auto-end settings (issue #198)
+        sessionInactivityEndMinutes: project?.sessionInactivityEndMinutes ?? null,
+        sessionMaxDurationMinutes: project?.sessionMaxDurationMinutes ?? null,
         room: {
           create: {
             livekitRoomName: roomName,
@@ -138,6 +148,12 @@ export class SessionsService {
       name: session.name,
       room: session.room || undefined,
     });
+
+    // Arm the session auto-end hard-cap timer (issue #198)
+    this.sessionTimeoutService.onSessionStarted(
+      session.id,
+      session.sessionMaxDurationMinutes,
+    );
 
     return session;
   }
@@ -404,6 +420,9 @@ export class SessionsService {
 
     // Emit session.closed event for real-time dashboard updates
     this.emitSessionClosed(id, session.projectId, session.name);
+
+    // Clear any auto-end timers (issue #198)
+    this.sessionTimeoutService.onSessionClosed(id);
 
     return { message: 'Session closed successfully' };
   }
