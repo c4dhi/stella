@@ -102,7 +102,7 @@ PostgreSQL with Prisma ORM stores all persistent data:
 - **Messages & Events**: Full conversation history and audit logs
 - **Templates**: Reusable plans and environment configurations
 
-See [Database Schema](/docs/architecture/database) for the complete data model.
+See [Database Schema](./database.md) for the complete data model.
 
 ## Technology Stack
 
@@ -164,7 +164,7 @@ Multi-node Kubernetes cluster:
 
 ## Next Steps
 
-- [Data Flow](/docs/architecture/data-flow) - How messages flow through the system
-- [Session Lifecycle](/docs/architecture/session-lifecycle) - Session states and transitions
-- [Database Schema](/docs/architecture/database) - PostgreSQL data model with Prisma
-- [Kubernetes Orchestration](/docs/architecture/kubernetes-orchestration) - Pod management details
+- [Data Flow](./data-flow.md) - How messages flow through the system
+- [Session Lifecycle](./session-lifecycle.md) - Session states and transitions
+- [Database Schema](./database.md) - PostgreSQL data model with Prisma
+- [Kubernetes Orchestration](./kubernetes-orchestration.md) - Pod management details

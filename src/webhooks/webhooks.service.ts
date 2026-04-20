@@ -65,6 +65,62 @@ export class WebhooksService {
   }
 
   /**
+   * Finalize CLOSING -> CLOSED when the last agent leaves the room.
+   * This keeps session cleanup aligned with actual agent shutdown.
+   */
+  private async finalizeClosingSessionOnAgentLeave(
+    sessionId: string,
+    participantIdentity: string,
+    roomName: string,
+  ): Promise<void> {
+    if (!this.isAgentParticipant(participantIdentity)) return;
+
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { id: true, status: true, projectId: true, name: true },
+    });
+
+    if (!session || session.status !== 'CLOSING') return;
+
+    // Finalize only after all agents are actually gone from the room.
+    const remaining = await this.countRoomParticipants(roomName);
+    if (remaining.agents > 0) return;
+
+    const closedAt = new Date();
+    const finalizeResult = await this.prisma.session.updateMany({
+      where: {
+        id: sessionId,
+        status: 'CLOSING',
+      },
+      data: {
+        status: 'CLOSED',
+        closedAt,
+        recorderShouldJoin: false,
+      },
+    });
+
+    // updateMany keeps this idempotent under concurrent webhook deliveries.
+    if (finalizeResult.count === 0) return;
+
+    const revokedInvitations = await this.prisma.invitation.updateMany({
+      where: {
+        sessionId,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+      data: { status: 'REVOKED' },
+    });
+
+    if (revokedInvitations.count > 0) {
+      this.logger.log(
+        `Session ${sessionId}: auto-revoked ${revokedInvitations.count} invitation(s) on close finalization`,
+      );
+    }
+
+    this.sessionsService.emitSessionClosed(sessionId, session.projectId, session.name);
+    this.logger.log(`Session ${sessionId} finalized to CLOSED after last agent disconnected`);
+  }
+
+  /**
    * Handle any participant joining a room.
    * Updates recorder join state and triggers agent spawning for on_demand sessions.
    */
@@ -561,6 +617,8 @@ export class WebhooksService {
 
       // Handle participant inactivity for recorder/agent management
       await this.handleParticipantInactivity(room.sessionId, participantIdentity);
+      // If this was an agent leave during CLOSING, finalize the session close now.
+      await this.finalizeClosingSessionOnAgentLeave(room.sessionId, participantIdentity, roomName);
 
     } catch (error) {
       this.logger.error(

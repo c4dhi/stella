@@ -431,5 +431,5 @@ export class HealthController {
 
 ## Next Steps
 
-- [Production Checklist](/docs/deployment/production-checklist) - Go-live checklist
-- [Kubernetes Deployment](/docs/deployment/kubernetes) - Deployment guide
+- [Production Checklist](./production-checklist.md) - Go-live checklist
+- [Kubernetes Deployment](./kubernetes.md) - Deployment guide

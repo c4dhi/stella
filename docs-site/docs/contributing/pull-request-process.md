@@ -262,5 +262,5 @@ If your PR is large, consider:
 
 ## Next Steps
 
-- [Release Process](/docs/contributing/release-process) - How releases work
-- [Coding Standards](/docs/contributing/coding-standards) - Style guide
+- [Release Process](./release-process.md) - How releases work
+- [Coding Standards](./coding-standards/index.md) - Style guide

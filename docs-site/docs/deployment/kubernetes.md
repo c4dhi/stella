@@ -115,7 +115,7 @@ Once deployed:
 - **Storage**: 10Gi PersistentVolumeClaim
 - **Credentials**: Configured via environment
 
-See [Database Schema](/docs/architecture/database) for the complete data model.
+See [Database Schema](../architecture/database.md) for the complete data model.
 
 ### LiveKit Server (if self-hosted)
 
@@ -279,6 +279,6 @@ kubectl logs -f -n ai-agents -l app=session-management-server
 
 ## See Also
 
-- [Database Schema](/docs/architecture/database) - PostgreSQL data model
-- [Production Deployment](/docs/deployment/production)
-- [LiveKit Integration](/docs/integration/livekit)
+- [Database Schema](../architecture/database.md) - PostgreSQL data model
+- [Production Deployment](./production.md)
+- [LiveKit Integration](../integration/livekit.md)

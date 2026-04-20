@@ -297,6 +297,6 @@ The `run()` method:
 
 ## Next Steps
 
-- [Message Types](/docs/sdk/message-types) - Communication protocol
-- [Tools](/docs/sdk/tools) - Building tools
-- [Streaming](/docs/sdk/streaming) - Audio streaming details
+- [Message Types](./message-types.md) - Communication protocol
+- [Tools](./tools.md) - Building tools
+- [Streaming](./streaming.md) - Audio streaming details

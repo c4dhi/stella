@@ -13,12 +13,14 @@ import type {
   StateTransition,
   SessionContext,
   AgentSpawnMode,
+  EndNodeConfig,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
 import PlanTransitionEditor from './PlanTransitionEditor'
 import PlanStartEditor from './PlanStartEditor'
+import PlanEndEditor from './PlanEndEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -57,6 +59,34 @@ const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[
     ...state,
     type: normalizeStateType(state.type),
   }))
+
+const ensureEndTransitionsForCanvasConnections = (
+  inputStates: PlanState[],
+  metadata: PlanMetadata | undefined,
+): PlanState[] => {
+  const canvas = extractCanvasMetadata(metadata)
+  const endStateIds = new Set(canvas.end_state_ids || [])
+  if (endStateIds.size === 0) return inputStates
+
+  return inputStates.map((state) => {
+    if (!endStateIds.has(state.id)) return state
+    const transitions = state.transitions || []
+    const hasEndTransition = transitions.some((transition) => transition.target_state_id === '__end__')
+    if (hasEndTransition) return state
+
+    return {
+      ...state,
+      transitions: [
+        ...transitions,
+        {
+          target_state_id: '__end__',
+          condition_type: 'all_tasks_complete',
+          priority: transitions.length,
+        },
+      ],
+    }
+  })
+}
 
 const createEmptyTask = (): PlanTask => ({
   id: crypto.randomUUID(),
@@ -126,10 +156,27 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
         }
       : undefined
 
+  // Validate end_node_config shape to guard against stale/corrupted persisted values.
+  const rawEndNodeConfig = canvas.end_node_config
+  const parsedEndNodeConfig =
+    rawEndNodeConfig && typeof rawEndNodeConfig === 'object'
+      ? {
+          farewell_message: typeof (rawEndNodeConfig as { farewell_message?: unknown }).farewell_message === 'string'
+            ? (rawEndNodeConfig as { farewell_message: string }).farewell_message
+            : undefined,
+          summary_behavior: (['none', 'brief', 'full'] as const).includes(
+            (rawEndNodeConfig as { summary_behavior?: unknown }).summary_behavior as 'none' | 'brief' | 'full'
+          )
+            ? (rawEndNodeConfig as { summary_behavior: 'none' | 'brief' | 'full' }).summary_behavior
+            : undefined,
+        }
+      : undefined
+
   return {
     show_end_node: canvas.show_end_node === true,
     end_node_position: parsedEndNodePosition,
     end_state_ids: parsedEndStateIds,
+    end_node_config: parsedEndNodeConfig,
   }
 }
 
@@ -383,24 +430,28 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const initialMetadata = template?.content.metadata || {}
+  const initialStates = ensureEndTransitionsForCanvasConnections(
+    normalizePlanStates(template?.content.states || []),
+    initialMetadata,
+  )
 
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
   const [sessionContext, setSessionContext] = useState<SessionContext>(template?.content.session_context || { fields: [] })
   const [agentSpawnMode, setAgentSpawnMode] = useState<AgentSpawnMode>(extractSpawnMode(template?.content.metadata))
-  const [states, setStates] = useState<PlanState[]>(
-    normalizePlanStates(template?.content.states || [])
-  )
+  const [states, setStates] = useState<PlanState[]>(initialStates)
   const [initialStateId, setInitialStateId] = useState<string | null>(
     template?.content.initial_state_id || template?.content.states?.[0]?.id || null
   )
-  const [metadata, setMetadata] = useState<PlanMetadata>(template?.content.metadata || {})
+  const [metadata, setMetadata] = useState<PlanMetadata>(initialMetadata)
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
   )
   const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
   const [selectedStartNode, setSelectedStartNode] = useState(false)
+  const [selectedEndNode, setSelectedEndNode] = useState(false)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -442,10 +493,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     [states, initialStateId, statePositions]
   )
   const showEndNode = canvasMetadata.show_end_node === true
-  const endStateIds = (canvasMetadata.end_state_ids || []).filter((stateId) =>
-    states.some((state) => state.id === stateId)
-  )
   const endNodePosition = canvasMetadata.end_node_position
+  const endNodeConfig: EndNodeConfig = canvasMetadata.end_node_config || {}
+  const endTransitionStateIds = useMemo(
+    () =>
+      states
+        .filter((state) => (state.transitions || []).some((transition) => transition.target_state_id === '__end__'))
+        .map((state) => state.id),
+    [states]
+  )
   const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
     const refs: TransitionRef[] = []
     for (const state of states) {
@@ -506,7 +562,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         canvas: {
           ...stripLegacyCanvasStatePositions(metadata.plan_builder?.canvas),
           ...canvasMetadata,
-          end_state_ids: endStateIds,
+          end_state_ids: endTransitionStateIds,
         },
       },
     },
@@ -593,6 +649,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(index >= 0 ? index : null)
     setSelectedTransition(null)
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
@@ -634,12 +691,27 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(null)
     setSelectedTransition({ sourceStateId, transitionIndex })
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleSelectStartNode = () => {
     setSelectedStateIndex(null)
     setSelectedTransition(null)
     setSelectedStartNode(true)
+    setSelectedEndNode(false)
+  }
+
+  // Selects the End node, deselecting everything else so the sidebar shows PlanEndEditor.
+  const handleSelectEndNode = () => {
+    setSelectedStateIndex(null)
+    setSelectedTransition(null)
+    setSelectedStartNode(false)
+    setSelectedEndNode(true)
+  }
+
+  const handleEndNodeConfigChange = (config: EndNodeConfig) => {
+    updateCanvasMetadata((current) => ({ ...current, end_node_config: config }))
+    markChanged()
   }
 
   const handleInitialStateChange = (stateId: string) => {
@@ -650,8 +722,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleConnectEndState = (sourceStateId: string) => {
-    if (!states.some((state) => state.id === sourceStateId)) return
+    const sourceState = states.find((state) => state.id === sourceStateId)
+    if (!sourceState) return
 
+    // Record in canvas metadata so the End node edge is rendered
     updateCanvasMetadata((current) => {
       const existing = current.end_state_ids || []
       if (existing.includes(sourceStateId)) return current
@@ -660,14 +734,27 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         end_state_ids: [...existing, sourceStateId],
       }
     })
-    markChanged()
-  }
 
-  const handleDeleteEndConnection = (sourceStateId: string) => {
-    updateCanvasMetadata((current) => ({
-      ...current,
-      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== sourceStateId),
-    }))
+    // Also write the actual transition into the plan so the backend can act on it.
+    // Without this the connection is purely cosmetic — the state machine never sees __end__.
+    setStates((prev) =>
+      prev.map((state) =>
+        state.id === sourceStateId
+          ? {
+              ...state,
+              transitions: [
+                ...(state.transitions || []),
+                {
+                  target_state_id: '__end__',
+                  condition_type: 'all_tasks_complete' as const,
+                  priority: state.transitions?.length ?? 0,
+                },
+              ],
+            }
+          : state
+      )
+    )
+
     markChanged()
   }
 
@@ -761,6 +848,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       ...current,
       show_end_node: !showEndNode,
     }))
+    if (showEndNode) setSelectedEndNode(false)
     setAutoFitKey((prev) => prev + 1)
     markChanged()
   }
@@ -777,8 +865,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           throw new Error('Invalid plan structure')
         }
 
-        const normalizedStates = normalizePlanStates(content.states as PlanStateWithLegacyType[])
         const importedMetadata = (content.metadata as PlanMetadata) || {}
+        const normalizedStates = ensureEndTransitionsForCanvasConnections(
+          normalizePlanStates(content.states as PlanStateWithLegacyType[]),
+          importedMetadata,
+        )
         const importedCanvasMetadata = extractCanvasMetadata(importedMetadata)
         const importedEndStateIdSet = new Set(importedCanvasMetadata.end_state_ids || [])
         const importInitialStateId = content.initial_state_id || normalizedStates[0]?.id || null
@@ -816,6 +907,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
             },
           },
         }
+
 
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
@@ -884,7 +976,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       return
     }
 
-    const endConnectedSet = new Set(showEndNode ? endStateIds : [])
+    const endConnectedSet = new Set(showEndNode ? endTransitionStateIds : [])
     const statesWithoutOutgoing = states.filter(
       (state) => (state.transitions?.length ?? 0) === 0 && !endConnectedSet.has(state.id)
     )
@@ -961,6 +1053,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const selectedTransitionTarget = selectedTransitionData
     ? states.find((state) => state.id === selectedTransitionData.target_state_id)
     : null
+  const selectedTransitionTargetTitle = selectedTransitionData?.target_state_id === '__end__'
+    ? 'End'
+    : selectedTransitionTarget?.title || 'Unknown state'
   const selectedTransitionDeliverables = selectedTransitionState
     ? selectedTransitionState.type === 'goal'
       ? selectedTransitionState.goal?.deliverables || []
@@ -1149,6 +1244,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   agentSpawnMode={agentSpawnMode}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
                   selectedStartNode={selectedStartNode}
+                  selectedEndNode={selectedEndNode}
                   selectedTransition={selectedTransition}
                   statePositions={resolvedStatePositions}
                   endNodePosition={endNodePosition}
@@ -1156,12 +1252,11 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   autoFitKey={autoFitKey}
                   isDark={isDark}
                   onSelectStart={handleSelectStartNode}
+                  onSelectEnd={handleSelectEndNode}
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
-                  endStateIds={endStateIds}
                   onConnectEndState={handleConnectEndState}
-                  onDeleteEndConnection={handleDeleteEndConnection}
                   onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
                   onStatePositionChange={handleStatePositionChange}
@@ -1170,6 +1265,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                     setSelectedStateIndex(null)
                     setSelectedTransition(null)
                     setSelectedStartNode(false)
+                    setSelectedEndNode(false)
                   }}
                 />
               </div>
@@ -1216,11 +1312,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                {selectedStartNode ? 'Start Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
+                {selectedStartNode ? 'Start Node' : selectedEndNode ? 'End Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                 {selectedStartNode
                   ? 'Configure session start settings'
+                  : selectedEndNode
+                  ? 'Configure conversation end behavior'
                   : selectedTransitionData
                   ? 'Click an edge to edit condition and priority'
                   : 'Click a state node to edit details'}
@@ -1248,7 +1346,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedStartNode ? (
+                {selectedEndNode ? (
+                  <motion.div
+                    key="end-node"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanEndEditor
+                      config={endNodeConfig}
+                      onChange={handleEndNodeConfigChange}
+                    />
+                  </motion.div>
+                ) : selectedStartNode ? (
                   <motion.div
                     key="start-node"
                     initial={{ opacity: 0, x: 20 }}
@@ -1278,7 +1390,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   >
                     <PlanTransitionEditor
                       sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
-                      targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
+                      targetStateTitle={selectedTransitionTargetTitle}
                       transition={selectedTransitionData}
                       availableDeliverables={selectedTransitionDeliverables}
                       isAmbiguous={

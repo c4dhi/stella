@@ -225,7 +225,7 @@ AGENT_IMAGE=my-custom-agent:latest
 
 ## Next Steps
 
-- [Base Agent](/docs/agent-sdk/base-agent) - Learn about all BaseAgent methods
-- [Audio Pipeline](/docs/agent-sdk/audio-pipeline) - Configure STT/TTS
-- [Message Types](/docs/agent-sdk/message-types) - Understand the message protocol
-- [Tools](/docs/agent-sdk/tools) - Add custom tool support
+- [Base Agent](./base-agent.md) - Learn about all BaseAgent methods
+- [Audio Pipeline](./audio-pipeline.md) - Configure STT/TTS
+- [Message Types](./message-types.md) - Understand the message protocol
+- [Tools](./tools.md) - Add custom tool support

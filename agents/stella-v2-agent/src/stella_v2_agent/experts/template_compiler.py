@@ -51,7 +51,9 @@ def _resolve_plan(ctx: Dict[str, Any]) -> str:
             task_status = task.get("status", "pending")
             is_active = current_task_info and task.get("id") == current_task_info.get("id")
             task_marker = " ← ACTIVE TASK" if is_active else ""
-            parts.append(f"  Task: {task['description']} ({task_status}){task_marker}")
+            parts.append(
+                f"  Task: {task['description']} [task_id={task.get('id', '?')}] ({task_status}){task_marker}"
+            )
 
             for d in task.get("deliverables", []):
                 status = d.get("status", "pending")
@@ -131,6 +133,7 @@ def _resolve_current_focus(ctx: Dict[str, Any]) -> str:
 
     if current_task_info:
         parts.append(f"Active task: {current_task_info.get('description', '?')}")
+        parts.append(f"Active task_id: {current_task_info.get('id', '?')}")
         if current_task_info.get("instruction"):
             parts.append(f"Instruction: {current_task_info['instruction']}")
 
@@ -157,6 +160,17 @@ def _resolve_current_focus(ctx: Dict[str, Any]) -> str:
                 if examples:
                     line += f" (e.g. {', '.join(str(e) for e in examples)})"
                 parts.append(line)
+
+        # Explicitly list task IDs to prevent using descriptions as task_id.
+        no_deliverable_tasks = [
+            t for t in current_plan_state.get("tasks", [])
+            if not t.get("has_deliverables") and t.get("status") != "completed"
+        ]
+        if no_deliverable_tasks:
+            parts.append("")
+            parts.append("TASK IDs for complete_task/batch_update.tasks:")
+            for task in no_deliverable_tasks:
+                parts.append(f"  - task_id={task.get('id', '?')} | {task.get('description', '')}")
 
     return "\n".join(parts)
 
@@ -315,5 +329,4 @@ def compile_prompt(template: str, sm_context: Optional[Dict[str, Any]] = None) -
 def has_user_message_placeholder(template: str) -> bool:
     """Check if template contains {{user_message}}."""
     return "{{user_message}}" in template if template else False
-
 
