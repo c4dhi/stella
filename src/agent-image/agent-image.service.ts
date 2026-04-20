@@ -211,8 +211,18 @@ export class AgentImageService {
         const tagged = await this.tryTagFromLatest(config, fullImageName);
         if (tagged) return fullImageName;
       }
-      await this.buildAndImportImage(config, fullImageName, forceRebuild);
-      return fullImageName;
+      // If tagging failed (e.g., ctr not available inside K8s pod),
+      // fall back to the pre-built :latest image rather than blocking pod creation.
+      try {
+        await this.buildAndImportImage(config, fullImageName, forceRebuild);
+        return fullImageName;
+      } catch (error) {
+        this.logger.warn(
+          `Image build/import failed: ${error.message}. ` +
+          `Falling back to pre-built image ${legacyImageName}`,
+        );
+        return legacyImageName;
+      }
     })();
 
     this.buildingImages.set(fullImageName, buildPromise);
