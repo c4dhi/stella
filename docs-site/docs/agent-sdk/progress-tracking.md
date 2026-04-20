@@ -276,6 +276,6 @@ function AgentProgress({ todos, status }) {
 
 ## See Also
 
-- [Message Types](/docs/agent-sdk/message-types)
-- [Base Agent](/docs/agent-sdk/base-agent)
-- [Building Custom Agents](/docs/agent-sdk/building-custom-agent)
+- [Message Types](./message-types.md)
+- [Base Agent](./base-agent.md)
+- [Building Custom Agents](./building-custom-agent.md)

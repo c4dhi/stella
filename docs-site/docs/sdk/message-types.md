@@ -359,6 +359,6 @@ room.on('dataReceived', (payload) => {
 
 ## Next Steps
 
-- [Tools](/docs/sdk/tools) - Building custom tools
-- [Streaming](/docs/sdk/streaming) - Audio streaming
-- [Base Agent](/docs/sdk/base-agent) - Full API reference
+- [Tools](./tools.md) - Building custom tools
+- [Streaming](./streaming.md) - Audio streaming
+- [Base Agent](./base-agent.md) - Full API reference

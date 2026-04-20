@@ -360,6 +360,6 @@ A terminal end path is represented by both execution and builder metadata:
 
 ## Related Topics
 
-- [Plan Builder](/docs/plan-structure/plan-builder) — Visual editing workflow and canvas behavior
-- [States](/docs/plan-structure/states) — Transition behavior and condition details
-- [Examples](/docs/plan-structure/examples) — Additional complete plan examples
+- [Plan Builder](./plan-builder.md) — Visual editing workflow and canvas behavior
+- [States](./states.md) — Transition behavior and condition details
+- [Examples](./examples.md) — Additional complete plan examples

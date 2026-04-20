@@ -448,6 +448,6 @@ A typical conversation flows through multiple states:
 
 ## Next Steps
 
-- [Tasks](/docs/plan-structure/tasks) — Learn about task configuration
-- [Deliverables](/docs/plan-structure/deliverables) — Configure data collection
-- [Examples](/docs/plan-structure/examples) — See complete plan examples
+- [Tasks](./tasks.md) — Learn about task configuration
+- [Deliverables](./deliverables.md) — Configure data collection
+- [Examples](./examples.md) — See complete plan examples

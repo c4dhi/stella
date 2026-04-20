@@ -309,6 +309,6 @@ if __name__ == "__main__":
 
 ## See Also
 
-- [Message Types](/docs/agent-sdk/message-types)
-- [Audio Pipeline](/docs/agent-sdk/audio-pipeline)
-- [Building Custom Agents](/docs/agent-sdk/building-custom-agent)
+- [Message Types](./message-types.md)
+- [Audio Pipeline](./audio-pipeline.md)
+- [Building Custom Agents](./building-custom-agent.md)

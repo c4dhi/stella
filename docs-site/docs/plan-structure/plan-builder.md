@@ -379,6 +379,6 @@ In short:
 
 ## Next Steps
 
-- [States](/docs/plan-structure/states) — Configure state execution modes and transitions
-- [Tasks](/docs/plan-structure/tasks) — Define task instructions and required work
-- [Deliverables](/docs/plan-structure/deliverables) — Define what data each task must collect
+- [States](./states.md) — Configure state execution modes and transitions
+- [Tasks](./tasks.md) — Define task instructions and required work
+- [Deliverables](./deliverables.md) — Define what data each task must collect

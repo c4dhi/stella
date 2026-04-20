@@ -448,6 +448,6 @@ npm run validate:agents
 
 ## Next Steps
 
-- [Add Custom UI](/docs/guides/add-custom-ui) - Customize the frontend
-- [Base Agent Reference](/docs/sdk/base-agent) - Full API documentation
-- [Tools Reference](/docs/sdk/tools) - Advanced tool patterns
+- [Add Custom UI](./add-custom-ui.md) - Customize the frontend
+- [Base Agent Reference](../sdk/base-agent.md) - Full API documentation
+- [Tools Reference](../sdk/tools.md) - Advanced tool patterns
