@@ -189,12 +189,30 @@ export class WebhooksService {
         this.logger.log(`Human joined session ${sessionId}: ${participantIdentity}`);
       }
 
-      // Auto-resume agent for any session with saved config (not just on_demand)
-      // This handles both on_demand spawn and auto-restart after inactivity pause
+      // Agent spawn/resume logic:
+      // - Participants (participant-*): can spawn new agents OR resume paused ones
+      // - Organizers (human/user ID): can only RESUME paused agents, never spawn new ones
+      const isParticipant = participantIdentity.startsWith('participant-');
       const hasRunningAgent = session.agents.length > 0;
-      if (!hasRunningAgent && session.lastAgentConfig) {
-        this.logger.log(`Auto-resume triggered for session ${sessionId} (human joined)`);
-        await this.spawnOrResumeAgent(session);
+
+      if (!hasRunningAgent && session.lastAgentConfig && session.status !== 'CLOSED') {
+        // Check if there's a paused agent that can be resumed
+        const hasPausedAgent = await this.prisma.agentInstance.findFirst({
+          where: {
+            sessionId,
+            pausedAt: { not: null },
+          },
+        });
+
+        if (hasPausedAgent) {
+          // Anyone can resume a paused agent (organizer or participant)
+          this.logger.log(`Auto-resume paused agent for session ${sessionId} (${participantIdentity} joined)`);
+          await this.spawnOrResumeAgent(session);
+        } else if (isParticipant) {
+          // Only participants can trigger spawning a NEW agent
+          this.logger.log(`Auto-spawn triggered for session ${sessionId} (participant joined: ${participantIdentity})`);
+          await this.spawnOrResumeAgent(session);
+        }
       }
     }
   }
@@ -255,8 +273,34 @@ export class WebhooksService {
       }
     }
 
-    // If NO participants remain (no humans AND no agents), start recorder leave timer
+    // If NO participants remain (no humans AND no agents), check if the session
+    // should be closed. Only close if a human actually participated — otherwise
+    // the session might just be waiting for an invitation to be created.
     if (remainingParticipants.humans === 0 && remainingParticipants.agents === 0) {
+      if (session.status === 'ACTIVE' && session.hasHumanParticipant) {
+        const closedAt = new Date();
+        await this.prisma.session.update({
+          where: { id: sessionId },
+          data: { status: 'CLOSED', closedAt },
+        });
+
+        // Auto-revoke pending/accepted invitations on session close
+        const revokedInvitations = await this.prisma.invitation.updateMany({
+          where: {
+            sessionId,
+            status: { in: ['PENDING', 'ACCEPTED'] },
+          },
+          data: { status: 'REVOKED' },
+        });
+        if (revokedInvitations.count > 0) {
+          this.logger.log(
+            `Session ${sessionId}: auto-revoked ${revokedInvitations.count} invitation(s) on close`,
+          );
+        }
+
+        this.sessionsService.emitSessionClosed(sessionId, session.projectId, session.name);
+        this.logger.log(`Session ${sessionId} closed — all participants left after human interaction`);
+      }
       this.startRecorderLeaveTimer(sessionId);
     }
   }
