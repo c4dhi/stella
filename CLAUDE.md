@@ -104,6 +104,10 @@ const eventSource = new EventSource(url)
 | API Client | `frontend-ui/src/services/ApiClient.ts` |
 | API Types | `frontend-ui/src/lib/api-types.ts` |
 | Settings Page | `frontend-ui/src/pages/SettingsPage.tsx` |
+| Plan Generator Prompt | `src/plan-templates/plan-generator.service.ts` |
+| Plan Builder Docs | `docs-site/docs/plan-structure/plan-builder.md` |
+| Transition Conditions Docs | `docs-site/docs/plan-structure/states.md` |
+| Plan Builder Images | `docs-site/assets/img/` |
 | K8s Manifests | `k8s/` |
 | Deploy Script | `scripts/lib/deploy.sh` |
 

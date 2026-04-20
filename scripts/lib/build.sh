@@ -969,15 +969,15 @@ build_images() {
     # Start all builds in parallel (each docker build uses multiple cores internally)
 
     # Core services
-    start_parallel_build "session-management-server" "session-management-server:latest" "." "$session_args"
-    start_parallel_build "stt-service" "stt-service:latest" "./stt-service" "$gpu_args"
-    start_parallel_build "tts-service" "tts-service:latest" "./tts-service" "$gpu_args"
-    start_parallel_build "frontend-ui" "frontend-ui:latest" "./frontend-ui" "$frontend_args"
-    start_parallel_build "message-recorder-python" "message-recorder-python:latest" "./message-recorder-python"
+    start_parallel_build "session-management-server" "session-management-server:${IMAGE_TAG}" "." "$session_args"
+    start_parallel_build "stt-service" "stt-service:${IMAGE_TAG}" "./stt-service" "$gpu_args"
+    start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$gpu_args"
+    start_parallel_build "frontend-ui" "frontend-ui:${IMAGE_TAG}" "./frontend-ui" "$frontend_args"
+    start_parallel_build "message-recorder-python" "message-recorder-python:${IMAGE_TAG}" "./message-recorder-python"
 
     # Auto-discovered agents (any directory under agents/ with a Dockerfile)
     for agent_name in "${DISCOVERED_AGENTS[@]}"; do
-        start_parallel_build "$agent_name" "${agent_name}:latest" "." "" "agents/${agent_name}/Dockerfile"
+        start_parallel_build "$agent_name" "${agent_name}:${IMAGE_TAG}" "." "" "agents/${agent_name}/Dockerfile"
     done
 
     # Wait for all parallel builds to complete
@@ -1025,7 +1025,7 @@ build_images() {
 # Import a single image to K3s with spinner
 import_single_image_to_k3s() {
     local service="$1"
-    docker save "${service}:latest" | sudo k3s ctr images import - >/dev/null 2>&1
+    docker save "${service}:${IMAGE_TAG}" | sudo k3s ctr images import - >/dev/null 2>&1
 }
 
 import_images_to_k3s() {
@@ -1039,7 +1039,7 @@ import_images_to_k3s() {
         echo -ne "   ${ARROW} ${service}... "
 
         # Start import in background
-        docker save "${service}:latest" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
+        docker save "${service}:${IMAGE_TAG}" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
         local pid=$!
 
         # Spinner animation
@@ -1081,9 +1081,9 @@ sync_images_to_k3s() {
     # Find images that exist in Docker but not in K3s
     for img in "${all_images[@]}"; do
         # Check if image exists in Docker
-        if docker images -q "${img}:latest" 2>/dev/null | grep -q .; then
+        if docker images -q "${img}:${IMAGE_TAG}" 2>/dev/null | grep -q .; then
             # Check if image exists in K3s containerd
-            if ! sudo k3s ctr images ls -q 2>/dev/null | grep -q "docker.io/library/${img}:latest"; then
+            if ! sudo k3s ctr images ls -q 2>/dev/null | grep -q "docker.io/library/${img}:${IMAGE_TAG}"; then
                 images_to_sync+=("$img")
             fi
         fi
@@ -1097,7 +1097,7 @@ sync_images_to_k3s() {
             echo -ne "   ${ARROW} ${img}... "
 
             # Start sync in background
-            docker save "${img}:latest" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
+            docker save "${img}:${IMAGE_TAG}" 2>/dev/null | sudo k3s ctr images import - >/dev/null 2>&1 &
             local pid=$!
 
             # Spinner animation
@@ -1133,28 +1133,28 @@ cleanup_for_rebuild() {
 
     # Delete application pods (keep postgres unless reset-db)
     if [[ "$RESET_DB_MODE" == "true" ]]; then
-        kubectl delete pods -n ai-agents --all --grace-period=5 2>/dev/null || true
-        kubectl delete pvc -n ai-agents --all 2>/dev/null || true
+        kubectl delete pods -n "$KUBERNETES_NAMESPACE" --all --grace-period=5 2>/dev/null || true
+        kubectl delete pvc -n "$KUBERNETES_NAMESPACE" --all 2>/dev/null || true
     else
-        kubectl delete pods -n ai-agents -l app!=postgres --grace-period=5 2>/dev/null || true
+        kubectl delete pods -n "$KUBERNETES_NAMESPACE" -l app!=postgres --grace-period=5 2>/dev/null || true
     fi
     [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: pods deleted"
 
     # Clean up failed pods
-    kubectl delete pods -n ai-agents --field-selector=status.phase=Failed 2>/dev/null || true
+    kubectl delete pods -n "$KUBERNETES_NAMESPACE" --field-selector=status.phase=Failed 2>/dev/null || true
 
     # Remove old Docker images (core services + discovered agents)
     local images
     read -ra images <<< "$(get_all_image_names)"
     for img in "${images[@]}"; do
-        docker rmi "${img}:latest" 2>/dev/null || true
+        docker rmi "${img}:${IMAGE_TAG}" 2>/dev/null || true
     done
     [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: docker images removed"
 
     # Clean K3s containerd images (Linux)
     if [[ "$OS_TYPE" == "linux" ]]; then
         for img in "${images[@]}"; do
-            sudo k3s ctr images rm "docker.io/library/${img}:latest" 2>/dev/null || true
+            sudo k3s ctr images rm "docker.io/library/${img}:${IMAGE_TAG}" 2>/dev/null || true
         done
         [[ "${VERBOSE_MODE:-false}" == "true" ]] && echo "[DEBUG] cleanup_for_rebuild: k3s images removed"
     fi

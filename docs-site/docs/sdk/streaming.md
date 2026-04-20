@@ -336,6 +336,6 @@ class MyAgent(BaseAgent):
 
 ## Next Steps
 
-- [Base Agent](/docs/sdk/base-agent) - Full API reference
-- [Tools](/docs/sdk/tools) - Building custom tools
-- [Data Flow](/docs/architecture/data-flow) - System data flow
+- [Base Agent](./base-agent.md) - Full API reference
+- [Tools](./tools.md) - Building custom tools
+- [Data Flow](../architecture/data-flow.md) - System data flow

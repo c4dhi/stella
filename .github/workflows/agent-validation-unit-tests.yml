@@ -1,0 +1,45 @@
+name: Agent Validation Unit Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/agent-package/**'
+      - 'src/kubernetes/utils/**'
+      - 'src/common/utils/**'
+      - '.github/workflows/agent-validation-unit-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/agent-package/**'
+      - 'src/kubernetes/utils/**'
+      - 'src/common/utils/**'
+      - '.github/workflows/agent-validation-unit-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run issue-specific validation unit tests
+        run: |
+          npm test -- --runTestsByPath \
+            src/agent-package/validators/manifest.validator.spec.ts \
+            src/kubernetes/utils/agent-config-injection.util.spec.ts \
+            src/common/utils/sanitize-config.spec.ts \
+            src/kubernetes/utils/resource-clamping.util.spec.ts

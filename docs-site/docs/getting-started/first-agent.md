@@ -152,6 +152,6 @@ kubectl describe pod -n ai-agents <agent-pod-name>
 
 ## Next Steps
 
-- [Agents Overview](/docs/agents/overview) - Learn about different agent types
-- [Agent SDK](/docs/agent-sdk/overview) - Build custom agents
-- [Kubernetes Deployment](/docs/deployment/kubernetes) - Production deployment
+- [Agents Overview](../agents/overview.md) - Learn about different agent types
+- [Agent SDK](../agent-sdk/overview.md) - Build custom agents
+- [Kubernetes Deployment](../deployment/kubernetes.md) - Production deployment

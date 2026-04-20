@@ -155,6 +155,9 @@ class ExpertRunner:
             deliverables_set: List[str] = []
             tasks_completed: List[str] = []
             tool_calls_made: List[Dict[str, Any]] = []
+            # Initialise here so the session_completed scan below is always safe,
+            # even when the LLM returns no tool calls.
+            results: List[Dict[str, Any]] = []
 
             if response.tool_calls:
                 tool_map = {t.name: t for t in tools}
@@ -181,7 +184,17 @@ class ExpertRunner:
 
                 for r in results:
                     tool_calls_made.append(r)
-                    if r.get("success"):
+                    if r["name"] == "batch_update":
+                        # batch_update can have partial success; still surface any
+                        # successful deliverables/tasks included in its data payload.
+                        data = r.get("data", {}) or {}
+                        for d in data.get("deliverables_set", []):
+                            if d.get("key"):
+                                deliverables_set.append(d["key"])
+                        for t in data.get("tasks_completed", []):
+                            if t.get("task_id"):
+                                tasks_completed.append(t["task_id"])
+                    elif r.get("success"):
                         if r["name"] == "set_deliverable":
                             key = r.get("arguments", {}).get("key")
                             if key:
@@ -190,14 +203,20 @@ class ExpertRunner:
                             task_id = r.get("arguments", {}).get("task_id")
                             if task_id:
                                 tasks_completed.append(task_id)
-                        elif r["name"] == "batch_update":
-                            data = r.get("data", {})
-                            for d in data.get("deliverables_set", []):
-                                if d.get("key"):
-                                    deliverables_set.append(d["key"])
-                            for t in data.get("tasks_completed", []):
-                                if t.get("task_id"):
-                                    tasks_completed.append(t["task_id"])
+
+            # Check if any tool result signals that the plan reached __end__.
+            # We only need the first match — all tool calls within a turn share the same session.
+            session_completed = False
+            farewell_message: Optional[str] = None
+            summary_behavior: Optional[str] = None
+            for r in results:
+                data = r.get("data", {}) or {}
+                # Read completion metadata even if batch_update had partial failures.
+                if data.get("session_completed"):
+                    session_completed = True
+                    farewell_message = data.get("farewell_message")
+                    summary_behavior = data.get("summary_behavior")
+                    break
 
             latency_ms = (time.time() - start_time) * 1000
             verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"
@@ -206,6 +225,7 @@ class ExpertRunner:
                 f"Expert '{config.name}' tool mode: "
                 f"{len(tool_calls_made)} calls, {len(deliverables_set)} deliverables, "
                 f"{len(tasks_completed)} tasks in {latency_ms:.0f}ms"
+                + (", session_completed=True" if session_completed else "")
             )
 
             return ExpertVerdict(
@@ -221,6 +241,12 @@ class ExpertRunner:
                     "deliverables_set": deliverables_set,
                     "tasks_completed": tasks_completed,
                     "text_content": response.content or "",
+                    # Set when any tool triggered an __end__ transition.
+                    # _process_post_response in agent.py reads this to emit
+                    # the farewell and set _session_completed on the agent.
+                    "session_completed": session_completed,
+                    "farewell_message": farewell_message,
+                    "summary_behavior": summary_behavior,
                 },
             )
 

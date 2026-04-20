@@ -7,6 +7,454 @@ title: "Examples"
 
 This page provides complete, copy-pasteable plan examples for common use cases.
 
+## Linear Flow Example
+
+Use this pattern when every state should move forward in a single direction, with no branching paths.
+
+```json
+{
+  "id": "linear-check-in",
+  "title": "Linear Check-In Flow",
+  "description": "A straightforward greeting -> intake -> close flow",
+  "initial_state_id": "state_greeting",
+  "system_prompt": "You are a concise and supportive assistant.",
+  "states": [
+    {
+      "id": "state_greeting",
+      "title": "Greeting",
+      "type": "sequential",
+      "description": "Open the conversation and capture the user's name",
+      "tasks": [
+        {
+          "id": "task_name",
+          "description": "Capture preferred name",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "user_name",
+              "type": "string",
+              "description": "User's preferred name",
+              "required": true
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "state_intake",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_intake",
+      "title": "Intake",
+      "type": "flexible",
+      "description": "Capture the user's primary request",
+      "tasks": [
+        {
+          "id": "task_request",
+          "description": "Capture request",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "primary_request",
+              "type": "string",
+              "description": "What the user needs help with",
+              "required": true
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "state_farewell",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_farewell",
+      "title": "Farewell",
+      "type": "sequential",
+      "description": "Close politely and end the session",
+      "tasks": [
+        {
+          "id": "task_close",
+          "description": "Provide short closing message",
+          "required": true,
+          "deliverables": []
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "__end__",
+          "condition_type": "all_tasks_complete",
+          "priority": 0
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "plan_builder": {
+      "start": {
+        "agent_spawn_mode": "immediate"
+      },
+      "canvas": {
+        "show_end_node": true,
+        "end_state_ids": ["state_farewell"],
+        "state_positions": {}
+      }
+    }
+  }
+}
+```
+
+- Each non-terminal state has exactly one outgoing transition.
+- Transition ordering is simple (`priority: 1`), with final handoff to `__end__`.
+- End-node metadata marks `state_farewell` as the terminal visual state.
+
+## Branching Flow Example
+
+Use this pattern when one intake state should route to different paths based on user data.
+
+```json
+{
+  "id": "branching-support-triage",
+  "title": "Branching Support Triage",
+  "description": "Routes users into priority, strategy, or closure states",
+  "initial_state_id": "state_intake",
+  "system_prompt": "You are a calm triage assistant. Route clearly and keep responses concise.",
+  "states": [
+    {
+      "id": "state_intake",
+      "title": "Intake",
+      "type": "flexible",
+      "description": "Collect issue type, urgency, and support preference",
+      "tasks": [
+        {
+          "id": "task_issue_type",
+          "description": "Capture issue type",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "issue_type",
+              "type": "enum",
+              "required": true,
+              "description": "Issue category",
+              "enum_values": ["billing", "technical", "account"]
+            }
+          ]
+        },
+        {
+          "id": "task_urgency",
+          "description": "Capture urgency score",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "urgency_score",
+              "type": "number",
+              "required": true,
+              "description": "Urgency from 1 to 10"
+            }
+          ]
+        },
+        {
+          "id": "task_support_preference",
+          "description": "Capture support preference",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "support_preference",
+              "type": "enum",
+              "required": true,
+              "description": "Preferred support mode",
+              "enum_values": ["quick_tips", "grounding_exercise", "deeper_explanation", "just_listen"]
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "state_priority",
+          "condition_type": "all_of",
+          "priority": 1,
+          "condition_config": {
+            "conditions": [
+              {
+                "condition_type": "deliverable_value_in",
+                "condition_config": {
+                  "key": "issue_type",
+                  "values": ["billing", "account"]
+                }
+              },
+              {
+                "condition_type": "deliverable_value_numeric",
+                "condition_config": {
+                  "key": "urgency_score",
+                  "operator": "gte",
+                  "value": 7
+                }
+              }
+            ]
+          }
+        },
+        {
+          "target_state_id": "state_strategy",
+          "condition_type": "any_of",
+          "priority": 5,
+          "condition_config": {
+            "conditions": [
+              {
+                "condition_type": "deliverable_value_in",
+                "condition_config": {
+                  "key": "support_preference",
+                  "values": ["grounding_exercise", "quick_tips"]
+                }
+              },
+              {
+                "condition_type": "deliverable_value_numeric",
+                "condition_config": {
+                  "key": "urgency_score",
+                  "operator": "lt",
+                  "value": 4
+                }
+              }
+            ]
+          }
+        },
+        {
+          "target_state_id": "state_closure",
+          "condition_type": "all_tasks_complete",
+          "priority": 99
+        }
+      ]
+    },
+    {
+      "id": "state_priority",
+      "title": "Priority Queue",
+      "type": "sequential",
+      "description": "Handle urgent users first",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "state_closure",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_strategy",
+      "title": "Coping Strategy",
+      "type": "flexible",
+      "description": "Offer targeted coping options",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "state_closure",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_closure",
+      "title": "Closure",
+      "type": "sequential",
+      "description": "Summarize and close",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "__end__",
+          "condition_type": "all_tasks_complete",
+          "priority": 0
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "plan_builder": {
+      "start": {
+        "agent_spawn_mode": "immediate"
+      },
+      "canvas": {
+        "show_end_node": true,
+        "end_state_ids": ["state_closure"],
+        "state_positions": {}
+      }
+    }
+  }
+}
+```
+
+- `state_intake` has multiple outgoing transitions with clear priority order.
+- Priority `99` acts as a deterministic fallback when specific conditions do not match.
+- All paths converge at `state_closure`, then transition to `__end__`.
+
+## Circular Flow with Guard Example
+
+Use this pattern when a state may need repeated clarification, but must still exit safely.
+
+```json
+{
+  "id": "circular-clarification-flow",
+  "title": "Circular Clarification with Guard",
+  "description": "Loops for clarification and exits through a guard transition when progress stalls",
+  "initial_state_id": "state_collect",
+  "system_prompt": "You are a focused assistant. Clarify only when needed, then move forward.",
+  "states": [
+    {
+      "id": "state_collect",
+      "title": "Collect Request",
+      "type": "flexible",
+      "description": "Capture initial request and confidence",
+      "tasks": [
+        {
+          "id": "task_request",
+          "description": "Capture request summary",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "request_summary",
+              "type": "string",
+              "required": true,
+              "description": "User's request in one sentence"
+            }
+          ]
+        },
+        {
+          "id": "task_confidence",
+          "description": "Capture confidence score",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "confidence_score",
+              "type": "number",
+              "required": true,
+              "description": "How clear the user feels from 1 to 10"
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "state_clarify",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_clarify",
+      "title": "Clarify",
+      "type": "flexible",
+      "description": "Clarify details until enough signal is captured",
+      "tasks": [
+        {
+          "id": "task_needs_clarification",
+          "description": "Capture whether more clarification is needed",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "needs_clarification",
+              "type": "boolean",
+              "required": true,
+              "description": "Whether another clarification round is needed"
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "state_guard_exit",
+          "condition_type": "turn_count_exceeded",
+          "priority": 1,
+          "condition_config": {
+            "scope": "without_progress",
+            "turns": 3
+          }
+        },
+        {
+          "target_state_id": "state_clarify",
+          "condition_type": "deliverable_value",
+          "priority": 5,
+          "condition_config": {
+            "key": "needs_clarification",
+            "value": true
+          }
+        },
+        {
+          "target_state_id": "state_resolution",
+          "condition_type": "all_tasks_complete",
+          "priority": 99
+        }
+      ]
+    },
+    {
+      "id": "state_guard_exit",
+      "title": "Guard Exit",
+      "type": "sequential",
+      "description": "Exit path when the loop exceeds safe retry limits",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "state_farewell",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_resolution",
+      "title": "Resolution",
+      "type": "sequential",
+      "description": "Provide final recommendation",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "state_farewell",
+          "condition_type": "all_tasks_complete",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "state_farewell",
+      "title": "Farewell",
+      "type": "sequential",
+      "description": "Close the conversation",
+      "tasks": [],
+      "transitions": [
+        {
+          "target_state_id": "__end__",
+          "condition_type": "all_tasks_complete",
+          "priority": 0
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "plan_builder": {
+      "start": {
+        "agent_spawn_mode": "immediate"
+      },
+      "canvas": {
+        "show_end_node": true,
+        "end_state_ids": ["state_farewell"],
+        "state_positions": {}
+      }
+    }
+  }
+}
+```
+
+- `state_clarify` intentionally loops when `needs_clarification = true`.
+- Guard transition (`turn_count_exceeded`, priority `1`) breaks potential infinite loops.
+- Both normal and guarded paths converge to `state_farewell`, then transition to `__end__`.
+
 ## Simple Greeting Flow
 
 A minimal three-state conversation: greeting, data collection, and farewell.
@@ -623,7 +1071,7 @@ Verify your transition conditions work correctly:
 
 ### Keep Instructions Clear
 
-Write instructions as if briefing a human agent:
+Write instructions as if briefing the assistant:
 - What to do
 - How to handle edge cases
 - What tone to use

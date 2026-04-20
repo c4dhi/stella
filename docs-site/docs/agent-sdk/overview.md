@@ -132,7 +132,7 @@ for msg in history:
     print(f"{msg.role}: {msg.content}")
 ```
 
-See [Accessing Chat History](/docs/guides/build-your-own-agent#accessing-chat-history) for the full API.
+See [Accessing Chat History](../guides/build-your-own-agent.md#accessing-chat-history) for the full API.
 
 ## Quick Example
 
@@ -176,8 +176,8 @@ stella-agent-sdk>=1.0.0
 
 ## Next Steps
 
-- [Getting Started](/docs/agent-sdk/getting-started) - Create your first custom agent
-- [Base Agent](/docs/agent-sdk/base-agent) - Deep dive into the BaseAgent class
-- [Message Types](/docs/agent-sdk/message-types) - All available message types
-- [Audio Pipeline](/docs/agent-sdk/audio-pipeline) - Configure STT/TTS providers
-- [Building Custom Agents](/docs/agent-sdk/building-custom-agent) - Complete tutorial
+- [Getting Started](./getting-started.md) - Create your first custom agent
+- [Base Agent](./base-agent.md) - Deep dive into the BaseAgent class
+- [Message Types](./message-types.md) - All available message types
+- [Audio Pipeline](./audio-pipeline.md) - Configure STT/TTS providers
+- [Building Custom Agents](./building-custom-agent.md) - Complete tutorial

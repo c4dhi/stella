@@ -57,6 +57,8 @@ Environment Variables (set by session-management-server):
     TTS_SERVICE_ADDRESS: External TTS service address (gRPC)
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from stella_agent_sdk.messages.types import (
     InputType,
     OutputType,
@@ -102,7 +104,10 @@ from stella_agent_sdk.tools import (
     ToolExecutor,
 )
 
-__version__ = "0.5.0"
+try:
+    __version__ = version("stella-ai-agent-sdk")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # Message types

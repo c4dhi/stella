@@ -193,6 +193,6 @@ async def test_connection():
 
 ## See Also
 
-- [Agents Overview](/docs/agents/overview) - All agent types
-- [LiveKit Integration](/docs/integration/livekit) - LiveKit setup
-- [First Agent](/docs/getting-started/first-agent) - Deployment guide
+- [Agents Overview](./overview.md) - All agent types
+- [LiveKit Integration](../integration/livekit.md) - LiveKit setup
+- [First Agent](../getting-started/first-agent.md) - Deployment guide

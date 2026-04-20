@@ -92,10 +92,12 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'plan-structure/index',
+        'plan-structure/plan-builder',
         'plan-structure/states',
         'plan-structure/tasks',
         'plan-structure/deliverables',
         'plan-structure/examples',
+        'plan-structure/json-schema-reference',
       ],
     },
     {
@@ -129,6 +131,7 @@ const sidebars: SidebarsConfig = {
         'deployment/message-recording',
         'deployment/production-checklist',
         'deployment/monitoring',
+        'deployment/agent-validation',
       ],
     },
     {

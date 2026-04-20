@@ -335,7 +335,7 @@ stop_services() {
     # Scale down deployments
     local deployments=("session-management-server" "frontend-ui" "stt-service" "tts-service" "message-recorder")
     for deploy in "${deployments[@]}"; do
-        kubectl scale deployment "$deploy" -n ai-agents --replicas=0 2>/dev/null || true
+        kubectl scale deployment "$deploy" -n "$KUBERNETES_NAMESPACE" --replicas=0 2>/dev/null || true
     done
 
     success "Services stopped"

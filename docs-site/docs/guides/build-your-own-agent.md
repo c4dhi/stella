@@ -416,6 +416,28 @@ agents:
         memory: "2Gi"
 ```
 
+### Run Deployment Tests
+
+Before deploying an agent, validate the same surfaces STELLA depends on at build and runtime:
+
+- `agent.yaml` should parse cleanly and satisfy the canonical manifest schema
+- the package should include a `Dockerfile` or point to a published image
+- Python dependencies should include `stella-ai-agent-sdk`
+- the agent should start successfully with representative config
+
+For built-in agents in this repository, these checks are enforced automatically in GitHub Actions:
+
+- `npm run validate:agents` validates built-in manifests, Dockerfile presence, slug consistency, and SDK compatibility
+- Python startup smoke tests install the SDK and agents, then verify they initialize with sample config
+
+For custom agents, validation happens individually per package. When a custom agent is uploaded or built, STELLA validates that package's manifest, Dockerfile, and SDK dependency before deployment.
+
+If you are developing your agent in this repository, run the built-in validation checks locally before opening a PR:
+
+```bash title="terminal"
+npm run validate:agents
+```
+
 ## Best Practices
 
 1. **Error Handling**: Always wrap external API calls in try/catch blocks
@@ -426,6 +448,6 @@ agents:
 
 ## Next Steps
 
-- [Add Custom UI](/docs/guides/add-custom-ui) - Customize the frontend
-- [Base Agent Reference](/docs/sdk/base-agent) - Full API documentation
-- [Tools Reference](/docs/sdk/tools) - Advanced tool patterns
+- [Add Custom UI](./add-custom-ui.md) - Customize the frontend
+- [Base Agent Reference](../sdk/base-agent.md) - Full API documentation
+- [Tools Reference](../sdk/tools.md) - Advanced tool patterns

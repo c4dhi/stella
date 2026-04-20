@@ -199,5 +199,5 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 
 ## Next Steps
 
-- [Monitoring](/docs/deployment/monitoring) - Set up observability
-- [Kubernetes Deployment](/docs/deployment/kubernetes) - Deployment guide
+- [Monitoring](./monitoring.md) - Set up observability
+- [Kubernetes Deployment](./kubernetes.md) - Deployment guide
