@@ -124,6 +124,11 @@ class StateMachineClient:
                 "new_state_id": response.new_state_id or None,
                 "new_state_title": response.new_state_title or None,
                 "progress": response.progress,
+                # Set by the backend when the plan reached the __end__ sentinel state.
+                # The agent should send farewell_message then stop accepting new turns.
+                "session_completed": response.session_completed,
+                "farewell_message": response.farewell_message or None,
+                "summary_behavior": response.summary_behavior or None,
             }
         except grpc.aio.AioRpcError as e:
             logger.error(f"gRPC error during complete_task: {e.code()} - {e.details()}")
@@ -169,6 +174,11 @@ class StateMachineClient:
                 "new_state_id": response.new_state_id or None,
                 "new_state_title": response.new_state_title or None,
                 "progress": response.progress,
+                # Set by the backend when the plan reached the __end__ sentinel state.
+                # The agent should send farewell_message then stop accepting new turns.
+                "session_completed": response.session_completed,
+                "farewell_message": response.farewell_message or None,
+                "summary_behavior": response.summary_behavior or None,
             }
         except grpc.aio.AioRpcError as e:
             logger.error(f"gRPC error during set_deliverable: {e.code()} - {e.details()}")

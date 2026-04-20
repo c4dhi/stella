@@ -1,6 +1,6 @@
 import { Controller, Logger } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
-import { StateMachineService } from './state-machine.service';
+import { StateMachineService, END_STATE_ID } from './state-machine.service';
 
 /**
  * StateMachineGrpcController - gRPC endpoints for state machine operations.
@@ -64,6 +64,10 @@ export class StateMachineGrpcController {
     newStateId?: string;
     newStateTitle?: string;
     progress?: number;
+    // Set when transition reached the end state. Agent should stop prompting.
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
   }> {
     this.logger.log(`CompleteTask called for session: ${request.sessionId}, task: ${request.taskId}`);
 
@@ -81,6 +85,9 @@ export class StateMachineGrpcController {
       newStateId: result.newStateId,
       newStateTitle: result.newStateTitle,
       progress: result.progress,
+      sessionCompleted: result.sessionCompleted,
+      farewellMessage: result.farewellMessage,
+      summaryBehavior: result.summaryBehavior,
     };
   }
 
@@ -101,6 +108,10 @@ export class StateMachineGrpcController {
     newStateId?: string;
     newStateTitle?: string;
     progress?: number;
+    // Set when transition reached the end state. Agent should stop prompting.
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
   }> {
     this.logger.log(`SetDeliverable called for session: ${request.sessionId}, key: ${request.key}`);
 
@@ -128,6 +139,9 @@ export class StateMachineGrpcController {
       newStateId: result.newStateId,
       newStateTitle: result.newStateTitle,
       progress: result.progress,
+      sessionCompleted: result.sessionCompleted,
+      farewellMessage: result.farewellMessage,
+      summaryBehavior: result.summaryBehavior,
     };
   }
 
@@ -151,16 +165,26 @@ export class StateMachineGrpcController {
     goalDepthGuidance?: string;
     goalBoundaries?: string;
     goalSuccessDescription?: string;
+    // Set when the session has reached the end state.
+    sessionCompleted?: boolean;
   }> {
     this.logger.debug(`GetCurrentState called for session: ${request.sessionId}`);
 
-    const state = await this.stateMachineService.getCurrentState(request.sessionId);
+    // Check raw DB state before calling getCurrentState so we can distinguish
+    // "session completed" (currentStateId === __end__) from "not initialized" (no state row).
+    const rawState = await this.stateMachineService.getState(request.sessionId);
+    if (!rawState) {
+      return { success: false, error: 'State machine not initialized for this session' };
+    }
 
+    if (rawState.currentStateId === END_STATE_ID) {
+      // Conversation terminated — agent should stop prompting.
+      return { success: true, sessionCompleted: true, stateId: END_STATE_ID };
+    }
+
+    const state = await this.stateMachineService.getCurrentState(request.sessionId);
     if (!state) {
-      return {
-        success: false,
-        error: 'State machine not initialized for this session',
-      };
+      return { success: false, error: 'State machine not initialized for this session' };
     }
 
     return {
