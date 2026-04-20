@@ -272,5 +272,5 @@ POST /api/v2/sessions
 
 ## Next Steps
 
-- [Pull Request Process](/docs/contributing/pull-request-process) - Submit changes
-- [Coding Standards](/docs/contributing/coding-standards) - Style guide
+- [Pull Request Process](./pull-request-process.md) - Submit changes
+- [Coding Standards](./coding-standards/index.md) - Style guide

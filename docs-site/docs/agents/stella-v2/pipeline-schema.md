@@ -310,5 +310,5 @@ See `agents/stella-v2-agent/agent.yaml` for the full stella-v2 pipeline schema w
 
 ## See Also
 
-- [Pipeline Configurator](/docs/agents/stella-v2/pipeline-configurator) — How to create and manage configurations
-- [stella-v2 Overview](/docs/agents/stella-v2) — Architecture and design rationale
+- [Pipeline Configurator](./pipeline-configurator.md) — How to create and manage configurations
+- [stella-v2 Overview](./index.md) — Architecture and design rationale

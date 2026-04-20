@@ -45,10 +45,10 @@ Thank you for your interest in contributing to STELLA! This guide will help you 
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally
-3. **Set up development environment** (see [Development Setup](/docs/contributing/development-setup))
+3. **Set up development environment** (see [Development Setup](./development-setup.md))
 4. **Create a branch** for your changes
-5. **Make your changes** following our [coding standards](/docs/contributing/coding-standards)
-6. **Submit a pull request** following our [PR process](/docs/contributing/pull-request-process)
+5. **Make your changes** following our [coding standards](./coding-standards/index.md)
+6. **Submit a pull request** following our [PR process](./pull-request-process.md)
 
 ```bash
 # Fork on GitHub, then:
@@ -98,7 +98,7 @@ STELLA/
 
 ## Next Steps
 
-- [Development Setup](/docs/contributing/development-setup) - Set up your environment
-- [Coding Standards](/docs/contributing/coding-standards) - Code style guidelines
-- [Pull Request Process](/docs/contributing/pull-request-process) - PR workflow
-- [Release Process](/docs/contributing/release-process) - How we release
+- [Development Setup](./development-setup.md) - Set up your environment
+- [Coding Standards](./coding-standards/index.md) - Code style guidelines
+- [Pull Request Process](./pull-request-process.md) - PR workflow
+- [Release Process](./release-process.md) - How we release

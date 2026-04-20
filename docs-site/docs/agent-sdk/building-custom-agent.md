@@ -467,7 +467,7 @@ agents:
 
 ## See Also
 
-- [Base Agent](/docs/agent-sdk/base-agent)
-- [Audio Pipeline](/docs/agent-sdk/audio-pipeline)
-- [Tools](/docs/agent-sdk/tools)
-- [Progress Tracking](/docs/agent-sdk/progress-tracking)
+- [Base Agent](./base-agent.md)
+- [Audio Pipeline](./audio-pipeline.md)
+- [Tools](./tools.md)
+- [Progress Tracking](./progress-tracking.md)

@@ -326,5 +326,5 @@ Review these implementations in `frontend-ui/src/components/face/` for inspirati
 
 ## Next Steps
 
-- [LiveKit Integration](/docs/integration/livekit) - How audio data flows to visualizers
-- [Architecture Overview](/docs/architecture/overview) - System architecture
+- [LiveKit Integration](../integration/livekit.md) - How audio data flows to visualizers
+- [Architecture Overview](../architecture/overview.md) - System architecture

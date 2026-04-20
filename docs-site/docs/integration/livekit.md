@@ -459,6 +459,6 @@ room.on(RoomEvent.TrackSubscribed, (track) => {
 
 ## See Also
 
-- [LiveKit Production](/docs/integration/livekit-production)
-- [Message Types](/docs/agent-sdk/message-types)
-- [First Agent](/docs/getting-started/first-agent)
+- [LiveKit Production](./livekit-production.md)
+- [Message Types](../agent-sdk/message-types.md)
+- [First Agent](../getting-started/first-agent.md)
