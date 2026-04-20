@@ -9,10 +9,13 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import {
   AgentMetricsResponseDto,
   StageLatencyDto,
+  StageDataPointDto,
+  SessionStagePointDto,
   OutlierSessionDto,
   OutlierStageDto,
   SessionAnalyticsResponseDto,
   MetricsSummaryDto,
+  PlanCompletionSessionDto,
 } from './dto/agent-metrics.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
@@ -963,15 +966,16 @@ export class AgentsService {
   }
 
   /**
-   * Extract stage name and timing_ms from an analytics message's metadata.
-   * Handles multiple envelope nesting formats.
+   * Extract stage name and timing value from an analytics message's metadata.
+   * Supports both old format (timing_ms) and new event format (elapsed_ms).
    */
-  private extractStageTiming(metadata: any): { stage: string; timing_ms: number; sessionId?: string } | null {
+  private extractStageTiming(metadata: any): { stage: string; timing_ms: number; isTimelineEvent: boolean } | null {
     const data = this.extractFullMetadata(metadata);
     const stage = data?.stage;
-    const timingMs = data?.timing_ms;
+    const hasElapsed = typeof data?.elapsed_ms === 'number';
+    const timingMs = hasElapsed ? data.elapsed_ms : data?.timing_ms;
     if (typeof stage === 'string' && typeof timingMs === 'number') {
-      return { stage, timing_ms: timingMs };
+      return { stage, timing_ms: timingMs, isTimelineEvent: hasElapsed };
     }
     return null;
   }
@@ -985,15 +989,21 @@ export class AgentsService {
     for (const [stage, timings] of stageTimings) {
       const sorted = timings.slice().sort((a, b) => a - b);
       const sum = sorted.reduce((acc, v) => acc + v, 0);
+      const mean = sum / sorted.length;
+      const variance = sorted.reduce((acc, v) => acc + (v - mean) ** 2, 0) / sorted.length;
 
       stages.push({
         stage,
         count: sorted.length,
-        mean_ms: Math.round((sum / sorted.length) * 100) / 100,
+        mean_ms: Math.round(mean * 100) / 100,
+        p5_ms: percentile(sorted, 5),
+        p25_ms: percentile(sorted, 25),
         p50_ms: percentile(sorted, 50),
+        p75_ms: percentile(sorted, 75),
         p95_ms: percentile(sorted, 95),
         min_ms: sorted[0],
         max_ms: sorted[sorted.length - 1],
+        stddev_ms: Math.round(Math.sqrt(variance) * 100) / 100,
       });
     }
 
@@ -1011,7 +1021,9 @@ export class AgentsService {
     const safetyMessages: Array<{ route: string }> = [];
     const transitionMessages: Array<{ wasExpected: boolean }> = [];
     const planMessages: Array<{ sessionId: string; completionRate: number; reachedEnd: boolean }> = [];
-    const bridgeTimings: number[] = [];
+    const ttfabTimings: number[] = [];
+    const bridgeDurationTimings: number[] = [];
+    const ttfrTimings: number[] = [];
 
     for (const msg of messages) {
       const data = this.extractFullMetadata(msg.metadata);
@@ -1023,9 +1035,7 @@ export class AgentsService {
             safetyMessages.push({ route: data.route });
           }
           break;
-        case 'state_transition':
-          transitionMessages.push({ wasExpected: data.was_expected === true });
-          break;
+        // state_transition removed — not tracked for stella v2
         case 'plan_completion':
           if (typeof data.completion_rate === 'number') {
             planMessages.push({
@@ -1035,9 +1045,37 @@ export class AgentsService {
             });
           }
           break;
-        case 'bridge_generation':
+        // Old format (timing_ms)
+        case 'ttfab_bridge':
+        case 'ttfab_direct':
           if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
-            bridgeTimings.push(data.timing_ms);
+            ttfabTimings.push(data.timing_ms);
+          }
+          break;
+        case 'bridge_duration':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            bridgeDurationTimings.push(data.timing_ms);
+          }
+          break;
+        case 'ttfr':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            ttfrTimings.push(data.timing_ms);
+          }
+          break;
+        // New format (elapsed_ms) — elapsed values are direct timeline positions
+        case 'bridge_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfabTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'bridge_tts_done':
+          if (typeof data.elapsed_ms === 'number') {
+            bridgeDurationTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'response_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfrTimings.push(data.elapsed_ms);
           }
           break;
       }
@@ -1047,9 +1085,9 @@ export class AgentsService {
       safetyRouting: safetyMessages.length > 0 ? {
         totalTurns: safetyMessages.length,
         safeTurns: safetyMessages.filter((m) => m.route === 'SAFE').length,
-        unsafeTurns: safetyMessages.filter((m) => m.route === 'UNSAFE').length,
+        unsafeTurns: safetyMessages.filter((m) => m.route !== 'SAFE').length,
         interceptionRate: Math.round(
-          (safetyMessages.filter((m) => m.route === 'UNSAFE').length / safetyMessages.length) * 10000,
+          (safetyMessages.filter((m) => m.route !== 'SAFE').length / safetyMessages.length) * 10000,
         ) / 10000,
       } : null,
 
@@ -1074,10 +1112,24 @@ export class AgentsService {
         };
       })() : null,
 
-      bridgeGeneration: bridgeTimings.length > 0 ? {
-        totalBridges: bridgeTimings.length,
+      bridgeGeneration: ttfabTimings.length > 0 ? {
+        totalBridges: ttfabTimings.length,
         avgBridgeDuration_ms: Math.round(
-          (bridgeTimings.reduce((s, v) => s + v, 0) / bridgeTimings.length) * 100,
+          (ttfabTimings.reduce((s, v) => s + v, 0) / ttfabTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      bridgeDuration: bridgeDurationTimings.length > 0 ? {
+        count: bridgeDurationTimings.length,
+        avg_ms: Math.round(
+          (bridgeDurationTimings.reduce((s, v) => s + v, 0) / bridgeDurationTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      ttfr: ttfrTimings.length > 0 ? {
+        count: ttfrTimings.length,
+        avg_ms: Math.round(
+          (ttfrTimings.reduce((s, v) => s + v, 0) / ttfrTimings.length) * 100,
         ) / 100,
       } : null,
     };
@@ -1102,9 +1154,7 @@ export class AgentsService {
       throw new NotFoundException(`Agent type '${agentSlug}' not found`);
     }
 
-    // 2. Find sessions that used this agent type (scoped by project + agent type,
-    //    not by createdAt — filtering by instance creation date would exclude agents
-    //    created outside the range that still have in-range messages)
+    // 2. Find sessions that used this agent type within the date range
     const agentInstances = await this.prisma.agentInstance.findMany({
       where: {
         session: { projectId },
@@ -1112,6 +1162,7 @@ export class AgentsService {
           { agentTypeId: agentType.id },
           { agentType: agentSlug },
         ],
+        createdAt: { gte: from, lte: to },
       },
       select: { sessionId: true },
       distinct: ['sessionId'],
@@ -1133,6 +1184,8 @@ export class AgentsService {
           safetyRouting: null,
           stateTransitions: null,
           bridgeGeneration: null,
+          bridgeDuration: null,
+          ttfr: null,
         },
       };
     }
@@ -1145,6 +1198,7 @@ export class AgentsService {
         timestamp: { gte: from, lte: to },
       },
       select: { sessionId: true, metadata: true },
+      orderBy: { timestamp: 'asc' },
     });
 
     // 4. Count user turns for context
@@ -1165,8 +1219,12 @@ export class AgentsService {
       const parsed = this.extractStageTiming(msg.metadata as any);
       if (!parsed) continue;
 
-      // Skip non-latency stages (timing_ms=0) from the stages/outlier aggregation
-      if (parsed.timing_ms === 0) continue;
+      // Skip non-timeline events (old format with timing_ms=0, e.g. safety_routing)
+      // Timeline events with elapsed_ms=0 (stt_end) are valid and should pass through
+      if (parsed.timing_ms === 0 && !parsed.isTimelineEvent) continue;
+
+      // Skip anchor events — these are reference points, not pipeline stages
+      if (parsed.stage === 'vad_trigger' || parsed.stage === 'stt_end') continue;
 
       // Global
       if (!globalTimings.has(parsed.stage)) {
@@ -1253,7 +1311,6 @@ export class AgentsService {
    * Get per-stage latency analytics for a single session.
    */
   async getSessionAnalytics(sessionId: string, projectId?: string): Promise<SessionAnalyticsResponseDto> {
-    // Verify the session belongs to the requested project
     if (projectId) {
       const session = await this.prisma.session.findFirst({
         where: { id: sessionId, projectId },
@@ -1266,7 +1323,7 @@ export class AgentsService {
 
     const analyticsMessages = await this.prisma.message.findMany({
       where: { sessionId, messageType: 'analytics' },
-      select: { sessionId: true, metadata: true },
+      select: { sessionId: true, metadata: true, timestamp: true },
     });
 
     const totalTurns = await this.prisma.message.count({
@@ -1278,13 +1335,20 @@ export class AgentsService {
     });
 
     const stageTimings = new Map<string, number[]>();
+    const rawPoints: SessionStagePointDto[] = [];
+
     for (const msg of analyticsMessages) {
       const parsed = this.extractStageTiming(msg.metadata as any);
-      if (!parsed || parsed.timing_ms === 0) continue;
+      if (!parsed || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
       if (!stageTimings.has(parsed.stage)) {
         stageTimings.set(parsed.stage, []);
       }
       stageTimings.get(parsed.stage)!.push(parsed.timing_ms);
+      rawPoints.push({
+        stage: parsed.stage,
+        timing_ms: parsed.timing_ms,
+        timestamp: msg.timestamp.toISOString(),
+      });
     }
 
     return {
@@ -1292,6 +1356,7 @@ export class AgentsService {
       totalTurns,
       stages: this.computeStageStats(stageTimings),
       summary: this.computeMetricsSummary(analyticsMessages),
+      rawPoints,
     };
   }
 
@@ -1356,6 +1421,180 @@ export class AgentsService {
     }
 
     return { points };
+  }
+
+  /**
+   * Get per-session average timing for a specific stage.
+   * Returns one data point per session (avg of all measurements in that session).
+   */
+  async getStageDataPoints(
+    projectId: string,
+    agentSlug: string,
+    stageName: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ points: StageDataPointDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { points: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { points: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Group by session, compute per-session average
+    const sessionData = new Map<string, { timings: number[]; lastTimestamp: Date }>();
+
+    for (const msg of messages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (!parsed || parsed.stage !== stageName || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
+
+      if (!sessionData.has(msg.sessionId)) {
+        sessionData.set(msg.sessionId, { timings: [], lastTimestamp: msg.timestamp });
+      }
+      const entry = sessionData.get(msg.sessionId)!;
+      entry.timings.push(parsed.timing_ms);
+      entry.lastTimestamp = msg.timestamp;
+    }
+
+    // Fetch session names for all sessions that have data
+    const sessionIdsWithData = Array.from(sessionData.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const points: StageDataPointDto[] = [];
+    for (const [sessionId, { timings, lastTimestamp }] of sessionData) {
+      const avg = timings.reduce((s, v) => s + v, 0) / timings.length;
+      points.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        avg_timing_ms: Math.round(avg * 100) / 100,
+        count: timings.length,
+        timestamp: lastTimestamp.toISOString(),
+      });
+    }
+
+    return { points };
+  }
+
+  /**
+   * Get per-session plan completion data for drill-down.
+   * Returns one row per session with final completion rate and whether the plan reached end.
+   */
+  async getPlanCompletionSessions(
+    projectId: string,
+    agentSlug: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ sessions: PlanCompletionSessionDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { sessions: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { sessions: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Deduplicate by session (take last plan_completion message per session)
+    const bySession = new Map<string, { completionRate: number; reachedEnd: boolean; timestamp: Date }>();
+
+    for (const msg of messages) {
+      const data = this.extractFullMetadata(msg.metadata);
+      if (!data || data.stage !== 'plan_completion' || typeof data.completion_rate !== 'number') continue;
+
+      bySession.set(msg.sessionId, {
+        completionRate: data.completion_rate,
+        reachedEnd: data.plan_reached_end === true,
+        timestamp: msg.timestamp,
+      });
+    }
+
+    // Fetch session names
+    const sessionIdsWithData = Array.from(bySession.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const result: PlanCompletionSessionDto[] = [];
+    for (const [sessionId, { completionRate, reachedEnd, timestamp }] of bySession) {
+      result.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        completionRate: Math.round(completionRate * 10000) / 10000,
+        reachedEnd,
+        timestamp: timestamp.toISOString(),
+      });
+    }
+
+    // Sort by completion rate ascending (lowest first for easy outlier spotting)
+    result.sort((a, b) => a.completionRate - b.completionRate);
+
+    return { sessions: result };
   }
 }
 

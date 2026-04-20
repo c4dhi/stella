@@ -2,10 +2,14 @@ export class StageLatencyDto {
   stage: string;
   count: number;
   mean_ms: number;
+  p5_ms: number;
+  p25_ms: number;
   p50_ms: number;
+  p75_ms: number;
   p95_ms: number;
   min_ms: number;
   max_ms: number;
+  stddev_ms: number;
 }
 
 export class OutlierStageDto {
@@ -42,6 +46,14 @@ export class MetricsSummaryDto {
     totalBridges: number;
     avgBridgeDuration_ms: number;
   } | null;
+  bridgeDuration: {
+    count: number;
+    avg_ms: number;
+  } | null;
+  ttfr: {
+    count: number;
+    avg_ms: number;
+  } | null;
 }
 
 export class AgentMetricsResponseDto {
@@ -55,9 +67,32 @@ export class AgentMetricsResponseDto {
   summary: MetricsSummaryDto;
 }
 
+export class StageDataPointDto {
+  sessionId: string;
+  sessionName: string;
+  avg_timing_ms: number;
+  count: number;
+  timestamp: string;
+}
+
+export class SessionStagePointDto {
+  stage: string;
+  timing_ms: number;
+  timestamp: string;
+}
+
 export class SessionAnalyticsResponseDto {
   sessionId: string;
   totalTurns: number;
   stages: StageLatencyDto[];
   summary: MetricsSummaryDto;
+  rawPoints: SessionStagePointDto[];
+}
+
+export class PlanCompletionSessionDto {
+  sessionId: string;
+  sessionName: string;
+  completionRate: number;
+  reachedEnd: boolean;
+  timestamp: string;
 }

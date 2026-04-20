@@ -148,6 +148,47 @@ export class AgentsController {
   }
 
   /**
+   * Get per-session average data points for a specific stage (for drill-down).
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/stages/:stageName/points')
+  @UseGuards(ProjectAccessGuard)
+  async getStageDataPoints(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Param('stageName') stageName: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getStageDataPoints(projectId, agentSlug, stageName, fromDate, toDate);
+  }
+
+  /**
+   * Get per-session plan completion data for drill-down.
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/plan-completion/sessions')
+  @UseGuards(ProjectAccessGuard)
+  async getPlanCompletionSessions(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getPlanCompletionSessions(projectId, agentSlug, fromDate, toDate);
+  }
+
+  /**
    * Get per-stage latency analytics for a single session.
    */
   @Get('projects/:projectId/sessions/:sessionId/analytics')
