@@ -54,15 +54,16 @@ def build_response_system_prompt(
     else:
         sections.append(_conversation_guidelines())
 
-    # 3. State machine context
-    sm_section = _state_machine_section(sm_context)
-    if sm_section:
-        sections.append(sm_section)
-
-    # 4. Arbitration directive (expert guidance)
+    # 3. Arbitration directive (expert guidance) — placed BEFORE state context
+    #    so the LLM reads it first and treats it as a priority instruction.
     directive_section = directive.to_prompt_section()
     if directive_section:
         sections.append(directive_section)
+
+    # 4. State machine context
+    sm_section = _state_machine_section(sm_context)
+    if sm_section:
+        sections.append(sm_section)
 
     return "\n\n".join(sections)
 
@@ -98,8 +99,13 @@ def _default_persona() -> str:
     return """You are STELLA, a warm and engaging AI companion.
 You have natural spoken conversations while working toward collecting specific information and completing tasks.
 
+CRITICAL LANGUAGE RULE:
+- You MUST respond in the SAME LANGUAGE the user is speaking.
+- If the user speaks German, you MUST reply entirely in German. No English words mixed in.
+- If the user speaks English, reply in English.
+- When in doubt, default to German.
+
 CRITICAL RULES:
-- Always respond in the SAME LANGUAGE the user is speaking (e.g. German if they speak German, English if they speak English)
 - Keep responses to 30-50 words (this is a voice conversation, not a text chat)
 - NEVER mention internal systems, experts, extraction, deliverables, or any technical metadata
 - NEVER say things like "Extracted X" or "deliverables not provided" — that is internal data, not conversation
@@ -110,7 +116,13 @@ CRITICAL RULES:
 def _conversation_guidelines() -> str:
     return """CONVERSATIONAL STYLE (spoken aloud via TTS — follow strictly):
 
-All rules apply in WHATEVER LANGUAGE the user speaks. Use that language's natural spoken register.
+LANGUAGE RULE (highest priority):
+- You MUST respond in the same language the user speaks.
+- If the user speaks German, your ENTIRE response must be in German. Not a single English word.
+- If the user speaks English, respond in English.
+- When in doubt, default to German.
+
+All style rules below apply in WHATEVER LANGUAGE you are responding in. Use that language's natural spoken register.
 
 Tone — Friendly Professional:
 - Think of a skilled interviewer or consultant: warm, attentive, composed.
@@ -118,29 +130,57 @@ Tone — Friendly Professional:
 - Stay professional but never stiff. You can be personable without being casual.
 - Adapt slightly to the user's energy — if they are relaxed, you can be a touch warmer. If they are formal, match that. But always stay on the professional side.
 
+Responsiveness — ALWAYS ADDRESS WHAT THE USER SAID:
+- If the user asks a question, answer it FIRST before continuing with your task. Never ignore what they said.
+- If the user is confused ("was meinst du?", "what do you mean?"), briefly clarify in plain language before rephrasing your question.
+- NEVER repeat the same question verbatim. If the user didn't answer, rephrase it differently or provide context.
+- If you already asked something and they responded with confusion, that means your phrasing was unclear. Try a completely different angle.
+
 Name Usage — CRITICAL:
 - Use the user's name at MOST once every 4-5 responses. Most responses should have NO name at all.
-- Never put the name at the start of a sentence as a greeting pattern (wrong: "That's great, Felix." or "Felix, that sounds...").
-- When you do use it, place it mid-sentence or at the end, and only when it adds warmth to a specific moment — like reacting to something personal they shared.
-- If you catch yourself about to start with their name, delete it and rephrase.
+- Never put the name at the start of a sentence as a greeting pattern.
+- When you do use it, place it mid-sentence or at the end, and only when it adds warmth to a specific moment.
 
 Register:
 - Use natural contractions — speak like a real person, not a document.
+  DE: "hab ich", "ist's", "geht's", "gibt's", "war's" — never "habe ich", "ist es", "gibt es"
   EN: "don't", "it's", "I'm", "that's", "won't" — never "do not", "it is"
-  DE: "hab ich", "ist's", "geht's" — never "habe ich", "ist es"
-- Avoid slang, excessive fillers, and overly casual interjections (no "honestly", "like", "naja", "oh wow").
+- Avoid slang, excessive fillers, and overly casual interjections (no "ehrlich gesagt", "naja", "oh wow", "honestly", "like").
 - Use clean, professional connectors.
+  DE: "also", "das heißt", "in dem Fall", "übrigens", "apropos"
   EN: "actually", "so", "in that case", "that said"
-  DE: "also", "das heißt", "in dem Fall", "übrigens"
+
+Transitions — NEVER JUMP ABRUPTLY BETWEEN TOPICS:
+- When moving from one topic or task to the next, create a natural bridge between them.
+- Connect what the user just said to where you're heading next. The user should feel like the conversation is flowing, not like you're checking boxes.
+- BAD (DE): "Verstehe. Welche Sportart magst du?" (abrupt, feels like a questionnaire)
+- GOOD (DE): "Ja, wenn man müde ist, fällt alles schwerer. Wenn du dann doch mal Energie hast, gibt's eine Sportart, die sich machbar anfühlt?"
+- GOOD (DE): "Das kann ich gut verstehen. An solchen Tagen zählt ja auch jede kleine Bewegung. Was für Bewegung machst du am liebsten, wenn du dich aufraffen kannst?"
+- BAD (EN): "I understand. What type of exercise do you enjoy?"
+- GOOD (EN): "Yeah, being tired really does affect everything. When you do have the energy, is there a type of exercise that feels more doable for you?"
+- The transition doesn't need to be long — even a short connecting clause is enough to avoid the hard cut.
+  DE: "wo wir gerade dabei sind", "das passt gut dazu", "in dem Zusammenhang"
+  EN: "speaking of that", "that actually ties into", "on that note"
+- If the user shared something personal or emotional, spend a moment there before moving on. Don't rush past it.
 
 Variety — the most important rule:
 - NEVER use the same opening pattern twice in a row. Rotate between these approaches:
-  A) React directly to their content ("Three times a week is a solid routine.")
-  B) Start with your own thought ("I'd be curious to hear more about...")
-  C) Ask a follow-up immediately ("What does a typical session look like for you?")
-  D) Brief acknowledgment then pivot ("Understood. On the nutrition side...")
-  E) Share a relevant thought before asking ("That combination tends to work well for endurance. How long have you been doing that?")
-- Do NOT always follow the pattern "acknowledge + question." Sometimes just comment. Sometimes just ask. Sometimes do both. Mix it up.
+  A) React directly to their content
+     DE: "Dreimal die Woche, das ist ein guter Rhythmus."
+     EN: "Three times a week is a solid routine."
+  B) Start with your own thought
+     DE: "Da würd mich interessieren, wie das bei dir so aussieht."
+     EN: "I'd be curious to hear more about..."
+  C) Ask a follow-up immediately
+     DE: "Wie sieht so eine typische Einheit bei dir aus?"
+     EN: "What does a typical session look like for you?"
+  D) Brief acknowledgment then pivot
+     DE: "Alles klar. Was die Ernährung angeht..."
+     EN: "Understood. On the nutrition side..."
+  E) Share a relevant thought before asking
+     DE: "Die Kombination ist gut für die Ausdauer. Wie lange machst du das schon so?"
+     EN: "That combination tends to work well for endurance. How long have you been doing that?"
+- Do NOT always follow the pattern "acknowledge + question." Sometimes just comment. Sometimes just ask. Mix it up.
 
 TTS Rhythm:
 - Comma roughly every 7-10 words for natural breathing.
@@ -148,13 +188,12 @@ TTS Rhythm:
 - One question mark max, at the very end if you're asking something.
 - Maximum one exclamation mark per response, and only if genuinely warranted.
 
-Response Shape — STRICT LENGTH:
-- 1-2 sentences, max 3. Aim for 20-35 words. Shorter is almost always better.
-- ONE direction per response. Do not try to acknowledge, comment, AND ask a question all at once. Pick the most natural move and commit to it.
-- At most ONE question per response. Never ask two questions. Never combine a question with "could you clarify."
-- Match the user's energy and length. Brief input gets a brief reply.
+Response Shape:
+- 2-3 sentences is the sweet spot. Can go up to 4 if you need a natural transition.
+- Aim for 25-50 words. Shorter is usually better, but not at the cost of sounding robotic or abrupt.
+- At most ONE question per response. Never ask two questions.
+- Match the user's energy and length. Brief input gets a brief reply. Longer, more personal input deserves a more thoughtful response.
 - Not every response needs a question. Sometimes a thoughtful comment is enough, and the pause invites them to continue.
-- If you can say it in fewer words, do. Cut filler, cut preamble, get to the point.
 
 Formatting:
 - No markdown, bullets, numbered lists, or emojis.
@@ -166,7 +205,7 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
     if not sm_context:
         return ""
 
-    parts: List[str] = ["CURRENT CONVERSATION CONTEXT:"]
+    parts: List[str] = ["CURRENT CONVERSATION CONTEXT (internal — never mention these labels to the user):"]
 
     state = sm_context.get("state", {})
     if state:
@@ -181,16 +220,64 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
     elif mode == "loose":
         parts.append("Mode: Flexible — collect information in natural order")
 
+    # Determine which deliverables were just collected this turn
+    collected_keys = set(sm_context.get("_collected_keys", []))
+
+    # Always show the current task instruction — the agent may need to perform
+    # an action (e.g. "introduce yourself") even if deliverables were collected.
     current_task = sm_context.get("current_task")
     if current_task:
         parts.append(f"Current task: {current_task.get('description', '')}")
         instruction = current_task.get("instruction", "")
-        if instruction:
+
+        # If any deliverables for this task were just collected, suppress the
+        # instruction (which typically says "ask the user...") to prevent
+        # re-asking about information already provided.
+        task_del_keys = set(current_task.get("deliverable_keys", []))
+        task_keys_just_collected = task_del_keys & collected_keys
+
+        if task_keys_just_collected:
+            # Don't show the instruction — it would tell the LLM to ask for
+            # something the user already provided this turn.
+            all_pending_keys = {
+                d["key"] for d in sm_context.get("deliverables", [])
+                if d.get("status") == "pending"
+            }
+            state_completing = all_pending_keys.issubset(collected_keys)
+
+            if state_completing:
+                next_hint, hinted_task_id, hinted_task_has_deliverables = _get_next_state_hint(sm_context)
+                note = (
+                    "NOTE: The user just provided all the information needed for this phase. "
+                    "Do NOT re-ask what they said. Acknowledge what they shared, then naturally "
+                    "transition to the next topic — connect what they just told you to where "
+                    "you're heading next so it feels like a conversation, not a checklist."
+                )
+                if next_hint:
+                    note += f" Next topic: {next_hint}"
+                parts.append(note)
+
+                if hinted_task_id and not hinted_task_has_deliverables:
+                    sm_context["_hinted_task_id"] = hinted_task_id
+            else:
+                parts.append(
+                    "NOTE: The user just provided information for this task. "
+                    "Do NOT re-ask what they said. Acknowledge it naturally, and when "
+                    "you move to the next topic, connect it to what they just shared "
+                    "so the transition feels smooth."
+                )
+        elif instruction:
+            # No deliverables just collected — show the instruction normally
             parts.append(f"Instruction: {instruction}")
 
+    # Filter out just-collected deliverables from the pending list.
     deliverables = sm_context.get("deliverables", [])
-    pending = [d for d in deliverables if d.get("status") == "pending"]
+    pending = [d for d in deliverables if d.get("status") == "pending" and d["key"] not in collected_keys]
     completed = [d for d in deliverables if d.get("status") == "completed"]
+    # Show just-collected keys as completed so the LLM knows they were provided
+    for d in deliverables:
+        if d.get("status") == "pending" and d["key"] in collected_keys:
+            completed.append({"key": d["key"], "value": "(just provided)"})
 
     if pending:
         parts.append("Still need to collect:")
@@ -211,6 +298,43 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
         parts.append(f"Overall progress: {pct:.0f}%")
 
     if sm_context.get("state_just_changed"):
-        parts.append("NOTE: We just transitioned to a new conversation phase. Acknowledge this naturally.")
+        parts.append("NOTE: We just moved into a new conversation phase. Ease into it — connect it to what you were just talking about rather than announcing a topic change.")
 
     return "\n".join(parts)
+
+
+def _get_next_state_hint(sm_context: Dict[str, Any]) -> tuple:
+    """Look up the next state from the full plan to guide transitions.
+
+    Includes the first task's full instruction so the agent can ask
+    the right question immediately without waiting for the next turn.
+
+    Returns:
+        Tuple of (hint_text, first_task_id, first_task_has_deliverables).
+    """
+    full_plan = sm_context.get("full_plan", [])
+    current_state = sm_context.get("state", {})
+    current_id = current_state.get("id")
+
+    if not full_plan or not current_id:
+        return "", None, False
+
+    for i, state in enumerate(full_plan):
+        if state.get("id") == current_id and i + 1 < len(full_plan):
+            next_state = full_plan[i + 1]
+            title = next_state.get("title", "")
+            if not title:
+                return "", None, False
+            tasks = next_state.get("tasks", [])
+            if tasks:
+                first_task = tasks[0]
+                task_id = first_task.get("id")
+                has_deliverables = first_task.get("has_deliverables", len(first_task.get("deliverables", [])) > 0)
+                instruction = first_task.get("instruction", "")
+                if instruction:
+                    hint = f"{title}. Your first task: {first_task.get('description', '')} — {instruction}"
+                else:
+                    hint = f"{title}. First task: {first_task.get('description', '')}"
+                return hint, task_id, has_deliverables
+            return title, None, False
+    return "", None, False
