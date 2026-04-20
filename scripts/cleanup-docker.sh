@@ -11,6 +11,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+
 echo -e "${BLUE}======================================${NC}"
 echo -e "${BLUE}Docker Cleanup for Minikube${NC}"
 echo -e "${BLUE}======================================${NC}"
@@ -53,12 +55,12 @@ fi
 echo ""
 echo -e "${GREEN}Step 1: Cleaning up Kubernetes agent pods...${NC}"
 # Delete failed and error pods
-FAILED_PODS=$(kubectl get pods -n ai-agents -l app=conversational-ai-agent --field-selector=status.phase=Failed -o name 2>/dev/null || echo "")
-ERROR_PODS=$(kubectl get pods -n ai-agents -l app=conversational-ai-agent --field-selector=status.phase=Error -o name 2>/dev/null || echo "")
+FAILED_PODS=$(kubectl get pods -n "$NAMESPACE" -l app=conversational-ai-agent --field-selector=status.phase=Failed -o name 2>/dev/null || echo "")
+ERROR_PODS=$(kubectl get pods -n "$NAMESPACE" -l app=conversational-ai-agent --field-selector=status.phase=Error -o name 2>/dev/null || echo "")
 
 if [ -n "$FAILED_PODS" ] || [ -n "$ERROR_PODS" ]; then
     echo "Deleting failed/error agent pods..."
-    kubectl delete $FAILED_PODS $ERROR_PODS -n ai-agents --ignore-not-found=true
+    kubectl delete $FAILED_PODS $ERROR_PODS -n "$NAMESPACE" --ignore-not-found=true
 else
     echo "No failed/error agent pods to remove"
 fi
@@ -66,12 +68,12 @@ fi
 echo ""
 echo -e "${GREEN}Step 2: Removing orphaned Kubernetes secrets...${NC}"
 # Find agent secrets that don't have corresponding pods
-for secret in $(kubectl get secrets -n ai-agents -o name | grep agent-secret); do
+for secret in $(kubectl get secrets -n "$NAMESPACE" -o name | grep agent-secret); do
     AGENT_ID=$(echo $secret | sed 's/secret\/agent-secret-//')
-    POD_EXISTS=$(kubectl get pod -n ai-agents "agent-$AGENT_ID" 2>/dev/null || echo "")
+    POD_EXISTS=$(kubectl get pod -n "$NAMESPACE" "agent-$AGENT_ID" 2>/dev/null || echo "")
     if [ -z "$POD_EXISTS" ]; then
         echo "Deleting orphaned secret: $secret"
-        kubectl delete -n ai-agents $secret --ignore-not-found=true
+        kubectl delete -n "$NAMESPACE" $secret --ignore-not-found=true
     fi
 done
 
@@ -113,7 +115,7 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}Removing old stopped agent pods...${NC}"
     # Delete pods that are in Succeeded status for more than 1 hour
-    kubectl delete pods -n ai-agents -l app=conversational-ai-agent --field-selector=status.phase=Succeeded --ignore-not-found=true
+    kubectl delete pods -n "$NAMESPACE" -l app=conversational-ai-agent --field-selector=status.phase=Succeeded --ignore-not-found=true
 fi
 
 echo ""
@@ -134,5 +136,5 @@ echo -e "${YELLOW}To see what would be removed without deleting:${NC}"
 echo "  minikube ssh 'docker system df -v'"
 echo ""
 echo -e "${YELLOW}To clean up stopped Kubernetes agent pods:${NC}"
-echo "  kubectl delete pods -n ai-agents --field-selector=status.phase!=Running"
+echo "  kubectl delete pods -n "$NAMESPACE" --field-selector=status.phase!=Running"
 echo ""

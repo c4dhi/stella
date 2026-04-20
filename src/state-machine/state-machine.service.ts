@@ -1,6 +1,13 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionState, Prisma } from '@prisma/client';
+
+/**
+ * Reserved sentinel ID for the End node drawn in the Plan Builder canvas.
+ * Not a real plan state — used to signal conversation termination when a
+ * transition targets it. Matches END_NODE_ID in PlanCanvas.tsx.
+ */
+export const END_STATE_ID = '__end__';
 
 /**
  * Plan data structure (matches SDK Plan type)
@@ -11,6 +18,18 @@ export interface PlanData {
   initial_state_id?: string;
   states: PlanState[];
   system_prompt?: string;
+  // Canvas metadata written by the Plan Builder UI.
+  // end_node_config is read when a transition reaches END_STATE_ID.
+  metadata?: {
+    plan_builder?: {
+      canvas?: {
+        end_node_config?: {
+          farewell_message?: string;
+          summary_behavior?: 'none' | 'brief' | 'full';
+        };
+      };
+    };
+  };
 }
 
 /**
@@ -108,6 +127,11 @@ export interface StateMachineResult {
   newStateTitle?: string;
   taskCompleted?: string;
   progress?: number;
+  // Set when the state machine reached END_STATE_ID. Agent should stop prompting.
+  sessionCompleted?: boolean;
+  // Populated from end_node_config when sessionCompleted is true.
+  farewellMessage?: string;
+  summaryBehavior?: string;
 }
 
 /**
@@ -201,6 +225,8 @@ export interface FullStateInfo {
   turnsWithoutProgress: number;
   states: FullStateStateInfo[];
   collectedDeliverables: Record<string, unknown>;
+  // True when currentStateId === END_STATE_ID (conversation terminated).
+  sessionCompleted?: boolean;
 }
 
 @Injectable()
@@ -310,7 +336,7 @@ export class StateMachineService {
   async completeTask(
     sessionId: string,
     taskId: string,
-    reasoning: string,
+    _reasoning: string,  // Reserved for future audit logging; not used in current logic
   ): Promise<StateMachineResult> {
     const state = await this.getState(sessionId);
     if (!state) {
@@ -369,6 +395,9 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
       progress: await this.calculateProgress(sessionId, {
         ...state,
         completedTasks: updatedCompletedTasks,
@@ -529,6 +558,9 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
       progress: await this.calculateProgress(sessionId, {
         ...state,
         deliverables: deliverables as unknown as Prisma.JsonValue,
@@ -544,6 +576,10 @@ export class StateMachineService {
   async getCurrentState(sessionId: string): Promise<CurrentStateInfo | null> {
     const state = await this.getState(sessionId);
     if (!state) return null;
+
+    // Session has reached the end state; no active state to return.
+    // Callers should check for null and treat it as session completed.
+    if (state.currentStateId === END_STATE_ID) return null;
 
     const plan = state.planData as unknown as PlanData;
     const currentState = this.getCurrentPlanState(plan, state.currentStateId);
@@ -1428,7 +1464,7 @@ export class StateMachineService {
 
   private async evaluateAndTransition(
     sessionId: string,
-  ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
+  ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string; sessionCompleted?: boolean; farewellMessage?: string; summaryBehavior?: string }> {
     const state = await this.getState(sessionId);
     if (!state) {
       this.logger.log(`[evaluateAndTransition] No state found for session ${sessionId}`);
@@ -1568,17 +1604,26 @@ export class StateMachineService {
           );
         }
 
-        const targetState = plan.states.find(s => s.id === winner.target_state_id);
-        if (targetState) {
-          matchedTargetId = winner.target_state_id;
-          matchedTargetTitle = targetState.title || targetState.id;
+        // END_STATE_ID is a reserved sentinel — not in plan.states — so skip the lookup.
+        if (winner.target_state_id === END_STATE_ID) {
+          matchedTargetId = END_STATE_ID;
+          matchedTargetTitle = 'End';
           this.logger.log(
-            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
+            `[evaluateAndTransition] Winner targets end state: condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
           );
         } else {
-          this.logger.warn(
-            `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
-          );
+          const targetState = plan.states.find(s => s.id === winner.target_state_id);
+          if (targetState) {
+            matchedTargetId = winner.target_state_id;
+            matchedTargetTitle = targetState.title || targetState.id;
+            this.logger.log(
+              `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
+            );
+          } else {
+            this.logger.warn(
+              `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
+            );
+          }
         }
       }
 
@@ -1610,6 +1655,28 @@ export class StateMachineService {
       this.logger.log(
         `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
       );
+
+      // End state reached: mark the session CLOSING first, then return completion.
+      // CLOSED is now finalized later when the agent disconnects, which prevents
+      // cleanup logic from racing while farewell TTS is still in progress.
+      if (matchedTargetId === END_STATE_ID) {
+        const endConfig = rawPlan.metadata?.plan_builder?.canvas?.end_node_config;
+        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — marking CLOSING`);
+
+        // Keep closedAt null until shutdown is confirmed and final CLOSED is written.
+        await this.prisma.session.update({
+          where: { id: sessionId },
+          data: { status: 'CLOSING', closedAt: null },
+        });
+
+        return {
+          transitioned: true,
+          newStateId: END_STATE_ID,
+          sessionCompleted: true,
+          farewellMessage: endConfig?.farewell_message,
+          summaryBehavior: endConfig?.summary_behavior,
+        };
+      }
 
       transitioned = true;
       currentStateId = matchedTargetId;
@@ -1800,6 +1867,8 @@ export class StateMachineService {
       turnsWithoutProgress: state.turnsWithoutProgress,
       states,
       collectedDeliverables: collectedDeliverablesMap,
+      // Signal to the frontend that the conversation has terminated.
+      sessionCompleted: state.currentStateId === END_STATE_ID,
     };
   }
 }

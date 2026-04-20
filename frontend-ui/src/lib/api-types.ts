@@ -740,6 +740,15 @@ export interface PlanCanvasPosition {
 }
 
 /**
+ * Configuration for the End node, stored in PlanCanvasMetadata.
+ * Consumed by the backend when the state machine transitions to the end state.
+ */
+export interface EndNodeConfig {
+  farewell_message?: string            // Final message the agent sends before the session closes
+  summary_behavior?: 'none' | 'brief' | 'full'  // Whether to summarize the conversation on exit
+}
+
+/**
  * Visual metadata persisted by the Plan Builder canvas.
  *
  * Stored at: `metadata.plan_builder.canvas`
@@ -747,12 +756,14 @@ export interface PlanCanvasPosition {
  * Notes:
  * - `state_positions` and `end_node_position` are UI layout only.
  * - `end_state_ids` marks states connected to the visual End node.
+ * - `end_node_config` configures end-state runtime behavior (farewell, summary).
  */
 export interface PlanCanvasMetadata {
   state_positions?: Record<string, PlanCanvasPosition> // Per-state canvas coordinates
   show_end_node?: boolean                               // Whether End node is visible
   end_node_position?: PlanCanvasPosition                // End node canvas coordinates
   end_state_ids?: string[]                              // State IDs connected to End node in UI
+  end_node_config?: EndNodeConfig                       // End-state runtime behavior
 }
 
 /**

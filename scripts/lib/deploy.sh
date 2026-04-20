@@ -39,6 +39,22 @@ ALL_SERVICES="session-management-server frontend-ui stt-service tts-service mess
 ALL_DEPLOYMENTS="session-management-server frontend-ui stt-service tts-service message-recorder"
 
 # =============================================================================
+# Manifest Preparation (namespace + image tag substitution)
+# =============================================================================
+
+prepare_manifest() {
+    local source="$1"
+    local dest="${TEMP_DIR}/k8s-manifests/$(basename "$source")"
+    mkdir -p "${TEMP_DIR}/k8s-manifests"
+    sed -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|name: ai-agents|name: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|KUBERNETES_NAMESPACE: \"ai-agents\"|KUBERNETES_NAMESPACE: \"${KUBERNETES_NAMESPACE}\"|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
+        "$source" > "$dest"
+    echo "$dest"
+}
+
+# =============================================================================
 # ConfigMap Generation
 # =============================================================================
 
@@ -105,10 +121,15 @@ generate_configmap() {
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
+        -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|KUBERNETES_NAMESPACE: \"ai-agents\"|KUBERNETES_NAMESPACE: \"${KUBERNETES_NAMESPACE}\"|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
         k8s/04-configmap.yaml > "$output_file"
 
     # Generate message-recorder manifest with host gateway
-    sed "s/192.168.194.1/${host_gateway_ip}/g" \
+    sed -e "s/192.168.194.1/${host_gateway_ip}/g" \
+        -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
         k8s/06-message-recorder.yaml > "${TEMP_DIR}/06-message-recorder-updated.yaml"
 
     # Detect ConfigMap changes by comparing generated file to last deployed version
@@ -148,7 +169,9 @@ generate_session_server_manifest() {
 
     # Replace placeholder with actual project directory path
     # This makes it work regardless of where the project is cloned
-    sed "s|__PROJECT_DIR_PLACEHOLDER__|${PROJECT_DIR}|g" \
+    sed -e "s|__PROJECT_DIR_PLACEHOLDER__|${PROJECT_DIR}|g" \
+        -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
         k8s/06-session-management-server.yaml > "$output_file"
 
     # K3s volume mounts: enabled on Linux (K3s runtime), removed on macOS (OrbStack/Docker Desktop)
@@ -185,8 +208,10 @@ apply_dns_to_all_manifests() {
 
     verbose "Applying custom DNS to all services: $CUSTOM_DNS_SERVERS"
 
-    # Copy frontend-ui manifest to temp dir for modification
-    cp k8s/07-frontend-ui.yaml "${TEMP_DIR}/07-frontend-ui-updated.yaml"
+    # Copy frontend-ui manifest to temp dir for modification (with namespace/image substitution)
+    sed -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
+        k8s/07-frontend-ui.yaml > "${TEMP_DIR}/07-frontend-ui-updated.yaml"
 
     # List of all manifests that need DNS config (services that make external API calls)
     local manifests=(
@@ -213,9 +238,13 @@ apply_dns_to_all_manifests() {
 # =============================================================================
 
 generate_gpu_manifests() {
-    # Start with base manifests
-    cp k8s/08-stt-service.yaml "${TEMP_DIR}/08-stt-service.yaml"
-    cp k8s/09-tts-service.yaml "${TEMP_DIR}/09-tts-service.yaml"
+    # Start with base manifests (with namespace/image substitution)
+    sed -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
+        k8s/08-stt-service.yaml > "${TEMP_DIR}/08-stt-service.yaml"
+    sed -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
+        -e "s|:latest|:${IMAGE_TAG}|g" \
+        k8s/09-tts-service.yaml > "${TEMP_DIR}/09-tts-service.yaml"
 
     # Enable GPU runtime class if requested
     # NOTE: We only enable runtimeClassName (for CUDA access), NOT nvidia.com/gpu resource requests
@@ -298,7 +327,7 @@ add_dns_config_to_manifest() {
         print indent "  nameservers:"
         printf "%s", dns_servers
         print indent "  searches:"
-        print indent "    - \"ai-agents.svc.cluster.local\""
+        print indent "    - \"'${KUBERNETES_NAMESPACE}'.svc.cluster.local\""
         print indent "    - \"svc.cluster.local\""
         print indent "    - \"cluster.local\""
         dns_added = 1
@@ -319,7 +348,7 @@ create_secrets() {
 
     local db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
 
-    kubectl create secret generic stella-ai-secrets -n ai-agents \
+    kubectl create secret generic stella-ai-secrets -n "$KUBERNETES_NAMESPACE" \
         --from-literal=postgres-db="$POSTGRES_DB" \
         --from-literal=postgres-user="$POSTGRES_USER" \
         --from-literal=postgres-password="$POSTGRES_PASSWORD" \
@@ -352,7 +381,7 @@ create_secrets() {
 
 # Global for cleanup
 PG_FORWARD_PID=""
-PG_LOCAL_PORT=5433
+PG_LOCAL_PORT="${PG_LOCAL_PORT:-5433}"
 MIGRATION_DB_URL=""
 
 cleanup_port_forward() {
@@ -380,7 +409,7 @@ setup_port_forward() {
     fi
 
     # Start port-forward to PostgreSQL in background (suppress all output)
-    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n ai-agents >/dev/null 2>"$pf_error_file" &
+    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n "$KUBERNETES_NAMESPACE" >/dev/null 2>"$pf_error_file" &
     PG_FORWARD_PID=$!
 
     # Wait for port-forward to be ready
@@ -400,7 +429,7 @@ setup_port_forward() {
         if [[ $waited -ge $max_wait ]]; then
             cleanup_port_forward
             error "Timeout waiting for PostgreSQL port-forward (${max_wait}s)"
-            echo "  Check PostgreSQL pod: kubectl get pods -n ai-agents -l app=postgres"
+            echo "  Check PostgreSQL pod: kubectl get pods -n $KUBERNETES_NAMESPACE -l app=postgres"
             rm -f "$pf_error_file"
             return 1
         fi
@@ -499,11 +528,11 @@ diagnose_migration_error() {
             echo -e "  ${GREEN}Option 1 (Recommended):${NC} Mark migration as already applied"
             echo "  The schema already exists, so we just need to record it in the migration history."
             echo ""
-            echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
             echo "    cd $PROJECT_DIR"
             echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" \\"
             echo "      npx prisma migrate resolve --applied ${failed_migration}"
-            echo "    pkill -f 'port-forward.*5433'"
+            echo "    pkill -f 'port-forward.*${PG_LOCAL_PORT}'"
             echo ""
             echo -e "  ${YELLOW}Option 2:${NC} Drop the existing object and re-run migration"
             echo "  Use this if the existing schema is incorrect/outdated."
@@ -512,13 +541,13 @@ diagnose_migration_error() {
                 local type_name
                 type_name=$(echo "$output" | grep -oP 'type "\K[^"]+' | head -1)
                 echo "    # Connect to database and drop the type"
-                echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
-                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
+                echo "    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
+                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p ${PG_LOCAL_PORT} -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
                 echo "      -c 'DROP TYPE IF EXISTS \"${type_name:-TypeName}\" CASCADE;'"
             else
                 echo "    # Connect to database and drop the table/index"
-                echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
-                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
+                echo "    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
+                echo "    PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p ${PG_LOCAL_PORT} -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
                 echo "    # Then: DROP TABLE IF EXISTS \"table_name\" CASCADE;"
             fi
             ;;
@@ -526,7 +555,7 @@ diagnose_migration_error() {
         "failed_migrations")
             echo -e "  ${GREEN}Option 1:${NC} Resolve the failed migration as applied (if schema exists)"
             echo ""
-            echo "    kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "    kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
             echo "    cd $PROJECT_DIR"
             echo "    DATABASE_URL=\"postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@localhost:5433/\${POSTGRES_DB}\" \\"
             echo "      npx prisma migrate resolve --applied ${failed_migration}"
@@ -540,8 +569,8 @@ diagnose_migration_error() {
             echo -e "  ${YELLOW}This requires manual database repair:${NC}"
             echo ""
             echo "  1. Check what's missing in the database:"
-            echo "     kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
-            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
+            echo "     kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
+            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p ${PG_LOCAL_PORT} -U \${POSTGRES_USER} -d \${POSTGRES_DB}"
             echo "     \\dt   -- list tables"
             echo "     \\d table_name  -- describe table"
             echo ""
@@ -566,12 +595,12 @@ diagnose_migration_error() {
             echo -e "  ${YELLOW}General troubleshooting steps:${NC}"
             echo ""
             echo "  1. Check migration status:"
-            echo "     kubectl port-forward svc/postgres 5433:5432 -n ai-agents &"
+            echo "     kubectl port-forward svc/postgres ${PG_LOCAL_PORT}:5432 -n $KUBERNETES_NAMESPACE &"
             echo "     cd $PROJECT_DIR"
             echo "     DATABASE_URL=\"...\" npx prisma migrate status"
             echo ""
             echo "  2. View migration history in database:"
-            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p 5433 -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
+            echo "     PGPASSWORD=\${POSTGRES_PASSWORD} psql -h localhost -p ${PG_LOCAL_PORT} -U \${POSTGRES_USER} -d \${POSTGRES_DB} \\"
             echo "       -c 'SELECT * FROM _prisma_migrations ORDER BY started_at DESC LIMIT 10;'"
             echo ""
             echo "  3. If stuck, you can mark migrations as resolved:"
@@ -960,7 +989,7 @@ deploy_services() {
 
     # Apply model PVCs with targeted guardrails for storage resize restrictions.
     apply_model_storage_pvcs() {
-        local namespace="ai-agents"
+        local namespace="$KUBERNETES_NAMESPACE"
         local stt_manifest="k8s/02-stt-models-pvc.yaml"
         local tts_manifest="k8s/02-tts-models-pvc.yaml"
 
@@ -1051,7 +1080,7 @@ deploy_services() {
     }
 
     # Phase 1: Namespace, RBAC, and Secrets
-    apply_with_spinner "Namespace & RBAC" bash -c "kubectl apply -f k8s/00-namespace.yaml && kubectl apply -f k8s/03-secrets.yaml && kubectl apply -f k8s/05-rbac.yaml"
+    apply_with_spinner "Namespace & RBAC" bash -c "kubectl apply -f $(prepare_manifest k8s/00-namespace.yaml) && kubectl apply -f $(prepare_manifest k8s/03-secrets.yaml) && kubectl apply -f $(prepare_manifest k8s/05-rbac.yaml)"
 
     # Secrets (inline, not backgroundable due to function)
     echo -ne "   ${ARROW} Secrets... "
@@ -1070,13 +1099,11 @@ deploy_services() {
 
     # Phase 2: PostgreSQL
     echo -ne "   ${ARROW} PostgreSQL... "
-    kubectl apply -f k8s/01-postgres-config.yaml >/dev/null 2>&1 || true
-    kubectl apply -f k8s/01-postgres.yaml >/dev/null 2>&1
+    kubectl apply -f "$(prepare_manifest k8s/01-postgres-config.yaml)" >/dev/null 2>&1 || true
+    kubectl apply -f "$(prepare_manifest k8s/01-postgres.yaml)" >/dev/null 2>&1
 
-    # Wait for PostgreSQL with spinner.
-    # Use deployment rollout status instead of pod label wait:
-    # label-based waits can include old Completed pods that will never become Ready.
-    kubectl rollout status deployment/postgres -n ai-agents --timeout=120s >/dev/null 2>&1 &
+    # Wait for PostgreSQL with spinner
+    kubectl wait --for=condition=ready pod -l app=postgres -n "$KUBERNETES_NAMESPACE" --timeout=120s >/dev/null 2>&1 &
     local pg_pid=$!
 
     local spinner_idx=0
@@ -1120,7 +1147,7 @@ deploy_services() {
 
     local -a apply_manifests=(
         "session-management-server:${TEMP_DIR}/06-session-management-server-updated.yaml"
-        "frontend-ui:${FRONTEND_MANIFEST:-k8s/07-frontend-ui.yaml}"
+        "frontend-ui:${FRONTEND_MANIFEST:-$(prepare_manifest k8s/07-frontend-ui.yaml)}"
         "stt-service:$STT_MANIFEST"
         "tts-service:$TTS_MANIFEST"
         "message-recorder:${TEMP_DIR}/06-message-recorder-updated.yaml"
@@ -1149,7 +1176,9 @@ deploy_services() {
 
     # NodePort services for local development
     if [[ "$NODE_ENV" != "production" ]]; then
-        kubectl apply -f k8s/local/ >/dev/null 2>&1 || true
+        for f in k8s/local/*.yaml; do
+            [[ -f "$f" ]] && kubectl apply -f "$(prepare_manifest "$f")" >/dev/null 2>&1 || true
+        done
     fi
 
     # GPU patches if enabled
@@ -1174,11 +1203,11 @@ apply_gpu_patches() {
     local services=("stt-service" "tts-service")
     for svc in "${services[@]}"; do
         local has_nvidia
-        has_nvidia=$(kubectl get deployment -n ai-agents "$svc" \
+        has_nvidia=$(kubectl get deployment -n "$KUBERNETES_NAMESPACE" "$svc" \
             -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null | grep -c "NVIDIA_VISIBLE_DEVICES" || true)
 
         if [[ "$has_nvidia" == "0" ]]; then
-            kubectl patch deployment -n ai-agents "$svc" --type='json' \
+            kubectl patch deployment -n "$KUBERNETES_NAMESPACE" "$svc" --type='json' \
                 -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"}}]' >/dev/null 2>&1
             verbose "$svc: GPU patch applied"
         fi
@@ -1220,7 +1249,7 @@ restart_services() {
 
     # Restart services that need it
     for deploy in $services_to_restart; do
-        kubectl rollout restart deployment "$deploy" -n ai-agents >/dev/null 2>&1 || true
+        kubectl rollout restart deployment "$deploy" -n "$KUBERNETES_NAMESPACE" >/dev/null 2>&1 || true
     done
 
     export SERVICES_TO_WAIT
@@ -1255,7 +1284,7 @@ wait_for_services() {
         # Start rollout status check in background
         echo -ne "   ${ARROW} ${display_name}... "
 
-        kubectl rollout status "deployment/$deploy" -n ai-agents --timeout="${timeout}s" >/dev/null 2>&1 &
+        kubectl rollout status "deployment/$deploy" -n "$KUBERNETES_NAMESPACE" --timeout="${timeout}s" >/dev/null 2>&1 &
         local pid=$!
 
         # Spinner animation while waiting
@@ -1333,12 +1362,12 @@ start_port_forwards() {
 start_manual_port_forwards() {
     verbose "Starting manual port-forwards..."
 
-    # Kill existing port-forwards
-    pkill -f "kubectl port-forward.*ai-agents" 2>/dev/null || true
+    # Kill existing port-forwards for this namespace
+    pkill -f "kubectl port-forward.*${KUBERNETES_NAMESPACE}" 2>/dev/null || true
 
     # Start new port-forwards in background
-    kubectl port-forward svc/frontend-ui 8080:8080 -n ai-agents >/dev/null 2>&1 &
-    kubectl port-forward svc/session-management-server 3000:3000 -n ai-agents >/dev/null 2>&1 &
+    kubectl port-forward svc/frontend-ui ${FRONTEND_PORT}:8080 -n "$KUBERNETES_NAMESPACE" >/dev/null 2>&1 &
+    kubectl port-forward svc/session-management-server ${BACKEND_PORT}:3000 -n "$KUBERNETES_NAMESPACE" >/dev/null 2>&1 &
 
     verbose "Manual port-forwards started"
 }
@@ -1356,7 +1385,7 @@ check_service_runtime_status() {
     local details=""
 
     # Get the pod name
-    pod_name=$(kubectl get pods -n ai-agents -l "app=$service" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    pod_name=$(kubectl get pods -n "$KUBERNETES_NAMESPACE" -l "app=$service" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [[ -z "$pod_name" ]]; then
         echo "unknown|unknown|Pod not found"
@@ -1365,7 +1394,7 @@ check_service_runtime_status() {
 
     # Get recent logs (last 100 lines should be enough for startup)
     local logs
-    logs=$(kubectl logs "$pod_name" -n ai-agents --tail=100 2>/dev/null || echo "")
+    logs=$(kubectl logs "$pod_name" -n "$KUBERNETES_NAMESPACE" --tail=100 2>/dev/null || echo "")
 
     if [[ "$service" == "stt-service" ]]; then
         # Check for Whisper CUDA success
@@ -1490,7 +1519,7 @@ show_gpu_status() {
         if [[ "$stt_status" == "CPU" || "$tts_status" == "CPU" ]]; then
             echo ""
             warning "GPU enabled but some services fell back to CPU"
-            echo -e "   ${DIM}Check: kubectl logs -n ai-agents -l app=stt-service --tail=50${NC}"
+            echo -e "   ${DIM}Check: kubectl logs -n $KUBERNETES_NAMESPACE -l app=stt-service --tail=50${NC}"
         fi
     fi
 }
@@ -1509,7 +1538,7 @@ show_summary() {
     show_gpu_status
 
     summary_box \
-        "http://localhost:8080" \
-        "http://localhost:3000" \
+        "http://localhost:${FRONTEND_PORT}" \
+        "http://localhost:${BACKEND_PORT}" \
         "${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}"
 }

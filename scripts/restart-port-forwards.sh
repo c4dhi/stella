@@ -26,10 +26,13 @@ echo -e "${YELLOW}Note: If macOS firewall prompts, click 'Allow' to enable netwo
 echo ""
 
 # Port forward with --address 0.0.0.0 to bind to all network interfaces
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/session-management-server 3000:3000 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/livekit 7880:7880 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/postgres 5432:5432 > /dev/null 2>&1 &
-kubectl port-forward --address 0.0.0.0 -n ai-agents svc/frontend-ui 5173:80 > /dev/null 2>&1 &
+NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+_BACKEND_PORT="${BACKEND_PORT:-3000}"
+_POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+kubectl port-forward --address 0.0.0.0 -n "$NAMESPACE" svc/session-management-server ${_BACKEND_PORT}:3000 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n "$NAMESPACE" svc/livekit 7880:7880 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n "$NAMESPACE" svc/postgres ${_POSTGRES_PORT}:5432 > /dev/null 2>&1 &
+kubectl port-forward --address 0.0.0.0 -n "$NAMESPACE" svc/frontend-ui 5173:80 > /dev/null 2>&1 &
 
 # Wait for port forwards to establish
 sleep 3
@@ -39,12 +42,12 @@ echo -e "${GREEN}✅ Port forwards restarted!${NC}"
 echo ""
 echo -e "${BLUE}📱 From your phone or any device on the network:${NC}"
 echo -e "  ${GREEN}Frontend UI:${NC} http://${LOCAL_IP}:5173"
-echo -e "  ${GREEN}Backend API:${NC} http://${LOCAL_IP}:3000"
+echo -e "  ${GREEN}Backend API:${NC} http://${LOCAL_IP}:${_BACKEND_PORT}"
 echo -e "  ${GREEN}LiveKit:${NC} ws://${LOCAL_IP}:7880"
 echo ""
 echo -e "${BLUE}💻 From your Mac (localhost also works):${NC}"
 echo -e "  ${GREEN}Frontend UI:${NC} http://localhost:5173"
-echo -e "  ${GREEN}Backend API:${NC} http://localhost:3000"
+echo -e "  ${GREEN}Backend API:${NC} http://localhost:${_BACKEND_PORT}"
 echo -e "  ${GREEN}LiveKit:${NC} ws://localhost:7880"
 echo ""
 echo -e "${YELLOW}⚠️  Port forwards are running in the background${NC}"
