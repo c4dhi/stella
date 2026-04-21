@@ -51,13 +51,23 @@ const normalizeStateType = (type: unknown): PlanState['type'] => {
   return 'flexible'
 }
 
-const normalizeGoalTransitions = (state: PlanState): PlanState => {
-  if (state.type !== 'goal' || !state.transitions?.length) return state
+const normalizeTransitionsForStateType = (state: PlanState): PlanState => {
+  if (!state.transitions?.length) return state
+  if (state.type === 'goal') {
+    return {
+      ...state,
+      transitions: state.transitions.map((transition) =>
+        transition.condition_type === 'all_tasks_complete'
+          ? { ...transition, condition_type: 'goal_achieved', condition_config: undefined }
+          : transition
+      ),
+    }
+  }
   return {
     ...state,
     transitions: state.transitions.map((transition) =>
-      transition.condition_type === 'all_tasks_complete'
-        ? { ...transition, condition_type: 'goal_achieved', condition_config: undefined }
+      transition.condition_type === 'goal_achieved'
+        ? { ...transition, condition_type: 'all_tasks_complete', condition_config: undefined }
         : transition
     ),
   }
@@ -66,7 +76,7 @@ const normalizeGoalTransitions = (state: PlanState): PlanState => {
 // Migration: normalize persisted/imported legacy state types for editor safety.
 const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[] =>
   inputStates.map((state) =>
-    normalizeGoalTransitions({
+    normalizeTransitionsForStateType({
       ...state,
       type: normalizeStateType(state.type),
     } as PlanState)
@@ -293,7 +303,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
 
   const buildContent = (): PlanContent => ({
-    states: states.map((state) => normalizeGoalTransitions(state)),
+    states: states.map((state) => normalizeTransitionsForStateType(state)),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
     ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
     ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'
@@ -341,7 +351,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleUpdateState = (index: number, updated: PlanState) => {
-    setStates((prev) => prev.map((s, i) => (i === index ? updated : s)))
+    const normalized = normalizeTransitionsForStateType(updated)
+    setStates((prev) => prev.map((s, i) => (i === index ? normalized : s)))
     markChanged()
   }
 
