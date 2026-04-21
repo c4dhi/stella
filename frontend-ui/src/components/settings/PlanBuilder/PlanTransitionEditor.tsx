@@ -62,6 +62,15 @@ export default function PlanTransitionEditor({
   const conditionOptions: StateTransitionConditionType[] = sourceStateType === 'goal'
     ? ['goal_achieved', 'deliverable_exists', 'deliverable_value']
     : ['all_tasks_complete', 'deliverable_exists', 'deliverable_value']
+  const hasExistingConditionFallback = !conditionOptions.includes(transition.condition_type)
+
+  const getConditionLabel = (condition: StateTransitionConditionType): string => {
+    if (condition === 'all_tasks_complete') return 'All tasks complete'
+    if (condition === 'goal_achieved') return 'Goal achieved'
+    if (condition === 'deliverable_exists') return 'Deliverable exists'
+    if (condition === 'deliverable_value') return 'Deliverable value'
+    return condition.replace(/_/g, ' ')
+  }
 
   const handleConditionChange = (conditionType: StateTransitionConditionType) => {
     if (conditionType === 'all_tasks_complete' || conditionType === 'goal_achieved') {
@@ -135,12 +144,14 @@ export default function PlanTransitionEditor({
           onChange={(e) => handleConditionChange(e.target.value as StateTransitionConditionType)}
           className="input-field w-full"
         >
+          {hasExistingConditionFallback && (
+            <option value={transition.condition_type}>
+              {`${getConditionLabel(transition.condition_type)} (Existing)`}
+            </option>
+          )}
           {conditionOptions.map((condition) => (
             <option key={condition} value={condition}>
-              {condition === 'all_tasks_complete' && 'All tasks complete'}
-              {condition === 'goal_achieved' && 'Goal achieved'}
-              {condition === 'deliverable_exists' && 'Deliverable exists'}
-              {condition === 'deliverable_value' && 'Deliverable value'}
+              {getConditionLabel(condition)}
             </option>
           ))}
         </select>
