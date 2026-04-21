@@ -42,7 +42,7 @@ import re
 import signal
 import time
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Coroutine
 
 import jwt
 
@@ -384,6 +384,14 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             await agent_server_client.disconnect()
             agent_server_client = None
 
+        # Track participant event tasks so they are not left unmanaged.
+        participant_event_tasks: set[asyncio.Task[Any]] = set()
+
+        def spawn_participant_event_task(coro: Coroutine[Any, Any, None]) -> None:
+            task = asyncio.create_task(coro)
+            participant_event_tasks.add(task)
+            task.add_done_callback(participant_event_tasks.discard)
+
         async def emit_participant_event_message(
             event_type: str,
             participant_identity: str,
@@ -398,35 +406,42 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             - Renders template placeholders using participant/agent variables.
             - Publishes rendered text as final agent text and speaks it via TTS.
             """
-            cfg = participant_event_config.get(event_type, {})
-            if cfg.get("enabled") is not True:
-                return
-            
-            if not _is_registered_participant_identity(participant_identity):
-                logger.info(
-                    "[PARTICIPANT %s] Skipping non-participant identity: %s",
+            try:
+                cfg = participant_event_config.get(event_type, {})
+                if cfg.get("enabled") is not True:
+                    return
+
+                if not _is_registered_participant_identity(participant_identity):
+                    logger.info(
+                        "[PARTICIPANT %s] Skipping non-participant identity: %s",
+                        event_type.upper(),
+                        participant_identity,
+                    )
+                    return
+
+                template = cfg.get("template") or ""
+                if not isinstance(template, str) or not template.strip():
+                    return
+
+                participant_name = room_manager.get_participant_name(participant_identity) or participant_identity
+                variables = {
+                    "participant_name": participant_name,
+                    "agent_name": agent_name,
+                }
+                rendered = _render_message_template(template, variables).strip()
+                if not rendered:
+                    return
+
+                transcript_id = f"participant_event_{event_type}_{uuid.uuid4().hex[:8]}"
+                await audio_pipeline.publish_text(rendered, is_final=True, transcript_id=transcript_id)
+                await audio_pipeline.speak(rendered)
+                logger.info("[PARTICIPANT %s] Spoke configured message: %s", event_type.upper(), rendered)
+            except Exception:
+                logger.exception(
+                    "[PARTICIPANT %s] Failed to emit configured message for identity: %s",
                     event_type.upper(),
                     participant_identity,
                 )
-                return
-            
-            template = cfg.get("template") or ""
-            if not isinstance(template, str) or not template.strip():
-                return
-
-            participant_name = room_manager.get_participant_name(participant_identity) or participant_identity
-            variables = {
-                "participant_name": participant_name,
-                "agent_name": agent_name,
-            }
-            rendered = _render_message_template(template, variables).strip()
-            if not rendered:
-                return
-
-            transcript_id = f"participant_event_{event_type}_{uuid.uuid4().hex[:8]}"
-            await audio_pipeline.publish_text(rendered, is_final=True, transcript_id=transcript_id)
-            await audio_pipeline.speak(rendered)
-            logger.info("[PARTICIPANT %s] Spoke configured message: %s", event_type.upper(), rendered)
 
         # 10c. Register callback to re-send progress when new participants join
         def on_participant_joined(participant_identity: str):
@@ -449,7 +464,7 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             else:
                 logger.warning(f"[PARTICIPANT JOINED] {participant_identity} - no progress payload to send!")
 
-            asyncio.create_task(emit_participant_event_message("joined", participant_identity))
+            spawn_participant_event_task(emit_participant_event_message("joined", participant_identity))
 
         def on_participant_left(participant_identity: str):
             """
@@ -459,7 +474,7 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
                 participant_identity: The LiveKit identity of the participant who left
             """
             logger.info(f"[PARTICIPANT LEFT] {participant_identity}")
-            asyncio.create_task(emit_participant_event_message("left", participant_identity))
+            spawn_participant_event_task(emit_participant_event_message("left", participant_identity))
 
         # Register participant event callbacks with RoomManager
         room_manager.on_participant_joined(on_participant_joined)
