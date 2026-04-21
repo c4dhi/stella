@@ -209,8 +209,7 @@ export class EnvVarTemplatesService {
    * This is the single entry point for all env var resolution:
    *   1. Decrypt the template vars (if a templateId is given).
    *   2. Merge manualVars on top so they override template values.
-   *   3. Return both the merged plaintext map (for K8s) and an encrypted
-   *      copy of the manual vars (for storage on AgentInstance).
+   *   3. Return the merged plaintext map (for K8s secret creation).
    *
    * SECURITY: `merged` must only be written to a K8s secret — never logged or
    * returned to API clients.
@@ -219,7 +218,7 @@ export class EnvVarTemplatesService {
     templateId: string | undefined | null,
     userId: string | undefined | null,
     manualVars?: Record<string, string>,
-  ): Promise<{ merged: Record<string, string>; encryptedManual: string | null }> {
+  ): Promise<{ merged: Record<string, string> }> {
     // A template cannot be resolved without user ownership context.
     if (templateId && !userId) {
       this.logger.warn(
@@ -242,12 +241,7 @@ export class EnvVarTemplatesService {
     // Step 2: manual vars override template values (right-side wins in spread).
     const merged = { ...templateVars, ...(manualVars ?? {}) };
 
-    // Step 3: encrypt the manual vars for at-rest storage on AgentInstance.
-    // Template vars are already stored encrypted in EnvVarTemplate — no need to re-encrypt them.
-    const hasManualVars = manualVars && Object.keys(manualVars).length > 0;
-    const encryptedManual = hasManualVars ? this.encryption.encrypt(manualVars!) : null;
-
-    return { merged, encryptedManual };
+    return { merged };
   }
 
   /**
