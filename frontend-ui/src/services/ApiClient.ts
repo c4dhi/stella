@@ -1579,6 +1579,39 @@ class SessionManagementClient {
       body: JSON.stringify({ isAdmin }),
     })
   }
+
+  // ============================================================================
+  // Agent Analytics API
+  // ============================================================================
+
+  async getAgentMetrics(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').AgentMetricsResponse> {
+    return this.get<import('../lib/api-types').AgentMetricsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getSessionAnalytics(projectId: string, sessionId: string): Promise<import('../lib/api-types').SessionAnalyticsResponse> {
+    return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/projects/${projectId}/sessions/${sessionId}/analytics`)
+  }
+
+  async getStageDataPoints(projectId: string, agentSlug: string, stageName: string, from: string, to: string): Promise<import('../lib/api-types').StageDataPointsResponse> {
+    return this.get<import('../lib/api-types').StageDataPointsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/stages/${encodeURIComponent(stageName)}/points?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getPlanCompletionSessions(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').PlanCompletionSessionsResponse> {
+    return this.get<import('../lib/api-types').PlanCompletionSessionsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/plan-completion/sessions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {
+    const params = `since=${encodeURIComponent(since)}${stage ? `&stage=${encodeURIComponent(stage)}` : ''}`
+    return this.get<import('../lib/api-types').MetricsTimelineResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/timeline?${params}`
+    )
+  }
 }
 
 // Export singleton instance

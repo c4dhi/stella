@@ -79,6 +79,9 @@ class OutputType(str, Enum):
     PROGRESS_UPDATE = "progress_update"
     """Progress/task tracking update - displayed in task panel UI."""
 
+    ANALYTICS = "analytics"
+    """Analytics timing measurement — stored for aggregation, not displayed or spoken."""
+
 
 class StatusSubtype(str, Enum):
     """Subtypes for STATUS output messages."""

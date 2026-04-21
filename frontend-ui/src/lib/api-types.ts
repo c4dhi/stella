@@ -1195,6 +1195,105 @@ export interface TranscriptExport {
 }
 
 // ============================================================================
+// Agent Analytics Types
+// ============================================================================
+
+export interface StageLatency {
+  stage: string
+  count: number
+  mean_ms: number
+  p5_ms: number
+  p25_ms: number
+  p50_ms: number
+  p75_ms: number
+  p95_ms: number
+  min_ms: number
+  max_ms: number
+  stddev_ms: number
+}
+
+export interface OutlierStage {
+  stage: string
+  sessionMean_ms: number
+  globalP50_ms: number
+}
+
+export interface OutlierSession {
+  sessionId: string
+  sessionName: string
+  createdAt: string
+  outlierStages: OutlierStage[]
+}
+
+export interface MetricsSummary {
+  planCompletion: { totalSessions: number; completedPlans: number; avgCompletionRate: number } | null
+  safetyRouting: { totalTurns: number; safeTurns: number; unsafeTurns: number; interceptionRate: number } | null
+  stateTransitions: { totalTransitions: number; expectedTransitions: number; accuracy: number } | null
+  bridgeGeneration: { totalBridges: number; avgBridgeDuration_ms: number } | null
+  bridgeDuration: { count: number; avg_ms: number } | null
+  ttfr: { count: number; avg_ms: number } | null
+}
+
+export interface AgentMetricsResponse {
+  agentSlug: string
+  projectId: string
+  dateRange: { from: string; to: string }
+  totalSessions: number
+  totalTurns: number
+  stages: StageLatency[]
+  outlierSessions: OutlierSession[]
+  summary: MetricsSummary
+}
+
+export interface StageDataPoint {
+  sessionId: string
+  sessionName: string
+  avg_timing_ms: number
+  count: number
+  timestamp: string
+}
+
+export interface StageDataPointsResponse {
+  points: StageDataPoint[]
+}
+
+export interface SessionStagePoint {
+  stage: string
+  timing_ms: number
+  timestamp: string
+}
+
+export interface SessionAnalyticsResponse {
+  sessionId: string
+  totalTurns: number
+  stages: StageLatency[]
+  summary: MetricsSummary
+  rawPoints: SessionStagePoint[]
+}
+
+export interface PlanCompletionSession {
+  sessionId: string
+  sessionName: string
+  completionRate: number
+  reachedEnd: boolean
+  timestamp: string
+}
+
+export interface PlanCompletionSessionsResponse {
+  sessions: PlanCompletionSession[]
+}
+
+export interface MetricsTimelinePoint {
+  timestamp: string
+  timing_ms: number
+  sessionId: string
+}
+
+export interface MetricsTimelineResponse {
+  points: MetricsTimelinePoint[]
+}
+
+// ============================================================================
 // Admin Dashboard Types
 // ============================================================================
 
