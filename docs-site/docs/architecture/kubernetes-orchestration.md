@@ -397,6 +397,6 @@ async def ready():
 
 ## Next Steps
 
-- [Session Lifecycle](/docs/architecture/session-lifecycle) - Session states
-- [Deployment Guide](/docs/deployment/kubernetes) - Production deployment
-- [Monitoring](/docs/deployment/monitoring) - Observability setup
+- [Session Lifecycle](./session-lifecycle.md) - Session states
+- [Deployment Guide](../deployment/kubernetes.md) - Production deployment
+- [Monitoring](../deployment/monitoring.md) - Observability setup

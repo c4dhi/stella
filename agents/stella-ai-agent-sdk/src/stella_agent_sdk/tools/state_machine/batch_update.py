@@ -93,6 +93,11 @@ class BatchUpdateTool(BaseTool):
             "deliverables_failed": [],
             "tasks_completed": [],
             "tasks_failed": [],
+            # Forward end-node completion metadata so the expert runner can emit
+            # farewell and stop the session cleanly.
+            "session_completed": False,
+            "farewell_message": None,
+            "summary_behavior": None,
         }
 
         # Process deliverables — stop if a state transition occurs
@@ -110,6 +115,10 @@ class BatchUpdateTool(BaseTool):
                         "transitioned": result.get("transitioned", False),
                         "new_state_id": result.get("new_state_id"),
                     })
+                    if result.get("session_completed"):
+                        results["session_completed"] = True
+                        results["farewell_message"] = result.get("farewell_message")
+                        results["summary_behavior"] = result.get("summary_behavior")
                     if result.get("transitioned", False):
                         transitioned = True
                         for skipped in deliverables[i + 1:]:
@@ -129,19 +138,53 @@ class BatchUpdateTool(BaseTool):
                     "error": str(e),
                 })
 
+        # Build pending-task lookup once so task_id inputs can be validated/corrected.
+        pending_tasks = await self._client.get_pending_tasks()
+        pending_ids = {t.get("id") for t in pending_tasks if t.get("id")}
+        pending_by_description: Dict[str, str] = {}
+        duplicate_descriptions = set()
+        for task in pending_tasks:
+            description = task.get("description")
+            task_id = task.get("id")
+            if not description or not task_id:
+                continue
+            if description in pending_by_description:
+                duplicate_descriptions.add(description)
+            else:
+                pending_by_description[description] = task_id
+        for description in duplicate_descriptions:
+            pending_by_description.pop(description, None)
+
         # Process tasks — skip if already transitioned
         if not transitioned:
             for i, t in enumerate(tasks):
                 try:
+                    raw_task_id = t["task_id"]
+                    resolved_task_id = raw_task_id
+                    if resolved_task_id not in pending_ids:
+                        resolved_task_id = pending_by_description.get(raw_task_id, "")
+                        if not resolved_task_id:
+                            results["tasks_failed"].append({
+                                "task_id": raw_task_id,
+                                "error": (
+                                    f"invalid task_id '{raw_task_id}': use an exact pending task ID"
+                                ),
+                            })
+                            continue
+
                     result = await self._client.complete_task(
-                        t["task_id"], t.get("reasoning", "")
+                        resolved_task_id, t.get("reasoning", "")
                     )
                     if result.get("success"):
                         results["tasks_completed"].append({
-                            "task_id": t["task_id"],
+                            "task_id": resolved_task_id,
                             "transitioned": result.get("transitioned", False),
                             "new_state_id": result.get("new_state_id"),
                         })
+                        if result.get("session_completed"):
+                            results["session_completed"] = True
+                            results["farewell_message"] = result.get("farewell_message")
+                            results["summary_behavior"] = result.get("summary_behavior")
                         if result.get("transitioned", False):
                             transitioned = True
                             for skipped in tasks[i + 1:]:

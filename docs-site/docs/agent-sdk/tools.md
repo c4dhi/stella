@@ -368,6 +368,6 @@ async def search_flights(
 
 ## See Also
 
-- [Base Agent](/docs/agent-sdk/base-agent)
-- [Message Types](/docs/agent-sdk/message-types)
-- [Building Custom Agents](/docs/agent-sdk/building-custom-agent)
+- [Base Agent](./base-agent.md)
+- [Message Types](./message-types.md)
+- [Building Custom Agents](./building-custom-agent.md)

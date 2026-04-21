@@ -243,5 +243,5 @@ CREATE TABLE messages (
 
 ## Next Steps
 
-- [Session Lifecycle](/docs/architecture/session-lifecycle) - Session states
-- [Kubernetes Orchestration](/docs/architecture/kubernetes-orchestration) - Pod management
+- [Session Lifecycle](./session-lifecycle.md) - Session states
+- [Kubernetes Orchestration](./kubernetes-orchestration.md) - Pod management

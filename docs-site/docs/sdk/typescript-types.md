@@ -495,6 +495,6 @@ export const POLL_INTERVALS = {
 
 ## See Also
 
-- [SDK Overview](/docs/sdk/overview)
-- [Message Types](/docs/sdk/message-types)
-- [Frontend Integration](/docs/integration/frontend)
+- [SDK Overview](./overview.md)
+- [Message Types](./message-types.md)
+- [Frontend Integration](../integration/frontend.md)

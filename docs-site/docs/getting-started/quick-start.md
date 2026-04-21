@@ -88,6 +88,6 @@ tail -f /tmp/stella-ai-k8s/stella-ai-k8s.log
 
 ## Next Steps
 
-- [Installation Guide](/docs/getting-started/installation) - Detailed setup instructions
-- [First Agent](/docs/getting-started/first-agent) - Deploy your first conversational AI agent
-- [Agents Overview](/docs/agents/overview) - Learn about different agent types
+- [Installation Guide](./installation.md) - Detailed setup instructions
+- [First Agent](./first-agent.md) - Deploy your first conversational AI agent
+- [Agents Overview](../agents/overview.md) - Learn about different agent types

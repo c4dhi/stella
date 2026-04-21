@@ -200,4 +200,4 @@ def _calculate_confidence(self, expert_results, conflict_analysis) -> float:
 ## Next Steps
 
 - [Custom Experts](custom-experts) - Learn how to add and modify experts
-- [Plan Structure](/docs/plan-structure) - Learn how to configure conversation flows with Plans
+- [Plan Structure](../../plan-structure/index.md) - Learn how to configure conversation flows with Plans

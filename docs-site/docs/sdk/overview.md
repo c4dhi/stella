@@ -63,7 +63,7 @@ The foundation of all STELLA agents. Handles:
 - Audio stream management
 - Event dispatching
 
-See [Base Agent Reference](/docs/sdk/base-agent) for full API.
+See [Base Agent Reference](./base-agent.md) for full API.
 
 ### AudioPipeline
 
@@ -86,7 +86,7 @@ async def search(query: str) -> dict:
     return {"results": results}
 ```
 
-See [Tools Reference](/docs/sdk/tools) for patterns.
+See [Tools Reference](./tools.md) for patterns.
 
 ### Message Types
 
@@ -95,7 +95,7 @@ Structured communication with the frontend:
 - `StatusMessage`: Agent status updates
 - `ProgressMessage`: Task progress
 
-See [Message Types](/docs/sdk/message-types) for details.
+See [Message Types](./message-types.md) for details.
 
 ## Architecture
 
@@ -164,7 +164,7 @@ The SDK is LLM-agnostic. Use any provider:
 
 ## Next Steps
 
-- [Base Agent](/docs/sdk/base-agent) - Full BaseAgent API
-- [Message Types](/docs/sdk/message-types) - Communication protocol
-- [Tools](/docs/sdk/tools) - Building custom tools
-- [Streaming](/docs/sdk/streaming) - Real-time audio handling
+- [Base Agent](./base-agent.md) - Full BaseAgent API
+- [Message Types](./message-types.md) - Communication protocol
+- [Tools](./tools.md) - Building custom tools
+- [Streaming](./streaming.md) - Real-time audio handling

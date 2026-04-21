@@ -71,7 +71,7 @@ stella-v2 uses two configuration schemas in `agent.yaml`:
 - **`configSchema`**: Top-level agent configuration (plan, LLM defaults, env vars). Includes `x-stella-supports-configurator: true` to enable the pipeline configurator.
 - **`pipelineSchema`**: Defines the 5 pipeline nodes, their configurable slots, edges between them, and global thresholds.
 
-Users create **Pipeline Configurations** — named, reusable presets that override specific slots. A configuration is **mandatory** when deploying stella-v2. See [Pipeline Configurator](/docs/agents/stella-v2/pipeline-configurator) for details.
+Users create **Pipeline Configurations** — named, reusable presets that override specific slots. A configuration is **mandatory** when deploying stella-v2. See [Pipeline Configurator](./pipeline-configurator.md) for details.
 
 ## Environment Variables
 
@@ -100,6 +100,6 @@ Users create **Pipeline Configurations** — named, reusable presets that overri
 
 ## See Also
 
-- [Pipeline Configurator](/docs/agents/stella-v2/pipeline-configurator) — How to create and manage pipeline configurations
-- [Pipeline Schema Reference](/docs/agents/stella-v2/pipeline-schema) — `pipelineSchema` format for `agent.yaml`
-- [Plan Structure](/docs/plan-structure) — Conversation flow definitions used with stella-v2
+- [Pipeline Configurator](./pipeline-configurator.md) — How to create and manage pipeline configurations
+- [Pipeline Schema Reference](./pipeline-schema.md) — `pipelineSchema` format for `agent.yaml`
+- [Plan Structure](../../plan-structure/index.md) — Conversation flow definitions used with stella-v2

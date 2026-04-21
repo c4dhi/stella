@@ -18,7 +18,7 @@ STELLA supports multiple agent types, each designed for different use cases. All
 
 ## Architecture
 
-All STELLA agents follow a similar pipeline architecture and can be configured with **Plans** — JSON-based conversation blueprints that define states, tasks, and data collection. See the [Plan Structure](/docs/plan-structure) documentation for details.
+All STELLA agents follow a similar pipeline architecture and can be configured with **Plans** — JSON-based conversation blueprints that define states, tasks, and data collection. See the [Plan Structure](../plan-structure/index.md) documentation for details.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -105,8 +105,8 @@ All agents support these common environment variables:
 
 ## Next Steps
 
-- [stella-v2](/docs/agents/stella-v2) - Streamlined pipeline with configurator
-- [stella-agent](/docs/agents/stella-agent) - Full-featured agent details
-- [stella-light-agent](/docs/agents/stella-light-agent) - Lightweight agent details
-- [echo-agent](/docs/agents/echo-agent) - Test agent details
-- [Agent SDK](/docs/agent-sdk/overview) - Build custom agents
+- [stella-v2](./stella-v2/index.md) - Streamlined pipeline with configurator
+- [stella-agent](./stella-agent/index.md) - Full-featured agent details
+- [stella-light-agent](./stella-light-agent.md) - Lightweight agent details
+- [echo-agent](./echo-agent.md) - Test agent details
+- [Agent SDK](../agent-sdk/overview.md) - Build custom agents

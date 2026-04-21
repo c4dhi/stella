@@ -105,74 +105,220 @@ Transitions define when and how to move from one state to another.
 
 ### Condition Types
 
+The state machine supports the following `condition_type` values:
+
+| Condition Type | Purpose | Added In |
+|----------------|---------|----------|
+| `all_tasks_complete` | Transition when required tasks in the current state are complete | Existing |
+| `deliverable_exists` | Transition when a deliverable key has been collected | Existing |
+| `deliverable_value` | Transition when a deliverable equals a specific value | Existing |
+| `turn_count_exceeded` | Guardrail transition based on turn count | Ticket 5 |
+| `deliverable_value_in` | Transition when a deliverable matches one of several values | Ticket 5 |
+| `deliverable_value_numeric` | Numeric comparison (`gt`, `gte`, `lt`, `lte`, `eq`, `neq`, `between`) | Ticket 5 |
+| `all_of` | Composite AND over nested child conditions | Ticket 5 |
+| `any_of` | Composite OR over nested child conditions | Ticket 5 |
+| `compound` | Composite with explicit operator (`and` or `or`) | Ticket 5 |
+
+### Existing Conditions
+
 #### `all_tasks_complete`
 
 Transitions when all required tasks in the current state are completed.
 
 ```json
 {
-  "transitions": [
-    {
-      "target_state_id": "review",
-      "condition_type": "all_tasks_complete",
-      "priority": 1
-    }
-  ]
-}
-```
-
-#### `deliverable_value`
-
-Transitions when a specific deliverable has a specific value.
-
-```json
-{
-  "transitions": [
-    {
-      "target_state_id": "premium-support",
-      "condition_type": "deliverable_value",
-      "priority": 1,
-      "condition_config": {
-        "deliverable_key": "membership_type",
-        "expected_value": "premium"
-      }
-    },
-    {
-      "target_state_id": "standard-support",
-      "condition_type": "deliverable_value",
-      "priority": 2,
-      "condition_config": {
-        "deliverable_key": "membership_type",
-        "expected_value": "standard"
-      }
-    }
-  ]
+  "target_state_id": "review",
+  "condition_type": "all_tasks_complete",
+  "priority": 1
 }
 ```
 
 #### `deliverable_exists`
 
-Transitions when a deliverable has any value (not empty).
+Transitions when a deliverable key has any collected value.
 
 ```json
 {
-  "transitions": [
-    {
-      "target_state_id": "has-referral",
-      "condition_type": "deliverable_exists",
-      "priority": 1,
-      "condition_config": {
-        "deliverable_key": "referral_code"
-      }
-    },
-    {
-      "target_state_id": "no-referral",
-      "condition_type": "all_tasks_complete",
-      "priority": 2
-    }
-  ]
+  "target_state_id": "has_referral",
+  "condition_type": "deliverable_exists",
+  "priority": 1,
+  "condition_config": {
+    "key": "referral_code"
+  }
 }
 ```
+
+#### `deliverable_value`
+
+Transitions when a deliverable equals a specific value.
+
+```json
+{
+  "target_state_id": "premium_support",
+  "condition_type": "deliverable_value",
+  "priority": 1,
+  "condition_config": {
+    "key": "membership_type",
+    "value": "premium"
+  }
+}
+```
+
+### New Conditions from Ticket 5
+
+#### `turn_count_exceeded`
+
+Transitions when turn counters cross a threshold. Use this for fallback routing when users get stuck.
+
+```json
+{
+  "target_state_id": "clarify_or_handoff",
+  "condition_type": "turn_count_exceeded",
+  "priority": 5,
+  "condition_config": {
+    "turns": 3,
+    "scope": "without_progress"
+  }
+}
+```
+
+- `scope: "without_progress"` tracks consecutive turns without completing work
+- `scope: "total"` tracks total turns in the current state
+
+#### `deliverable_value_in`
+
+Transitions when a deliverable value is in an allowed set.
+
+```json
+{
+  "target_state_id": "high_priority_queue",
+  "condition_type": "deliverable_value_in",
+  "priority": 2,
+  "condition_config": {
+    "key": "issue_category",
+    "values": ["billing_error", "payment_failed", "account_locked"]
+  }
+}
+```
+
+#### `deliverable_value_numeric`
+
+Transitions when a numeric deliverable satisfies a comparison rule.
+
+Example 1: threshold check
+
+```json
+{
+  "target_state_id": "urgent_path",
+  "condition_type": "deliverable_value_numeric",
+  "priority": 1,
+  "condition_config": {
+    "key": "risk_score",
+    "operator": "gte",
+    "value": 8
+  }
+}
+```
+
+Example 2: range check
+
+```json
+{
+  "target_state_id": "moderate_path",
+  "condition_type": "deliverable_value_numeric",
+  "priority": 2,
+  "condition_config": {
+    "key": "risk_score",
+    "operator": "between",
+    "min": 4,
+    "max": 7,
+    "inclusive": true
+  }
+}
+```
+
+#### `all_of`
+
+Transitions only when all child conditions are true.
+
+```json
+{
+  "target_state_id": "eligible_fast_track",
+  "condition_type": "all_of",
+  "priority": 1,
+  "condition_config": {
+    "conditions": [
+      {
+        "condition_type": "deliverable_exists",
+        "condition_config": { "key": "consent" }
+      },
+      {
+        "condition_type": "deliverable_value",
+        "condition_config": { "key": "age_verified", "value": true }
+      }
+    ]
+  }
+}
+```
+
+#### `any_of`
+
+Transitions when at least one child condition is true.
+
+```json
+{
+  "target_state_id": "expedited_checkout",
+  "condition_type": "any_of",
+  "priority": 1,
+  "condition_config": {
+    "conditions": [
+      {
+        "condition_type": "deliverable_exists",
+        "condition_config": { "key": "express_checkout" }
+      },
+      {
+        "condition_type": "deliverable_exists",
+        "condition_config": { "key": "saved_payment_method" }
+      }
+    ]
+  }
+}
+```
+
+#### `compound`
+
+Composite condition with explicit logical operator.
+
+```json
+{
+  "target_state_id": "ready_to_close",
+  "condition_type": "compound",
+  "priority": 1,
+  "condition_config": {
+    "operator": "and",
+    "conditions": [
+      {
+        "condition_type": "deliverable_exists",
+        "condition_config": { "key": "summary_confirmed" }
+      },
+      {
+        "condition_type": "deliverable_value",
+        "condition_config": { "key": "approval_status", "value": "approved" }
+      }
+    ]
+  }
+}
+```
+
+## UI and JSON Support
+
+The visual Plan Builder currently exposes three condition types in the edge editor:
+
+- `all_tasks_complete`
+- `deliverable_exists`
+- `deliverable_value`
+
+Advanced conditions from Ticket 5 are supported in plan JSON and runtime evaluation. They can be authored directly in JSON today.
 
 ### Transition Priority
 
@@ -186,8 +332,8 @@ When multiple transition conditions are satisfied, the transition with the lowes
       "condition_type": "deliverable_value",
       "priority": 1,
       "condition_config": {
-        "deliverable_key": "urgency",
-        "expected_value": "emergency"
+        "key": "urgency",
+        "value": "emergency"
       }
     },
     {
@@ -251,8 +397,8 @@ In this example:
       "condition_type": "deliverable_value",
       "priority": 1,
       "condition_config": {
-        "deliverable_key": "issue_type",
-        "expected_value": "billing"
+        "key": "issue_type",
+        "value": "billing"
       }
     },
     {
@@ -260,8 +406,8 @@ In this example:
       "condition_type": "deliverable_value",
       "priority": 1,
       "condition_config": {
-        "deliverable_key": "issue_type",
-        "expected_value": "technical"
+        "key": "issue_type",
+        "value": "technical"
       }
     },
     {
@@ -302,6 +448,6 @@ A typical conversation flows through multiple states:
 
 ## Next Steps
 
-- [Tasks](/docs/plan-structure/tasks) — Learn about task configuration
-- [Deliverables](/docs/plan-structure/deliverables) — Configure data collection
-- [Examples](/docs/plan-structure/examples) — See complete plan examples
+- [Tasks](./tasks.md) — Learn about task configuration
+- [Deliverables](./deliverables.md) — Configure data collection
+- [Examples](./examples.md) — See complete plan examples
