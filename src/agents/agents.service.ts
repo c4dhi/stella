@@ -97,6 +97,16 @@ export class AgentsService {
     }
   }
 
+  private encryptManualEnvVarsForStorage(
+    manualVars?: Record<string, string>,
+  ): string | null {
+    if (!manualVars || Object.keys(manualVars).length === 0) {
+      return null;
+    }
+
+    return this.encryptionService.encrypt(manualVars);
+  }
+
   /**
    * Map Kubernetes pod phase to AgentStatus
    */
@@ -271,10 +281,7 @@ export class AgentsService {
 
     // Encrypt manual env vars now so they are persisted before the async pod creation.
     // This guarantees restart() can recover them even if the pod creation fails.
-    const manualEnvVarsEncrypted =
-      createAgentDto.envVars && Object.keys(createAgentDto.envVars).length > 0
-        ? this.encryptionService.encrypt(createAgentDto.envVars)
-        : null;
+    const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // 1. Create agent record (status=STARTING, no podName yet)
     const agent = await this.prisma.agentInstance.create({
@@ -431,10 +438,7 @@ export class AgentsService {
     // Determine agent type (default to stella-agent)
     const agentType = createAgentDto.agentType || 'stella-agent';
     // Encrypt manual env vars so standalone agents have the same restart behavior as regular agents.
-    const manualEnvVarsEncrypted =
-      createAgentDto.envVars && Object.keys(createAgentDto.envVars).length > 0
-        ? this.encryptionService.encrypt(createAgentDto.envVars)
-        : null;
+    const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // Create agent record with gRPC address
     const agent = await this.prisma.agentInstance.create({
@@ -862,6 +866,11 @@ export class AgentsService {
         role: { in: ['OWNER', 'ADMIN'] },
       },
     });
+    if (!projectMembership) {
+      throw new NotFoundException(
+        `No OWNER/ADMIN project membership found for project ${agent.session.projectId}`,
+      );
+    }
 
     // Register pending session so gRPC agent registration can match
     const agentType = agent.agentType || 'stella-agent';
@@ -891,7 +900,7 @@ export class AgentsService {
     // gets an identical secret to the original deployment.
     const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
       agent.envVarTemplateId ?? undefined,
-      projectMembership?.userId ?? undefined,
+      projectMembership.userId,
       storedManualVars,
     );
 
