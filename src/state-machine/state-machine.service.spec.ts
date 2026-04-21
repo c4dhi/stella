@@ -497,6 +497,35 @@ describe('goal_achieved condition', () => {
     expect(result.newStateId).toBe('state-next');
   });
 
+  it('does not auto-evaluate transitions for arbitrary discovered goal insights', async () => {
+    const sessionId = 'session-goal-discovered-insight-no-auto-transition';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].transitions = [
+      {
+        target_state_id: 'state-next',
+        condition_type: 'deliverable_exists',
+        condition_config: { deliverable_key: 'insight_summary' },
+        priority: 1,
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const result = await svc.setDeliverable(
+      sessionId,
+      'insight_summary',
+      'User shared enough context',
+      'Captured as discovered insight',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.transitioned).toBe(false);
+
+    const current = await svc.getCurrentState(sessionId);
+    expect(current?.stateId).toBe('state-goal');
+  });
+
   it('injects goal completion instruction using success_description in synthetic goal task', async () => {
     const sessionId = 'session-goal-instruction';
     const { prisma } = createPrismaMock();

@@ -460,6 +460,20 @@ export class StateMachineService {
         },
       });
 
+      // Preserve existing semantics for generic discovered insights:
+      // only the explicit goal completion marker should trigger transition evaluation.
+      if (key !== '__goal_achieved__') {
+        return {
+          success: true,
+          transitioned: false,
+          progress: await this.calculateProgress(sessionId, {
+            ...state,
+            deliverables: deliverables as unknown as Prisma.JsonValue,
+            turnsWithoutProgress: 0,
+          } as SessionState),
+        };
+      }
+
       const transitionResult = await this.evaluateAndTransition(sessionId);
 
       return {
