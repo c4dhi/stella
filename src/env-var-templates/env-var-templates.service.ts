@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from './encryption.service';
@@ -219,6 +220,16 @@ export class EnvVarTemplatesService {
     userId: string | undefined | null,
     manualVars?: Record<string, string>,
   ): Promise<{ merged: Record<string, string>; encryptedManual: string | null }> {
+    // A template cannot be resolved without user ownership context.
+    if (templateId && !userId) {
+      this.logger.warn(
+        `Template ${templateId} was provided without userId; refusing to resolve template vars`,
+      );
+      throw new BadRequestException(
+        'Cannot resolve env var template without user context',
+      );
+    }
+
     // Step 1: decrypt template vars when a template is referenced.
     let templateVars: Record<string, string> = {};
     if (templateId && userId) {
