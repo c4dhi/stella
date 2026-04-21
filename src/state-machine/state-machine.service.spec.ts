@@ -480,6 +480,26 @@ describe('goal_achieved condition', () => {
     expect(result.newStateId).toBeUndefined();
   });
 
+  it('treats required goal tasks without deliverables as auto-complete in state completion checks', async () => {
+    const sessionId = 'session-goal-action-task-auto-complete';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].tasks = [
+      {
+        id: 'action-task',
+        description: 'A guidance/action step without deliverables',
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const state = await (svc as any).getState(sessionId);
+    const planState = (state.planData as PlanData).states.find((s) => s.id === 'state-goal');
+    const isComplete = (svc as any).isCurrentStateComplete(state, planState);
+
+    expect(isComplete).toBe(true);
+  });
+
   it('transitions when __goal_achieved__ is set truthy', async () => {
     const sessionId = 'session-goal-achieved';
     const { prisma } = createPrismaMock();

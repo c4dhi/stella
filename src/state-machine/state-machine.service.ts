@@ -881,6 +881,15 @@ export class StateMachineService {
 
       const taskDeliverables = task.deliverables || [];
       if (taskDeliverables.length === 0) {
+        if (stateType === 'goal') {
+          // In goal mode, deliverable-less tasks are guidance/action scaffolding.
+          // Completion is driven by goal markers/deliverables, not explicit task ticks.
+          this.logger.log(
+            `[isCurrentStateComplete] Task '${task.id}' has no deliverables — auto-complete in goal mode`,
+          );
+          continue;
+        }
+
         // Task without deliverables - check if completed
         if (!state.completedTasks.includes(task.id)) {
           this.logger.log(
