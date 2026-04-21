@@ -517,6 +517,30 @@ describe('goal_achieved condition', () => {
     expect(result.newStateId).toBe('state-next');
   });
 
+  it('still transitions via goal_achieved when goal state has an action task without deliverables', async () => {
+    const sessionId = 'session-goal-achieved-with-action-task';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].tasks = [
+      {
+        id: 'action-task',
+        description: 'Offer reflective summary to participant',
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const result = await svc.setDeliverable(
+      sessionId,
+      '__goal_achieved__',
+      true,
+      'Objective reached after action step',
+    );
+
+    expect(result.transitioned).toBe(true);
+    expect(result.newStateId).toBe('state-next');
+  });
+
   it('does not auto-evaluate transitions for arbitrary discovered goal insights', async () => {
     const sessionId = 'session-goal-discovered-insight-no-auto-transition';
     const { prisma } = createPrismaMock();
