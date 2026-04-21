@@ -6,7 +6,7 @@ import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { CreateInvitationDto, CreateInvitationResponse } from '../../lib/api-types'
 import type { VisualizerType } from '../face/types'
-import { VisualizerSelectionStep, ExpirationSelectionStep, INVITATION_EXPIRATION_OPTIONS } from '../shared'
+import { VisualizerSelectionStep, ExpirationSelectionStep, INVITATION_EXPIRATION_OPTIONS, SessionDurationSelectionStep } from '../shared'
 
 interface InviteParticipantModalProps {
   isOpen: boolean
@@ -15,7 +15,7 @@ interface InviteParticipantModalProps {
   onSuccess?: (response: CreateInvitationResponse) => void
 }
 
-type Step = 'type' | 'message' | 'visualizer' | 'expiration' | 'complete'
+type Step = 'type' | 'message' | 'visualizer' | 'duration' | 'expiration' | 'complete'
 type InvitationType = 'web' | 'mobile'
 
 interface InvitationTypeConfig {
@@ -61,7 +61,8 @@ const STEPS: { id: Step; number: number; label: string }[] = [
   { id: 'type', number: 1, label: 'Invitation Type' },
   { id: 'message', number: 2, label: 'Welcome Message' },
   { id: 'visualizer', number: 3, label: 'Visualizer' },
-  { id: 'expiration', number: 4, label: 'Expiration' },
+  { id: 'duration', number: 4, label: 'Session Duration' },
+  { id: 'expiration', number: 5, label: 'Expiration' },
 ]
 
 export default function InviteParticipantModal({
@@ -86,6 +87,7 @@ export default function InviteParticipantModal({
   const [visualizerType, setVisualizerType] = useState<VisualizerType | undefined>(undefined)
   const [visualizerLocked, setVisualizerLocked] = useState(false)
   const [expiresInHours, setExpiresInHours] = useState<number | undefined>(undefined)
+  const [maxSessionDurationSeconds, setMaxSessionDurationSeconds] = useState<number | null>(null)
 
   // Result state
   const [result, setResult] = useState<CreateInvitationResponse | null>(null)
@@ -98,6 +100,7 @@ export default function InviteParticipantModal({
     setVisualizerType(undefined)
     setVisualizerLocked(false)
     setExpiresInHours(undefined)
+    setMaxSessionDurationSeconds(null)
     setResult(null)
     setError(null)
     setCopied(false)
@@ -116,7 +119,7 @@ export default function InviteParticipantModal({
   }
 
   const handleContinue = () => {
-    const stepOrder: Step[] = ['type', 'message', 'visualizer', 'expiration']
+    const stepOrder: Step[] = ['type', 'message', 'visualizer', 'duration', 'expiration']
     const currentIndex = stepOrder.indexOf(step)
     if (currentIndex < stepOrder.length - 1) {
       setStep(stepOrder[currentIndex + 1])
@@ -124,7 +127,7 @@ export default function InviteParticipantModal({
   }
 
   const handleBack = () => {
-    const stepOrder: Step[] = ['type', 'message', 'visualizer', 'expiration']
+    const stepOrder: Step[] = ['type', 'message', 'visualizer', 'duration', 'expiration']
     const currentIndex = stepOrder.indexOf(step)
     if (currentIndex > 0) {
       setStep(stepOrder[currentIndex - 1])
@@ -143,6 +146,7 @@ export default function InviteParticipantModal({
         visualizerType: visualizerType || undefined,
         visualizerLocked,
         expiresInHours,
+        maxSessionDurationSeconds: maxSessionDurationSeconds ?? undefined,
       }
 
       const response = await apiClient.createInvitation(sessionId, dto)
@@ -182,6 +186,8 @@ export default function InviteParticipantModal({
         return true
       case 'visualizer':
         return true
+      case 'duration':
+        return true
       case 'expiration':
         return true
       default:
@@ -194,6 +200,7 @@ export default function InviteParticipantModal({
       case 'type': return 'Invite Participant'
       case 'message': return 'Welcome Message'
       case 'visualizer': return 'Choose Visualizer'
+      case 'duration': return 'Session Duration'
       case 'expiration': return 'Set Expiration'
       case 'complete': return 'Invitation Created'
     }
@@ -204,6 +211,7 @@ export default function InviteParticipantModal({
       case 'type': return 'Choose how the participant will join this session'
       case 'message': return 'Add a personal message shown when they join (optional)'
       case 'visualizer': return 'Set a default visualizer or let them choose'
+      case 'duration': return 'Optionally cap how long the session runs after the agent starts speaking'
       case 'expiration': return 'Set how long the invitation link remains valid'
       case 'complete': return 'Share this link with the participant'
     }
@@ -482,7 +490,24 @@ export default function InviteParticipantModal({
                 </motion.div>
               )}
 
-              {/* Step 4: Expiration */}
+              {/* Step 4: Session Duration */}
+              {step === 'duration' && (
+                <motion.div
+                  key="duration"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <SessionDurationSelectionStep
+                    maxSessionDurationSeconds={maxSessionDurationSeconds}
+                    onMaxSessionDurationSecondsChange={setMaxSessionDurationSeconds}
+                  />
+                </motion.div>
+              )}
+
+              {/* Step 5: Expiration */}
               {step === 'expiration' && (
                 <motion.div
                   key="expiration"

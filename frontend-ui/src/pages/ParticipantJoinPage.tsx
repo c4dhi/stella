@@ -44,6 +44,7 @@ interface SessionData {
   connectionInfo: ConnectionInfo;
   visualizerType: string | null;
   visualizerLocked: boolean;
+  maxSessionDurationSeconds: number | null;
 }
 
 export default function ParticipantJoinPage() {
@@ -149,6 +150,7 @@ export default function ParticipantJoinPage() {
               connectionInfo: response.connectionInfo,
               visualizerType: response.visualizerType ?? null,
               visualizerLocked: response.visualizerLocked,
+              maxSessionDurationSeconds: response.maxSessionDurationSeconds ?? null,
             });
             setPageState('SESSION_VIEW');
           } catch (rejoinErr: any) {
@@ -190,6 +192,7 @@ export default function ParticipantJoinPage() {
         connectionInfo: response.connectionInfo,
         visualizerType: response.visualizerType ?? null,
         visualizerLocked: response.visualizerLocked,
+        maxSessionDurationSeconds: response.maxSessionDurationSeconds ?? null,
       });
 
       setPageState('SESSION_VIEW');
@@ -252,6 +255,7 @@ export default function ParticipantJoinPage() {
         connectionInfo: response.connectionInfo,
         visualizerType: response.visualizerType ?? null,
         visualizerLocked: response.visualizerLocked,
+        maxSessionDurationSeconds: response.maxSessionDurationSeconds ?? null,
       });
 
       setPageState('SESSION_VIEW');

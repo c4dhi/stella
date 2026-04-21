@@ -56,6 +56,7 @@ interface SessionData {
   connectionInfo: ConnectionInfo
   visualizerType: string | null
   visualizerLocked: boolean
+  maxSessionDurationSeconds: number | null  // null = no timeout
 }
 
 interface ParticipantSessionViewProps {
@@ -429,19 +430,23 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           return
         }
 
-        // Start session timer on first agent message
-        if (!sessionTimerStartedRef.current && (envelope.type === 'transcript' || envelope.type === 'agent_text')) {
+        // Start session timer on first agent message (only if a max duration is configured)
+        if (
+          !sessionTimerStartedRef.current &&
+          sessionData.maxSessionDurationSeconds != null &&
+          (envelope.type === 'transcript' || envelope.type === 'agent_text')
+        ) {
           const msgData = envelope.data
           const source = msgData?.source as string | undefined
           const speakerName = msgData?.speaker_name || ''
           // Only start on agent messages, not user speech
           if (envelope.type === 'agent_text' || source === 'agent' || speakerName.startsWith('agent')) {
-            const SESSION_TIMEOUT_SECONDS = 7 * 60 // 7 minutes
+            const sessionTimeoutSeconds = sessionData.maxSessionDurationSeconds
             sessionTimerStartedRef.current = true
             sessionTimerRef.current = setInterval(() => {
               setElapsedSeconds(prev => {
                 const next = prev + 1
-                if (next >= SESSION_TIMEOUT_SECONDS && !sessionCompletedRef.current) {
+                if (next >= sessionTimeoutSeconds && !sessionCompletedRef.current) {
                   setSessionTimedOut(true)
                   if (sessionTimerRef.current) {
                     clearInterval(sessionTimerRef.current)
@@ -451,7 +456,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
                 return next
               })
             }, 1000)
-            console.log(`[Participant] Session timer started on first agent message (${SESSION_TIMEOUT_SECONDS}s limit)`)
+            console.log(`[Participant] Session timer started on first agent message (${sessionTimeoutSeconds}s limit)`)
           }
         }
 
@@ -606,7 +611,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         console.error('Error parsing data:', error)
       }
     },
-    [pendingCorrelationIds, sessionData.identity, sessionData.participantName]
+    [pendingCorrelationIds, sessionData.identity, sessionData.participantName, sessionData.maxSessionDurationSeconds]
   )
 
   // Handle room disconnection

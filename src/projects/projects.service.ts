@@ -311,6 +311,9 @@ export class ProjectsService {
       if (dto.enabled !== undefined) {
         updateData.publicEnabled = dto.enabled;
       }
+      if (dto.maxSessionDurationSeconds !== undefined) {
+        updateData.publicMaxSessionDurationSeconds = dto.maxSessionDurationSeconds;
+      }
     } else {
       // When making private, optionally clear public config
       // Keep the publicToken so it can be re-enabled without losing the link

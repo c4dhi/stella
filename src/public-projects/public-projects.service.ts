@@ -155,6 +155,7 @@ export class PublicProjectsService {
       agentIcon: agentConfig?.icon || project.publicAgentType?.icon || undefined,
       visualizerType: project.publicVisualizerType || undefined,
       visualizerLocked: project.publicVisualizerLocked,
+      maxSessionDurationSeconds: project.publicMaxSessionDurationSeconds ?? undefined,
       isExpired,
       isEnabled: project.publicEnabled,
     };
@@ -250,6 +251,7 @@ export class PublicProjectsService {
     const { invitation } = await this.invitationsService.create(session.id, {
       visualizerType: project.publicVisualizerType || undefined,
       visualizerLocked: project.publicVisualizerLocked,
+      maxSessionDurationSeconds: project.publicMaxSessionDurationSeconds ?? undefined,
       // Auto-generated name
     });
 
