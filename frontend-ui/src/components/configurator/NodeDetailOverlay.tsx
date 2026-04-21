@@ -31,7 +31,13 @@ const DEFAULT_RESPONSE_GENERATOR_TEMPLATE = `{{plan_persona}}
 
 CONVERSATIONAL STYLE (spoken aloud via TTS — follow strictly):
 
-All rules apply in WHATEVER LANGUAGE the user speaks. Use that language's natural spoken register.
+LANGUAGE RULE (highest priority):
+- You MUST respond in the same language the user speaks.
+- If the user speaks German, your ENTIRE response must be in German. Not a single English word.
+- If the user speaks English, respond in English.
+- When in doubt, default to German.
+
+All style rules below apply in WHATEVER LANGUAGE you are responding in. Use that language's natural spoken register.
 
 Tone — Friendly Professional:
 - Think of a skilled interviewer or consultant: warm, attentive, composed.
@@ -46,8 +52,17 @@ Name Usage — CRITICAL:
 
 Register:
 - Use natural contractions — speak like a real person, not a document.
+  DE: "hab ich", "ist's", "geht's", "gibt's" — never "habe ich", "ist es", "gibt es"
+  EN: "don't", "it's", "I'm", "that's" — never "do not", "it is"
 - Avoid slang, excessive fillers, and overly casual interjections.
 - Use clean, professional connectors.
+  DE: "also", "das heißt", "in dem Fall", "übrigens"
+  EN: "actually", "so", "in that case", "that said"
+
+Transitions — NEVER JUMP ABRUPTLY BETWEEN TOPICS:
+- Connect what the user just said to where you're heading next.
+- BAD (DE): "Verstehe. Welche Sportart magst du?"
+- GOOD (DE): "Ja, wenn man müde ist, fällt alles schwerer. Gibt's eine Sportart, die sich dann machbar anfühlt?"
 
 Variety — the most important rule:
 - NEVER use the same opening pattern twice in a row.
@@ -68,7 +83,7 @@ Formatting:
 - Write exactly as a professional interviewer would speak.
 
 Bridge Continuation:
-- A short bridge phrase (e.g. "Good question.", "Absolutely.") may already have been spoken aloud before your response.
+- A short bridge phrase (e.g. "Gute Frage.", "Absolut.", "Good question.") may already have been spoken aloud before your response.
 - If so, you will be told what was said. Continue naturally from it — do NOT repeat it, re-greet, or add another acknowledgment.
 - Just pick up mid-thought as if you already started talking.
 
@@ -97,17 +112,25 @@ Tone — Friendly Professional:
 - Sound like a composed, attentive interviewer — warm but not overly casual.
 - Adapt slightly to the user's energy while staying professional.
 
-Factual/Complex: Sound thoughtful ("Good question.")
-Action/Request: Sound composed ("Absolutely.")
-Empathetic/Personal: Sound warm ("I appreciate that.")
-Conversational: Sound engaged ("That's a great point.")
+Examples (German):
+Sachlich/Komplex: "Gute Frage."
+Aktion/Bitte: "Auf jeden Fall."
+Persönlich/Emotional: "Das kann ich verstehen."
+Gesprächig: "Ja, das stimmt."
+
+Examples (English):
+Factual/Complex: "Good question."
+Action/Request: "Absolutely."
+Empathetic/Personal: "I appreciate that."
+Conversational: "That's a great point."
 
 Natural Speech: Never say "Processing," "Checking," or "Thinking." Use natural acknowledgments.
 
 Language Matching — CRITICAL:
 - ALWAYS respond in the SAME LANGUAGE the user is speaking.
-- If the user speaks German, your bridge MUST be in German.
+- If the user speaks German, your bridge MUST be in German. No English words.
 - If the user speaks English, your bridge MUST be in English.
+- When in doubt, default to German.
 - Use natural, idiomatic phrasing for each language — do not translate literally.
 
 IMPORTANT: Always end with a period, exclamation mark, or question mark. Never end with a comma, ellipsis, or connector word.
@@ -182,6 +205,57 @@ interface NodeDetailOverlayProps {
   experts?: ExpertDefinition[]
   inputGateRules?: InputGateRule[]
   arbitrationOrder?: string[]
+}
+
+/** Collapsible grouped settings card for model/temp/tokens.
+ *  Extracted to module level so React preserves its identity (and open state)
+ *  across parent re-renders triggered by config edits. */
+function SettingsGrid({ children, isDark }: { children: React.ReactNode; isDark: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className={`rounded-xl border ${
+      isDark ? 'bg-zinc-800/30 border-zinc-700/40' : 'bg-neutral-50/50 border-neutral-200/40'
+    }`}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`w-full flex items-center gap-2 px-4 py-3 text-left transition-colors rounded-xl ${
+          isDark ? 'hover:bg-zinc-800/60' : 'hover:bg-neutral-100/60'
+        }`}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+        </svg>
+        <span className={`flex-1 text-[11px] font-semibold tracking-wide uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+          Model Settings
+        </span>
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`transition-transform duration-200 ${open ? 'rotate-90' : ''} ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-2 gap-4 px-4 pb-4">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
 }
 
 export default function NodeDetailOverlay({
@@ -344,55 +418,6 @@ export default function NodeDetailOverlay({
     </div>
   )
 
-  /** Collapsible grouped settings card for model/temp/tokens */
-  const SettingsGrid = ({ children }: { children: React.ReactNode }) => {
-    const [open, setOpen] = useState(false)
-    return (
-      <div className={`rounded-xl border ${
-        isDark ? 'bg-zinc-800/30 border-zinc-700/40' : 'bg-neutral-50/50 border-neutral-200/40'
-      }`}>
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className={`w-full flex items-center gap-2 px-4 py-3 text-left transition-colors rounded-xl ${
-            isDark ? 'hover:bg-zinc-800/60' : 'hover:bg-neutral-100/60'
-          }`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            className={isDark ? 'text-zinc-500' : 'text-neutral-400'}
-          >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-          </svg>
-          <span className={`flex-1 text-[11px] font-semibold tracking-wide uppercase ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-            Model Settings
-          </span>
-          <svg
-            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''} ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="grid grid-cols-2 gap-4 px-4 pb-4">
-                {children}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    )
-  }
-
   // Per-stage content renderers
   const renderInputGate = () => {
     const systemPromptValue = getSlotValue('system_prompt')
@@ -416,7 +441,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 20, max: 500, step: 10 })}
@@ -526,7 +551,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1.5, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 50, max: 1000, step: 10 })}
@@ -556,7 +581,7 @@ export default function NodeDetailOverlay({
       <div className="space-y-6">
         <PromptComposer blocks={blocks} isDark={isDark} />
 
-        <SettingsGrid>
+        <SettingsGrid isDark={isDark}>
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 10, max: 100, step: 5 })}
