@@ -37,7 +37,7 @@ from stella_v2_agent.experts.registry import ExpertRegistry
 from stella_v2_agent.pipeline.input_gate import InputGate
 from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
-from stella_v2_agent.pipeline.arbitration import Arbitration, _DEFAULT_GATE_FAILURE_MESSAGE
+from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
 from stella_v2_agent.adapters import ProgressAdapter
 import logging
@@ -138,7 +138,11 @@ class StellaV2Agent(BaseAgent):
         """
         self._is_processing = True
         self._turn_counter += 1
-        turn_id = f"turn_{self._turn_counter}"
+        # Prefer the STT transcript_id forwarded via metadata so audio-stage and
+        # agent-stage analytics share one turn_id. Fall back to a local counter
+        # for non-audio inputs (text-only, tests).
+        forwarded_turn_id = (input.metadata or {}).get("turn_id")
+        turn_id = forwarded_turn_id or f"turn_{self._turn_counter}"
 
         try:
             # Fetch context
@@ -180,7 +184,7 @@ class StellaV2Agent(BaseAgent):
                     route="UNSAFE", experts_consulted=[], turn_id=turn_id,
                 )
                 yield AgentOutput.text_chunk(
-                    input.session_id, _DEFAULT_GATE_FAILURE_MESSAGE, is_final=True
+                    input.session_id, self.arbitration.gate_failure_message, is_final=True
                 )
                 return
 
@@ -257,7 +261,7 @@ class StellaV2Agent(BaseAgent):
             if arb_result.directive.short_circuit:
                 yield AgentOutput.text_chunk(
                     input.session_id,
-                    arb_result.directive.redirect_message or _DEFAULT_GATE_FAILURE_MESSAGE,
+                    arb_result.directive.redirect_message or self.arbitration.gate_failure_message,
                     is_final=True,
                 )
                 return
@@ -476,10 +480,18 @@ class StellaV2Agent(BaseAgent):
             full_state = await self.sm_client.get_full_state()
 
         # ── Analytics emissions ──
+        last_transition = None
         if full_state:
             current_state_id = full_state.get("current_state_id")
+            previous_state_id = self._last_post_response_state_id
 
-            # Analytics: state transition (if state changed during this turn)
+            # Build transition metadata if the state changed during this turn.
+            if current_state_id and current_state_id != previous_state_id:
+                last_transition = self._build_last_transition_metadata(
+                    previous_state_id, current_state_id
+                )
+
+            # Update tracker AFTER comparison so the next turn sees this turn's end state.
             self._last_post_response_state_id = current_state_id
 
             # Analytics: plan completion snapshot (emitted each turn for dashboard)
@@ -490,15 +502,6 @@ class StellaV2Agent(BaseAgent):
                 plan_reached_end=reached_end_state,
                 plan_id=full_state.get("plan_id"),
             )
-
-        # Build transition metadata if the state changed during this turn.
-        last_transition = None
-        if full_state:
-            current_state_id = full_state.get("current_state_id")
-            if current_state_id and current_state_id != self._last_post_response_state_id:
-                last_transition = self._build_last_transition_metadata(
-                    self._last_post_response_state_id, current_state_id
-                )
 
         # Emit final progress for this turn.
         if full_state:

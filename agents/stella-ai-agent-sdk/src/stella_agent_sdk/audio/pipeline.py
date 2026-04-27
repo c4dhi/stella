@@ -1068,6 +1068,22 @@ class AudioPipeline:
             while True:
                 # If we have a prefetched result, use it; otherwise wait for queue
                 if prefetch_task is not None:
+                    # Race the prefetch await against the stop signal. Otherwise an
+                    # in-flight synthesis blocks the worker while the transcript gate
+                    # stays closed, dropping user speech during barge-in.
+                    stop_waiter = asyncio.create_task(self._stop_speaking_event.wait())
+                    try:
+                        await asyncio.wait(
+                            {prefetch_task, stop_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        stop_waiter.cancel()
+                    if self._stop_speaking_event.is_set():
+                        prefetch_task.cancel()
+                        prefetch_task = None
+                        prefetch_source = None
+                        break
                     chunks = await prefetch_task
                     source = prefetch_source
                     prefetch_task = None

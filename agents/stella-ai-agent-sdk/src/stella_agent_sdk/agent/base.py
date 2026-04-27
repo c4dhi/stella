@@ -544,8 +544,14 @@ class BaseAgent(ABC):
                         break
                 event = latest_event
 
-                # Create AgentInput and route through process()
-                input_msg = AgentInput.text_input(self._session_id or "", event.text)
+                # Create AgentInput and route through process(). Forward the STT
+                # transcript_id as turn_id so audio-stage and agent-stage analytics
+                # events share a single key for downstream joins.
+                input_msg = AgentInput.text_input(
+                    self._session_id or "",
+                    event.text,
+                    turn_id=getattr(event, "transcript_id", None),
+                )
 
                 # Process and stream response
                 self._is_processing = True
