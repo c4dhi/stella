@@ -755,12 +755,11 @@ export interface EndNodeConfig {
  * Stored at: `metadata.plan_builder.canvas`
  *
  * Notes:
- * - `state_positions` and `end_node_position` are UI layout only.
+ * - `end_node_position` is UI layout only.
  * - `end_state_ids` marks states connected to the visual End node.
  * - `end_node_config` configures end-state runtime behavior (farewell, summary).
  */
 export interface PlanCanvasMetadata {
-  state_positions?: Record<string, PlanCanvasPosition> // Per-state canvas coordinates
   show_end_node?: boolean                               // Whether End node is visible
   end_node_position?: PlanCanvasPosition                // End node canvas coordinates
   end_state_ids?: string[]                              // State IDs connected to End node in UI
@@ -791,6 +790,7 @@ export interface PlanStartMetadata {
  * - `plan_builder.start`: start-node behavior metadata
  */
 export interface PlanMetadata {
+  nodePositions?: Record<string, PlanCanvasPosition>
   plan_builder?: {
     canvas?: PlanCanvasMetadata
     start?: PlanStartMetadata

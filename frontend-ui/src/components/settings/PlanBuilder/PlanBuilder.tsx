@@ -126,31 +126,42 @@ const createEmptyDeliverable = (): PlanDeliverable => ({
   required: true,
 })
 
+const parseNodePositions = (value: unknown): Record<string, PlanCanvasPosition> => {
+  const parsed: Record<string, PlanCanvasPosition> = {}
+  if (!value || typeof value !== 'object') return parsed
+
+  for (const [stateId, position] of Object.entries(value)) {
+    if (
+      position &&
+      typeof position === 'object' &&
+      typeof (position as { x?: unknown }).x === 'number' &&
+      typeof (position as { y?: unknown }).y === 'number'
+    ) {
+      parsed[stateId] = {
+        x: (position as { x: number }).x,
+        y: (position as { y: number }).y,
+      }
+    }
+  }
+
+  return parsed
+}
+
+const extractNodePositions = (metadata: PlanMetadata | undefined): Record<string, PlanCanvasPosition> =>
+  parseNodePositions(metadata?.nodePositions)
+
+const stripLegacyCanvasStatePositions = (canvas: unknown): Record<string, unknown> => {
+  if (!canvas || typeof canvas !== 'object') return {}
+  const { state_positions: _legacyStatePositions, ...rest } = canvas as Record<string, unknown>
+  return rest
+}
+
 const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMetadata => {
   const planBuilder = metadata?.plan_builder
   if (!planBuilder || typeof planBuilder !== 'object') return {}
 
   const canvas = planBuilder.canvas
   if (!canvas || typeof canvas !== 'object') return {}
-
-  const rawStatePositions = canvas.state_positions
-  const parsedStatePositions: Record<string, PlanCanvasPosition> = {}
-
-  if (rawStatePositions && typeof rawStatePositions === 'object') {
-    for (const [stateId, position] of Object.entries(rawStatePositions)) {
-      if (
-        position &&
-        typeof position === 'object' &&
-        typeof (position as { x?: unknown }).x === 'number' &&
-        typeof (position as { y?: unknown }).y === 'number'
-      ) {
-        parsedStatePositions[stateId] = {
-          x: (position as { x: number }).x,
-          y: (position as { y: number }).y,
-        }
-      }
-    }
-  }
 
   const rawEndStateIds = canvas.end_state_ids
   const parsedEndStateIds = Array.isArray(rawEndStateIds)
@@ -186,7 +197,6 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
       : undefined
 
   return {
-    state_positions: parsedStatePositions,
     show_end_node: canvas.show_end_node === true,
     end_node_position: parsedEndNodePosition,
     end_state_ids: parsedEndStateIds,
@@ -194,7 +204,6 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
   }
 }
 
-const hasMetadataContent = (metadata: PlanMetadata) => Object.keys(metadata).length > 0
 const extractSpawnMode = (metadata: PlanMetadata | undefined): AgentSpawnMode => {
   const mode = metadata?.plan_builder?.start?.agent_spawn_mode
   return mode === 'on_demand' ? 'on_demand' : 'immediate'
@@ -250,6 +259,199 @@ const isTransitionConditionIncomplete = (transition: StateTransition): boolean =
   return false
 }
 
+const getLayoutStateOrder = (states: PlanState[], initialStateId: string | null): string[] => {
+  if (states.length === 0) return []
+
+  const stateIds = new Set(states.map((state) => state.id))
+  const adjacency = new Map<string, string[]>()
+  const incomingCount = new Map<string, number>()
+
+  for (const state of states) {
+    incomingCount.set(state.id, 0)
+  }
+
+  for (const state of states) {
+    const targets = (state.transitions || [])
+      .map((transition) => transition.target_state_id)
+      .filter((targetId) => stateIds.has(targetId))
+
+    adjacency.set(state.id, targets)
+
+    for (const targetId of targets) {
+      incomingCount.set(targetId, (incomingCount.get(targetId) || 0) + 1)
+    }
+  }
+
+  const queue: string[] = []
+  const validInitial = initialStateId && stateIds.has(initialStateId) ? initialStateId : null
+  if (validInitial) {
+    queue.push(validInitial)
+  } else {
+    const noIncoming = states
+      .filter((state) => (incomingCount.get(state.id) || 0) === 0)
+      .map((state) => state.id)
+    queue.push(noIncoming[0] || states[0].id)
+  }
+
+  const ordered: string[] = []
+  const visited = new Set<string>()
+
+  while (queue.length > 0) {
+    const stateId = queue.shift()
+    if (!stateId || visited.has(stateId)) continue
+    visited.add(stateId)
+    ordered.push(stateId)
+
+    for (const targetId of adjacency.get(stateId) || []) {
+      if (!visited.has(targetId)) queue.push(targetId)
+    }
+  }
+
+  for (const state of states) {
+    if (!visited.has(state.id)) ordered.push(state.id)
+  }
+
+  return ordered
+}
+
+const buildAutoLayoutPositions = (
+  states: PlanState[],
+  initialStateId: string | null
+): Record<string, PlanCanvasPosition> => {
+  const orderedStateIds = getLayoutStateOrder(states, initialStateId)
+  return orderedStateIds.reduce<Record<string, PlanCanvasPosition>>((acc, stateId, index) => {
+    acc[stateId] = getDefaultStatePosition(index)
+    return acc
+  }, {})
+}
+
+const resolveStatePositions = (
+  states: PlanState[],
+  initialStateId: string | null,
+  explicitPositions: Record<string, PlanCanvasPosition>
+): Record<string, PlanCanvasPosition> => {
+  const autoPositions = buildAutoLayoutPositions(states, initialStateId)
+  return states.reduce<Record<string, PlanCanvasPosition>>((acc, state) => {
+    acc[state.id] = explicitPositions[state.id] || autoPositions[state.id] || getDefaultStatePosition(0)
+    return acc
+  }, {})
+}
+
+interface PlanImportValidationResult {
+  errors: string[]
+  warnings: string[]
+  resolvedInitialStateId: string | null
+}
+
+const validateImportedPlan = (
+  states: PlanState[],
+  initialStateId: string | null,
+  endStateIds: Set<string> = new Set()
+): PlanImportValidationResult => {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (states.length === 0) {
+    errors.push('Plan has no states.')
+    return { errors, warnings, resolvedInitialStateId: null }
+  }
+
+  const seenStateIds = new Set<string>()
+  for (const state of states) {
+    if (!state.id || typeof state.id !== 'string') {
+      errors.push('Every state must have a valid string id.')
+      continue
+    }
+    if (seenStateIds.has(state.id)) {
+      errors.push(`Duplicate state id "${state.id}".`)
+      continue
+    }
+    seenStateIds.add(state.id)
+  }
+
+  const resolvedInitialStateId =
+    initialStateId && seenStateIds.has(initialStateId) ? initialStateId : states[0]?.id || null
+
+  if (initialStateId && !seenStateIds.has(initialStateId)) {
+    warnings.push(`Initial state "${initialStateId}" was not found. Start was reset to "${resolvedInitialStateId}".`)
+  }
+
+  for (const endStateId of endStateIds) {
+    if (!seenStateIds.has(endStateId)) {
+      errors.push(`End node connection references missing state "${endStateId}".`)
+    }
+  }
+
+  const adjacency = new Map<string, string[]>()
+  const incomingCount = new Map<string, number>()
+  for (const state of states) incomingCount.set(state.id, 0)
+
+  for (const state of states) {
+    const transitions = state.transitions || []
+    if (!Array.isArray(transitions)) {
+      errors.push(`State "${state.id}" has an invalid transitions value.`)
+      continue
+    }
+    if (transitions.length === 0 && !endStateIds.has(state.id)) {
+      warnings.push(`State "${state.id}" has no outgoing transitions.`)
+    }
+
+    const targets: string[] = []
+    transitions.forEach((transition, index) => {
+      if (!transition || typeof transition !== 'object') {
+        errors.push(`State "${state.id}" has an invalid transition at index ${index}.`)
+        return
+      }
+      if (!transition.target_state_id || typeof transition.target_state_id !== 'string') {
+        errors.push(`State "${state.id}" has a transition missing "target_state_id" at index ${index}.`)
+        return
+      }
+      if (!transition.condition_type || typeof transition.condition_type !== 'string') {
+        errors.push(`State "${state.id}" has a transition missing "condition_type" at index ${index}.`)
+      }
+      if (!seenStateIds.has(transition.target_state_id)) {
+        errors.push(
+          `State "${state.id}" transitions to missing state "${transition.target_state_id}" at index ${index}.`
+        )
+        return
+      }
+      targets.push(transition.target_state_id)
+      incomingCount.set(
+        transition.target_state_id,
+        (incomingCount.get(transition.target_state_id) || 0) + 1
+      )
+    })
+    adjacency.set(state.id, targets)
+  }
+
+  const orphanStates = states
+    .map((state) => state.id)
+    .filter((stateId) => stateId !== resolvedInitialStateId && (incomingCount.get(stateId) || 0) === 0)
+  if (orphanStates.length > 0) {
+    warnings.push(`Orphaned state(s) with no incoming transitions: ${orphanStates.join(', ')}.`)
+  }
+
+  const reachable = new Set<string>()
+  const queue: string[] = resolvedInitialStateId ? [resolvedInitialStateId] : []
+  while (queue.length > 0) {
+    const stateId = queue.shift()
+    if (!stateId || reachable.has(stateId)) continue
+    reachable.add(stateId)
+    for (const targetId of adjacency.get(stateId) || []) {
+      if (!reachable.has(targetId)) queue.push(targetId)
+    }
+  }
+
+  const unreachableStates = states
+    .map((state) => state.id)
+    .filter((stateId) => !reachable.has(stateId))
+  if (unreachableStates.length > 0) {
+    warnings.push(`Unreachable state(s) from start: ${unreachableStates.join(', ')}.`)
+  }
+
+  return { errors, warnings, resolvedInitialStateId }
+}
+
 export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
@@ -302,8 +504,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     })
   }
 
+  const updateNodePositions = (
+    updater: (current: Record<string, PlanCanvasPosition>) => Record<string, PlanCanvasPosition>
+  ) => {
+    setMetadata((prev) => ({
+      ...prev,
+      nodePositions: updater(extractNodePositions(prev)),
+    }))
+  }
+
   const canvasMetadata = extractCanvasMetadata(metadata)
-  const statePositions = canvasMetadata.state_positions || {}
+  const statePositions = extractNodePositions(metadata)
+  const resolvedStatePositions = useMemo(
+    () => resolveStatePositions(states, initialStateId, statePositions),
+    [states, initialStateId, statePositions]
+  )
   const showEndNode = canvasMetadata.show_end_node === true
   const endNodePosition = canvasMetadata.end_node_position
   const endNodeConfig: EndNodeConfig = canvasMetadata.end_node_config || {}
@@ -362,25 +577,22 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     states: states.map((state) => normalizeTransitionsForStateType(state)),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
     ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
-    ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'
-      ? {
-          metadata: {
-            ...metadata,
-            plan_builder: {
-              ...(metadata.plan_builder || {}),
-              start: {
-                ...(metadata.plan_builder?.start || {}),
-                agent_spawn_mode: agentSpawnMode,
-              },
-              canvas: {
-                ...(metadata.plan_builder?.canvas || {}),
-                ...canvasMetadata,
-                end_state_ids: endTransitionStateIds,
-              },
-            },
-          },
-        }
-      : {}),
+    metadata: {
+      ...metadata,
+      nodePositions: resolvedStatePositions,
+      plan_builder: {
+        ...(metadata.plan_builder || {}),
+        start: {
+          ...(metadata.plan_builder?.start || {}),
+          agent_spawn_mode: agentSpawnMode,
+        },
+        canvas: {
+          ...stripLegacyCanvasStatePositions(metadata.plan_builder?.canvas),
+          ...canvasMetadata,
+          end_state_ids: endTransitionStateIds,
+        },
+      },
+    },
     ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
   })
 
@@ -394,12 +606,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStartNode(false)
     setInitialStateId((current) => current || newState.id)
 
-    updateCanvasMetadata((current) => ({
+    updateNodePositions((current) => ({
       ...current,
-      state_positions: {
-        ...(current.state_positions || {}),
-        [newState.id]: getDefaultStatePosition(newIndex),
-      },
+      [newState.id]: getDefaultStatePosition(newIndex),
     }))
 
     setAutoFitKey((prev) => prev + 1)
@@ -434,15 +643,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       setSelectedStateIndex(selectedStateIndex - 1)
     }
 
-    updateCanvasMetadata((current) => {
-      const nextPositions = { ...(current.state_positions || {}) }
+    updateNodePositions((current) => {
+      const nextPositions = { ...current }
       delete nextPositions[stateToDelete.id]
-      return {
-        ...current,
-        state_positions: nextPositions,
-        end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== stateToDelete.id),
-      }
+      return nextPositions
     })
+    updateCanvasMetadata((current) => ({
+      ...current,
+      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== stateToDelete.id),
+    }))
 
     setSelectedTransition((current) => {
       if (!current) return current
@@ -648,12 +857,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleStatePositionChange = (stateId: string, position: PlanCanvasPosition) => {
-    updateCanvasMetadata((current) => ({
+    updateNodePositions((current) => ({
       ...current,
-      state_positions: {
-        ...(current.state_positions || {}),
-        [stateId]: position,
-      },
+      [stateId]: position,
     }))
     markChanged()
   }
@@ -693,17 +899,65 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           normalizePlanStates(content.states as PlanStateWithLegacyType[]),
           importedMetadata,
         )
+        const importedCanvasMetadata = extractCanvasMetadata(importedMetadata)
+        const importedEndStateIdSet = new Set(importedCanvasMetadata.end_state_ids || [])
+        const importInitialStateId = content.initial_state_id || normalizedStates[0]?.id || null
+        const validation = validateImportedPlan(
+          normalizedStates,
+          importInitialStateId,
+          importedEndStateIdSet
+        )
+        if (validation.errors.length > 0) {
+          addToast({ message: validation.errors[0], type: 'error' })
+          if (validation.errors.length > 1) {
+            addToast({
+              message: `Import failed with ${validation.errors.length} validation errors.`,
+              type: 'error',
+            })
+          }
+          return
+        }
+
+        const importedPositions = extractNodePositions(importedMetadata)
+        const hadExplicitPositions = Object.keys(importedPositions).length > 0
+        const nextStatePositions = resolveStatePositions(
+          normalizedStates,
+          validation.resolvedInitialStateId,
+          importedPositions
+        )
+        const nextMetadata: PlanMetadata = {
+          ...importedMetadata,
+          nodePositions: nextStatePositions,
+          plan_builder: {
+            ...(importedMetadata.plan_builder || {}),
+            canvas: {
+              ...stripLegacyCanvasStatePositions(importedMetadata.plan_builder?.canvas),
+              ...importedCanvasMetadata,
+            },
+          },
+        }
+
+
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
         setSelectedTransition(null)
         setSelectedStartNode(false)
-        setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
+        setInitialStateId(validation.resolvedInitialStateId)
         setSystemPrompt(content.system_prompt || '')
         setSessionContext(content.session_context || { fields: [] })
         setAgentSpawnMode(extractSpawnMode(importedMetadata))
-        setMetadata(importedMetadata)
+        setMetadata(nextMetadata)
         setAutoFitKey((prev) => prev + 1)
 
+        if (!hadExplicitPositions) {
+          addToast({ message: 'No node positions found. Auto-layout applied.', type: 'info' })
+        }
+        if (validation.warnings.length > 0) {
+          addToast({
+            message: `Imported with ${validation.warnings.length} warning(s): ${validation.warnings[0]}`,
+            type: 'info',
+          })
+        }
         markChanged()
         addToast({ message: 'Plan imported successfully', type: 'success' })
       } catch {
@@ -1021,7 +1275,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   selectedStartNode={selectedStartNode}
                   selectedEndNode={selectedEndNode}
                   selectedTransition={selectedTransition}
-                  statePositions={statePositions}
+                  statePositions={resolvedStatePositions}
                   endNodePosition={endNodePosition}
                   showEndNode={showEndNode}
                   autoFitKey={autoFitKey}
