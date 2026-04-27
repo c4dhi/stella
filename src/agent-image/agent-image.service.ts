@@ -109,13 +109,17 @@ export class AgentImageService {
     // Surface containerd reachability at boot so a stale-socket scenario fails loud,
     // not silently the first time a user tries to create an agent.
     if (this.isProduction) {
-      this.checkContainerdHealth().then((result) => {
-        if (result.ok) {
-          this.logger.log('Containerd reachable at startup');
-        } else {
-          this.logger.error(`Containerd unreachable at startup: ${result.error}`);
-        }
-      });
+      this.checkContainerdHealth()
+        .then((result) => {
+          if (result.ok) {
+            this.logger.log('Containerd reachable at startup');
+          } else {
+            this.logger.error(`Containerd unreachable at startup: ${result.error}`);
+          }
+        })
+        .catch((err) => {
+          this.logger.error(`Containerd boot check threw: ${(err as Error).message?.trim()}`);
+        });
     }
   }
 

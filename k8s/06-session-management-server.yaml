@@ -162,11 +162,13 @@ spec:
           mountPath: /var/run/docker.sock
         # K3s containerd socket: mount the parent directory (not the socket file)
         # so the pod transparently picks up a recreated socket if k3s restarts.
-        - name: k3s-containerd-dir
-          mountPath: /run/k3s/containerd
-        - name: k3s-binary
-          mountPath: /usr/local/bin/k3s
-          readOnly: true
+        # The "# K3S: " prefix is stripped by scripts/lib/deploy.sh on k3s targets
+        # and removed entirely on non-k3s targets.
+        # K3S: - name: k3s-containerd-dir
+        # K3S:   mountPath: /run/k3s/containerd
+        # K3S: - name: k3s-binary
+        # K3S:   mountPath: /usr/local/bin/k3s
+        # K3S:   readOnly: true
         # Mount project directory for agent source code (path set dynamically by deploy script)
         - name: project-dir
           mountPath: /workspace/stella-backend
@@ -209,14 +211,14 @@ spec:
         hostPath:
           path: /var/run/docker.sock
           type: Socket
-      - name: k3s-containerd-dir
-        hostPath:
-          path: /run/k3s/containerd
-          type: Directory
-      - name: k3s-binary
-        hostPath:
-          path: /usr/local/bin/k3s
-          type: File
+      # K3S: - name: k3s-containerd-dir
+      # K3S:   hostPath:
+      # K3S:     path: /run/k3s/containerd
+      # K3S:     type: Directory
+      # K3S: - name: k3s-binary
+      # K3S:   hostPath:
+      # K3S:     path: /usr/local/bin/k3s
+      # K3S:     type: File
       # Project directory containing agent source code (path replaced dynamically by deploy script)
       - name: project-dir
         hostPath:
