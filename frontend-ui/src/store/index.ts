@@ -14,6 +14,7 @@ import type {
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 import { apiClient } from '../services/ApiClient'
 import { PeerTransport } from '../services/PeerTransport'
+import { progressUpdateToTodoList } from '../lib/progressConversion'
 
 type ConnectionState = {
   status: 'idle' | 'connecting' | 'connected' | 'error'
@@ -415,7 +416,7 @@ export const useStore = create<
     })
 
     try {
-      const result = await apiClient.getSessionMessages(sessionId, { limit: 50 })
+      const result = await apiClient.getSessionMessages(sessionId, { limit: 200, includeDebug: true })
 
       // If no messages returned, stop pagination
       const hasMore = result.messages.length > 0 ? result.hasMore : false
@@ -446,7 +447,8 @@ export const useStore = create<
     try {
       const result = await apiClient.getSessionMessages(sessionId, {
         cursor: historyCursor,
-        limit: 50,
+        limit: 200,
+        includeDebug: true,
       })
 
       // If no messages returned, stop pagination
@@ -841,17 +843,40 @@ export const useStore = create<
 
   // Task timeline actions for time machine feature
   buildTaskUpdateTimeline: (messages) => {
-    // Extract all task update messages and build chronological timeline
+    // Extract all task update messages and build chronological timeline.
+    // Handles both stella-v1 (complete_todo_list) and stella-v2 (progress_update) formats.
     const taskUpdates = messages
       .filter(msg => {
+        if (!msg.metadata) return false
         const envelope = msg.metadata?.envelope
-        return envelope?.type === 'complete_todo_list'
+        if (envelope?.type === 'complete_todo_list') return true
+        if (envelope?.type === 'progress_update') return true
+        if (msg.messageType === 'progress_update') return true
+        if (msg.messageType === 'complete_todo_list') return true
+        return false
       })
       .map(msg => {
-        const envelope = msg.metadata.envelope
+        const envelope = msg.metadata.envelope || { type: msg.messageType, data: msg.metadata }
         const data = envelope.data || envelope
+
+        const envelopeTs = typeof data.timestamp === 'string' ? data.timestamp
+          : typeof envelope.timestamp === 'string' ? envelope.timestamp
+          : null
+        const ts = envelopeTs ? new Date(envelopeTs).getTime() : new Date(msg.timestamp).getTime()
+        const timestamp = isNaN(ts) ? new Date(msg.timestamp).getTime() : ts
+
+        if (envelope.type === 'progress_update') {
+          return {
+            timestamp,
+            messageId: msg.id,
+            agentId: msg.metadata.participant_id || data.metadata?.agent_id || 'unknown',
+            agentName: data.metadata?.agent_name,
+            todoList: progressUpdateToTodoList(data),
+          }
+        }
+
         return {
-          timestamp: new Date(msg.timestamp).getTime(),
+          timestamp,
           messageId: msg.id,
           agentId: envelope.participant_id || data.participant_id || 'unknown',
           agentName: msg.metadata?.participant_name,
