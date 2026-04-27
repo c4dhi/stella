@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as k8s from '@kubernetes/client-node';
 import { AgentImageService } from '../agent-image/agent-image.service';
-import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 import { buildPodEnvVars, buildSecretStringData } from './utils/agent-config-injection.util';
 import {
   clampCpuLimit,
@@ -15,20 +14,19 @@ export interface AgentPodConfig {
   agentId: string;
   sessionId: string;
   projectId: string;
-  userId: string;           // User ID for env var template access validation
   agentName: string;
   agentIcon: string;
   roomName: string;
   livekitUrl: string;
   livekitApiKey: string;
   livekitApiSecret: string;
-  // API keys (OPENAI_API_KEY, etc.) provided via envVarTemplateId
   ttsProvider: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
   agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
-  envVarTemplateId?: string; // Optional env var template for custom environment variables
-  envVars?: Record<string, string>;  // Additional env vars to merge with/override template values
+  // Pre-resolved env vars: template vars decrypted and merged with manual overrides by the caller.
+  // KubernetesService receives the final map and spreads it directly into the K8s Secret.
+  resolvedEnvVars: Record<string, string>;
   resourceCpuLimit?: string;    // CPU limit from AgentType (e.g., "2000m") - falls back to default
   resourceMemoryLimit?: string; // Memory limit from AgentType (e.g., "2Gi") - falls back to default
 }
@@ -47,7 +45,6 @@ export class KubernetesService {
   constructor(
     private configService: ConfigService,
     private agentImageService: AgentImageService,
-    private envVarTemplatesService: EnvVarTemplatesService,
   ) {
     this.namespace = this.configService.get<string>('KUBERNETES_NAMESPACE', 'default');
     this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'stella-agent');
@@ -248,29 +245,8 @@ export class KubernetesService {
   }
 
   private async createSecret(secretName: string, config: AgentPodConfig): Promise<void> {
-    // Fetch custom env vars from template if specified
-    let customEnvVars: Record<string, string> = {};
-    if (config.envVarTemplateId && config.userId) {
-      try {
-        this.logger.log(`Fetching env var template ${config.envVarTemplateId} for user ${config.userId}`);
-        customEnvVars = await this.envVarTemplatesService.getDecryptedVariables(
-          config.envVarTemplateId,
-          config.userId,
-        );
-        this.logger.log(`Loaded ${Object.keys(customEnvVars).length} custom environment variables from template`);
-      } catch (error) {
-        this.logger.error(`Failed to load env var template: ${error.message}`);
-        throw error;
-      }
-    }
-
-    // Merge/override with additional env vars from the request
-    // This allows users to add new vars or override template values
-    if (config.envVars && Object.keys(config.envVars).length > 0) {
-      this.logger.log(`Merging ${Object.keys(config.envVars).length} additional env vars (will override template values)`);
-      customEnvVars = { ...customEnvVars, ...config.envVars };
-    }
-
+    // resolvedEnvVars is pre-merged by the caller (AgentsService) via EnvVarTemplatesService.resolveEnvVars().
+    // KubernetesService has no knowledge of templates or encryption — it just spreads the final map.
     const secret: k8s.V1Secret = {
       metadata: {
         name: secretName,
@@ -290,13 +266,13 @@ export class KubernetesService {
         roomName: config.roomName,
         ttsProvider: config.ttsProvider,
         agentConfig: config.agentConfig || {},
-        customEnvVars,
+        customEnvVars: config.resolvedEnvVars,
       }),
     };
 
     try {
       await this.k8sApi.createNamespacedSecret({ namespace: this.namespace, body: secret });
-      this.logger.log(`Created secret ${secretName} in namespace ${this.namespace}`);
+      this.logger.log(`Created secret ${secretName} with ${Object.keys(config.resolvedEnvVars).length} custom env vars`);
     } catch (error) {
       this.logger.error(`Failed to create secret: ${error.message}`);
       throw error;

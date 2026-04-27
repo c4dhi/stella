@@ -9,7 +9,12 @@ import { SessionsService } from '../sessions/sessions.service';
 import { AgentsService } from '../agents/agents.service';
 import { InvitationsService } from '../invitations/invitations.service';
 import { AgentStatus } from '@prisma/client';
-import { PublicProjectInfoDto, JoinPublicProjectResponseDto, StartJoinPublicProjectResponseDto, JoinProgressDto } from './dto/public-project-info.dto';
+import {
+  PublicProjectInfoDto,
+  JoinPublicProjectResponseDto,
+  StartJoinPublicProjectResponseDto,
+  JoinProgressDto,
+} from './dto/public-project-info.dto';
 
 // In-memory progress state
 interface ProgressState {
@@ -58,8 +63,16 @@ export class PublicProjectsService {
     }
   }
 
-  private updateProgress(sessionId: string, step: number, status: ProgressState['status'], message: string, extra: Partial<ProgressState> = {}): void {
-    this.logger.log(`[${sessionId}] Progress: step=${step}, status=${status}, message=${message}`);
+  private updateProgress(
+    sessionId: string,
+    step: number,
+    status: ProgressState['status'],
+    message: string,
+    extra: Partial<ProgressState> = {},
+  ): void {
+    this.logger.log(
+      `[${sessionId}] Progress: step=${step}, status=${status}, message=${message}`,
+    );
     this.progressMap.set(sessionId, {
       step,
       status,
@@ -69,55 +82,25 @@ export class PublicProjectsService {
     });
   }
 
-  /**
-   * Build the runtime agent config from persisted public project settings.
-   * Backward compatibility:
-   * - `plan` (legacy) is still supported.
-   * - `config` (full runtime payload) is supported.
-   * - `pipelineConfig` maps to SDK key `pipeline_config`.
-   */
-  private buildRuntimeAgentConfig(agentConfig: PublicAgentConfig | null): Record<string, unknown> {
-    const runtimeConfig: Record<string, unknown> = {};
-
-    if (agentConfig?.config && typeof agentConfig.config === 'object' && !Array.isArray(agentConfig.config)) {
-      Object.assign(runtimeConfig, JSON.parse(JSON.stringify(agentConfig.config)));
-    }
-
-    if (agentConfig?.plan && typeof agentConfig.plan === 'object') {
-      runtimeConfig.plan = agentConfig.plan;
-    }
-
-    if (agentConfig?.pipelineConfig && typeof agentConfig.pipelineConfig === 'object') {
-      runtimeConfig.pipeline_config = agentConfig.pipelineConfig;
-    }
-
-    return runtimeConfig;
-  }
-
-  /**
-   * Validate required runtime config for specific agent types before deployment.
-   */
-  private validateRuntimeConfigForAgentType(
-    agentTypeSlug: string | null | undefined,
-    runtimeConfig: Record<string, unknown>,
-  ): void {
-    if (agentTypeSlug !== 'stella-v2-agent') {
-      return;
-    }
-
-    const pipelineConfig = runtimeConfig.pipeline_config;
-    if (!pipelineConfig || typeof pipelineConfig !== 'object' || Array.isArray(pipelineConfig)) {
-      throw new BadRequestException(
-        'Public STELLA V2 sessions require a pipeline configuration. Please set agentConfig.pipelineConfig before starting the session.',
-      );
-    }
+  private buildRuntimeAgentConfig(
+    agentConfig: PublicAgentConfig | null,
+  ): Record<string, unknown> {
+    return {
+      ...(agentConfig?.config || {}),
+      ...(agentConfig?.plan ? { plan: agentConfig.plan } : {}),
+      ...(agentConfig?.pipelineConfig
+        ? { pipeline_config: agentConfig.pipelineConfig }
+        : {}),
+    };
   }
 
   /**
    * Get public project info by token
    * Returns display info for the waiting screen
    */
-  async getPublicProjectInfo(publicToken: string): Promise<PublicProjectInfoDto> {
+  async getPublicProjectInfo(
+    publicToken: string,
+  ): Promise<PublicProjectInfoDto> {
     const project = await this.prisma.project.findUnique({
       where: { publicToken },
       include: {
@@ -152,7 +135,8 @@ export class PublicProjectsService {
     return {
       projectName: project.name,
       agentName: agentConfig?.name || project.publicAgentType?.name || 'Agent',
-      agentIcon: agentConfig?.icon || project.publicAgentType?.icon || undefined,
+      agentIcon:
+        agentConfig?.icon || project.publicAgentType?.icon || undefined,
       visualizerType: project.publicVisualizerType || undefined,
       visualizerLocked: project.publicVisualizerLocked,
       isExpired,
@@ -166,7 +150,9 @@ export class PublicProjectsService {
    * waits for the agent to be ready, creates an invitation,
    * and returns the invitation token for redirect
    */
-  async joinPublicProject(publicToken: string): Promise<JoinPublicProjectResponseDto> {
+  async joinPublicProject(
+    publicToken: string,
+  ): Promise<JoinPublicProjectResponseDto> {
     // 1. Validate public project configuration
     const project = await this.prisma.project.findUnique({
       where: { publicToken },
@@ -188,7 +174,9 @@ export class PublicProjectsService {
     }
 
     if (!project.publicEnabled) {
-      throw new BadRequestException('This public project is currently disabled');
+      throw new BadRequestException(
+        'This public project is currently disabled',
+      );
     }
 
     // Check expiration
@@ -209,8 +197,6 @@ export class PublicProjectsService {
 
     // Get agent config from JSON
     const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
-    const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
-    this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
 
     // 2. Create a new session
     const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
@@ -218,16 +204,20 @@ export class PublicProjectsService {
       name: sessionName,
     });
 
-    this.logger.log(`Created session ${session.id} for public project ${project.id}`);
+    this.logger.log(
+      `Created session ${session.id} for public project ${project.id}`,
+    );
 
-    // 3. Deploy the agent with pre-configured settings
+    // 3. Deploy the agent with pre-configured settings.
+    // Config normalization (plan/pipelineConfig → runtime shape) and type validation
+    // are now handled inside AgentsService.create(), so we pass the raw fields directly.
     const agent = await this.agentsService.create(
       session.id,
       {
         name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
         icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
         agentType: project.publicAgentType?.slug || 'stella-agent',
-        config: runtimeConfig,
+        config: this.buildRuntimeAgentConfig(agentConfig),
         envVarTemplateId: agentConfig?.envVarTemplateId,
         envVars: agentConfig?.envVars,
       },
@@ -253,7 +243,9 @@ export class PublicProjectsService {
       // Auto-generated name
     });
 
-    this.logger.log(`Created invitation ${invitation.id} for session ${session.id}`);
+    this.logger.log(
+      `Created invitation ${invitation.id} for session ${session.id}`,
+    );
 
     return {
       invitationToken: invitation.token,
@@ -268,7 +260,9 @@ export class PublicProjectsService {
    *
    * Uses on_demand mode: agent is spawned via webhook when human joins LiveKit room.
    */
-  async startJoinPublicProject(publicToken: string): Promise<StartJoinPublicProjectResponseDto> {
+  async startJoinPublicProject(
+    publicToken: string,
+  ): Promise<StartJoinPublicProjectResponseDto> {
     const project = await this.validatePublicProject(publicToken);
 
     const ownerId = project.memberships[0]?.userId;
@@ -278,17 +272,15 @@ export class PublicProjectsService {
 
     // Get agent config for storing
     const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
-    const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
-    this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
 
-    // Prepare lastAgentConfig for on_demand spawning
-    // Cast to Prisma InputJsonValue for JSON field storage
+    // Prepare lastAgentConfig for on_demand webhook-driven spawning.
+    // Config is normalized inline (plan/pipelineConfig → runtime shape).
+    // Type validation runs in AgentsService.create() when the agent is eventually spawned.
     const lastAgentConfig = {
       name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
       icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
       agentType: project.publicAgentType?.slug || 'stella-agent',
-      // Persist a plain JSON object for webhook-driven on_demand spawning.
-      agentConfig: JSON.parse(JSON.stringify(runtimeConfig)),
+      agentConfig: this.buildRuntimeAgentConfig(agentConfig),
       envVarTemplateId: agentConfig?.envVarTemplateId || null,
       envVars: agentConfig?.envVars || {},
     };
@@ -297,7 +289,7 @@ export class PublicProjectsService {
     const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
     const session = await this.sessionsService.create(project.id, {
       name: sessionName,
-      agentSpawnMode: 'on_demand',  // Agent spawned via webhook when human joins
+      agentSpawnMode: 'on_demand', // Agent spawned via webhook when human joins
     });
 
     // Store agent config for later spawning (cast to satisfy Prisma's JsonValue type)
@@ -306,13 +298,15 @@ export class PublicProjectsService {
       data: { lastAgentConfig: lastAgentConfig as any },
     });
 
-    this.logger.log(`Created on_demand session ${session.id} for public project ${project.id}`);
+    this.logger.log(
+      `Created on_demand session ${session.id} for public project ${project.id}`,
+    );
 
     // Initialize progress
     this.updateProgress(session.id, 1, 'in_progress', 'Session created');
 
     // Run join process async (fire and forget)
-    this.runJoinProcess(project, session.id, ownerId).catch(err => {
+    this.runJoinProcess(project, session.id, ownerId).catch((err) => {
       this.logger.error(`Join failed: ${err.message}`);
     });
 
@@ -325,7 +319,12 @@ export class PublicProjectsService {
   getJoinProgress(sessionId: string): JoinProgressDto {
     const state = this.progressMap.get(sessionId);
     if (!state) {
-      return { step: 0, totalSteps: 5, status: 'in_progress', message: 'Initializing...' };
+      return {
+        step: 0,
+        totalSteps: 5,
+        status: 'in_progress',
+        message: 'Initializing...',
+      };
     }
     return {
       step: state.step,
@@ -344,7 +343,11 @@ export class PublicProjectsService {
    * For on_demand sessions: Skip agent deployment, just create invitation.
    * Agent will be spawned via webhook when human joins the LiveKit room.
    */
-  private async runJoinProcess(project: any, sessionId: string, ownerId: string): Promise<void> {
+  private async runJoinProcess(
+    project: any,
+    sessionId: string,
+    ownerId: string,
+  ): Promise<void> {
     try {
       // Check session spawn mode
       const session = await this.prisma.session.findUnique({
@@ -357,15 +360,20 @@ export class PublicProjectsService {
       if (isOnDemand) {
         // On-demand mode: Skip agent deployment, just create invitation
         // Agent will be spawned via webhook when human joins LiveKit room
-        this.updateProgress(sessionId, 2, 'in_progress', 'Preparing session...');
+        this.updateProgress(
+          sessionId,
+          2,
+          'in_progress',
+          'Preparing session...',
+        );
 
         // Brief delay to simulate progress
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 500));
 
         this.updateProgress(sessionId, 3, 'in_progress', 'Setting up room...');
 
         // Brief delay
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 500));
 
         // Step 4: Create invitation
         this.updateProgress(sessionId, 4, 'in_progress', 'Creating session...');
@@ -379,13 +387,14 @@ export class PublicProjectsService {
           invitationToken: invitation.token,
         });
 
-        this.logger.log(`On-demand session ${sessionId} ready - agent will spawn when user joins`);
-
+        this.logger.log(
+          `On-demand session ${sessionId} ready - agent will spawn when user joins`,
+        );
       } else {
-        // Immediate mode: Deploy agent now (legacy behavior)
-        const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
-        const runtimeConfig = this.buildRuntimeAgentConfig(agentConfig);
-        this.validateRuntimeConfigForAgentType(project.publicAgentType?.slug, runtimeConfig);
+        // Immediate mode: Deploy agent now (legacy behavior).
+        // AgentsService.create() handles config validation and env var resolution.
+        const agentConfig =
+          project.publicAgentConfig as PublicAgentConfig | null;
 
         // Step 2: Deploy agent
         this.updateProgress(sessionId, 2, 'in_progress', 'Deploying agent...');
@@ -395,7 +404,7 @@ export class PublicProjectsService {
             name: agentConfig?.name || project.publicAgentType?.name || 'Agent',
             icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
             agentType: project.publicAgentType?.slug || 'stella-agent',
-            config: runtimeConfig,
+            config: this.buildRuntimeAgentConfig(agentConfig),
             envVarTemplateId: agentConfig?.envVarTemplateId,
             envVars: agentConfig?.envVars,
           },
@@ -403,15 +412,25 @@ export class PublicProjectsService {
         );
 
         // Step 3: Wait for agent
-        this.updateProgress(sessionId, 3, 'in_progress', 'Starting agent...', { agentId: agent.id });
+        this.updateProgress(sessionId, 3, 'in_progress', 'Starting agent...', {
+          agentId: agent.id,
+        });
         const ready = await this.pollAgentReady(agent.id);
         if (!ready.success) {
-          this.updateProgress(sessionId, 3, 'failed', 'Agent failed to start', { error: ready.error });
+          this.updateProgress(sessionId, 3, 'failed', 'Agent failed to start', {
+            error: ready.error,
+          });
           return;
         }
 
         // Step 4: Create invitation
-        this.updateProgress(sessionId, 4, 'in_progress', 'Creating session...', { agentId: agent.id });
+        this.updateProgress(
+          sessionId,
+          4,
+          'in_progress',
+          'Creating session...',
+          { agentId: agent.id },
+        );
         const { invitation } = await this.invitationsService.create(sessionId, {
           visualizerType: project.publicVisualizerType || undefined,
           visualizerLocked: project.publicVisualizerLocked,
@@ -423,19 +442,25 @@ export class PublicProjectsService {
           invitationToken: invitation.token,
         });
       }
-
     } catch (error) {
-      this.updateProgress(sessionId, 0, 'failed', 'Failed', { error: error.message });
+      this.updateProgress(sessionId, 0, 'failed', 'Failed', {
+        error: error.message,
+      });
     }
   }
 
   /**
    * Wait for agent to be ready (blocking) - used by deprecated join endpoint
    */
-  private async waitForAgentReady(agentId: string, sessionId: string): Promise<boolean> {
+  private async waitForAgentReady(
+    agentId: string,
+    sessionId: string,
+  ): Promise<boolean> {
     const result = await this.pollAgentReady(agentId);
     if (!result.success) {
-      this.logger.error(`Agent ${agentId} failed to start for session ${sessionId}: ${result.error}`);
+      this.logger.error(
+        `Agent ${agentId} failed to start for session ${sessionId}: ${result.error}`,
+      );
     }
     return result.success;
   }
@@ -443,7 +468,10 @@ export class PublicProjectsService {
   /**
    * Poll for agent to become RUNNING
    */
-  private async pollAgentReady(agentId: string, maxWaitMs = 120000): Promise<{ success: boolean; error?: string }> {
+  private async pollAgentReady(
+    agentId: string,
+    maxWaitMs = 120000,
+  ): Promise<{ success: boolean; error?: string }> {
     const start = Date.now();
     while (Date.now() - start < maxWaitMs) {
       const agent = await this.prisma.agentInstance.findUnique({
@@ -453,10 +481,12 @@ export class PublicProjectsService {
 
       if (!agent) return { success: false, error: 'Agent not found' };
       if (agent.status === AgentStatus.RUNNING) return { success: true };
-      if (agent.status === AgentStatus.FAILED) return { success: false, error: agent.lastError || 'Failed' };
-      if (agent.status === AgentStatus.STOPPED) return { success: false, error: 'Stopped' };
+      if (agent.status === AgentStatus.FAILED)
+        return { success: false, error: agent.lastError || 'Failed' };
+      if (agent.status === AgentStatus.STOPPED)
+        return { success: false, error: 'Stopped' };
 
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     }
     return { success: false, error: 'Timeout' };
   }
@@ -485,7 +515,9 @@ export class PublicProjectsService {
     }
 
     if (!project.publicEnabled) {
-      throw new BadRequestException('This public project is currently disabled');
+      throw new BadRequestException(
+        'This public project is currently disabled',
+      );
     }
 
     // Check expiration
@@ -500,5 +532,4 @@ export class PublicProjectsService {
 
     return project;
   }
-
 }

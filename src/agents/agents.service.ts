@@ -20,6 +20,7 @@ import {
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 import { EncryptionService } from '../env-var-templates/encryption.service';
+import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 
 /**
  * AgentsService - Manages agent lifecycle.
@@ -37,8 +38,10 @@ export class AgentsService {
     private prisma: PrismaService,
     private k8s: KubernetesService,
     private configService: ConfigService,
-    // Reuse the existing encryption service to avoid storing manual env vars as plaintext.
+    // Used for encrypting manual env vars at persist time and decrypting them on restart.
     private readonly encryptionService: EncryptionService,
+    // Used for resolving env vars (template decrypt + manual merge) before K8s pod creation.
+    private readonly envVarTemplatesService: EnvVarTemplatesService,
     private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
@@ -78,40 +81,41 @@ export class AgentsService {
   }
 
   /**
-   * Encrypt manually entered env vars before persisting them on the agent record.
-   * Returns null when no manual values were provided.
-   */
-  private encryptManualEnvVarsForStorage(envVars?: Record<string, string>): string | null {
-    // Only persist non-empty maps so we do not store noise or placeholder objects.
-    if (!envVars || Object.keys(envVars).length === 0) {
-      return null;
-    }
-    try {
-      return this.encryptionService.encrypt(envVars);
-    } catch (error) {
-      this.logger.error(`Failed to encrypt manual env vars for storage: ${error.message}`);
-      throw new BadRequestException('Unable to store manual environment variables');
-    }
-  }
-
-  /**
-   * Decrypt persisted manual env vars so restart can recreate the same secret values.
-   */
-  private decryptManualEnvVarsForRestart(encryptedEnvVars: string, agentId: string): Record<string, string> {
-    try {
-      return this.encryptionService.decrypt(encryptedEnvVars);
-    } catch (error) {
-      this.logger.error(`Failed to decrypt manual env vars for agent ${agentId}: ${error.message}`);
-      throw new BadRequestException('Unable to restore manual environment variables for restart');
-    }
-  }
-
-  /**
    * Security: Sanitize agent config to prevent injection attacks.
    * Delegates to shared utility in common/utils/sanitize-config.ts
    */
   private sanitizeAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
     return sanitizeAgentConfig(config);
+  }
+
+  /**
+   * Validate that the agent config satisfies requirements for the given agent type.
+   * Called on every create() path so no entry point can skip type-specific validation.
+   *
+   * Currently enforced: stella-v2-agent requires a pipeline_config object.
+   */
+  private validateRuntimeConfigForAgentType(
+    agentTypeSlug: string,
+    runtimeConfig: Record<string, unknown>,
+  ): void {
+    if (agentTypeSlug !== 'stella-v2-agent') return;
+
+    const pipelineConfig = runtimeConfig.pipeline_config;
+    if (!pipelineConfig || typeof pipelineConfig !== 'object' || Array.isArray(pipelineConfig)) {
+      throw new BadRequestException(
+        'stella-v2-agent requires a pipeline configuration (config.pipeline_config).',
+      );
+    }
+  }
+
+  private encryptManualEnvVarsForStorage(
+    manualVars?: Record<string, string>,
+  ): string | null {
+    if (!manualVars || Object.keys(manualVars).length === 0) {
+      return null;
+    }
+
+    return this.encryptionService.encrypt(manualVars);
   }
 
   /**
@@ -281,7 +285,13 @@ export class AgentsService {
 
     // Security: Validate and sanitize agent config
     const agentConfig = this.sanitizeAgentConfig(createAgentDto.config || {});
-    // Persist manual env vars encrypted so restart can reapply them without asking user again.
+
+    // Validate type-specific config requirements for ALL creation paths.
+    // (Previously this only ran for public-project flows in PublicProjectsService.)
+    this.validateRuntimeConfigForAgentType(agentType, agentConfig);
+
+    // Encrypt manual env vars now so they are persisted before the async pod creation.
+    // This guarantees restart() can recover them even if the pod creation fails.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // 1. Create agent record (status=STARTING, no podName yet)
@@ -352,12 +362,20 @@ export class AgentsService {
         throw new Error('Missing LIVEKIT_API_KEY or LIVEKIT_API_SECRET');
       }
 
+      // Resolve env vars once here, before touching K8s.
+      // Decrypts the template (if any), merges manual overrides on top, and returns the final map.
+      // KubernetesService receives only the merged plaintext — no business logic leaks into infrastructure.
+      const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+        createAgentDto.envVarTemplateId,
+        userId,
+        createAgentDto.envVars,
+      );
+
       // Create K8s pod - agent connects directly to LiveKit via SDK
       const { podName, secretName } = await this.k8s.createAgentPod({
         agentId,
         sessionId: session.id,
         projectId: session.projectId,
-        userId,
         agentName: sanitizedName,
         agentIcon: createAgentDto.icon || '🤖',
         agentType,
@@ -368,8 +386,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: sanitizedConfig,
         forceRebuild: createAgentDto.forceRebuild,
-        envVarTemplateId: createAgentDto.envVarTemplateId,
-        envVars: createAgentDto.envVars,  // Pass additional env vars to merge with template
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
@@ -431,7 +448,7 @@ export class AgentsService {
 
     // Determine agent type (default to stella-agent)
     const agentType = createAgentDto.agentType || 'stella-agent';
-    // Persist manual env vars encrypted so standalone agents have the same restart behavior.
+    // Encrypt manual env vars so standalone agents have the same restart behavior as regular agents.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // Create agent record with gRPC address
@@ -860,6 +877,11 @@ export class AgentsService {
         role: { in: ['OWNER', 'ADMIN'] },
       },
     });
+    if (!projectMembership) {
+      throw new NotFoundException(
+        `No OWNER/ADMIN project membership found for project ${agent.session.projectId}`,
+      );
+    }
 
     // Register pending session so gRPC agent registration can match
     const agentType = agent.agentType || 'stella-agent';
@@ -879,18 +901,26 @@ export class AgentsService {
       select: { resourceCpu: true, resourceMemory: true },
     });
 
-    // Restore manual env vars captured at deploy time so restart keeps one-time manual values.
-    const restoredManualEnvVars = agent.manualEnvVarsEncrypted
-      ? this.decryptManualEnvVarsForRestart(agent.manualEnvVarsEncrypted, id)
+    // Decrypt the stored manual vars so they can be re-merged through the same resolution
+    // path as the original deploy — template vars decrypted + manual vars merged on top.
+    const storedManualVars = agent.manualEnvVarsEncrypted
+      ? this.encryptionService.decrypt(agent.manualEnvVarsEncrypted)
       : undefined;
+
+    // Re-resolve env vars using the same code path as create() to guarantee the restarted pod
+    // gets an identical secret to the original deployment.
+    const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+      agent.envVarTemplateId ?? undefined,
+      projectMembership.userId,
+      storedManualVars,
+    );
 
     // Recreate Kubernetes pod with SAME agent ID
     try {
       const { podName, secretName } = await this.k8s.createAgentPod({
-        agentId: id, // SAME ID - this ensures pod/secret are unique to this agent
+        agentId: id, // SAME ID - pod/secret names are deterministic from agentId
         sessionId: agent.sessionId,
         projectId: agent.session.projectId,
-        userId: projectMembership?.userId || '', // Get user from project for env var access
         agentName: agent.name,
         agentIcon: agent.icon || '🤖',
         roomName: agent.session.room.livekitRoomName,
@@ -900,9 +930,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType,
-        envVarTemplateId: agent.envVarTemplateId || undefined,  // Pass stored env var template for API keys
-        // Reapply decrypted manual env vars so pod secret matches the original deployment config.
-        envVars: restoredManualEnvVars,
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
