@@ -112,8 +112,13 @@ get_var_metadata() {
         WHISPER_BEAM_SIZE)     echo "stt|text|optional|5|3|Whisper beam search size||" ;;
         WHISPER_LANGUAGE)      echo "stt|text|optional|||Language code (empty for auto-detect)||" ;;
         VAD_THRESHOLD)         echo "stt|text|optional|0.5|0.35|Voice activity detection threshold (0-1)||" ;;
-        VAD_MIN_SPEECH_MS)     echo "stt|text|optional|300|200|Min speech duration (ms)||" ;;
-        VAD_MIN_SILENCE_MS)    echo "stt|text|optional|800|400|Min silence before utterance end (ms)||" ;;
+        VAD_SILENCE_DURATION_MS) echo "stt|text|optional|800|500|Silence before MAYBE_ENDING state (ms)||" ;;
+        VAD_CONTINUATION_WINDOW_MS) echo "stt|text|optional|1000|600|Time for speech to resume in MAYBE_ENDING (ms)||" ;;
+        VAD_MAX_ENDPOINTING_DELAY_MS) echo "stt|text|optional|2000|2000|Hard cutoff for endpointing delay (ms)||" ;;
+        VAD_MIN_SPEECH_MS)     echo "stt|text|optional|500|200|Min speech duration (ms)||" ;;
+        VAD_MAX_SPEECH_DURATION_MS) echo "stt|text|optional|30000|30000|Force endpoint after this speech duration (ms)||" ;;
+        VAD_AUDIO_INACTIVITY_TIMEOUT_MS) echo "stt|text|optional|1500|1500|Force endpoint on audio inactivity (ms)||" ;;
+        VAD_RMS_THRESHOLD)     echo "stt|text|optional|0.008|0.01|Energy gate for background noise filtering||" ;;
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
 
         # --- TTS ---
@@ -164,8 +169,13 @@ ALL_VARIABLES=(
     "WHISPER_BEAM_SIZE"
     "WHISPER_LANGUAGE"
     "VAD_THRESHOLD"
+    "VAD_SILENCE_DURATION_MS"
+    "VAD_CONTINUATION_WINDOW_MS"
+    "VAD_MAX_ENDPOINTING_DELAY_MS"
     "VAD_MIN_SPEECH_MS"
-    "VAD_MIN_SILENCE_MS"
+    "VAD_MAX_SPEECH_DURATION_MS"
+    "VAD_AUDIO_INACTIVITY_TIMEOUT_MS"
+    "VAD_RMS_THRESHOLD"
     "PARTIAL_INTERVAL_MS"
     "TTS_PROVIDER"
     "ELEVENLABS_VOICE_ID"

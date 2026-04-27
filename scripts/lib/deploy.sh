@@ -111,8 +111,13 @@ generate_configmap() {
         -e "s|\${ONNX_PROVIDER}|${ONNX_PROVIDER:-CPUExecutionProvider}|g" \
         -e "s|\${ENABLE_GPU}|${ENABLE_GPU:-false}|g" \
         -e "s|\${VAD_THRESHOLD}|${VAD_THRESHOLD:-0.5}|g" \
-        -e "s|\${VAD_MIN_SPEECH_MS}|${VAD_MIN_SPEECH_MS:-200}|g" \
-        -e "s|\${VAD_MIN_SILENCE_MS}|${VAD_MIN_SILENCE_MS:-500}|g" \
+        -e "s|\${VAD_SILENCE_DURATION_MS}|${VAD_SILENCE_DURATION_MS:-800}|g" \
+        -e "s|\${VAD_CONTINUATION_WINDOW_MS}|${VAD_CONTINUATION_WINDOW_MS:-1000}|g" \
+        -e "s|\${VAD_MAX_ENDPOINTING_DELAY_MS}|${VAD_MAX_ENDPOINTING_DELAY_MS:-2000}|g" \
+        -e "s|\${VAD_MIN_SPEECH_MS}|${VAD_MIN_SPEECH_MS:-500}|g" \
+        -e "s|\${VAD_MAX_SPEECH_DURATION_MS}|${VAD_MAX_SPEECH_DURATION_MS:-30000}|g" \
+        -e "s|\${VAD_AUDIO_INACTIVITY_TIMEOUT_MS}|${VAD_AUDIO_INACTIVITY_TIMEOUT_MS:-1500}|g" \
+        -e "s|\${VAD_RMS_THRESHOLD}|${VAD_RMS_THRESHOLD:-0.008}|g" \
         -e "s|\${PARTIAL_INTERVAL_MS}|${PARTIAL_INTERVAL_MS:-1000}|g" \
         -e "s|\${WHISPER_INITIAL_PROMPT}|${WHISPER_INITIAL_PROMPT:-}|g" \
         -e "s|\${LIVEKIT_TURN_ENABLED}|${LIVEKIT_TURN_ENABLED:-false}|g" \
