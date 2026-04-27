@@ -477,6 +477,21 @@ class RoomManager:
             del self._stream_tasks[participant.identity]
             logger.info(f"Unsubscribed from audio track from {participant.identity}")
 
+        # If no audio sources remain, signal end-of-audio to consumers so the
+        # in-flight STT utterance finalizes instead of stalling on the unmute
+        # that never comes (issue #165).
+        if not self._audio_streams:
+            try:
+                self._audio_queue.put_nowait(b"")
+            except asyncio.QueueFull:
+                # Drop the oldest frame to make room — the sentinel matters
+                # more than any single buffered chunk.
+                try:
+                    self._audio_queue.get_nowait()
+                    self._audio_queue.put_nowait(b"")
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
+
     def _on_participant_connected(self, participant: rtc.RemoteParticipant) -> None:
         """Handle participant joining."""
         logger.info(f"Participant joined: {participant.identity} (name: {participant.name})")
@@ -531,6 +546,12 @@ class RoomManager:
                     self._audio_queue.get(),
                     timeout=0.5,
                 )
+                if audio_data == b"":
+                    # End-of-audio sentinel from _on_track_unsubscribed: stop
+                    # the iterator so the STT bidi stream finalizes the current
+                    # utterance. The pipeline will start a new stream when audio
+                    # resumes.
+                    return
                 yield audio_data
             except asyncio.TimeoutError:
                 # No audio available, continue waiting
