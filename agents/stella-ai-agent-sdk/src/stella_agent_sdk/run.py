@@ -361,6 +361,13 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
                     }
                 }
                 await audio_pipeline._room.publish_data(debug_payload)
+            elif output.type == OutputType.ANALYTICS:
+                # Forward analytics timing measurements for storage
+                analytics_payload = {
+                    "type": "analytics",
+                    "data": output.metadata or {},
+                }
+                await audio_pipeline._room.publish_data(analytics_payload)
             else:
                 logger.debug(f"[ON_READY] Ignoring output type: {output.type}")
 

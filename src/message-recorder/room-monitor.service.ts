@@ -263,6 +263,17 @@ export class RoomMonitorService implements OnModuleInit, OnModuleDestroy {
           );
           break;
 
+        case 'progress_update':
+          // Store SDK progress updates (stella-v2) as todo list updates
+          // so historical replay and time machine work for closed sessions.
+          // Store the full envelope so buildTaskUpdateTimeline can identify the type.
+          await this.messageRecorder.recordTodoListUpdate(
+            sessionId,
+            participantIdentity || 'system',
+            { envelope, participant_id: participantIdentity },
+          );
+          break;
+
         // Ignore these message types (don't record):
         case 'tts_start':
         case 'tts_stop':

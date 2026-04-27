@@ -463,6 +463,6 @@ private async request<T>(path: string, options?: RequestInit): Promise<T> {
 
 ## Next Steps
 
-- [LiveKit Integration](/docs/integration/livekit) - LiveKit setup
-- [Add Custom UI](/docs/guides/add-custom-ui) - UI customization
-- [Architecture Overview](/docs/architecture/overview) - System architecture
+- [LiveKit Integration](./livekit.md) - LiveKit setup
+- [Add Custom UI](../guides/add-custom-ui.md) - UI customization
+- [Architecture Overview](../architecture/overview.md) - System architecture

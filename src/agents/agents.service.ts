@@ -6,9 +6,21 @@ import { KubernetesService } from '../kubernetes/kubernetes.service';
 import { AgentServerService } from '../agent-server/agent-server.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import {
+  AgentMetricsResponseDto,
+  StageLatencyDto,
+  StageDataPointDto,
+  SessionStagePointDto,
+  OutlierSessionDto,
+  OutlierStageDto,
+  SessionAnalyticsResponseDto,
+  MetricsSummaryDto,
+  PlanCompletionSessionDto,
+} from './dto/agent-metrics.dto';
 import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 import { EncryptionService } from '../env-var-templates/encryption.service';
+import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
 
 /**
  * AgentsService - Manages agent lifecycle.
@@ -26,8 +38,10 @@ export class AgentsService {
     private prisma: PrismaService,
     private k8s: KubernetesService,
     private configService: ConfigService,
-    // Reuse the existing encryption service to avoid storing manual env vars as plaintext.
+    // Used for encrypting manual env vars at persist time and decrypting them on restart.
     private readonly encryptionService: EncryptionService,
+    // Used for resolving env vars (template decrypt + manual merge) before K8s pod creation.
+    private readonly envVarTemplatesService: EnvVarTemplatesService,
     private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
@@ -67,40 +81,41 @@ export class AgentsService {
   }
 
   /**
-   * Encrypt manually entered env vars before persisting them on the agent record.
-   * Returns null when no manual values were provided.
-   */
-  private encryptManualEnvVarsForStorage(envVars?: Record<string, string>): string | null {
-    // Only persist non-empty maps so we do not store noise or placeholder objects.
-    if (!envVars || Object.keys(envVars).length === 0) {
-      return null;
-    }
-    try {
-      return this.encryptionService.encrypt(envVars);
-    } catch (error) {
-      this.logger.error(`Failed to encrypt manual env vars for storage: ${error.message}`);
-      throw new BadRequestException('Unable to store manual environment variables');
-    }
-  }
-
-  /**
-   * Decrypt persisted manual env vars so restart can recreate the same secret values.
-   */
-  private decryptManualEnvVarsForRestart(encryptedEnvVars: string, agentId: string): Record<string, string> {
-    try {
-      return this.encryptionService.decrypt(encryptedEnvVars);
-    } catch (error) {
-      this.logger.error(`Failed to decrypt manual env vars for agent ${agentId}: ${error.message}`);
-      throw new BadRequestException('Unable to restore manual environment variables for restart');
-    }
-  }
-
-  /**
    * Security: Sanitize agent config to prevent injection attacks.
    * Delegates to shared utility in common/utils/sanitize-config.ts
    */
   private sanitizeAgentConfig(config: Record<string, unknown>): Record<string, unknown> {
     return sanitizeAgentConfig(config);
+  }
+
+  /**
+   * Validate that the agent config satisfies requirements for the given agent type.
+   * Called on every create() path so no entry point can skip type-specific validation.
+   *
+   * Currently enforced: stella-v2-agent requires a pipeline_config object.
+   */
+  private validateRuntimeConfigForAgentType(
+    agentTypeSlug: string,
+    runtimeConfig: Record<string, unknown>,
+  ): void {
+    if (agentTypeSlug !== 'stella-v2-agent') return;
+
+    const pipelineConfig = runtimeConfig.pipeline_config;
+    if (!pipelineConfig || typeof pipelineConfig !== 'object' || Array.isArray(pipelineConfig)) {
+      throw new BadRequestException(
+        'stella-v2-agent requires a pipeline configuration (config.pipeline_config).',
+      );
+    }
+  }
+
+  private encryptManualEnvVarsForStorage(
+    manualVars?: Record<string, string>,
+  ): string | null {
+    if (!manualVars || Object.keys(manualVars).length === 0) {
+      return null;
+    }
+
+    return this.encryptionService.encrypt(manualVars);
   }
 
   /**
@@ -270,7 +285,13 @@ export class AgentsService {
 
     // Security: Validate and sanitize agent config
     const agentConfig = this.sanitizeAgentConfig(createAgentDto.config || {});
-    // Persist manual env vars encrypted so restart can reapply them without asking user again.
+
+    // Validate type-specific config requirements for ALL creation paths.
+    // (Previously this only ran for public-project flows in PublicProjectsService.)
+    this.validateRuntimeConfigForAgentType(agentType, agentConfig);
+
+    // Encrypt manual env vars now so they are persisted before the async pod creation.
+    // This guarantees restart() can recover them even if the pod creation fails.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // 1. Create agent record (status=STARTING, no podName yet)
@@ -341,12 +362,20 @@ export class AgentsService {
         throw new Error('Missing LIVEKIT_API_KEY or LIVEKIT_API_SECRET');
       }
 
+      // Resolve env vars once here, before touching K8s.
+      // Decrypts the template (if any), merges manual overrides on top, and returns the final map.
+      // KubernetesService receives only the merged plaintext — no business logic leaks into infrastructure.
+      const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+        createAgentDto.envVarTemplateId,
+        userId,
+        createAgentDto.envVars,
+      );
+
       // Create K8s pod - agent connects directly to LiveKit via SDK
       const { podName, secretName } = await this.k8s.createAgentPod({
         agentId,
         sessionId: session.id,
         projectId: session.projectId,
-        userId,
         agentName: sanitizedName,
         agentIcon: createAgentDto.icon || '🤖',
         agentType,
@@ -357,8 +386,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: sanitizedConfig,
         forceRebuild: createAgentDto.forceRebuild,
-        envVarTemplateId: createAgentDto.envVarTemplateId,
-        envVars: createAgentDto.envVars,  // Pass additional env vars to merge with template
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
@@ -420,7 +448,7 @@ export class AgentsService {
 
     // Determine agent type (default to stella-agent)
     const agentType = createAgentDto.agentType || 'stella-agent';
-    // Persist manual env vars encrypted so standalone agents have the same restart behavior.
+    // Encrypt manual env vars so standalone agents have the same restart behavior as regular agents.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
     // Create agent record with gRPC address
@@ -849,6 +877,11 @@ export class AgentsService {
         role: { in: ['OWNER', 'ADMIN'] },
       },
     });
+    if (!projectMembership) {
+      throw new NotFoundException(
+        `No OWNER/ADMIN project membership found for project ${agent.session.projectId}`,
+      );
+    }
 
     // Register pending session so gRPC agent registration can match
     const agentType = agent.agentType || 'stella-agent';
@@ -868,18 +901,26 @@ export class AgentsService {
       select: { resourceCpu: true, resourceMemory: true },
     });
 
-    // Restore manual env vars captured at deploy time so restart keeps one-time manual values.
-    const restoredManualEnvVars = agent.manualEnvVarsEncrypted
-      ? this.decryptManualEnvVarsForRestart(agent.manualEnvVarsEncrypted, id)
+    // Decrypt the stored manual vars so they can be re-merged through the same resolution
+    // path as the original deploy — template vars decrypted + manual vars merged on top.
+    const storedManualVars = agent.manualEnvVarsEncrypted
+      ? this.encryptionService.decrypt(agent.manualEnvVarsEncrypted)
       : undefined;
+
+    // Re-resolve env vars using the same code path as create() to guarantee the restarted pod
+    // gets an identical secret to the original deployment.
+    const { merged: resolvedEnvVars } = await this.envVarTemplatesService.resolveEnvVars(
+      agent.envVarTemplateId ?? undefined,
+      projectMembership.userId,
+      storedManualVars,
+    );
 
     // Recreate Kubernetes pod with SAME agent ID
     try {
       const { podName, secretName } = await this.k8s.createAgentPod({
-        agentId: id, // SAME ID - this ensures pod/secret are unique to this agent
+        agentId: id, // SAME ID - pod/secret names are deterministic from agentId
         sessionId: agent.sessionId,
         projectId: agent.session.projectId,
-        userId: projectMembership?.userId || '', // Get user from project for env var access
         agentName: agent.name,
         agentIcon: agent.icon || '🤖',
         roomName: agent.session.room.livekitRoomName,
@@ -889,9 +930,7 @@ export class AgentsService {
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType,
-        envVarTemplateId: agent.envVarTemplateId || undefined,  // Pass stored env var template for API keys
-        // Reapply decrypted manual env vars so pod secret matches the original deployment config.
-        envVars: restoredManualEnvVars,
+        resolvedEnvVars,
         resourceCpuLimit: agentTypeRecord?.resourceCpu || undefined,
         resourceMemoryLimit: agentTypeRecord?.resourceMemory || undefined,
       });
@@ -942,4 +981,659 @@ export class AgentsService {
     // Delegate to centralized restart logic
     return await this.restartAgent(id);
   }
+
+  // ============================================================================
+  // Analytics / Metrics
+  // ============================================================================
+
+  /**
+   * Unwrap the envelope nesting to get the full analytics data object.
+   */
+  private extractFullMetadata(metadata: any): Record<string, any> | null {
+    return metadata?.envelope?.data ?? metadata?.data ?? metadata ?? null;
+  }
+
+  /**
+   * Extract stage name and timing value from an analytics message's metadata.
+   * Supports both old format (timing_ms) and new event format (elapsed_ms).
+   */
+  private extractStageTiming(metadata: any): { stage: string; timing_ms: number; isTimelineEvent: boolean } | null {
+    const data = this.extractFullMetadata(metadata);
+    const stage = data?.stage;
+    const hasElapsed = typeof data?.elapsed_ms === 'number';
+    const timingMs = hasElapsed ? data.elapsed_ms : data?.timing_ms;
+    if (typeof stage === 'string' && typeof timingMs === 'number') {
+      return { stage, timing_ms: timingMs, isTimelineEvent: hasElapsed };
+    }
+    return null;
+  }
+
+  /**
+   * Compute per-stage latency statistics from a list of timing values.
+   */
+  private computeStageStats(stageTimings: Map<string, number[]>): StageLatencyDto[] {
+    const stages: StageLatencyDto[] = [];
+
+    for (const [stage, timings] of stageTimings) {
+      const sorted = timings.slice().sort((a, b) => a - b);
+      const sum = sorted.reduce((acc, v) => acc + v, 0);
+      const mean = sum / sorted.length;
+      const variance = sorted.reduce((acc, v) => acc + (v - mean) ** 2, 0) / sorted.length;
+
+      stages.push({
+        stage,
+        count: sorted.length,
+        mean_ms: Math.round(mean * 100) / 100,
+        p5_ms: percentile(sorted, 5),
+        p25_ms: percentile(sorted, 25),
+        p50_ms: percentile(sorted, 50),
+        p75_ms: percentile(sorted, 75),
+        p95_ms: percentile(sorted, 95),
+        min_ms: sorted[0],
+        max_ms: sorted[sorted.length - 1],
+        stddev_ms: Math.round(Math.sqrt(variance) * 100) / 100,
+      });
+    }
+
+    stages.sort((a, b) => a.stage.localeCompare(b.stage));
+    return stages;
+  }
+
+  /**
+   * Compute non-latency summary metrics from analytics messages.
+   * Handles: safety_routing, state_transition, plan_completion, bridge_generation.
+   */
+  private computeMetricsSummary(
+    messages: Array<{ sessionId: string; metadata: any }>,
+  ): MetricsSummaryDto {
+    const safetyMessages: Array<{ route: string }> = [];
+    const transitionMessages: Array<{ wasExpected: boolean }> = [];
+    const planMessages: Array<{ sessionId: string; completionRate: number; reachedEnd: boolean }> = [];
+    const ttfabTimings: number[] = [];
+    const bridgeDurationTimings: number[] = [];
+    const ttfrTimings: number[] = [];
+
+    for (const msg of messages) {
+      const data = this.extractFullMetadata(msg.metadata);
+      if (!data?.stage) continue;
+
+      switch (data.stage) {
+        case 'safety_routing':
+          if (typeof data.route === 'string') {
+            safetyMessages.push({ route: data.route });
+          }
+          break;
+        // state_transition removed — not tracked for stella v2
+        case 'plan_completion':
+          if (typeof data.completion_rate === 'number') {
+            planMessages.push({
+              sessionId: msg.sessionId,
+              completionRate: data.completion_rate,
+              reachedEnd: data.plan_reached_end === true,
+            });
+          }
+          break;
+        // Old format (timing_ms)
+        case 'ttfab_bridge':
+        case 'ttfab_direct':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            ttfabTimings.push(data.timing_ms);
+          }
+          break;
+        case 'bridge_duration':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            bridgeDurationTimings.push(data.timing_ms);
+          }
+          break;
+        case 'ttfr':
+          if (typeof data.timing_ms === 'number' && data.timing_ms > 0) {
+            ttfrTimings.push(data.timing_ms);
+          }
+          break;
+        // New format (elapsed_ms) — elapsed values are direct timeline positions
+        case 'bridge_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfabTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'bridge_tts_done':
+          if (typeof data.elapsed_ms === 'number') {
+            bridgeDurationTimings.push(data.elapsed_ms);
+          }
+          break;
+        case 'response_tts_first_byte':
+          if (typeof data.elapsed_ms === 'number') {
+            ttfrTimings.push(data.elapsed_ms);
+          }
+          break;
+      }
+    }
+
+    return {
+      safetyRouting: safetyMessages.length > 0 ? {
+        totalTurns: safetyMessages.length,
+        safeTurns: safetyMessages.filter((m) => m.route === 'SAFE').length,
+        unsafeTurns: safetyMessages.filter((m) => m.route !== 'SAFE').length,
+        interceptionRate: Math.round(
+          (safetyMessages.filter((m) => m.route !== 'SAFE').length / safetyMessages.length) * 10000,
+        ) / 10000,
+      } : null,
+
+      stateTransitions: transitionMessages.length > 0 ? {
+        totalTransitions: transitionMessages.length,
+        expectedTransitions: transitionMessages.filter((m) => m.wasExpected).length,
+        accuracy: Math.round(
+          (transitionMessages.filter((m) => m.wasExpected).length / transitionMessages.length) * 10000,
+        ) / 10000,
+      } : null,
+
+      planCompletion: planMessages.length > 0 ? (() => {
+        // Deduplicate by session (take last per session)
+        const bySession = new Map<string, typeof planMessages[0]>();
+        for (const m of planMessages) bySession.set(m.sessionId, m);
+        const unique = Array.from(bySession.values());
+        const avgRate = unique.reduce((s, m) => s + m.completionRate, 0) / unique.length;
+        return {
+          totalSessions: unique.length,
+          completedPlans: unique.filter((m) => m.reachedEnd).length,
+          avgCompletionRate: Math.round(avgRate * 10000) / 10000,
+        };
+      })() : null,
+
+      bridgeGeneration: ttfabTimings.length > 0 ? {
+        totalBridges: ttfabTimings.length,
+        avgBridgeDuration_ms: Math.round(
+          (ttfabTimings.reduce((s, v) => s + v, 0) / ttfabTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      bridgeDuration: bridgeDurationTimings.length > 0 ? {
+        count: bridgeDurationTimings.length,
+        avg_ms: Math.round(
+          (bridgeDurationTimings.reduce((s, v) => s + v, 0) / bridgeDurationTimings.length) * 100,
+        ) / 100,
+      } : null,
+
+      ttfr: ttfrTimings.length > 0 ? {
+        count: ttfrTimings.length,
+        avg_ms: Math.round(
+          (ttfrTimings.reduce((s, v) => s + v, 0) / ttfrTimings.length) * 100,
+        ) / 100,
+      } : null,
+    };
+  }
+
+  /**
+   * Get aggregated per-stage latency metrics for an agent type within a project.
+   * Includes outlier session detection (sessions where any stage mean > 2x global p50).
+   */
+  async getAgentMetrics(
+    projectId: string,
+    agentSlug: string,
+    from: Date,
+    to: Date,
+  ): Promise<AgentMetricsResponseDto> {
+    // 1. Look up AgentType by slug
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      throw new NotFoundException(`Agent type '${agentSlug}' not found`);
+    }
+
+    // 2. Find sessions that used this agent type within the date range
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+
+    if (sessionIds.length === 0) {
+      return {
+        agentSlug,
+        projectId,
+        dateRange: { from: from.toISOString(), to: to.toISOString() },
+        totalSessions: 0,
+        totalTurns: 0,
+        stages: [],
+        outlierSessions: [],
+        summary: {
+          planCompletion: null,
+          safetyRouting: null,
+          stateTransitions: null,
+          bridgeGeneration: null,
+          bridgeDuration: null,
+          ttfr: null,
+        },
+      };
+    }
+
+    // 3. Query analytics messages for those sessions
+    const analyticsMessages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // 4. Count user turns for context
+    const totalTurns = await this.prisma.message.count({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: { in: ['transcript', 'user_text'] },
+        role: 'user',
+        timestamp: { gte: from, lte: to },
+      },
+    });
+
+    // 5. Extract stage timings — global and per-session
+    const globalTimings = new Map<string, number[]>();
+    const perSessionTimings = new Map<string, Map<string, number[]>>();
+
+    for (const msg of analyticsMessages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (!parsed) continue;
+
+      // Skip non-timeline events (old format with timing_ms=0, e.g. safety_routing)
+      // Timeline events with elapsed_ms=0 (stt_end) are valid and should pass through
+      if (parsed.timing_ms === 0 && !parsed.isTimelineEvent) continue;
+
+      // Skip anchor events — these are reference points, not pipeline stages
+      if (parsed.stage === 'vad_trigger' || parsed.stage === 'stt_end') continue;
+
+      // Global
+      if (!globalTimings.has(parsed.stage)) {
+        globalTimings.set(parsed.stage, []);
+      }
+      globalTimings.get(parsed.stage)!.push(parsed.timing_ms);
+
+      // Per-session
+      if (!perSessionTimings.has(msg.sessionId)) {
+        perSessionTimings.set(msg.sessionId, new Map());
+      }
+      const sessionMap = perSessionTimings.get(msg.sessionId)!;
+      if (!sessionMap.has(parsed.stage)) {
+        sessionMap.set(parsed.stage, []);
+      }
+      sessionMap.get(parsed.stage)!.push(parsed.timing_ms);
+    }
+
+    // 6. Compute global stage statistics
+    const stages = this.computeStageStats(globalTimings);
+
+    // 7. Build p50 lookup for outlier detection
+    const globalP50 = new Map<string, number>();
+    for (const s of stages) {
+      globalP50.set(s.stage, s.p50_ms);
+    }
+
+    // 8. Detect outlier sessions (any stage mean > 2x global p50)
+    const outlierSessionIds: string[] = [];
+    const outlierData = new Map<string, OutlierStageDto[]>();
+
+    for (const [sessId, stageMap] of perSessionTimings) {
+      const outlierStages: OutlierStageDto[] = [];
+
+      for (const [stage, timings] of stageMap) {
+        const p50 = globalP50.get(stage);
+        if (p50 === undefined || p50 === 0) continue;
+
+        const mean = timings.reduce((a, b) => a + b, 0) / timings.length;
+        if (mean > 2 * p50) {
+          outlierStages.push({
+            stage,
+            sessionMean_ms: Math.round(mean * 100) / 100,
+            globalP50_ms: p50,
+          });
+        }
+      }
+
+      if (outlierStages.length > 0) {
+        outlierSessionIds.push(sessId);
+        outlierData.set(sessId, outlierStages);
+      }
+    }
+
+    // 9. Fetch session names for outliers (single query)
+    let outlierSessions: OutlierSessionDto[] = [];
+    if (outlierSessionIds.length > 0) {
+      const sessions = await this.prisma.session.findMany({
+        where: { id: { in: outlierSessionIds } },
+        select: { id: true, name: true, createdAt: true },
+      });
+
+      outlierSessions = sessions.map((s) => ({
+        sessionId: s.id,
+        sessionName: s.name || s.id,
+        createdAt: s.createdAt.toISOString(),
+        outlierStages: outlierData.get(s.id) || [],
+      }));
+    }
+
+    return {
+      agentSlug,
+      projectId,
+      dateRange: { from: from.toISOString(), to: to.toISOString() },
+      totalSessions: sessionIds.length,
+      totalTurns,
+      stages,
+      outlierSessions,
+      summary: this.computeMetricsSummary(analyticsMessages),
+    };
+  }
+
+  /**
+   * Get per-stage latency analytics for a single session.
+   */
+  async getSessionAnalytics(sessionId: string, projectId?: string): Promise<SessionAnalyticsResponseDto> {
+    if (projectId) {
+      const session = await this.prisma.session.findFirst({
+        where: { id: sessionId, projectId },
+        select: { id: true },
+      });
+      if (!session) {
+        throw new NotFoundException(`Session '${sessionId}' not found in project`);
+      }
+    }
+
+    const analyticsMessages = await this.prisma.message.findMany({
+      where: { sessionId, messageType: 'analytics' },
+      select: { sessionId: true, metadata: true, timestamp: true },
+    });
+
+    const totalTurns = await this.prisma.message.count({
+      where: {
+        sessionId,
+        messageType: { in: ['transcript', 'user_text'] },
+        role: 'user',
+      },
+    });
+
+    const stageTimings = new Map<string, number[]>();
+    const rawPoints: SessionStagePointDto[] = [];
+
+    for (const msg of analyticsMessages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (!parsed || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
+      if (!stageTimings.has(parsed.stage)) {
+        stageTimings.set(parsed.stage, []);
+      }
+      stageTimings.get(parsed.stage)!.push(parsed.timing_ms);
+      rawPoints.push({
+        stage: parsed.stage,
+        timing_ms: parsed.timing_ms,
+        timestamp: msg.timestamp.toISOString(),
+      });
+    }
+
+    return {
+      sessionId,
+      totalTurns,
+      stages: this.computeStageStats(stageTimings),
+      summary: this.computeMetricsSummary(analyticsMessages),
+      rawPoints,
+    };
+  }
+
+  /**
+   * Get raw TTFAB data points over time for a live timeline chart.
+   * Returns individual measurements with timestamps, ordered chronologically.
+   */
+  async getMetricsTimeline(
+    projectId: string,
+    agentSlug: string,
+    since: Date,
+    stage: string = 'ttfab',
+  ): Promise<{ points: Array<{ timestamp: string; timing_ms: number; sessionId: string }> }> {
+    // 1. Find sessions for this agent type
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { points: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { points: [] };
+    }
+
+    // 2. Query raw analytics messages for the target stage since the given time
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: since },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // 3. Filter to the requested stage and extract timing
+    const points: Array<{ timestamp: string; timing_ms: number; sessionId: string }> = [];
+    for (const msg of messages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (parsed && parsed.stage === stage) {
+        points.push({
+          timestamp: msg.timestamp.toISOString(),
+          timing_ms: parsed.timing_ms,
+          sessionId: msg.sessionId,
+        });
+      }
+    }
+
+    return { points };
+  }
+
+  /**
+   * Get per-session average timing for a specific stage.
+   * Returns one data point per session (avg of all measurements in that session).
+   */
+  async getStageDataPoints(
+    projectId: string,
+    agentSlug: string,
+    stageName: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ points: StageDataPointDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { points: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { points: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Group by session, compute per-session average
+    const sessionData = new Map<string, { timings: number[]; lastTimestamp: Date }>();
+
+    for (const msg of messages) {
+      const parsed = this.extractStageTiming(msg.metadata as any);
+      if (!parsed || parsed.stage !== stageName || (parsed.timing_ms === 0 && !parsed.isTimelineEvent)) continue;
+
+      if (!sessionData.has(msg.sessionId)) {
+        sessionData.set(msg.sessionId, { timings: [], lastTimestamp: msg.timestamp });
+      }
+      const entry = sessionData.get(msg.sessionId)!;
+      entry.timings.push(parsed.timing_ms);
+      entry.lastTimestamp = msg.timestamp;
+    }
+
+    // Fetch session names for all sessions that have data
+    const sessionIdsWithData = Array.from(sessionData.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const points: StageDataPointDto[] = [];
+    for (const [sessionId, { timings, lastTimestamp }] of sessionData) {
+      const avg = timings.reduce((s, v) => s + v, 0) / timings.length;
+      points.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        avg_timing_ms: Math.round(avg * 100) / 100,
+        count: timings.length,
+        timestamp: lastTimestamp.toISOString(),
+      });
+    }
+
+    return { points };
+  }
+
+  /**
+   * Get per-session plan completion data for drill-down.
+   * Returns one row per session with final completion rate and whether the plan reached end.
+   */
+  async getPlanCompletionSessions(
+    projectId: string,
+    agentSlug: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ sessions: PlanCompletionSessionDto[] }> {
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { slug: agentSlug },
+    });
+
+    if (!agentType) {
+      return { sessions: [] };
+    }
+
+    const agentInstances = await this.prisma.agentInstance.findMany({
+      where: {
+        session: { projectId },
+        OR: [
+          { agentTypeId: agentType.id },
+          { agentType: agentSlug },
+        ],
+        createdAt: { gte: from, lte: to },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    });
+
+    const sessionIds = agentInstances.map((a) => a.sessionId);
+    if (sessionIds.length === 0) {
+      return { sessions: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        messageType: 'analytics',
+        timestamp: { gte: from, lte: to },
+      },
+      select: { sessionId: true, metadata: true, timestamp: true },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    // Deduplicate by session (take last plan_completion message per session)
+    const bySession = new Map<string, { completionRate: number; reachedEnd: boolean; timestamp: Date }>();
+
+    for (const msg of messages) {
+      const data = this.extractFullMetadata(msg.metadata);
+      if (!data || data.stage !== 'plan_completion' || typeof data.completion_rate !== 'number') continue;
+
+      bySession.set(msg.sessionId, {
+        completionRate: data.completion_rate,
+        reachedEnd: data.plan_reached_end === true,
+        timestamp: msg.timestamp,
+      });
+    }
+
+    // Fetch session names
+    const sessionIdsWithData = Array.from(bySession.keys());
+    const sessions = sessionIdsWithData.length > 0
+      ? await this.prisma.session.findMany({
+          where: { id: { in: sessionIdsWithData } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const sessionNames = new Map(sessions.map(s => [s.id, s.name || s.id]));
+
+    const result: PlanCompletionSessionDto[] = [];
+    for (const [sessionId, { completionRate, reachedEnd, timestamp }] of bySession) {
+      result.push({
+        sessionId,
+        sessionName: sessionNames.get(sessionId) || sessionId,
+        completionRate: Math.round(completionRate * 10000) / 10000,
+        reachedEnd,
+        timestamp: timestamp.toISOString(),
+      });
+    }
+
+    // Sort by completion rate ascending (lowest first for easy outlier spotting)
+    result.sort((a, b) => a.completionRate - b.completionRate);
+
+    return { sessions: result };
+  }
+}
+
+/**
+ * Linear interpolation percentile on a pre-sorted array.
+ */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return Math.round((sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)) * 100) / 100;
 }

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   Logger,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from './encryption.service';
@@ -200,6 +201,47 @@ export class EnvVarTemplatesService {
     });
 
     return this.toResponse(template);
+  }
+
+  /**
+   * Resolve the final env var map for agent deployment.
+   *
+   * This is the single entry point for all env var resolution:
+   *   1. Decrypt the template vars (if a templateId is given).
+   *   2. Merge manualVars on top so they override template values.
+   *   3. Return the merged plaintext map (for K8s secret creation).
+   *
+   * SECURITY: `merged` must only be written to a K8s secret — never logged or
+   * returned to API clients.
+   */
+  async resolveEnvVars(
+    templateId: string | undefined | null,
+    userId: string | undefined | null,
+    manualVars?: Record<string, string>,
+  ): Promise<{ merged: Record<string, string> }> {
+    // A template cannot be resolved without user ownership context.
+    if (templateId && !userId) {
+      this.logger.warn(
+        `Template ${templateId} was provided without userId; refusing to resolve template vars`,
+      );
+      throw new BadRequestException(
+        'Cannot resolve env var template without user context',
+      );
+    }
+
+    // Step 1: decrypt template vars when a template is referenced.
+    let templateVars: Record<string, string> = {};
+    if (templateId && userId) {
+      templateVars = await this.getDecryptedVariables(templateId, userId);
+      this.logger.log(
+        `Resolved ${Object.keys(templateVars).length} vars from template ${templateId}`,
+      );
+    }
+
+    // Step 2: manual vars override template values (right-side wins in spread).
+    const merged = { ...templateVars, ...(manualVars ?? {}) };
+
+    return { merged };
   }
 
   /**

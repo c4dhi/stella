@@ -143,7 +143,7 @@ python -m src.agent
 
 ## Database Setup
 
-STELLA uses PostgreSQL with Prisma ORM. See [Database Schema](/docs/architecture/database) for the complete data model.
+STELLA uses PostgreSQL with Prisma ORM. See [Database Schema](../architecture/database.md) for the complete data model.
 
 ### Using Docker (Recommended)
 
@@ -322,6 +322,6 @@ kill -9 <PID>
 
 ## Next Steps
 
-- [Coding Standards](/docs/contributing/coding-standards) - Code style guide
-- [Pull Request Process](/docs/contributing/pull-request-process) - PR workflow
-- [Database Schema](/docs/architecture/database) - Data model reference
+- [Coding Standards](./coding-standards/index.md) - Code style guide
+- [Pull Request Process](./pull-request-process.md) - PR workflow
+- [Database Schema](../architecture/database.md) - Data model reference

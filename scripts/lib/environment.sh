@@ -55,9 +55,12 @@ setup_directories() {
 
     # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files)
     export TEMP_DIR="${STELLA_AI_TEMP_DIR:-/tmp}"
-    export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
-    export LOG_DIR="${TEMP_DIR}/stella-ai-logs"
-    export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums"
+    # Scope temp dirs by namespace to prevent collisions between parallel instances
+    local ns_suffix=""
+    [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
+    export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
+    export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
+    export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
 
     # Create required directories
     ensure_dir "$PID_DIR"
@@ -124,19 +127,21 @@ load_environment() {
     # Update temp directory after loading env
     if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
         export TEMP_DIR="$STELLA_AI_TEMP_DIR"
-        export PID_DIR="${TEMP_DIR}/stella-ai-k8s"
-        export LOG_DIR="${TEMP_DIR}/stella-ai-logs"
-        export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums"
+        local ns_suffix=""
+        [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
+        export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
+        export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
+        export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
         ensure_dir "$PID_DIR"
         ensure_dir "$LOG_DIR"
         ensure_dir "$CHECKSUM_DIR"
     fi
 
+    # Set hardcoded defaults (must come before configure_urls — URLs depend on computed ports)
+    set_defaults
+
     # Configure URLs based on environment
     configure_urls
-
-    # Set hardcoded defaults
-    set_defaults
 
     # Display configuration table (set_defaults calls configure_gpu_settings which displays the table)
 }
@@ -155,11 +160,11 @@ configure_urls() {
         export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN:-localhost}"
     else
         # Local URLs
-        export PUBLIC_FRONTEND_URL="http://localhost:8080"
-        export PUBLIC_API_URL="http://localhost:3000"
+        export PUBLIC_FRONTEND_URL="http://localhost:${FRONTEND_PORT}"
+        export PUBLIC_API_URL="http://localhost:${BACKEND_PORT}"
         export PUBLIC_DB_HOST="localhost"
-        export PUBLIC_DB_PORT="5432"
-        export CORS_ORIGIN="http://localhost:8080"
+        export PUBLIC_DB_PORT="${POSTGRES_PORT}"
+        export CORS_ORIGIN="http://localhost:${FRONTEND_PORT}"
     fi
 
     # Map PUBLIC_LIVEKIT_URL to VITE_LIVEKIT_URL for frontend
@@ -290,12 +295,29 @@ display_config_table() {
 # =============================================================================
 
 set_defaults() {
-    # Backend port
-    export PORT="${PORT:-3000}"
-
     # Kubernetes configuration
     export KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
     export DEFAULT_AGENT_TYPE="${DEFAULT_AGENT_TYPE:-stella-agent}"
+
+    # Port offset: auto +100 for non-default namespace, 0 otherwise
+    export PORT_OFFSET="${PORT_OFFSET:-0}"
+    if [[ "$KUBERNETES_NAMESPACE" != "ai-agents" && "$PORT_OFFSET" == "0" ]]; then
+        PORT_OFFSET=100
+    fi
+    export FRONTEND_PORT=$((8080 + PORT_OFFSET))
+    export BACKEND_PORT=$((3000 + PORT_OFFSET))
+    export POSTGRES_PORT=$((5432 + PORT_OFFSET))
+    export PG_LOCAL_PORT=$((5433 + PORT_OFFSET))
+
+    # Image tag: namespace name for non-default, latest for default
+    if [[ "$KUBERNETES_NAMESPACE" == "ai-agents" ]]; then
+        export IMAGE_TAG="${IMAGE_TAG:-latest}"
+    else
+        export IMAGE_TAG="${IMAGE_TAG:-${KUBERNETES_NAMESPACE}}"
+    fi
+
+    # Backend port
+    export PORT="${PORT:-3000}"
     export AGENT_IMAGE_PULL_POLICY="${AGENT_IMAGE_PULL_POLICY:-IfNotPresent}"
 
     # Legacy compatibility
@@ -325,8 +347,13 @@ set_defaults() {
 
     # VAD Configuration
     export VAD_THRESHOLD="${VAD_THRESHOLD:-0.5}"
-    export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-200}"
-    export VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-500}"
+    export VAD_SILENCE_DURATION_MS="${VAD_SILENCE_DURATION_MS:-800}"
+    export VAD_CONTINUATION_WINDOW_MS="${VAD_CONTINUATION_WINDOW_MS:-1000}"
+    export VAD_MAX_ENDPOINTING_DELAY_MS="${VAD_MAX_ENDPOINTING_DELAY_MS:-2000}"
+    export VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-500}"
+    export VAD_MAX_SPEECH_DURATION_MS="${VAD_MAX_SPEECH_DURATION_MS:-30000}"
+    export VAD_AUDIO_INACTIVITY_TIMEOUT_MS="${VAD_AUDIO_INACTIVITY_TIMEOUT_MS:-1500}"
+    export VAD_RMS_THRESHOLD="${VAD_RMS_THRESHOLD:-0.008}"
     export PARTIAL_INTERVAL_MS="${PARTIAL_INTERVAL_MS:-1000}"
     export WHISPER_INITIAL_PROMPT="${WHISPER_INITIAL_PROMPT:-}"
 

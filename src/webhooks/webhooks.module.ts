@@ -6,6 +6,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AgentsModule } from '../agents/agents.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { LiveKitModule } from '../livekit/livekit.module';
+import { EnvVarTemplatesModule } from '../env-var-templates/env-var-templates.module';
 
 /**
  * Webhooks Module
@@ -23,6 +24,8 @@ import { LiveKitModule } from '../livekit/livekit.module';
     ConfigModule,
     PrismaModule,
     LiveKitModule,
+    // EncryptionService is needed to decrypt manualEnvVarsEncrypted when recreating paused agents.
+    EnvVarTemplatesModule,
     forwardRef(() => AgentsModule),
     forwardRef(() => SessionsModule),
   ],

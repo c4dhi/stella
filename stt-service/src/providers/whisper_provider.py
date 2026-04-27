@@ -641,17 +641,18 @@ class WhisperProvider(STTProvider):
         self.initial_prompt = os.getenv("WHISPER_INITIAL_PROMPT", None) or None
 
         # VAD configuration (8 parameters - 3-state machine with continuation window)
+        # Defaults match .env.example — change there, not here
         self.vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.5"))
-        self.silence_duration_ms = int(os.getenv("VAD_SILENCE_DURATION_MS", "500"))
-        self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "600"))
+        self.silence_duration_ms = int(os.getenv("VAD_SILENCE_DURATION_MS", "800"))
+        self.continuation_window_ms = int(os.getenv("VAD_CONTINUATION_WINDOW_MS", "1000"))
         self.max_endpointing_delay_ms = int(os.getenv("VAD_MAX_ENDPOINTING_DELAY_MS", "2000"))
         self.min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "500"))
         self.max_speech_duration_ms = int(os.getenv("VAD_MAX_SPEECH_DURATION_MS", "30000"))
         self.partial_interval_ms = int(os.getenv("PARTIAL_INTERVAL_MS", "1000"))
         self.audio_inactivity_timeout_ms = int(os.getenv("VAD_AUDIO_INACTIVITY_TIMEOUT_MS", "1500"))
         # RMS energy gate - filters quiet background noise before VAD
-        # 0.01 = -40dB (good for typical environments), 0.02 = -34dB (noisier environments)
-        self.rms_threshold = float(os.getenv("VAD_RMS_THRESHOLD", "0.015"))
+        # 0.008 = -42dB (permissive), 0.01 = -40dB (moderate), 0.02 = -34dB (strict)
+        self.rms_threshold = float(os.getenv("VAD_RMS_THRESHOLD", "0.008"))
 
         print(f"[WhisperProvider] Config: model={self.model_size}, device={self.device}, "
               f"compute_type={self.compute_type}, language={self.language or 'auto'}")

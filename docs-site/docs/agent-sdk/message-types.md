@@ -303,6 +303,6 @@ await agent.send(CustomMessage("my data"))
 
 ## See Also
 
-- [Base Agent](/docs/agent-sdk/base-agent)
-- [Progress Tracking](/docs/agent-sdk/progress-tracking)
-- [Building Custom Agents](/docs/agent-sdk/building-custom-agent)
+- [Base Agent](./base-agent.md)
+- [Progress Tracking](./progress-tracking.md)
+- [Building Custom Agents](./building-custom-agent.md)

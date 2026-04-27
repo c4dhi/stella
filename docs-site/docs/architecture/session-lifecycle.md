@@ -317,9 +317,9 @@ GET /sessions/{sessionId}/messages
 - `before` - ISO timestamp for pagination
 - `include_debug` - Include debug messages (default: false)
 
-**For agents**, see [Accessing Chat History](/docs/guides/build-your-own-agent#accessing-chat-history).
+**For agents**, see [Accessing Chat History](../guides/build-your-own-agent.md#accessing-chat-history).
 
 ## Next Steps
 
-- [Kubernetes Orchestration](/docs/architecture/kubernetes-orchestration) - Pod management
-- [Data Flow](/docs/architecture/data-flow) - Message flow details
+- [Kubernetes Orchestration](./kubernetes-orchestration.md) - Pod management
+- [Data Flow](./data-flow.md) - Message flow details

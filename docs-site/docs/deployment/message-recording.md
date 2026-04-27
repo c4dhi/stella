@@ -82,7 +82,7 @@ The system provides:
 
 ## Database Schema
 
-Enhanced Message model in `prisma/schema.prisma`. See [Database Schema](/docs/architecture/database) for the complete data model.
+Enhanced Message model in `prisma/schema.prisma`. See [Database Schema](../architecture/database.md) for the complete data model.
 
 ```prisma
 model Message {
@@ -291,7 +291,7 @@ This should not happen (deduplication by ID), but if it does:
 
 ## See Also
 
-- [Database Schema](/docs/architecture/database) - Complete data model
-- [Session Lifecycle](/docs/architecture/session-lifecycle)
-- [LiveKit Integration](/docs/integration/livekit)
-- [Frontend Integration](/docs/integration/frontend)
+- [Database Schema](../architecture/database.md) - Complete data model
+- [Session Lifecycle](../architecture/session-lifecycle.md)
+- [LiveKit Integration](../integration/livekit.md)
+- [Frontend Integration](../integration/frontend.md)

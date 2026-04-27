@@ -25,4 +25,4 @@ This means a custom agent does not need to be part of the built-in agent set to 
 
 ## Recommended Workflow
 
-If you are building your own agent, follow the deployment-test checklist in [Build Your Own Agent](/docs/guides/build-your-own-agent#run-deployment-tests).
+If you are building your own agent, follow the deployment-test checklist in [Build Your Own Agent](../guides/build-your-own-agent.md#run-deployment-tests).

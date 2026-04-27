@@ -1,6 +1,13 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionState, Prisma } from '@prisma/client';
+
+/**
+ * Reserved sentinel ID for the End node drawn in the Plan Builder canvas.
+ * Not a real plan state — used to signal conversation termination when a
+ * transition targets it. Matches END_NODE_ID in PlanCanvas.tsx.
+ */
+export const END_STATE_ID = '__end__';
 
 /**
  * Plan data structure (matches SDK Plan type)
@@ -11,6 +18,18 @@ export interface PlanData {
   initial_state_id?: string;
   states: PlanState[];
   system_prompt?: string;
+  // Canvas metadata written by the Plan Builder UI.
+  // end_node_config is read when a transition reaches END_STATE_ID.
+  metadata?: {
+    plan_builder?: {
+      canvas?: {
+        end_node_config?: {
+          farewell_message?: string;
+          summary_behavior?: 'none' | 'brief' | 'full';
+        };
+      };
+    };
+  };
 }
 
 /**
@@ -62,6 +81,7 @@ export interface StateTransition {
    *
    * Simple:
    *   all_tasks_complete       – all required tasks/deliverables in the state are done
+   *   goal_achieved           – __goal_achieved__ deliverable is truthy
    *   deliverable_value        – a deliverable key equals a specific value (loose equality)
    *   deliverable_value_in     – a deliverable key matches any value in an array
    *   deliverable_value_numeric – a deliverable key satisfies a numeric comparison
@@ -75,6 +95,7 @@ export interface StateTransition {
    */
   condition_type:
     | 'all_tasks_complete'
+    | 'goal_achieved'
     | 'turn_count_exceeded'
     | 'deliverable_value'
     | 'deliverable_value_in'
@@ -108,6 +129,11 @@ export interface StateMachineResult {
   newStateTitle?: string;
   taskCompleted?: string;
   progress?: number;
+  // Set when the state machine reached END_STATE_ID. Agent should stop prompting.
+  sessionCompleted?: boolean;
+  // Populated from end_node_config when sessionCompleted is true.
+  farewellMessage?: string;
+  summaryBehavior?: string;
 }
 
 /**
@@ -201,6 +227,8 @@ export interface FullStateInfo {
   turnsWithoutProgress: number;
   states: FullStateStateInfo[];
   collectedDeliverables: Record<string, unknown>;
+  // True when currentStateId === END_STATE_ID (conversation terminated).
+  sessionCompleted?: boolean;
 }
 
 @Injectable()
@@ -219,9 +247,18 @@ export class StateMachineService {
    */
   private ensureTransitions(plan: PlanData): PlanData {
     const statesWithTransitions = plan.states.map((state, index) => {
+      const normalizedExistingTransitions = (state.transitions || []).map((transition) =>
+        state.type === 'goal' && transition.condition_type === 'all_tasks_complete'
+          ? { ...transition, condition_type: 'goal_achieved' as const, condition_config: undefined }
+          : transition,
+      );
+
       // If state already has transitions, keep them
-      if (state.transitions && state.transitions.length > 0) {
-        return state;
+      if (normalizedExistingTransitions.length > 0) {
+        return {
+          ...state,
+          transitions: normalizedExistingTransitions,
+        };
       }
 
       // If this is the last state, no transition needed
@@ -231,6 +268,8 @@ export class StateMachineService {
 
       // Generate default transition to next state
       const nextStateId = plan.states[index + 1].id;
+      const defaultConditionType: StateTransition['condition_type'] =
+        state.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete';
       this.logger.log(
         `Auto-generating transition for state '${state.id}' -> '${nextStateId}'`,
       );
@@ -240,7 +279,7 @@ export class StateMachineService {
         transitions: [
           {
             target_state_id: nextStateId,
-            condition_type: 'all_tasks_complete' as const,
+            condition_type: defaultConditionType,
             priority: 1,
           },
         ],
@@ -310,7 +349,7 @@ export class StateMachineService {
   async completeTask(
     sessionId: string,
     taskId: string,
-    reasoning: string,
+    _reasoning: string,  // Reserved for future audit logging; not used in current logic
   ): Promise<StateMachineResult> {
     const state = await this.getState(sessionId);
     if (!state) {
@@ -369,6 +408,9 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
       progress: await this.calculateProgress(sessionId, {
         ...state,
         completedTasks: updatedCompletedTasks,
@@ -447,8 +489,27 @@ export class StateMachineService {
         },
       });
 
+      // Preserve existing semantics for generic discovered insights:
+      // only the explicit goal completion marker should trigger transition evaluation.
+      if (key !== '__goal_achieved__') {
+        return {
+          success: true,
+          transitioned: false,
+          progress: await this.calculateProgress(sessionId, {
+            ...state,
+            deliverables: deliverables as unknown as Prisma.JsonValue,
+            turnsWithoutProgress: 0,
+          } as SessionState),
+        };
+      }
+
+      const transitionResult = await this.evaluateAndTransition(sessionId);
+
       return {
         success: true,
+        transitioned: transitionResult.transitioned,
+        newStateId: transitionResult.newStateId,
+        newStateTitle: transitionResult.newStateTitle,
         progress: await this.calculateProgress(sessionId, {
           ...state,
           deliverables: deliverables as unknown as Prisma.JsonValue,
@@ -529,6 +590,9 @@ export class StateMachineService {
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
       progress: await this.calculateProgress(sessionId, {
         ...state,
         deliverables: deliverables as unknown as Prisma.JsonValue,
@@ -544,6 +608,10 @@ export class StateMachineService {
   async getCurrentState(sessionId: string): Promise<CurrentStateInfo | null> {
     const state = await this.getState(sessionId);
     if (!state) return null;
+
+    // Session has reached the end state; no active state to return.
+    // Callers should check for null and treat it as session completed.
+    if (state.currentStateId === END_STATE_ID) return null;
 
     const plan = state.planData as unknown as PlanData;
     const currentState = this.getCurrentPlanState(plan, state.currentStateId);
@@ -622,12 +690,15 @@ export class StateMachineService {
 
       const allDeliverableKeys = [...new Set([...taskDeliverableKeys, ...goalDeliverableKeys])];
 
-      if (allDeliverableKeys.length === 0 && pendingTasks.length === 0) return [];
-
       return [{
         id: '__goal__',
         description: currentState.goal?.objective || currentState.description || currentState.title || 'Complete this phase',
-        instruction: currentState.goal?.depth_guidance,
+        instruction: [
+          currentState.goal?.depth_guidance,
+          currentState.goal?.success_description
+            ? `Mark this goal as achieved when this success criteria is met: ${currentState.goal.success_description}\nWhen met, call setDeliverable("__goal_achieved__", true).`
+            : 'Mark this goal as achieved when the objective is met.\nWhen met, call setDeliverable("__goal_achieved__", true).',
+        ].filter(Boolean).join('\n\n'),
         required: true,
         hasDeliverables: true,
         deliverableKeys: allDeliverableKeys,
@@ -847,13 +918,14 @@ export class StateMachineService {
       const taskDeliverables = task.deliverables || [];
       if (taskDeliverables.length === 0) {
         if (stateType === 'goal') {
-          // In goal mode, deliverable-less tasks are auto-considered complete.
-          // Goal mode focuses on information gathering (deliverables), not actions.
+          // In goal mode, deliverable-less tasks are guidance/action scaffolding.
+          // Completion is driven by goal markers/deliverables, not explicit task ticks.
           this.logger.log(
             `[isCurrentStateComplete] Task '${task.id}' has no deliverables — auto-complete in goal mode`,
           );
           continue;
         }
+
         // Task without deliverables - check if completed
         if (!state.completedTasks.includes(task.id)) {
           this.logger.log(
@@ -979,6 +1051,16 @@ export class StateMachineService {
     return actual === expected;
   }
 
+  private isGoalAchievedValue(raw: unknown): boolean {
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    if (typeof raw === 'string') {
+      const normalized = this.normalizeStringValue(raw);
+      return ['true', 'yes', '1', 'done', 'completed', 'complete', 'achieved', 'met'].includes(normalized);
+    }
+    return false;
+  }
+
   /**
    * Map operator strings (including symbolic aliases) to canonical keys.
    * Returns null when the operator is unrecognised, so callers can fail-closed.
@@ -1023,6 +1105,7 @@ export class StateMachineService {
   private validateConditionConfig(
     conditionType: string,
     conditionConfig: Record<string, unknown> | undefined,
+    currentState: PlanState,
     depth = 0,
   ): { valid: boolean; error?: string } {
     if (depth > StateMachineService.MAX_CONDITION_DEPTH) {
@@ -1034,6 +1117,14 @@ export class StateMachineService {
 
     switch (conditionType) {
       case 'all_tasks_complete':
+        if ((currentState.type || 'loose') === 'goal') {
+          return { valid: false, error: `'all_tasks_complete' is not supported for goal states` };
+        }
+        return { valid: true };
+      case 'goal_achieved':
+        if ((currentState.type || 'loose') !== 'goal') {
+          return { valid: false, error: `'goal_achieved' is only supported for goal states` };
+        }
         return { valid: true };
 
       case 'turn_count_exceeded': {
@@ -1117,14 +1208,14 @@ export class StateMachineService {
       // Composite conditions — delegate child validation recursively.
       case 'all_of':
       case 'any_of':
-        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+        return this.validateCompositeConditionConfig(conditionConfig, currentState, depth + 1);
 
       case 'compound': {
         const operator = String(conditionConfig?.operator || '').toLowerCase();
         if (operator !== 'and' && operator !== 'or') {
           return { valid: false, error: `'operator' must be 'and' or 'or' for compound` };
         }
-        return this.validateCompositeConditionConfig(conditionConfig, depth + 1);
+        return this.validateCompositeConditionConfig(conditionConfig, currentState, depth + 1);
       }
 
       default:
@@ -1138,6 +1229,7 @@ export class StateMachineService {
    */
   private validateCompositeConditionConfig(
     conditionConfig: Record<string, unknown> | undefined,
+    currentState: PlanState,
     depth: number,
   ): { valid: boolean; error?: string } {
     const conditions = conditionConfig?.conditions;
@@ -1165,7 +1257,12 @@ export class StateMachineService {
           ? (childConfigRaw as Record<string, unknown>)
           : undefined;
 
-      const childResult = this.validateConditionConfig(childType, childConfig, depth);
+      const childResult = this.validateConditionConfig(
+        childType,
+        childConfig,
+        currentState,
+        depth,
+      );
       if (!childResult.valid) {
         return {
           valid: false,
@@ -1180,7 +1277,7 @@ export class StateMachineService {
   /**
    * Evaluate a single condition node against the current session state.
    *
-   * Handles all 9 condition types including recursive composite conditions
+   * Handles all 10 condition types including recursive composite conditions
    * (all_of / any_of / compound).  The depth parameter guards against
    * infinite recursion from malformed plans.
    *
@@ -1206,8 +1303,23 @@ export class StateMachineService {
 
     switch (conditionType) {
       case 'all_tasks_complete':
+        if ((currentState.type || 'loose') === 'goal') {
+          this.warnInvalidCondition(
+            `'all_tasks_complete' is not supported for goal states; use 'goal_achieved' or deliverable-based conditions`,
+          );
+          return false;
+        }
         // Delegates to the existing helper that checks required tasks & deliverables.
         return this.isCurrentStateComplete(state, currentState);
+      case 'goal_achieved': {
+        if ((currentState.type || 'loose') !== 'goal') {
+          this.warnInvalidCondition(
+            `'goal_achieved' is only supported for goal states`,
+          );
+          return false;
+        }
+        return this.isGoalAchievedValue(deliverables.__goal_achieved__?.value);
+      }
 
       case 'turn_count_exceeded': {
         // Supports two scopes:
@@ -1428,7 +1540,7 @@ export class StateMachineService {
 
   private async evaluateAndTransition(
     sessionId: string,
-  ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string }> {
+  ): Promise<{ transitioned: boolean; newStateId?: string; newStateTitle?: string; sessionCompleted?: boolean; farewellMessage?: string; summaryBehavior?: string }> {
     const state = await this.getState(sessionId);
     if (!state) {
       this.logger.log(`[evaluateAndTransition] No state found for session ${sessionId}`);
@@ -1501,6 +1613,7 @@ export class StateMachineService {
         const validation = this.validateConditionConfig(
           transition.condition_type,
           transition.condition_config,
+          currentState,
         );
         if (!validation.valid) {
           this.warnInvalidCondition(
@@ -1568,17 +1681,26 @@ export class StateMachineService {
           );
         }
 
-        const targetState = plan.states.find(s => s.id === winner.target_state_id);
-        if (targetState) {
-          matchedTargetId = winner.target_state_id;
-          matchedTargetTitle = targetState.title || targetState.id;
+        // END_STATE_ID is a reserved sentinel — not in plan.states — so skip the lookup.
+        if (winner.target_state_id === END_STATE_ID) {
+          matchedTargetId = END_STATE_ID;
+          matchedTargetTitle = 'End';
           this.logger.log(
-            `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
+            `[evaluateAndTransition] Winner targets end state: condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
           );
         } else {
-          this.logger.warn(
-            `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
-          );
+          const targetState = plan.states.find(s => s.id === winner.target_state_id);
+          if (targetState) {
+            matchedTargetId = winner.target_state_id;
+            matchedTargetTitle = targetState.title || targetState.id;
+            this.logger.log(
+              `[evaluateAndTransition] Winner by priority: target='${matchedTargetId}', condition='${winner.condition_type}', priority=${winner.priority ?? 100}`,
+            );
+          } else {
+            this.logger.warn(
+              `[evaluateAndTransition] Target state '${winner.target_state_id}' not found in plan`,
+            );
+          }
         }
       }
 
@@ -1610,6 +1732,28 @@ export class StateMachineService {
       this.logger.log(
         `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
       );
+
+      // End state reached: mark the session CLOSING first, then return completion.
+      // CLOSED is now finalized later when the agent disconnects, which prevents
+      // cleanup logic from racing while farewell TTS is still in progress.
+      if (matchedTargetId === END_STATE_ID) {
+        const endConfig = rawPlan.metadata?.plan_builder?.canvas?.end_node_config;
+        this.logger.log(`[evaluateAndTransition] Session ${sessionId} reached end state — marking CLOSING`);
+
+        // Keep closedAt null until shutdown is confirmed and final CLOSED is written.
+        await this.prisma.session.update({
+          where: { id: sessionId },
+          data: { status: 'CLOSING', closedAt: null },
+        });
+
+        return {
+          transitioned: true,
+          newStateId: END_STATE_ID,
+          sessionCompleted: true,
+          farewellMessage: endConfig?.farewell_message,
+          summaryBehavior: endConfig?.summary_behavior,
+        };
+      }
 
       transitioned = true;
       currentStateId = matchedTargetId;
@@ -1800,6 +1944,8 @@ export class StateMachineService {
       turnsWithoutProgress: state.turnsWithoutProgress,
       states,
       collectedDeliverables: collectedDeliverablesMap,
+      // Signal to the frontend that the conversation has terminated.
+      sessionCompleted: state.currentStateId === END_STATE_ID,
     };
   }
 }

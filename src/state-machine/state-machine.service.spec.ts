@@ -298,6 +298,34 @@ function buildMultiMatchTiePlan(): PlanData {
   };
 }
 
+function buildGoalStatePlan(): PlanData {
+  return {
+    id: 'plan-goal-state',
+    title: 'Goal State Plan',
+    initial_state_id: 'state-goal',
+    states: [
+      {
+        id: 'state-goal',
+        title: 'Goal',
+        type: 'goal',
+        goal: {
+          objective: 'Help participant define a concrete next step',
+          success_description: 'Participant states a concrete, realistic next step they will take this week',
+        },
+        tasks: [],
+        transitions: [],
+      },
+      {
+        id: 'state-next',
+        title: 'Next',
+        type: 'loose',
+        tasks: [],
+        transitions: [],
+      },
+    ],
+  };
+}
+
 describe('StateMachineService non-linear transitions', () => {
   const sessionId = 'session-nonlinear';
   let service: StateMachineService;
@@ -424,6 +452,180 @@ describe('StateMachineService non-linear transitions', () => {
 
     // If deterministic, all outcomes collapse to a single selected target.
     expect(new Set(outcomes).size).toBe(1);
+  });
+});
+
+describe('goal_achieved condition', () => {
+  it('auto-generates goal_achieved as default transition for goal states', async () => {
+    const sessionId = 'session-goal-default-transition';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildGoalStatePlan());
+
+    const rawState = await (svc as any).getState(sessionId);
+    const goalState = (rawState?.planData as PlanData)?.states.find((state) => state.id === 'state-goal');
+
+    expect(goalState?.transitions[0]?.condition_type).toBe('goal_achieved');
+  });
+
+  it('does not transition immediately in goal states without deliverables', async () => {
+    const sessionId = 'session-goal-no-immediate-transition';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildGoalStatePlan());
+
+    const result = await (svc as any).evaluateAndTransition(sessionId);
+
+    expect(result.transitioned).toBe(false);
+    expect(result.newStateId).toBeUndefined();
+  });
+
+  it('treats required goal tasks without deliverables as auto-complete in state completion checks', async () => {
+    const sessionId = 'session-goal-action-task-auto-complete';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].tasks = [
+      {
+        id: 'action-task',
+        description: 'A guidance/action step without deliverables',
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const state = await (svc as any).getState(sessionId);
+    const planState = (state.planData as PlanData).states.find((s) => s.id === 'state-goal');
+    const isComplete = (svc as any).isCurrentStateComplete(state, planState);
+
+    expect(isComplete).toBe(true);
+  });
+
+  it('transitions when __goal_achieved__ is set truthy', async () => {
+    const sessionId = 'session-goal-achieved';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildGoalStatePlan());
+
+    const result = await svc.setDeliverable(
+      sessionId,
+      '__goal_achieved__',
+      true,
+      'Objective is met',
+    );
+
+    expect(result.transitioned).toBe(true);
+    expect(result.newStateId).toBe('state-next');
+  });
+
+  it('still transitions via goal_achieved when goal state has an action task without deliverables', async () => {
+    const sessionId = 'session-goal-achieved-with-action-task';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].tasks = [
+      {
+        id: 'action-task',
+        description: 'Offer reflective summary to participant',
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const result = await svc.setDeliverable(
+      sessionId,
+      '__goal_achieved__',
+      true,
+      'Objective reached after action step',
+    );
+
+    expect(result.transitioned).toBe(true);
+    expect(result.newStateId).toBe('state-next');
+  });
+
+  it('does not auto-evaluate transitions for arbitrary discovered goal insights', async () => {
+    const sessionId = 'session-goal-discovered-insight-no-auto-transition';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].transitions = [
+      {
+        target_state_id: 'state-next',
+        condition_type: 'deliverable_exists',
+        condition_config: { deliverable_key: 'insight_summary' },
+        priority: 1,
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const result = await svc.setDeliverable(
+      sessionId,
+      'insight_summary',
+      'User shared enough context',
+      'Captured as discovered insight',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.transitioned).toBe(false);
+
+    const current = await svc.getCurrentState(sessionId);
+    expect(current?.stateId).toBe('state-goal');
+  });
+
+  it('injects goal completion instruction using success_description in synthetic goal task', async () => {
+    const sessionId = 'session-goal-instruction';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildGoalStatePlan());
+
+    const pendingTasks = await svc.getPendingTasks(sessionId);
+    const goalTask = pendingTasks.find((task) => task.id === '__goal__');
+
+    expect(goalTask?.instruction).toContain('success criteria is met');
+    expect(goalTask?.instruction).toContain('setDeliverable("__goal_achieved__", true)');
+  });
+
+  it('migrates goal all_tasks_complete transitions to goal_achieved', async () => {
+    const sessionId = 'session-goal-all-tasks-complete-blocked';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].transitions = [
+      {
+        target_state_id: 'state-next',
+        condition_type: 'all_tasks_complete',
+        priority: 1,
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const rawState = await (svc as any).getState(sessionId);
+    const goalState = (rawState?.planData as PlanData)?.states.find((state) => state.id === 'state-goal');
+    expect(goalState?.transitions?.[0]?.condition_type).toBe('goal_achieved');
+
+    const result = await (svc as any).evaluateAndTransition(sessionId);
+
+    expect(result.transitioned).toBe(false);
+    expect(result.newStateId).toBeUndefined();
+  });
+
+  it('does not allow goal_achieved transitions for non-goal states', async () => {
+    const sessionId = 'session-non-goal-goal-achieved-blocked';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildTwoStatePlan(
+      {
+        target_state_id: 'state-b',
+        condition_type: 'goal_achieved',
+        priority: 1,
+      },
+      ['__goal_achieved__'],
+    );
+    await svc.initializeForSession(sessionId, plan);
+
+    await svc.setDeliverable(sessionId, '__goal_achieved__', true, 'marker set');
+    const result = await (svc as any).evaluateAndTransition(sessionId);
+
+    expect(result.transitioned).toBe(false);
+    expect(result.newStateId).toBeUndefined();
   });
 });
 

@@ -13,12 +13,14 @@ import type {
   StateTransition,
   SessionContext,
   AgentSpawnMode,
+  EndNodeConfig,
   PlanTask,
   PlanDeliverable,
 } from '../../../lib/api-types'
 import PlanStateEditor from './PlanStateEditor'
 import PlanTransitionEditor from './PlanTransitionEditor'
 import PlanStartEditor from './PlanStartEditor'
+import PlanEndEditor from './PlanEndEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
@@ -56,12 +58,64 @@ const normalizeStateType = (type: unknown): PlanState['type'] => {
   return 'flexible'
 }
 
+const normalizeTransitionsForStateType = (state: PlanState): PlanState => {
+  if (!state.transitions?.length) return state
+  if (state.type === 'goal') {
+    return {
+      ...state,
+      transitions: state.transitions.map((transition) =>
+        transition.condition_type === 'all_tasks_complete'
+          ? { ...transition, condition_type: 'goal_achieved', condition_config: undefined }
+          : transition
+      ),
+    }
+  }
+  return {
+    ...state,
+    transitions: state.transitions.map((transition) =>
+      transition.condition_type === 'goal_achieved'
+        ? { ...transition, condition_type: 'all_tasks_complete', condition_config: undefined }
+        : transition
+    ),
+  }
+}
+
 // Migration: normalize persisted/imported legacy state types for editor safety.
 const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[] =>
-  inputStates.map((state) => ({
-    ...state,
-    type: normalizeStateType(state.type),
-  }))
+  inputStates.map((state) =>
+    normalizeTransitionsForStateType({
+      ...state,
+      type: normalizeStateType(state.type),
+    } as PlanState)
+  )
+
+const ensureEndTransitionsForCanvasConnections = (
+  inputStates: PlanState[],
+  metadata: PlanMetadata | undefined,
+): PlanState[] => {
+  const canvas = extractCanvasMetadata(metadata)
+  const endStateIds = new Set(canvas.end_state_ids || [])
+  if (endStateIds.size === 0) return inputStates
+
+  return inputStates.map((state) => {
+    if (!endStateIds.has(state.id)) return state
+    const transitions = state.transitions || []
+    const hasEndTransition = transitions.some((transition) => transition.target_state_id === '__end__')
+    if (hasEndTransition) return state
+
+    return {
+      ...state,
+      transitions: [
+        ...transitions,
+        {
+          target_state_id: '__end__',
+          condition_type: 'all_tasks_complete',
+          priority: transitions.length,
+        },
+      ],
+    }
+  })
+}
 
 const createEmptyTask = (): PlanTask => ({
   id: crypto.randomUUID(),
@@ -77,31 +131,42 @@ const createEmptyDeliverable = (): PlanDeliverable => ({
   required: true,
 })
 
+const parseNodePositions = (value: unknown): Record<string, PlanCanvasPosition> => {
+  const parsed: Record<string, PlanCanvasPosition> = {}
+  if (!value || typeof value !== 'object') return parsed
+
+  for (const [stateId, position] of Object.entries(value)) {
+    if (
+      position &&
+      typeof position === 'object' &&
+      typeof (position as { x?: unknown }).x === 'number' &&
+      typeof (position as { y?: unknown }).y === 'number'
+    ) {
+      parsed[stateId] = {
+        x: (position as { x: number }).x,
+        y: (position as { y: number }).y,
+      }
+    }
+  }
+
+  return parsed
+}
+
+const extractNodePositions = (metadata: PlanMetadata | undefined): Record<string, PlanCanvasPosition> =>
+  parseNodePositions(metadata?.nodePositions)
+
+const stripLegacyCanvasStatePositions = (canvas: unknown): Record<string, unknown> => {
+  if (!canvas || typeof canvas !== 'object') return {}
+  const { state_positions: _legacyStatePositions, ...rest } = canvas as Record<string, unknown>
+  return rest
+}
+
 const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMetadata => {
   const planBuilder = metadata?.plan_builder
   if (!planBuilder || typeof planBuilder !== 'object') return {}
 
   const canvas = planBuilder.canvas
   if (!canvas || typeof canvas !== 'object') return {}
-
-  const rawStatePositions = canvas.state_positions
-  const parsedStatePositions: Record<string, PlanCanvasPosition> = {}
-
-  if (rawStatePositions && typeof rawStatePositions === 'object') {
-    for (const [stateId, position] of Object.entries(rawStatePositions)) {
-      if (
-        position &&
-        typeof position === 'object' &&
-        typeof (position as { x?: unknown }).x === 'number' &&
-        typeof (position as { y?: unknown }).y === 'number'
-      ) {
-        parsedStatePositions[stateId] = {
-          x: (position as { x: number }).x,
-          y: (position as { y: number }).y,
-        }
-      }
-    }
-  }
 
   const rawEndStateIds = canvas.end_state_ids
   const parsedEndStateIds = Array.isArray(rawEndStateIds)
@@ -120,15 +185,30 @@ const extractCanvasMetadata = (metadata: PlanMetadata | undefined): PlanCanvasMe
         }
       : undefined
 
+  // Validate end_node_config shape to guard against stale/corrupted persisted values.
+  const rawEndNodeConfig = canvas.end_node_config
+  const parsedEndNodeConfig =
+    rawEndNodeConfig && typeof rawEndNodeConfig === 'object'
+      ? {
+          farewell_message: typeof (rawEndNodeConfig as { farewell_message?: unknown }).farewell_message === 'string'
+            ? (rawEndNodeConfig as { farewell_message: string }).farewell_message
+            : undefined,
+          summary_behavior: (['none', 'brief', 'full'] as const).includes(
+            (rawEndNodeConfig as { summary_behavior?: unknown }).summary_behavior as 'none' | 'brief' | 'full'
+          )
+            ? (rawEndNodeConfig as { summary_behavior: 'none' | 'brief' | 'full' }).summary_behavior
+            : undefined,
+        }
+      : undefined
+
   return {
-    state_positions: parsedStatePositions,
     show_end_node: canvas.show_end_node === true,
     end_node_position: parsedEndNodePosition,
     end_state_ids: parsedEndStateIds,
+    end_node_config: parsedEndNodeConfig,
   }
 }
 
-const hasMetadataContent = (metadata: PlanMetadata) => Object.keys(metadata).length > 0
 const extractSpawnMode = (metadata: PlanMetadata | undefined): AgentSpawnMode => {
   const mode = metadata?.plan_builder?.start?.agent_spawn_mode
   return mode === 'on_demand' ? 'on_demand' : 'immediate'
@@ -167,6 +247,9 @@ const getConditionSignature = (transition: StateTransition): string => {
 const isTransitionConditionIncomplete = (transition: StateTransition): boolean => {
   const config = transition.condition_config || {}
   const key = typeof config.key === 'string' ? config.key.trim() : ''
+  if (transition.condition_type === 'goal_achieved') {
+    return false
+  }
   if (transition.condition_type === 'deliverable_exists') {
     return key.length === 0
   }
@@ -181,11 +264,209 @@ const isTransitionConditionIncomplete = (transition: StateTransition): boolean =
   return false
 }
 
+const getLayoutStateOrder = (states: PlanState[], initialStateId: string | null): string[] => {
+  if (states.length === 0) return []
+
+  const stateIds = new Set(states.map((state) => state.id))
+  const adjacency = new Map<string, string[]>()
+  const incomingCount = new Map<string, number>()
+
+  for (const state of states) {
+    incomingCount.set(state.id, 0)
+  }
+
+  for (const state of states) {
+    const targets = (state.transitions || [])
+      .map((transition) => transition.target_state_id)
+      .filter((targetId) => stateIds.has(targetId))
+
+    adjacency.set(state.id, targets)
+
+    for (const targetId of targets) {
+      incomingCount.set(targetId, (incomingCount.get(targetId) || 0) + 1)
+    }
+  }
+
+  const queue: string[] = []
+  const validInitial = initialStateId && stateIds.has(initialStateId) ? initialStateId : null
+  if (validInitial) {
+    queue.push(validInitial)
+  } else {
+    const noIncoming = states
+      .filter((state) => (incomingCount.get(state.id) || 0) === 0)
+      .map((state) => state.id)
+    queue.push(noIncoming[0] || states[0].id)
+  }
+
+  const ordered: string[] = []
+  const visited = new Set<string>()
+
+  while (queue.length > 0) {
+    const stateId = queue.shift()
+    if (!stateId || visited.has(stateId)) continue
+    visited.add(stateId)
+    ordered.push(stateId)
+
+    for (const targetId of adjacency.get(stateId) || []) {
+      if (!visited.has(targetId)) queue.push(targetId)
+    }
+  }
+
+  for (const state of states) {
+    if (!visited.has(state.id)) ordered.push(state.id)
+  }
+
+  return ordered
+}
+
+const buildAutoLayoutPositions = (
+  states: PlanState[],
+  initialStateId: string | null
+): Record<string, PlanCanvasPosition> => {
+  const orderedStateIds = getLayoutStateOrder(states, initialStateId)
+  return orderedStateIds.reduce<Record<string, PlanCanvasPosition>>((acc, stateId, index) => {
+    acc[stateId] = getDefaultStatePosition(index)
+    return acc
+  }, {})
+}
+
+const resolveStatePositions = (
+  states: PlanState[],
+  initialStateId: string | null,
+  explicitPositions: Record<string, PlanCanvasPosition>
+): Record<string, PlanCanvasPosition> => {
+  const autoPositions = buildAutoLayoutPositions(states, initialStateId)
+  return states.reduce<Record<string, PlanCanvasPosition>>((acc, state) => {
+    acc[state.id] = explicitPositions[state.id] || autoPositions[state.id] || getDefaultStatePosition(0)
+    return acc
+  }, {})
+}
+
+interface PlanImportValidationResult {
+  errors: string[]
+  warnings: string[]
+  resolvedInitialStateId: string | null
+}
+
+const validateImportedPlan = (
+  states: PlanState[],
+  initialStateId: string | null,
+  endStateIds: Set<string> = new Set()
+): PlanImportValidationResult => {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (states.length === 0) {
+    errors.push('Plan has no states.')
+    return { errors, warnings, resolvedInitialStateId: null }
+  }
+
+  const seenStateIds = new Set<string>()
+  for (const state of states) {
+    if (!state.id || typeof state.id !== 'string') {
+      errors.push('Every state must have a valid string id.')
+      continue
+    }
+    if (seenStateIds.has(state.id)) {
+      errors.push(`Duplicate state id "${state.id}".`)
+      continue
+    }
+    seenStateIds.add(state.id)
+  }
+
+  const resolvedInitialStateId =
+    initialStateId && seenStateIds.has(initialStateId) ? initialStateId : states[0]?.id || null
+
+  if (initialStateId && !seenStateIds.has(initialStateId)) {
+    warnings.push(`Initial state "${initialStateId}" was not found. Start was reset to "${resolvedInitialStateId}".`)
+  }
+
+  for (const endStateId of endStateIds) {
+    if (!seenStateIds.has(endStateId)) {
+      errors.push(`End node connection references missing state "${endStateId}".`)
+    }
+  }
+
+  const adjacency = new Map<string, string[]>()
+  const incomingCount = new Map<string, number>()
+  for (const state of states) incomingCount.set(state.id, 0)
+
+  for (const state of states) {
+    const transitions = state.transitions || []
+    if (!Array.isArray(transitions)) {
+      errors.push(`State "${state.id}" has an invalid transitions value.`)
+      continue
+    }
+    if (transitions.length === 0 && !endStateIds.has(state.id)) {
+      warnings.push(`State "${state.id}" has no outgoing transitions.`)
+    }
+
+    const targets: string[] = []
+    transitions.forEach((transition, index) => {
+      if (!transition || typeof transition !== 'object') {
+        errors.push(`State "${state.id}" has an invalid transition at index ${index}.`)
+        return
+      }
+      if (!transition.target_state_id || typeof transition.target_state_id !== 'string') {
+        errors.push(`State "${state.id}" has a transition missing "target_state_id" at index ${index}.`)
+        return
+      }
+      if (!transition.condition_type || typeof transition.condition_type !== 'string') {
+        errors.push(`State "${state.id}" has a transition missing "condition_type" at index ${index}.`)
+      }
+      if (!seenStateIds.has(transition.target_state_id)) {
+        errors.push(
+          `State "${state.id}" transitions to missing state "${transition.target_state_id}" at index ${index}.`
+        )
+        return
+      }
+      targets.push(transition.target_state_id)
+      incomingCount.set(
+        transition.target_state_id,
+        (incomingCount.get(transition.target_state_id) || 0) + 1
+      )
+    })
+    adjacency.set(state.id, targets)
+  }
+
+  const orphanStates = states
+    .map((state) => state.id)
+    .filter((stateId) => stateId !== resolvedInitialStateId && (incomingCount.get(stateId) || 0) === 0)
+  if (orphanStates.length > 0) {
+    warnings.push(`Orphaned state(s) with no incoming transitions: ${orphanStates.join(', ')}.`)
+  }
+
+  const reachable = new Set<string>()
+  const queue: string[] = resolvedInitialStateId ? [resolvedInitialStateId] : []
+  while (queue.length > 0) {
+    const stateId = queue.shift()
+    if (!stateId || reachable.has(stateId)) continue
+    reachable.add(stateId)
+    for (const targetId of adjacency.get(stateId) || []) {
+      if (!reachable.has(targetId)) queue.push(targetId)
+    }
+  }
+
+  const unreachableStates = states
+    .map((state) => state.id)
+    .filter((stateId) => !reachable.has(stateId))
+  if (unreachableStates.length > 0) {
+    warnings.push(`Unreachable state(s) from start: ${unreachableStates.join(', ')}.`)
+  }
+
+  return { errors, warnings, resolvedInitialStateId }
+}
+
 export default function PlanBuilder({ template, onSave, onCancel, onBack, isFromGenerator, onContentChange }: PlanBuilderProps) {
   const { resolvedTheme } = useThemeStore()
   const { addToast } = useToastStore()
   const isDark = resolvedTheme === 'dark'
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const initialMetadata = template?.content.metadata || {}
+  const initialStates = ensureEndTransitionsForCanvasConnections(
+    normalizePlanStates(template?.content.states || []),
+    initialMetadata,
+  )
 
   const [name, setName] = useState(template?.name || '')
   const [description, setDescription] = useState(template?.description || '')
@@ -198,18 +479,17 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [onParticipantLeft, setOnParticipantLeft] = useState(
     extractParticipantEventConfig(template?.content.metadata?.plan_builder?.start?.on_participant_left, 'on_participant_left')
   )
-  const [states, setStates] = useState<PlanState[]>(
-    normalizePlanStates(template?.content.states || [])
-  )
+  const [states, setStates] = useState<PlanState[]>(initialStates)
   const [initialStateId, setInitialStateId] = useState<string | null>(
     template?.content.initial_state_id || template?.content.states?.[0]?.id || null
   )
-  const [metadata, setMetadata] = useState<PlanMetadata>(template?.content.metadata || {})
+  const [metadata, setMetadata] = useState<PlanMetadata>(initialMetadata)
   const [selectedStateIndex, setSelectedStateIndex] = useState<number | null>(
     template?.content.states?.length ? 0 : null
   )
   const [selectedTransition, setSelectedTransition] = useState<SelectedTransition | null>(null)
   const [selectedStartNode, setSelectedStartNode] = useState(false)
+  const [selectedEndNode, setSelectedEndNode] = useState(false)
   const [xRayMode, setXRayMode] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [autoFitKey, setAutoFitKey] = useState(0)
@@ -235,13 +515,31 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     })
   }
 
+  const updateNodePositions = (
+    updater: (current: Record<string, PlanCanvasPosition>) => Record<string, PlanCanvasPosition>
+  ) => {
+    setMetadata((prev) => ({
+      ...prev,
+      nodePositions: updater(extractNodePositions(prev)),
+    }))
+  }
+
   const canvasMetadata = extractCanvasMetadata(metadata)
-  const statePositions = canvasMetadata.state_positions || {}
-  const showEndNode = canvasMetadata.show_end_node === true
-  const endStateIds = (canvasMetadata.end_state_ids || []).filter((stateId) =>
-    states.some((state) => state.id === stateId)
+  const statePositions = extractNodePositions(metadata)
+  const resolvedStatePositions = useMemo(
+    () => resolveStatePositions(states, initialStateId, statePositions),
+    [states, initialStateId, statePositions]
   )
+  const showEndNode = canvasMetadata.show_end_node === true
   const endNodePosition = canvasMetadata.end_node_position
+  const endNodeConfig: EndNodeConfig = canvasMetadata.end_node_config || {}
+  const endTransitionStateIds = useMemo(
+    () =>
+      states
+        .filter((state) => (state.transitions || []).some((transition) => transition.target_state_id === '__end__'))
+        .map((state) => state.id),
+    [states]
+  )
   const ambiguousTransitionRefs = useMemo<TransitionRef[]>(() => {
     const refs: TransitionRef[] = []
     for (const state of states) {
@@ -285,37 +583,28 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     for (const id of incompleteTransitionIdSet) ids.add(id)
     return ids
   }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
-  const hasParticipantEventConfig =
-    onParticipantJoin.enabled === true ||
-    onParticipantLeft.enabled === true ||
-    (onParticipantJoin.message_template || '') !== DEFAULT_JOIN_MESSAGE ||
-    (onParticipantLeft.message_template || '') !== DEFAULT_LEFT_MESSAGE
-
   const buildContent = (): PlanContent => ({
-    states,
+    states: states.map((state) => normalizeTransitionsForStateType(state)),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
     ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
-    ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate' || hasParticipantEventConfig
-      ? {
-          metadata: {
-            ...metadata,
-            plan_builder: {
-              ...(metadata.plan_builder || {}),
-              start: {
-                ...(metadata.plan_builder?.start || {}),
-                agent_spawn_mode: agentSpawnMode,
-                on_participant_join: onParticipantJoin,
-                on_participant_left: onParticipantLeft,
-              },
-              canvas: {
-                ...(metadata.plan_builder?.canvas || {}),
-                ...canvasMetadata,
-                end_state_ids: endStateIds,
-              },
-            },
-          },
-        }
-      : {}),
+    metadata: {
+      ...metadata,
+      nodePositions: resolvedStatePositions,
+      plan_builder: {
+        ...(metadata.plan_builder || {}),
+        start: {
+          ...(metadata.plan_builder?.start || {}),
+          agent_spawn_mode: agentSpawnMode,
+          on_participant_join: onParticipantJoin,
+          on_participant_left: onParticipantLeft,
+        },
+        canvas: {
+          ...stripLegacyCanvasStatePositions(metadata.plan_builder?.canvas),
+          ...canvasMetadata,
+          end_state_ids: endTransitionStateIds,
+        },
+      },
+    },
     ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
   })
 
@@ -329,12 +618,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStartNode(false)
     setInitialStateId((current) => current || newState.id)
 
-    updateCanvasMetadata((current) => ({
+    updateNodePositions((current) => ({
       ...current,
-      state_positions: {
-        ...(current.state_positions || {}),
-        [newState.id]: getDefaultStatePosition(newIndex),
-      },
+      [newState.id]: getDefaultStatePosition(newIndex),
     }))
 
     setAutoFitKey((prev) => prev + 1)
@@ -342,7 +628,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleUpdateState = (index: number, updated: PlanState) => {
-    setStates((prev) => prev.map((s, i) => (i === index ? updated : s)))
+    const normalized = normalizeTransitionsForStateType(updated)
+    setStates((prev) => prev.map((s, i) => (i === index ? normalized : s)))
     markChanged()
   }
 
@@ -368,15 +655,15 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       setSelectedStateIndex(selectedStateIndex - 1)
     }
 
-    updateCanvasMetadata((current) => {
-      const nextPositions = { ...(current.state_positions || {}) }
+    updateNodePositions((current) => {
+      const nextPositions = { ...current }
       delete nextPositions[stateToDelete.id]
-      return {
-        ...current,
-        state_positions: nextPositions,
-        end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== stateToDelete.id),
-      }
+      return nextPositions
     })
+    updateCanvasMetadata((current) => ({
+      ...current,
+      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== stateToDelete.id),
+    }))
 
     setSelectedTransition((current) => {
       if (!current) return current
@@ -402,18 +689,20 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(index >= 0 ? index : null)
     setSelectedTransition(null)
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
     const sourceState = states.find((state) => state.id === sourceStateId)
     if (!sourceState) return
+    const defaultConditionType = sourceState.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete'
     const createsAmbiguousDefault = (sourceState.transitions || []).some(
-      (transition) => transition.condition_type === 'all_tasks_complete'
+      (transition) => transition.condition_type === defaultConditionType
     )
 
     const nextTransition: StateTransition = {
       target_state_id: targetStateId,
-      condition_type: 'all_tasks_complete',
+      condition_type: defaultConditionType,
       priority: sourceState.transitions?.length ?? 0,
     }
 
@@ -432,7 +721,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     })
     if (createsAmbiguousDefault) {
       addToast({
-        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "All tasks complete" transitions.`,
+        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "${defaultConditionType.replace(/_/g, ' ')}" transitions.`,
         type: 'info',
       })
     }
@@ -443,12 +732,27 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     setSelectedStateIndex(null)
     setSelectedTransition({ sourceStateId, transitionIndex })
     setSelectedStartNode(false)
+    setSelectedEndNode(false)
   }
 
   const handleSelectStartNode = () => {
     setSelectedStateIndex(null)
     setSelectedTransition(null)
     setSelectedStartNode(true)
+    setSelectedEndNode(false)
+  }
+
+  // Selects the End node, deselecting everything else so the sidebar shows PlanEndEditor.
+  const handleSelectEndNode = () => {
+    setSelectedStateIndex(null)
+    setSelectedTransition(null)
+    setSelectedStartNode(false)
+    setSelectedEndNode(true)
+  }
+
+  const handleEndNodeConfigChange = (config: EndNodeConfig) => {
+    updateCanvasMetadata((current) => ({ ...current, end_node_config: config }))
+    markChanged()
   }
 
   const handleInitialStateChange = (stateId: string) => {
@@ -459,8 +763,10 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleConnectEndState = (sourceStateId: string) => {
-    if (!states.some((state) => state.id === sourceStateId)) return
+    const sourceState = states.find((state) => state.id === sourceStateId)
+    if (!sourceState) return
 
+    // Record in canvas metadata so the End node edge is rendered
     updateCanvasMetadata((current) => {
       const existing = current.end_state_ids || []
       if (existing.includes(sourceStateId)) return current
@@ -469,14 +775,27 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         end_state_ids: [...existing, sourceStateId],
       }
     })
-    markChanged()
-  }
 
-  const handleDeleteEndConnection = (sourceStateId: string) => {
-    updateCanvasMetadata((current) => ({
-      ...current,
-      end_state_ids: (current.end_state_ids || []).filter((stateId) => stateId !== sourceStateId),
-    }))
+    // Also write the actual transition into the plan so the backend can act on it.
+    // Without this the connection is purely cosmetic — the state machine never sees __end__.
+    setStates((prev) =>
+      prev.map((state) =>
+        state.id === sourceStateId
+          ? {
+              ...state,
+              transitions: [
+                ...(state.transitions || []),
+                {
+                  target_state_id: '__end__',
+                  condition_type: 'all_tasks_complete' as const,
+                  priority: state.transitions?.length ?? 0,
+                },
+              ],
+            }
+          : state
+      )
+    )
+
     markChanged()
   }
 
@@ -550,12 +869,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleStatePositionChange = (stateId: string, position: PlanCanvasPosition) => {
-    updateCanvasMetadata((current) => ({
+    updateNodePositions((current) => ({
       ...current,
-      state_positions: {
-        ...(current.state_positions || {}),
-        [stateId]: position,
-      },
+      [stateId]: position,
     }))
     markChanged()
   }
@@ -573,6 +889,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       ...current,
       show_end_node: !showEndNode,
     }))
+    if (showEndNode) setSelectedEndNode(false)
     setAutoFitKey((prev) => prev + 1)
     markChanged()
   }
@@ -589,26 +906,78 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           throw new Error('Invalid plan structure')
         }
 
-        const normalizedStates = normalizePlanStates(content.states as PlanStateWithLegacyType[])
+        const importedMetadata = (content.metadata as PlanMetadata) || {}
+        const normalizedStates = ensureEndTransitionsForCanvasConnections(
+          normalizePlanStates(content.states as PlanStateWithLegacyType[]),
+          importedMetadata,
+        )
+        const importedCanvasMetadata = extractCanvasMetadata(importedMetadata)
+        const importedEndStateIdSet = new Set(importedCanvasMetadata.end_state_ids || [])
+        const importInitialStateId = content.initial_state_id || normalizedStates[0]?.id || null
+        const validation = validateImportedPlan(
+          normalizedStates,
+          importInitialStateId,
+          importedEndStateIdSet
+        )
+        if (validation.errors.length > 0) {
+          addToast({ message: validation.errors[0], type: 'error' })
+          if (validation.errors.length > 1) {
+            addToast({
+              message: `Import failed with ${validation.errors.length} validation errors.`,
+              type: 'error',
+            })
+          }
+          return
+        }
+
+        const importedPositions = extractNodePositions(importedMetadata)
+        const hadExplicitPositions = Object.keys(importedPositions).length > 0
+        const nextStatePositions = resolveStatePositions(
+          normalizedStates,
+          validation.resolvedInitialStateId,
+          importedPositions
+        )
+        const nextMetadata: PlanMetadata = {
+          ...importedMetadata,
+          nodePositions: nextStatePositions,
+          plan_builder: {
+            ...(importedMetadata.plan_builder || {}),
+            canvas: {
+              ...stripLegacyCanvasStatePositions(importedMetadata.plan_builder?.canvas),
+              ...importedCanvasMetadata,
+            },
+          },
+        }
+
+
         setStates(normalizedStates)
         setSelectedStateIndex(normalizedStates.length > 0 ? 0 : null)
         setSelectedTransition(null)
         setSelectedStartNode(false)
-        setInitialStateId(content.initial_state_id || normalizedStates[0]?.id || null)
+        setInitialStateId(validation.resolvedInitialStateId)
         setSystemPrompt(content.system_prompt || '')
         setSessionContext(content.session_context || { fields: [] })
-        setAgentSpawnMode(extractSpawnMode((content.metadata as PlanMetadata) || {}))
+        setAgentSpawnMode(extractSpawnMode(importedMetadata))
         setOnParticipantJoin(extractParticipantEventConfig(
-          (content.metadata as PlanMetadata)?.plan_builder?.start?.on_participant_join,
+          importedMetadata?.plan_builder?.start?.on_participant_join,
           'on_participant_join',
         ))
         setOnParticipantLeft(extractParticipantEventConfig(
-          (content.metadata as PlanMetadata)?.plan_builder?.start?.on_participant_left,
+          importedMetadata?.plan_builder?.start?.on_participant_left,
           'on_participant_left',
         ))
-        setMetadata((content.metadata as PlanMetadata) || {})
+        setMetadata(nextMetadata)
         setAutoFitKey((prev) => prev + 1)
 
+        if (!hadExplicitPositions) {
+          addToast({ message: 'No node positions found. Auto-layout applied.', type: 'info' })
+        }
+        if (validation.warnings.length > 0) {
+          addToast({
+            message: `Imported with ${validation.warnings.length} warning(s): ${validation.warnings[0]}`,
+            type: 'info',
+          })
+        }
         markChanged()
         addToast({ message: 'Plan imported successfully', type: 'success' })
       } catch {
@@ -656,7 +1025,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
       return
     }
 
-    const endConnectedSet = new Set(showEndNode ? endStateIds : [])
+    const endConnectedSet = new Set(showEndNode ? endTransitionStateIds : [])
     const statesWithoutOutgoing = states.filter(
       (state) => (state.transitions?.length ?? 0) === 0 && !endConnectedSet.has(state.id)
     )
@@ -733,6 +1102,9 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const selectedTransitionTarget = selectedTransitionData
     ? states.find((state) => state.id === selectedTransitionData.target_state_id)
     : null
+  const selectedTransitionTargetTitle = selectedTransitionData?.target_state_id === '__end__'
+    ? 'End'
+    : selectedTransitionTarget?.title || 'Unknown state'
   const selectedTransitionDeliverables = selectedTransitionState
     ? selectedTransitionState.type === 'goal'
       ? selectedTransitionState.goal?.deliverables || []
@@ -921,19 +1293,19 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   agentSpawnMode={agentSpawnMode}
                   selectedStateId={selectedStateIndex !== null ? states[selectedStateIndex]?.id || null : null}
                   selectedStartNode={selectedStartNode}
+                  selectedEndNode={selectedEndNode}
                   selectedTransition={selectedTransition}
-                  statePositions={statePositions}
+                  statePositions={resolvedStatePositions}
                   endNodePosition={endNodePosition}
                   showEndNode={showEndNode}
                   autoFitKey={autoFitKey}
                   isDark={isDark}
                   onSelectStart={handleSelectStartNode}
+                  onSelectEnd={handleSelectEndNode}
                   onSelectState={handleSelectStateById}
                   onSelectTransition={handleSelectTransition}
                   onCreateTransition={handleCreateTransition}
-                  endStateIds={endStateIds}
                   onConnectEndState={handleConnectEndState}
-                  onDeleteEndConnection={handleDeleteEndConnection}
                   onDeleteTransitions={handleDeleteTransitions}
                   onDeleteState={handleDeleteStateById}
                   onStatePositionChange={handleStatePositionChange}
@@ -942,6 +1314,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                     setSelectedStateIndex(null)
                     setSelectedTransition(null)
                     setSelectedStartNode(false)
+                    setSelectedEndNode(false)
                   }}
                 />
               </div>
@@ -988,11 +1361,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
           <div className="h-full flex flex-col overflow-hidden">
             <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
               <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-                {selectedStartNode ? 'Start Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
+                {selectedStartNode ? 'Start Node' : selectedEndNode ? 'End Node' : selectedTransitionData ? 'Transition Editor' : 'State Editor'}
               </h3>
               <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
                 {selectedStartNode
                   ? 'Configure session start settings'
+                  : selectedEndNode
+                  ? 'Configure conversation end behavior'
                   : selectedTransitionData
                   ? 'Click an edge to edit condition and priority'
                   : 'Click a state node to edit details'}
@@ -1020,7 +1395,21 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden">
               <AnimatePresence mode="wait">
-                {selectedStartNode ? (
+                {selectedEndNode ? (
+                  <motion.div
+                    key="end-node"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    className="h-full"
+                  >
+                    <PlanEndEditor
+                      config={endNodeConfig}
+                      onChange={handleEndNodeConfigChange}
+                    />
+                  </motion.div>
+                ) : selectedStartNode ? (
                   <motion.div
                     key="start-node"
                     initial={{ opacity: 0, x: 20 }}
@@ -1054,7 +1443,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   >
                     <PlanTransitionEditor
                       sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
-                      targetStateTitle={selectedTransitionTarget?.title || 'Unknown state'}
+                      sourceStateType={selectedTransitionState.type}
+                      targetStateTitle={selectedTransitionTargetTitle}
                       transition={selectedTransitionData}
                       availableDeliverables={selectedTransitionDeliverables}
                       isAmbiguous={

@@ -13,6 +13,7 @@ import ParticipantConnectionModal from '../components/modals/ParticipantConnecti
 import DeployAgentModal from '../components/modals/DeployAgentModal'
 import ConfirmDialog from '../components/modals/ConfirmDialog'
 import MonitorLogsModal from '../components/modals/MonitorLogsModal'
+import SessionAnalyticsModal from '../components/modals/SessionAnalyticsModal'
 import StellaFaceModal from '../components/face/StellaFaceModal'
 import ProfileButton from '../components/layout/ProfileButton'
 import { useStore } from '../store'
@@ -67,6 +68,7 @@ export default function SessionView() {
   // Listener status for recording indicator
   const [listenerStatus, setListenerStatus] = useState<ListenerStatus | null>(null)
   const [showLogsModal, setShowLogsModal] = useState(false)
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false)
 
   const transport = useStore(s => s.transport)
   const status = useStore(s => s.status)
@@ -869,6 +871,15 @@ export default function SessionView() {
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                   </svg>
                 </button>
+                <button
+                  onClick={() => setShowAnalyticsModal(true)}
+                  className="btn-ghost p-1"
+                  title="Session analytics"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M18 20V10M12 20V4M6 20v-6" />
+                  </svg>
+                </button>
               </div>
             </div>
 
@@ -974,6 +985,14 @@ export default function SessionView() {
       <MonitorLogsModal
         isOpen={showLogsModal}
         onClose={() => setShowLogsModal(false)}
+        sessionId={sessionId}
+      />
+
+      {/* Session Analytics Modal */}
+      <SessionAnalyticsModal
+        isOpen={showAnalyticsModal}
+        onClose={() => setShowAnalyticsModal(false)}
+        projectId={session?.projectId || ''}
         sessionId={sessionId}
       />
 

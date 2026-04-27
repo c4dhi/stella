@@ -348,7 +348,7 @@ If the cgroup output contains a Docker container ID, the process is running insi
 
 ## See Also
 
-- [Kubernetes Architecture](/docs/deployment/kubernetes)
-- [Production Checklist](/docs/deployment/production-checklist)
-- [LiveKit Production](/docs/integration/livekit-production)
-- [Monitoring](/docs/deployment/monitoring)
+- [Kubernetes Architecture](./kubernetes.md)
+- [Production Checklist](./production-checklist.md)
+- [LiveKit Production](../integration/livekit-production.md)
+- [Monitoring](./monitoring.md)

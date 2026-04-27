@@ -234,5 +234,5 @@ Expected logs:
 
 ## See Also
 
-- [LiveKit Integration](/docs/integration/livekit)
-- [Production Deployment](/docs/deployment/production)
+- [LiveKit Integration](./livekit.md)
+- [Production Deployment](../deployment/production.md)

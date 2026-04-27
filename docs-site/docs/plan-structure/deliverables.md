@@ -372,4 +372,4 @@ Provide diverse examples that cover edge cases:
 
 ## Next Steps
 
-- [Examples](/docs/plan-structure/examples) — See complete plan examples with deliverables in context
+- [Examples](./examples.md) — See complete plan examples with deliverables in context
