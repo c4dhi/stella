@@ -53,12 +53,36 @@ const normalizeStateType = (type: unknown): PlanState['type'] => {
   return 'flexible'
 }
 
+const normalizeTransitionsForStateType = (state: PlanState): PlanState => {
+  if (!state.transitions?.length) return state
+  if (state.type === 'goal') {
+    return {
+      ...state,
+      transitions: state.transitions.map((transition) =>
+        transition.condition_type === 'all_tasks_complete'
+          ? { ...transition, condition_type: 'goal_achieved', condition_config: undefined }
+          : transition
+      ),
+    }
+  }
+  return {
+    ...state,
+    transitions: state.transitions.map((transition) =>
+      transition.condition_type === 'goal_achieved'
+        ? { ...transition, condition_type: 'all_tasks_complete', condition_config: undefined }
+        : transition
+    ),
+  }
+}
+
 // Migration: normalize persisted/imported legacy state types for editor safety.
 const normalizePlanStates = (inputStates: PlanStateWithLegacyType[]): PlanState[] =>
-  inputStates.map((state) => ({
-    ...state,
-    type: normalizeStateType(state.type),
-  }))
+  inputStates.map((state) =>
+    normalizeTransitionsForStateType({
+      ...state,
+      type: normalizeStateType(state.type),
+    } as PlanState)
+  )
 
 const ensureEndTransitionsForCanvasConnections = (
   inputStates: PlanState[],
@@ -209,6 +233,9 @@ const getConditionSignature = (transition: StateTransition): string => {
 const isTransitionConditionIncomplete = (transition: StateTransition): boolean => {
   const config = transition.condition_config || {}
   const key = typeof config.key === 'string' ? config.key.trim() : ''
+  if (transition.condition_type === 'goal_achieved') {
+    return false
+  }
   if (transition.condition_type === 'deliverable_exists') {
     return key.length === 0
   }
@@ -332,7 +359,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
 
   const buildContent = (): PlanContent => ({
-    states,
+    states: states.map((state) => normalizeTransitionsForStateType(state)),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
     ...(sessionContext.fields.length > 0 ? { session_context: sessionContext } : {}),
     ...(hasMetadataContent(metadata) || agentSpawnMode !== 'immediate'
@@ -380,7 +407,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   }
 
   const handleUpdateState = (index: number, updated: PlanState) => {
-    setStates((prev) => prev.map((s, i) => (i === index ? updated : s)))
+    const normalized = normalizeTransitionsForStateType(updated)
+    setStates((prev) => prev.map((s, i) => (i === index ? normalized : s)))
     markChanged()
   }
 
@@ -446,13 +474,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const handleCreateTransition = (sourceStateId: string, targetStateId: string) => {
     const sourceState = states.find((state) => state.id === sourceStateId)
     if (!sourceState) return
+    const defaultConditionType = sourceState.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete'
     const createsAmbiguousDefault = (sourceState.transitions || []).some(
-      (transition) => transition.condition_type === 'all_tasks_complete'
+      (transition) => transition.condition_type === defaultConditionType
     )
 
     const nextTransition: StateTransition = {
       target_state_id: targetStateId,
-      condition_type: 'all_tasks_complete',
+      condition_type: defaultConditionType,
       priority: sourceState.transitions?.length ?? 0,
     }
 
@@ -471,7 +500,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     })
     if (createsAmbiguousDefault) {
       addToast({
-        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "All tasks complete" transitions.`,
+        message: `Ambiguous route: "${sourceState.title || 'Untitled state'}" has multiple "${defaultConditionType.replace(/_/g, ' ')}" transitions.`,
         type: 'info',
       })
     }
@@ -1136,6 +1165,7 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                   >
                     <PlanTransitionEditor
                       sourceStateTitle={selectedTransitionState.title || 'Untitled state'}
+                      sourceStateType={selectedTransitionState.type}
                       targetStateTitle={selectedTransitionTargetTitle}
                       transition={selectedTransitionData}
                       availableDeliverables={selectedTransitionDeliverables}

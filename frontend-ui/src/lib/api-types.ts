@@ -661,6 +661,7 @@ export interface PlanTask {
  */
 export type StateTransitionConditionType =
   | 'all_tasks_complete'
+  | 'goal_achieved'
   | 'turn_count_exceeded'
   | 'deliverable_value'
   | 'deliverable_value_in'
