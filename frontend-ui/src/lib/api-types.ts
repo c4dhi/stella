@@ -1488,3 +1488,19 @@ export interface UpdateAgentConfigurationDto {
   configuration?: AgentConfigurationPayload
   agentVersion?: string
 }
+
+export type PublicHealthComponentStatus = 'operational' | 'degraded' | 'down'
+
+export type PublicHealthComponentId = 'api' | 'database' | 'realtime' | 'stt' | 'tts'
+
+export interface PublicHealthComponent {
+  id: PublicHealthComponentId
+  status: PublicHealthComponentStatus
+  lastCheckedAt: string
+}
+
+export interface PublicHealthResponse {
+  status: PublicHealthComponentStatus
+  components: PublicHealthComponent[]
+  generatedAt: string
+}

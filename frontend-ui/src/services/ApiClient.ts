@@ -73,6 +73,7 @@ import type {
   AgentConfiguration,
   CreateAgentConfigurationDto,
   UpdateAgentConfigurationDto,
+  PublicHealthResponse,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -1613,6 +1614,24 @@ class SessionManagementClient {
     return this.get<import('../lib/api-types').MetricsTimelineResponse>(
       `/projects/${projectId}/agents/${agentSlug}/metrics/timeline?${params}`
     )
+  }
+
+  // ============================================================================
+  // Public Status / Health (No auth required)
+  // ============================================================================
+
+  async getPublicHealth(): Promise<PublicHealthResponse> {
+    const url = `${this.getBaseUrl()}/health/public`
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw {
+        statusCode: response.status,
+        timestamp: new Date().toISOString(),
+        path: '/health/public',
+        message: response.statusText,
+      } as ApiError
+    }
+    return response.json()
   }
 }
 

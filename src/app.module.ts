@@ -29,6 +29,7 @@ import { AgentRegistryModule } from './agent-registry/agent-registry.module';
 import { StateMachineModule } from './state-machine/state-machine.module';
 import { AdminModule } from './admin/admin.module';
 import { AgentConfigurationsModule } from './agent-configurations/agent-configurations.module';
+import { HealthModule } from './health/health.module';
 
 const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local';
 
@@ -63,6 +64,7 @@ const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : 
     StateMachineModule,
     AdminModule,
     AgentConfigurationsModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [
