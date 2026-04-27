@@ -18,6 +18,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { StorageModule } from './storage/storage.module';
 import { AgentPackageModule } from './agent-package/agent-package.module';
 import { AgentBuildModule } from './agent-build/agent-build.module';
+import { AgentImageModule } from './agent-image/agent-image.module';
 import { AgentUploadModule } from './agent-upload/agent-upload.module';
 import { PlanTemplatesModule } from './plan-templates/plan-templates.module';
 import { EnvVarTemplatesModule } from './env-var-templates/env-var-templates.module';
@@ -52,6 +53,7 @@ const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : 
     StorageModule,
     AgentPackageModule,
     AgentBuildModule,
+    AgentImageModule,
     AgentUploadModule,
     PlanTemplatesModule,
     EnvVarTemplatesModule,

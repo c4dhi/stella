@@ -160,11 +160,13 @@ spec:
         # Mount Docker socket for building images
         - name: docker-sock
           mountPath: /var/run/docker.sock
-        # K3S: - name: k3s-containerd-sock
-        # K3S:   mountPath: /run/k3s/containerd/containerd.sock
-        # K3S: - name: k3s-binary
-        # K3S:   mountPath: /usr/local/bin/k3s
-        # K3S:   readOnly: true
+        # K3s containerd socket: mount the parent directory (not the socket file)
+        # so the pod transparently picks up a recreated socket if k3s restarts.
+        - name: k3s-containerd-dir
+          mountPath: /run/k3s/containerd
+        - name: k3s-binary
+          mountPath: /usr/local/bin/k3s
+          readOnly: true
         # Mount project directory for agent source code (path set dynamically by deploy script)
         - name: project-dir
           mountPath: /workspace/stella-backend
@@ -176,32 +178,45 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
+        # Liveness: only checks the Node process is alive. A broken containerd
+        # should not crash-loop the pod.
         livenessProbe:
           httpGet:
             path: /health
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
+        # Readiness: also pings k3s containerd. If the host socket goes stale
+        # (e.g. k3s restarts), the pod is removed from rotation until it recovers.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: 3000
           initialDelaySeconds: 10
+          periodSeconds: 15
+          failureThreshold: 3
+        # Startup: gives the pod up to 60s to reach a ready state on first boot
+        # before liveness/readiness kick in.
+        startupProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
           periodSeconds: 5
+          failureThreshold: 12
       volumes:
       # Docker socket from host (for building images)
       - name: docker-sock
         hostPath:
           path: /var/run/docker.sock
           type: Socket
-      # K3S: - name: k3s-containerd-sock
-      # K3S:   hostPath:
-      # K3S:     path: /run/k3s/containerd/containerd.sock
-      # K3S:     type: Socket
-      # K3S: - name: k3s-binary
-      # K3S:   hostPath:
-      # K3S:     path: /usr/local/bin/k3s
-      # K3S:     type: File
+      - name: k3s-containerd-dir
+        hostPath:
+          path: /run/k3s/containerd
+          type: Directory
+      - name: k3s-binary
+        hostPath:
+          path: /usr/local/bin/k3s
+          type: File
       # Project directory containing agent source code (path replaced dynamically by deploy script)
       - name: project-dir
         hostPath:

@@ -105,6 +105,34 @@ export class AgentImageService {
     if (this.isRunningInK8s && !this.hasDockerSocket) {
       this.logger.warn(`Running inside K8s pod without Docker socket - images must be pre-built`);
     }
+
+    // Surface containerd reachability at boot so a stale-socket scenario fails loud,
+    // not silently the first time a user tries to create an agent.
+    if (this.isProduction) {
+      this.checkContainerdHealth().then((result) => {
+        if (result.ok) {
+          this.logger.log('Containerd reachable at startup');
+        } else {
+          this.logger.error(`Containerd unreachable at startup: ${result.error}`);
+        }
+      });
+    }
+  }
+
+  /**
+   * Ping K3s containerd via `k3s ctr version`. Used by the readiness probe
+   * so the pod is taken out of rotation if the host socket goes stale.
+   */
+  async checkContainerdHealth(): Promise<{ ok: boolean; error?: string }> {
+    if (!this.isProduction) {
+      return { ok: true };
+    }
+    try {
+      await execAsync('k3s ctr version', { timeout: 5000 });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message?.trim() };
+    }
   }
 
   /**
@@ -393,8 +421,8 @@ export class AgentImageService {
       try {
         // Use k3s ctr (works when k3s binary is mounted into the container)
         await execAsync(`k3s ctr images import ${tarPath}`, { timeout: 120000 });
-      } catch {
-        // Fall back to ctr directly with K3s containerd socket
+      } catch (k3sErr) {
+        this.logger.warn(`k3s ctr import failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
         await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import ${tarPath}`, { timeout: 120000 });
       }
 
@@ -417,7 +445,8 @@ export class AgentImageService {
         timeout: 10000,
       });
       return stdout.trim().length > 0;
-    } catch {
+    } catch (k3sErr) {
+      this.logger.warn(`k3s ctr image lookup failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
       try {
         const { stdout } = await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images ls -q | grep -E "^docker.io/library/${imageName}$"`, {
           timeout: 10000,
@@ -458,7 +487,8 @@ export class AgentImageService {
           // Remove from K3s containerd
           try {
             await execAsync(`k3s ctr images rm docker.io/library/${imageName}`);
-          } catch {
+          } catch (k3sErr) {
+            this.logger.warn(`k3s ctr image rm failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
             await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images rm docker.io/library/${imageName}`);
           }
         }

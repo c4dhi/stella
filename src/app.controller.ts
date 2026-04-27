@@ -1,7 +1,8 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
 import { AppService } from './app.service';
 import { Public } from './common/decorators/public.decorator';
 import { LiveKitService } from './livekit/livekit.service';
+import { AgentImageService } from './agent-image/agent-image.service';
 import * as os from 'os';
 
 @Controller()
@@ -9,6 +10,7 @@ export class AppController {
   constructor(
     private readonly appService: AppService,
     private readonly livekit: LiveKitService,
+    private readonly agentImage: AgentImageService,
   ) {}
 
   @Public()
@@ -25,6 +27,19 @@ export class AppController {
       timestamp: new Date().toISOString(),
       service: 'session-management-server',
     };
+  }
+
+  @Public()
+  @Get('health/ready')
+  async ready() {
+    const containerd = await this.agentImage.checkContainerdHealth();
+    if (!containerd.ok) {
+      throw new HttpException(
+        { status: 'unready', containerd },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    return { status: 'ready', containerd };
   }
 
   @Public()
