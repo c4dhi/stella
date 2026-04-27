@@ -175,6 +175,7 @@ const sidebars: SidebarsConfig = {
             'contributing/coding-standards/testing',
           ],
         },
+        'contributing/agent-failure-collection',
         'contributing/pull-request-process',
         'contributing/release-process',
       ],
