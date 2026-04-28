@@ -534,7 +534,7 @@ export default function StateList({ states, currentStateId, lastTransition }: St
       visitedStates,
       possibleStates,
     }
-  }, [states, currentStateId])
+  }, [states, currentStateId, stateById])
 
   if (!states || states.length === 0) {
     return (
