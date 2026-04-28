@@ -19,22 +19,11 @@ from stella_agent_sdk.progress import (
     ProgressGroup,
     ProgressState,
 )
+from stella_v2_agent.utils import normalize_transition_priority
 
 
 class ProgressAdapter:
     """Converts gRPC state machine state to generic SDK ProgressState."""
-
-    @staticmethod
-    def _priority_value(value: Any) -> int:
-        """Normalize transition priority (supports int-like strings)."""
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str):
-            try:
-                return int(value.strip())
-            except (ValueError, TypeError):
-                return 100
-        return 100
 
     @staticmethod
     def deliverable_status_to_item_status(status: str) -> ItemStatus:
@@ -82,7 +71,7 @@ class ProgressAdapter:
                     })
 
                 transitions_by_state[state_id].sort(
-                    key=lambda t: cls._priority_value(t.get("priority"))
+                    key=lambda t: normalize_transition_priority(t.get("priority"))
                 )
 
         for state in full_state.get("states", []):
