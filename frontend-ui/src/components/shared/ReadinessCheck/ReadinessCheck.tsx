@@ -14,6 +14,7 @@ import {
   runNetworkCheck,
   runWebRtcCheck,
   runWebSocketCheck,
+  runLivekitPublishCheck,
 } from './checks'
 import { stopStream } from '../../../lib/mediaDevices'
 import MicLevelModal from './MicLevelModal'
@@ -26,6 +27,7 @@ const CHECK_LABELS: Record<CheckId, string> = {
   websocket: 'Realtime gateway',
   micPermission: 'Microphone permission',
   micLevel: 'Microphone audio',
+  livekitPublish: 'Audio publish to server',
   audioOutput: 'Speakers',
 }
 
@@ -108,6 +110,7 @@ export default function ReadinessCheck({
     if (id === 'network') return { result: await runNetworkCheck(), stream: currentMicStream }
     if (id === 'webrtc') return { result: await runWebRtcCheck(), stream: currentMicStream }
     if (id === 'websocket') return { result: await runWebSocketCheck(), stream: currentMicStream }
+    if (id === 'livekitPublish') return { result: await runLivekitPublishCheck(), stream: currentMicStream }
     if (id === 'micPermission') {
       const { result, stream } = await runMicPermissionCheck()
       setMicStream(stream)

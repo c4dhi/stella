@@ -1,9 +1,10 @@
+import { Room, createLocalAudioTrack, ConnectionState } from 'livekit-client'
 import { CheckResult } from './types'
 import { getRuntimeConfig } from '../../../config/runtime'
+import { apiClient } from '../../../services/ApiClient'
 import {
   checkMicrophonePermission,
   requestMicrophoneAccess,
-  stopStream,
 } from '../../../lib/mediaDevices'
 
 export async function runBrowserCheck(): Promise<CheckResult> {
@@ -195,5 +196,89 @@ export async function runWebSocketCheck(): Promise<CheckResult> {
     }
   } finally {
     clearTimeout(timer)
+  }
+}
+
+export async function runLivekitPublishCheck(): Promise<CheckResult> {
+  let session
+  try {
+    session = await apiClient.startMediaTest()
+  } catch (err: any) {
+    if (err?.statusCode === 429) {
+      return {
+        id: 'livekitPublish',
+        status: 'skipped',
+        detail: err.message || 'Try again in a moment.',
+      }
+    }
+    return {
+      id: 'livekitPublish',
+      status: 'fail',
+      detail: 'Could not start the audio test session.',
+    }
+  }
+
+  const room = new Room()
+  let track: Awaited<ReturnType<typeof createLocalAudioTrack>> | null = null
+  try {
+    await room.connect(session.livekitUrl, session.token)
+    if (room.state !== ConnectionState.Connected) {
+      return {
+        id: 'livekitPublish',
+        status: 'fail',
+        detail: 'Could not connect to the realtime gateway.',
+      }
+    }
+    track = await createLocalAudioTrack()
+    const publication = await room.localParticipant.publishTrack(track)
+
+    await new Promise((r) => setTimeout(r, 2500))
+
+    const sender = publication.track?.sender
+    if (!sender) {
+      return {
+        id: 'livekitPublish',
+        status: 'fail',
+        detail: 'Track did not publish — check microphone access.',
+      }
+    }
+    const stats = await sender.getStats()
+    let bytesSent = 0
+    let packetsSent = 0
+    stats.forEach((report: any) => {
+      if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+        if (typeof report.bytesSent === 'number')
+          bytesSent = Math.max(bytesSent, report.bytesSent)
+        if (typeof report.packetsSent === 'number')
+          packetsSent = Math.max(packetsSent, report.packetsSent)
+      }
+    })
+
+    if (bytesSent > 0 && packetsSent > 0) {
+      return {
+        id: 'livekitPublish',
+        status: 'pass',
+        metric: bytesSent,
+        detail: `Audio reaching server (${packetsSent} packets)`,
+      }
+    }
+    return {
+      id: 'livekitPublish',
+      status: 'fail',
+      detail: 'No audio reached the server. Your network may block real-time audio.',
+    }
+  } catch (err) {
+    return {
+      id: 'livekitPublish',
+      status: 'fail',
+      detail: (err as Error).message || 'Audio publishing failed.',
+    }
+  } finally {
+    try {
+      track?.stop()
+    } catch {}
+    try {
+      await room.disconnect()
+    } catch {}
   }
 }

@@ -74,6 +74,7 @@ import type {
   CreateAgentConfigurationDto,
   UpdateAgentConfigurationDto,
   PublicHealthResponse,
+  MediaTestSession,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -1629,6 +1630,25 @@ class SessionManagementClient {
         timestamp: new Date().toISOString(),
         path: '/health/public',
         message: response.statusText,
+      } as ApiError
+    }
+    return response.json()
+  }
+
+  async startMediaTest(): Promise<MediaTestSession> {
+    const url = `${this.getBaseUrl()}/health/media-test/start`
+    const response = await fetch(url, { method: 'POST' })
+    if (!response.ok) {
+      let message = response.statusText
+      try {
+        const data = await response.json()
+        if (data?.message) message = data.message
+      } catch {}
+      throw {
+        statusCode: response.status,
+        timestamp: new Date().toISOString(),
+        path: '/health/media-test/start',
+        message,
       } as ApiError
     }
     return response.json()

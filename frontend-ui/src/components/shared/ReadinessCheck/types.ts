@@ -5,6 +5,7 @@ export type CheckId =
   | 'websocket'
   | 'micPermission'
   | 'micLevel'
+  | 'livekitPublish'
   | 'audioOutput'
 
 export type CheckStatus = 'pending' | 'running' | 'pass' | 'warn' | 'fail' | 'skipped'
@@ -33,15 +34,15 @@ export interface ReadinessCheckProps {
 }
 
 export const DEFAULT_ENABLED_CHECKS: Record<ReadinessMode, CheckId[]> = {
-  public: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'audioOutput'],
-  preflight: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'audioOutput'],
-  gate: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'audioOutput'],
+  public: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'livekitPublish', 'audioOutput'],
+  preflight: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'livekitPublish', 'audioOutput'],
+  gate: ['browser', 'network', 'webrtc', 'websocket', 'micPermission', 'micLevel', 'livekitPublish', 'audioOutput'],
 }
 
 export const DEFAULT_REQUIRED_CHECKS: Record<ReadinessMode, CheckId[]> = {
   public: [],
   preflight: ['browser', 'micPermission', 'micLevel'],
-  gate: ['browser', 'micPermission', 'micLevel', 'webrtc', 'websocket'],
+  gate: ['browser', 'micPermission', 'micLevel', 'webrtc', 'websocket', 'livekitPublish'],
 }
 
 export const INTERACTIVE_CHECKS: ReadonlyArray<CheckId> = ['micLevel', 'audioOutput']
