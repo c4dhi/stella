@@ -506,7 +506,7 @@ export default function SessionView() {
           return group.execution_mode === 'sequential' ? 'sequential' as StateType : 'flexible' as StateType
         }
 
-        const normalizeTransitions = (group: any) => {
+        const extractTransitionsFromGroup = (group: any) => {
           const rawTransitions = group?.metadata?.transitions
           if (!Array.isArray(rawTransitions)) return []
 
@@ -563,7 +563,7 @@ export default function SessionView() {
               status: group.status as StateStatus,
               is_current: group.is_current,
               completed_at: group.completed_at || undefined,
-              transitions: normalizeTransitions(group),
+              transitions: extractTransitionsFromGroup(group),
               tasks: tasks,
             }
           }) || [],
