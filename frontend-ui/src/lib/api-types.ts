@@ -780,6 +780,13 @@ export type AgentSpawnMode = 'immediate' | 'on_demand'
  */
 export interface PlanStartMetadata {
   agent_spawn_mode?: AgentSpawnMode
+  on_participant_join?: ParticipantEventMessageConfig
+  on_participant_left?: ParticipantEventMessageConfig
+}
+
+export interface ParticipantEventMessageConfig {
+  enabled?: boolean
+  message_template?: string
 }
 
 /**
