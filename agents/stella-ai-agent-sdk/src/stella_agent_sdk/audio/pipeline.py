@@ -142,9 +142,13 @@ class AudioPipeline:
         # TTS language (resolved once from env, used by all TTS paths)
         self._tts_language = os.getenv("TTS_LANGUAGE", None) or None
 
-        # Sentence-level streaming TTS queue (tuple of sentence text + source label)
+        # Sentence-level streaming TTS queues.
+        # _speech_queue carries text to synthesize; _tts_audio_queue carries synthesized audio.
         self._speech_queue: asyncio.Queue = asyncio.Queue()
-        self._speech_worker_task: Optional[asyncio.Task] = None
+        self._tts_audio_queue: asyncio.Queue = asyncio.Queue()
+        self._speech_synthesis_task: Optional[asyncio.Task] = None
+        self._speech_playback_task: Optional[asyncio.Task] = None
+        self._speech_sequence: int = 0
 
         # Per-turn analytics state (raw event model)
         self._turn_stt_start_ts: float = 0
@@ -942,8 +946,24 @@ class AudioPipeline:
                 self._speech_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        # Drain synthesized-but-not-played audio too.
+        while not self._tts_audio_queue.empty():
+            try:
+                self._tts_audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         self._stop_speaking_event.set()
+
+        # Wake workers blocked on queue get().
+        try:
+            self._speech_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+        try:
+            self._tts_audio_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
 
         # Wait briefly for TTS to notice interruption
         await asyncio.sleep(0.05)
@@ -970,11 +990,11 @@ class AudioPipeline:
         if not sentence.strip():
             return
 
-        # Start worker lazily
-        if self._speech_worker_task is None or self._speech_worker_task.done():
-            self._speech_worker_task = asyncio.create_task(self._speech_worker())
+        # Start workers lazily
+        self._ensure_speech_workers()
 
-        self._speech_queue.put_nowait((sentence, source))
+        self._speech_sequence += 1
+        self._speech_queue.put_nowait((self._speech_sequence, sentence, source))
         logger.info(f"[TTS] Enqueued {source} sentence ({len(sentence.split())} words): {sentence[:60]}...")
         if self.turn_anchor_ts > 0:
             elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
@@ -996,20 +1016,22 @@ class AudioPipeline:
         the finally block of run_audio_loop). Blocks until the worker
         has spoken every queued sentence or is interrupted.
         """
-        if self._speech_worker_task is None or self._speech_worker_task.done():
+        if self._speech_synthesis_task is None or self._speech_playback_task is None:
             # Even without TTS work, emit analytics if we have timing data
             self._reset_turn_analytics()
             return
 
-        # Send sentinel to tell worker there are no more sentences
+        # Send sentinel to tell synthesis worker there are no more sentences.
         await self._speech_queue.put(None)
 
         try:
-            await self._speech_worker_task
+            await self._speech_synthesis_task
+            await self._speech_playback_task
         except asyncio.CancelledError:
             pass
         finally:
-            self._speech_worker_task = None
+            self._speech_synthesis_task = None
+            self._speech_playback_task = None
             self._reset_turn_analytics()
 
     def _reset_turn_analytics(self) -> None:
@@ -1075,99 +1097,78 @@ class AudioPipeline:
 
             await self._room.publish_audio(chunk.audio_data)
 
-    async def _speech_worker(self) -> None:
-        """Background worker that speaks queued sentences with prefetch.
+    def _ensure_speech_workers(self) -> None:
+        """Start synthesis/playback workers lazily on first sentence enqueue."""
+        if self._speech_synthesis_task is None or self._speech_synthesis_task.done():
+            self._speech_synthesis_task = asyncio.create_task(self._speech_synthesis_worker())
+        if self._speech_playback_task is None or self._speech_playback_task.done():
+            self._speech_playback_task = asyncio.create_task(self._speech_playback_worker())
 
-        While playing sentence N, starts synthesizing sentence N+1 in parallel.
-        This eliminates the gap between sentences caused by waiting for synthesis.
-        """
-        logger.info("[TTS] Speech worker started")
+    async def _speech_synthesis_worker(self) -> None:
+        """Synthesize queued sentences into ordered audio packets."""
+        logger.info("[TTS] Speech synthesis worker started")
         self._is_speaking = True
         self._stop_speaking_event.clear()
         self.close_transcript_gate()
 
         try:
-            prefetch_task = None
-            prefetch_source = None
-
             while True:
-                # If we have a prefetched result, use it; otherwise wait for queue
-                if prefetch_task is not None:
-                    # Race the prefetch await against the stop signal. Otherwise an
-                    # in-flight synthesis blocks the worker while the transcript gate
-                    # stays closed, dropping user speech during barge-in.
-                    stop_waiter = asyncio.create_task(self._stop_speaking_event.wait())
-                    try:
-                        await asyncio.wait(
-                            {prefetch_task, stop_waiter},
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                    finally:
-                        stop_waiter.cancel()
-                    if self._stop_speaking_event.is_set():
-                        prefetch_task.cancel()
-                        prefetch_task = None
-                        prefetch_source = None
-                        break
-                    chunks = await prefetch_task
-                    source = prefetch_source
-                    prefetch_task = None
-                    prefetch_source = None
-                else:
-                    item = await self._speech_queue.get()
-                    if item is None:
-                        break
-                    sentence, source = item
-                    if self._stop_speaking_event.is_set():
-                        logger.info("[TTS] Speech worker: interrupted, skipping remaining")
-                        break
-                    # No prefetch available — synthesize synchronously for this first sentence
-                    chunks = await self._prefetch_sentence(
-                        sentence, language=self._tts_language, source=source
-                    )
-
-                if self._stop_speaking_event.is_set():
+                item = await self._speech_queue.get()
+                if item is None:
+                    # Forward sentinel so playback worker can exit cleanly.
+                    await self._tts_audio_queue.put(None)
                     break
 
+                seq, sentence, source = item
+                if self._stop_speaking_event.is_set():
+                    logger.info("[TTS] Speech synthesis worker: interrupted, skipping remaining")
+                    await self._tts_audio_queue.put(None)
+                    break
+
+                chunks = await self._prefetch_sentence(
+                    sentence, language=self._tts_language, source=source
+                )
+                if self._stop_speaking_event.is_set():
+                    await self._tts_audio_queue.put(None)
+                    break
                 if not chunks:
                     continue
 
-                # Before playing, peek at the next sentence and start prefetching it
-                try:
-                    next_item = self._speech_queue.get_nowait()
-                    if next_item is not None:
-                        next_sentence, next_source = next_item
-                        prefetch_task = asyncio.create_task(
-                            self._prefetch_sentence(
-                                next_sentence, language=self._tts_language, source=next_source
-                            )
-                        )
-                        prefetch_source = next_source
-                    else:
-                        # Sentinel — put it back so the main loop sees it
-                        self._speech_queue.put_nowait(None)
-                except asyncio.QueueEmpty:
-                    pass  # No next sentence yet — that's fine
+                # Keep sequence attached so playback order stays deterministic.
+                await self._tts_audio_queue.put((seq, chunks, source))
 
-                # Play the current sentence's audio
+        except asyncio.CancelledError:
+            logger.info("[TTS] Speech synthesis worker cancelled")
+            await self._tts_audio_queue.put(None)
+        except Exception as e:
+            logger.error(f"[TTS] Speech synthesis worker error: {e}")
+            await self._tts_audio_queue.put(None)
+
+    async def _speech_playback_worker(self) -> None:
+        """Play synthesized sentences from ordered audio queue."""
+        logger.info("[TTS] Speech playback worker started")
+        try:
+            while True:
+                item = await self._tts_audio_queue.get()
+                if item is None:
+                    break
+                _seq, chunks, source = item
+                if self._stop_speaking_event.is_set():
+                    break
+
                 await self._play_prefetched(chunks, source=source)
 
-                # Emit tts_done events after each sentence completes
+                # Emit tts_done events after each sentence completes.
                 if self.turn_anchor_ts > 0:
                     elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
                     if source == "bridge":
                         asyncio.create_task(self._emit_analytics_event("bridge_tts_done", elapsed))
                     else:
                         self._last_response_tts_done_elapsed = elapsed
-
         except asyncio.CancelledError:
-            logger.info("[TTS] Speech worker cancelled")
-            if prefetch_task:
-                prefetch_task.cancel()
+            logger.info("[TTS] Speech playback worker cancelled")
         except Exception as e:
-            logger.error(f"[TTS] Speech worker error: {e}")
-            if prefetch_task:
-                prefetch_task.cancel()
+            logger.error(f"[TTS] Speech playback worker error: {e}")
         finally:
             # Emit response_tts_done with the last response sentence's completion time
             if hasattr(self, '_last_response_tts_done_elapsed') and self._last_response_tts_done_elapsed > 0:
@@ -1175,7 +1176,7 @@ class AudioPipeline:
                 self._last_response_tts_done_elapsed = 0
             self._is_speaking = False
             self.open_transcript_gate()
-            logger.info("[TTS] Speech worker stopped")
+            logger.info("[TTS] Speech playback worker stopped")
 
     def on_speech_started(self, callback: Callable[[], Awaitable[None]]) -> None:
         """
