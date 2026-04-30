@@ -102,8 +102,8 @@ spec:
         env:
         # K3S: # explicit runtime flag for the readiness probe so checkContainerdHealth()
         # K3S: # only gates on `k3s ctr version` when we are actually deployed onto k3s.
-        - name: CONTAINER_RUNTIME
-          value: "k3s"
+        # K3S: - name: CONTAINER_RUNTIME
+        # K3S:   value: "k3s"
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:

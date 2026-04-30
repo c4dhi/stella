@@ -4,6 +4,7 @@ import { useThemeStore } from '../../../store/themeStore'
 interface StatsCardProps {
   title: string
   value: number
+  suffix?: string
   subtitle?: string
   icon: React.ReactNode
   trend?: {
@@ -54,6 +55,7 @@ const colorClasses = {
 export default function StatsCard({
   title,
   value,
+  suffix,
   subtitle,
   icon,
   trend,
@@ -107,6 +109,7 @@ export default function StatsCard({
         transition={{ type: 'spring', stiffness: 500, damping: 30 }}
       >
         {value.toLocaleString()}
+        {suffix && <span className="text-xl font-semibold ml-1">{suffix}</span>}
       </motion.div>
 
       <div
