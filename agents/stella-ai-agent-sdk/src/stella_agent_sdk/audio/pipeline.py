@@ -976,6 +976,18 @@ class AudioPipeline:
 
         self._speech_queue.put_nowait((sentence, source))
         logger.info(f"[TTS] Enqueued {source} sentence ({len(sentence.split())} words): {sentence[:60]}...")
+        if self.turn_anchor_ts > 0:
+            elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
+            # Phase 1 baseline metric for sentence dispatch timing.
+            asyncio.create_task(
+                self._emit_analytics_event(
+                    "tts_sentence_enqueued",
+                    elapsed,
+                    source=source,
+                    queue_size=self._speech_queue.qsize(),
+                    sentence_len=len(sentence),
+                )
+            )
 
     async def flush_speech_queue(self) -> None:
         """Signal end-of-stream and wait for all queued sentences to finish.
@@ -1009,13 +1021,14 @@ class AudioPipeline:
         self._turn_response_tts_first_byte_emitted = False
         self._last_response_tts_done_elapsed = 0
 
-    async def _prefetch_sentence(self, sentence: str, voice=None, speed=1.0, language=None):
+    async def _prefetch_sentence(self, sentence: str, voice=None, speed=1.0, language=None, source: str = "response"):
         """Pre-synthesize a sentence and return all audio chunks as a list.
 
         This runs the full gRPC synthesize_stream call and collects all chunks
         so they can be played back immediately without waiting for synthesis.
         """
         chunks = []
+        first_chunk_seen = False
         try:
             async for chunk in self._tts.synthesize_stream(
                 text=sentence,
@@ -1024,6 +1037,18 @@ class AudioPipeline:
                 speed=speed,
                 language=language,
             ):
+                if not first_chunk_seen and self.turn_anchor_ts > 0:
+                    first_chunk_seen = True
+                    elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
+                    # Phase 1 baseline metric for synthesis start timing.
+                    asyncio.create_task(
+                        self._emit_analytics_event(
+                            "tts_sentence_synthesis_first_chunk",
+                            elapsed,
+                            source=source,
+                            sentence_len=len(sentence),
+                        )
+                    )
                 chunks.append(chunk)
         except Exception as e:
             logger.error(f"[TTS] Prefetch failed: {e}")
@@ -1098,7 +1123,7 @@ class AudioPipeline:
                         break
                     # No prefetch available — synthesize synchronously for this first sentence
                     chunks = await self._prefetch_sentence(
-                        sentence, language=self._tts_language
+                        sentence, language=self._tts_language, source=source
                     )
 
                 if self._stop_speaking_event.is_set():
@@ -1114,7 +1139,7 @@ class AudioPipeline:
                         next_sentence, next_source = next_item
                         prefetch_task = asyncio.create_task(
                             self._prefetch_sentence(
-                                next_sentence, language=self._tts_language
+                                next_sentence, language=self._tts_language, source=next_source
                             )
                         )
                         prefetch_source = next_source
