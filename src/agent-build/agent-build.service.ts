@@ -238,8 +238,8 @@ export class AgentBuildService {
       // Import to K3s
       try {
         await execAsync(`k3s ctr images import ${tarPath}`, { timeout: 120000 })
-      } catch {
-        // Fall back to ctr directly with K3s containerd socket
+      } catch (k3sErr) {
+        this.logger.warn(`k3s ctr import failed (${(k3sErr as Error).message?.trim()}), falling back to ctr binary`)
         await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import ${tarPath}`, { timeout: 120000 })
       }
 

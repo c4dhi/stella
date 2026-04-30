@@ -37,6 +37,9 @@ export class AgentImageService {
   private readonly isProduction: boolean;  // Production uses K3s (needs containerd import)
   private readonly isRunningInK8s: boolean;
   private readonly hasDockerSocket: boolean;
+  // Explicit container runtime for the readiness probe. Decoupled from NODE_ENV so
+  // a non-k3s "production" deploy doesn't get stuck NotReady on a missing k3s CLI.
+  private readonly containerRuntime: 'k3s' | 'docker' | 'none';
 
   // Registry of known agent types and their build contexts
   // Paths are relative to stella-backend/ directory (the new context)
@@ -83,6 +86,15 @@ export class AgentImageService {
     const nodeEnv = this.configService.get<string>('NODE_ENV', 'local');
     this.isProduction = nodeEnv === 'production';
 
+    // CONTAINER_RUNTIME defaults to 'k3s' only for the production-in-K8s case
+    // (the original implicit assumption); otherwise 'none' so readiness stays green.
+    const explicitRuntime = this.configService.get<string>('CONTAINER_RUNTIME');
+    if (explicitRuntime === 'k3s' || explicitRuntime === 'docker' || explicitRuntime === 'none') {
+      this.containerRuntime = explicitRuntime;
+    } else {
+      this.containerRuntime = this.isProduction && !!process.env.KUBERNETES_SERVICE_HOST ? 'k3s' : 'none';
+    }
+
     // In K8s, use the mounted workspace path from AGENT_WORKSPACE_ROOT env var
     // Otherwise, compute it relative to this file's location
     if (this.isRunningInK8s && process.env.AGENT_WORKSPACE_ROOT) {
@@ -99,11 +111,44 @@ export class AgentImageService {
     this.logger.log(`AgentImageService initialized`);
     this.logger.log(`Workspace root: ${this.workspaceRoot}`);
     this.logger.log(`Environment: ${nodeEnv} (${this.isProduction ? 'K3s/containerd' : 'OrbStack/Docker'})`);
+    this.logger.log(`Container runtime (readiness probe): ${this.containerRuntime}`);
     this.logger.log(`Running in K8s: ${this.isRunningInK8s}`);
     this.logger.log(`Docker socket available: ${this.hasDockerSocket}`);
 
     if (this.isRunningInK8s && !this.hasDockerSocket) {
       this.logger.warn(`Running inside K8s pod without Docker socket - images must be pre-built`);
+    }
+
+    // Surface containerd reachability at boot so a stale-socket scenario fails loud,
+    // not silently the first time a user tries to create an agent.
+    if (this.containerRuntime === 'k3s') {
+      this.checkContainerdHealth()
+        .then((result) => {
+          if (result.ok) {
+            this.logger.log('Containerd reachable at startup');
+          } else {
+            this.logger.error(`Containerd unreachable at startup: ${result.error}`);
+          }
+        })
+        .catch((err) => {
+          this.logger.error(`Containerd boot check threw: ${(err as Error).message?.trim()}`);
+        });
+    }
+  }
+
+  /**
+   * Ping K3s containerd via `k3s ctr version`. Used by the readiness probe
+   * so the pod is taken out of rotation if the host socket goes stale.
+   */
+  async checkContainerdHealth(): Promise<{ ok: boolean; error?: string }> {
+    if (this.containerRuntime !== 'k3s') {
+      return { ok: true };
+    }
+    try {
+      await execAsync('k3s ctr version', { timeout: 5000 });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message?.trim() };
     }
   }
 
@@ -393,8 +438,8 @@ export class AgentImageService {
       try {
         // Use k3s ctr (works when k3s binary is mounted into the container)
         await execAsync(`k3s ctr images import ${tarPath}`, { timeout: 120000 });
-      } catch {
-        // Fall back to ctr directly with K3s containerd socket
+      } catch (k3sErr) {
+        this.logger.warn(`k3s ctr import failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
         await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import ${tarPath}`, { timeout: 120000 });
       }
 
@@ -417,7 +462,8 @@ export class AgentImageService {
         timeout: 10000,
       });
       return stdout.trim().length > 0;
-    } catch {
+    } catch (k3sErr) {
+      this.logger.warn(`k3s ctr image lookup failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
       try {
         const { stdout } = await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images ls -q | grep -E "^docker.io/library/${imageName}$"`, {
           timeout: 10000,
@@ -458,7 +504,8 @@ export class AgentImageService {
           // Remove from K3s containerd
           try {
             await execAsync(`k3s ctr images rm docker.io/library/${imageName}`);
-          } catch {
+          } catch (k3sErr) {
+            this.logger.warn(`k3s ctr image rm failed (${k3sErr.message?.trim()}), falling back to ctr binary`);
             await execAsync(`ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images rm docker.io/library/${imageName}`);
           }
         }
