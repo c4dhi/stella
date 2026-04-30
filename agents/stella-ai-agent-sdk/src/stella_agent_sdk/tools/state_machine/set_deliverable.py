@@ -89,5 +89,10 @@ class SetDeliverableTool(BaseTool):
                 "new_state_id": result.get("new_state_id"),
                 "new_state_title": result.get("new_state_title"),
                 "progress": result.get("progress"),
+                # Propagated from backend — set when plan reached __end__.
+                # The expert runner reads this to signal session completion upstream.
+                "session_completed": result.get("session_completed", False),
+                "farewell_message": result.get("farewell_message"),
+                "summary_behavior": result.get("summary_behavior"),
             }
         )

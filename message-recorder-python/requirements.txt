@@ -6,4 +6,4 @@ livekit-api==1.0.6
 aiohttp==3.13.4
 
 # Environment variable management
-python-dotenv==1.0.1
+python-dotenv==1.2.2

@@ -336,6 +336,73 @@ class AgentOutput:
             },
         )
 
+    # --- Factory methods for ANALYTICS outputs ---
+
+    @classmethod
+    def analytics(
+        cls,
+        session_id: str,
+        stage: str,
+        timing_ms: float,
+        **extra_metadata: Any,
+    ) -> "AgentOutput":
+        """
+        Create an analytics timing measurement.
+
+        Stored for aggregation, not displayed to users, not spoken via TTS.
+
+        Args:
+            session_id: The session ID.
+            stage: Pipeline stage name (e.g., "input_gate", "expert_pool", "aggregator").
+            timing_ms: Duration of this stage in milliseconds.
+            **extra_metadata: Additional context (e.g., expert_count, model).
+        """
+        return cls(
+            session_id=session_id,
+            type=OutputType.ANALYTICS,
+            content="",
+            metadata={
+                "stage": stage,
+                "timing_ms": timing_ms,
+                **extra_metadata,
+            },
+        )
+
+    @classmethod
+    def analytics_event(
+        cls,
+        session_id: str,
+        stage: str,
+        turn_id: str,
+        elapsed_ms: float,
+        **extra_metadata: Any,
+    ) -> "AgentOutput":
+        """
+        Create a raw timestamped analytics event (elapsed_ms relative to stt_end).
+
+        Unlike analytics(), this does not carry a pre-computed timing delta.
+        Instead it records the elapsed time since stt_end for a specific event,
+        allowing the dashboard to compute intervals between any pair of events.
+
+        Args:
+            session_id: The session ID.
+            stage: Event name (e.g., "bridge_start", "response_first_token").
+            turn_id: Groups events into conversational turns.
+            elapsed_ms: Milliseconds since stt_end (ground zero). Negative for pre-stt events.
+            **extra_metadata: Additional context.
+        """
+        return cls(
+            session_id=session_id,
+            type=OutputType.ANALYTICS,
+            content="",
+            metadata={
+                "stage": stage,
+                "turn_id": turn_id,
+                "elapsed_ms": elapsed_ms,
+                **extra_metadata,
+            },
+        )
+
     # --- Factory methods for HEALTH_STATUS outputs ---
 
     @classmethod

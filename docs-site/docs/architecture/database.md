@@ -440,5 +440,5 @@ npx prisma migrate reset
 
 ## Next Steps
 
-- [Data Flow](/docs/architecture/data-flow) - How data moves through the system
-- [Session Lifecycle](/docs/architecture/session-lifecycle) - Session states and transitions
+- [Data Flow](./data-flow.md) - How data moves through the system
+- [Session Lifecycle](./session-lifecycle.md) - Session states and transitions

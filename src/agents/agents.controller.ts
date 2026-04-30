@@ -5,7 +5,9 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Sse,
+  UseGuards,
   ValidationPipe,
   UsePipes,
 } from '@nestjs/common';
@@ -15,6 +17,7 @@ import { AgentsService } from './agents.service';
 import { AgentImageService } from '../agent-image/agent-image.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ProjectAccessGuard } from '../auth/guards/project-access.guard';
 
 interface MessageEvent {
   data: string;
@@ -101,5 +104,99 @@ export class AgentsController {
   @Post('agents/:agentId/restart')
   restart(@Param('agentId') id: string) {
     return this.agentsService.restart(id);
+  }
+
+  /**
+   * Get aggregated per-stage latency metrics for an agent type.
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   *
+   * Returns per-stage stats: { stage, count, mean_ms, p50_ms, p95_ms, min_ms, max_ms }
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics')
+  @UseGuards(ProjectAccessGuard)
+  async getAgentMetrics(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getAgentMetrics(projectId, agentSlug, fromDate, toDate);
+  }
+
+  /**
+   * Get raw TTFAB data points over time for a live timeline chart.
+   *
+   * Query params:
+   *   - since: ISO date string (defaults to 1 hour ago)
+   *   - stage: stage name to filter (defaults to 'ttfab')
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/timeline')
+  @UseGuards(ProjectAccessGuard)
+  async getMetricsTimeline(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('since') since?: string,
+    @Query('stage') stage?: string,
+  ) {
+    const sinceDate = since ? new Date(since) : new Date(Date.now() - 3600000);
+    return this.agentsService.getMetricsTimeline(projectId, agentSlug, sinceDate, stage || 'ttfab');
+  }
+
+  /**
+   * Get per-session average data points for a specific stage (for drill-down).
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/stages/:stageName/points')
+  @UseGuards(ProjectAccessGuard)
+  async getStageDataPoints(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Param('stageName') stageName: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getStageDataPoints(projectId, agentSlug, stageName, fromDate, toDate);
+  }
+
+  /**
+   * Get per-session plan completion data for drill-down.
+   *
+   * Query params:
+   *   - from: ISO date string (defaults to 30 days ago)
+   *   - to: ISO date string (defaults to now)
+   */
+  @Get('projects/:projectId/agents/:agentSlug/metrics/plan-completion/sessions')
+  @UseGuards(ProjectAccessGuard)
+  async getPlanCompletionSessions(
+    @Param('projectId') projectId: string,
+    @Param('agentSlug') agentSlug: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86400000);
+    const toDate = to ? new Date(to) : new Date();
+    return this.agentsService.getPlanCompletionSessions(projectId, agentSlug, fromDate, toDate);
+  }
+
+  /**
+   * Get per-stage latency analytics for a single session.
+   */
+  @Get('projects/:projectId/sessions/:sessionId/analytics')
+  @UseGuards(ProjectAccessGuard)
+  async getSessionAnalytics(
+    @Param('projectId') projectId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.agentsService.getSessionAnalytics(sessionId, projectId);
   }
 }

@@ -100,7 +100,7 @@ npm run start:dev
 
 ## Database Migrations
 
-STELLA uses Prisma ORM with PostgreSQL. See [Database Schema](/docs/architecture/database) for the complete data model.
+STELLA uses Prisma ORM with PostgreSQL. See [Database Schema](../architecture/database.md) for the complete data model.
 
 ```bash
 # Create a new migration
@@ -166,6 +166,6 @@ curl http://localhost:5173
 
 ## Next Steps
 
-- [First Agent](/docs/getting-started/first-agent) - Deploy your first agent
-- [Database Schema](/docs/architecture/database) - Understand the data model
-- [Kubernetes Deployment](/docs/deployment/kubernetes) - Production Kubernetes setup
+- [First Agent](./first-agent.md) - Deploy your first agent
+- [Database Schema](../architecture/database.md) - Understand the data model
+- [Kubernetes Deployment](../deployment/kubernetes.md) - Production Kubernetes setup

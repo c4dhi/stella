@@ -401,7 +401,7 @@ async def test_get_weather():
 
 ## Next Steps
 
-- [Custom Tools Guide](/docs/guides/custom-tools) - Step-by-step guide to creating tools
-- [Streaming](/docs/sdk/streaming) - Audio streaming
-- [Base Agent](/docs/sdk/base-agent) - Full API reference
-- [Build Your Own Agent](/docs/guides/build-your-own-agent) - Complete tutorial
+- [Custom Tools Guide](../guides/custom-tools.md) - Step-by-step guide to creating tools
+- [Streaming](./streaming.md) - Audio streaming
+- [Base Agent](./base-agent.md) - Full API reference
+- [Build Your Own Agent](../guides/build-your-own-agent.md) - Complete tutorial

@@ -180,12 +180,12 @@ Create custom conversation plans:
 
 See specific troubleshooting sections in:
 
-- [Installation Guide](/docs/getting-started/installation#troubleshooting)
-- [First Agent](/docs/getting-started/first-agent#troubleshooting)
-- [Kubernetes Deployment](/docs/deployment/kubernetes#troubleshooting)
+- [Installation Guide](./getting-started/installation.md#troubleshooting)
+- [First Agent](./getting-started/first-agent.md#troubleshooting)
+- [Kubernetes Deployment](./deployment/kubernetes.md#troubleshooting)
 
 ## Further Reading
 
-- [Deployment Guides](/docs/deployment/kubernetes) - Production deployment
-- [LiveKit Integration](/docs/integration/livekit) - WebRTC setup
-- [Agent SDK](/docs/agent-sdk/overview) - Building custom agents
+- [Deployment Guides](./deployment/kubernetes.md) - Production deployment
+- [LiveKit Integration](./integration/livekit.md) - WebRTC setup
+- [Agent SDK](./agent-sdk/overview.md) - Building custom agents

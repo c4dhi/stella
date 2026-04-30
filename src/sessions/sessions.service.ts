@@ -152,12 +152,10 @@ export class SessionsService {
     }
 
     if (query.search) {
-      where.room = {
-        livekitRoomName: {
-          contains: query.search,
-          mode: 'insensitive',
-        },
-      };
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { room: { livekitRoomName: { contains: query.search, mode: 'insensitive' } } },
+      ];
     }
 
     const [sessions, total] = await Promise.all([
@@ -720,11 +718,13 @@ export class SessionsService {
       ? [...chatMessageTypes, ...debugMessageTypes]
       : chatMessageTypes;
 
+    // Cursor is now a timestamp (ISO string) instead of a UUID.
+    // UUID-based cursoring (`id < cursor`) is broken for random UUIDs (non-sequential).
     const where: Prisma.MessageWhereInput = {
       sessionId,
       messageType: { in: messageTypes },
       ...(options.before && { timestamp: { lt: new Date(options.before) } }),
-      ...(options.cursor && { id: { lt: options.cursor } }),
+      ...(options.cursor && { timestamp: { lt: new Date(options.cursor) } }),
     };
 
     // Fetch one extra to determine if there are more messages
@@ -737,10 +737,16 @@ export class SessionsService {
     const hasMore = messages.length > limit;
     const results = hasMore ? messages.slice(0, -1) : messages;
 
+    // Cursor is the oldest message's timestamp for the next page
+    const oldestResult = results[results.length - 1];
+    const nextCursor = hasMore && oldestResult
+      ? oldestResult.timestamp.toISOString()
+      : null;
+
     return {
       messages: results.reverse(), // Return in ascending order (oldest first)
       hasMore,
-      nextCursor: hasMore ? results[results.length - 1].id : null,
+      nextCursor,
     };
   }
 
@@ -783,7 +789,8 @@ export class SessionsService {
       sessionId,
       sessionStatus: session.status,
       listener: {
-        isMonitoring: session.status === 'ACTIVE',
+        // Recorder should keep monitoring while session is transitioning to CLOSED.
+        isMonitoring: session.status === 'ACTIVE' || session.status === 'CLOSING',
         isConnected: isConnected && !isStale,
         roomState: isConnected && !isStale ? 'connected' : 'not_connected',
         service: 'python-message-recorder',
@@ -815,7 +822,8 @@ export class SessionsService {
         sessionId: session.id,
         sessionStatus: session.status,
         listener: {
-          isMonitoring: session.status === 'ACTIVE',
+          // Recorder should keep monitoring while session is transitioning to CLOSED.
+          isMonitoring: session.status === 'ACTIVE' || session.status === 'CLOSING',
           isConnected: isConnected && !isStale,
           roomState: isConnected && !isStale ? 'connected' : 'not_connected',
           service: 'python-message-recorder',
@@ -844,9 +852,9 @@ export class SessionsService {
 
   // Get global monitoring status
   async getMonitoringStatus() {
-    // Get all ACTIVE sessions from database
+    // Get all sessions that should still be monitored by recorder.
     const activeSessions = await this.prisma.session.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: { in: ['ACTIVE', 'CLOSING'] } },
       select: {
         id: true,
         status: true,
@@ -967,13 +975,13 @@ export class SessionsService {
 
   /**
    * Find all active sessions that need monitoring.
-   * Returns sessions in ACTIVE status with their room information.
+   * Returns sessions still expected to have recorder monitoring.
    * Used by Python message recorder to discover which rooms to join.
    */
   async findActiveSessions() {
     const sessions = await this.prisma.session.findMany({
       where: {
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'CLOSING'] },
       },
       include: {
         room: true,
@@ -995,7 +1003,7 @@ export class SessionsService {
   /**
    * Find rooms that the message recorder should join.
    * Used by smart sync mode - only joins rooms with actual participants.
-   * Returns sessions where recorderShouldJoin = true.
+   * Returns sessions where recorderShouldJoin = true and shutdown is not finalized.
    */
   async findRoomsToJoin(): Promise<{
     sessionId: string;
@@ -1005,7 +1013,7 @@ export class SessionsService {
   }[]> {
     const sessions = await this.prisma.session.findMany({
       where: {
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'CLOSING'] },
         recorderShouldJoin: true,
       },
       include: {
@@ -1135,6 +1143,17 @@ export class SessionsService {
       speaker_id: nestedSpeakerId || participantIdentity,
     };
 
+    // Use the envelope's original timestamp for accurate chronological ordering.
+    // Only trust ISO string timestamps (not numeric Unix epochs which could be seconds vs ms).
+    // Falls back to now() if not present (matches @default(now()) behavior).
+    const envelopeTimestamp = typeof messageEnvelope.timestamp === 'string'
+      ? messageEnvelope.timestamp
+      : (typeof nestedData === 'object' && typeof nestedData.timestamp === 'string'
+        ? nestedData.timestamp
+        : undefined);
+    const messageTimestamp = envelopeTimestamp ? new Date(envelopeTimestamp) : new Date();
+    const validTimestamp = isNaN(messageTimestamp.getTime()) ? new Date() : messageTimestamp;
+
     const message = await this.prisma.message.create({
       data: {
         sessionId,
@@ -1143,6 +1162,7 @@ export class SessionsService {
         status: 'final',
         messageType,
         metadata: completeMetadata,
+        timestamp: validTimestamp,
       },
     });
 
@@ -1615,7 +1635,7 @@ export class SessionsService {
 
       // Attach deliverables to user messages using collectedAt timestamps
       const userMessages = messages.filter(
-        (m) => m.role === 'user' && (m.messageType === 'transcript' || m.messageType === 'user_text'),
+        (m) => m.role === 'user' && (m.messageType === 'transcript' || m.messageType === 'transcript_chunk' || m.messageType === 'user_text'),
       );
       for (const [key, del] of Object.entries(collected)) {
         if (!del.collectedAt || userMessages.length === 0) continue;

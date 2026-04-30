@@ -73,6 +73,8 @@ import type {
   AgentConfiguration,
   CreateAgentConfigurationDto,
   UpdateAgentConfigurationDto,
+  PublicHealthResponse,
+  MediaTestSession,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -748,10 +750,11 @@ class SessionManagementClient {
       cursor?: string
       limit?: number
       before?: string
+      includeDebug?: boolean
     } = {}
   ): Promise<MessagesResponse> {
     // Create unique key for request deduplication
-    const requestKey = `messages-${sessionId}-${options.cursor || 'initial'}-${options.limit || 50}`
+    const requestKey = `messages-${sessionId}-${options.cursor || 'initial'}-${options.limit || 50}-${options.includeDebug ? 'debug' : 'nodebug'}`
 
     // Return existing pending request if one exists
     if (this.pendingRequests.has(requestKey)) {
@@ -764,6 +767,7 @@ class SessionManagementClient {
     if (options.cursor) params.append('cursor', options.cursor)
     if (options.limit) params.append('limit', options.limit.toString())
     if (options.before) params.append('before', options.before)
+    if (options.includeDebug) params.append('include_debug', 'true')
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/messages${queryString ? `?${queryString}` : ''}`
@@ -1578,6 +1582,76 @@ class SessionManagementClient {
       method: 'PATCH',
       body: JSON.stringify({ isAdmin }),
     })
+  }
+
+  // ============================================================================
+  // Agent Analytics API
+  // ============================================================================
+
+  async getAgentMetrics(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').AgentMetricsResponse> {
+    return this.get<import('../lib/api-types').AgentMetricsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getSessionAnalytics(projectId: string, sessionId: string): Promise<import('../lib/api-types').SessionAnalyticsResponse> {
+    return this.get<import('../lib/api-types').SessionAnalyticsResponse>(`/projects/${projectId}/sessions/${sessionId}/analytics`)
+  }
+
+  async getStageDataPoints(projectId: string, agentSlug: string, stageName: string, from: string, to: string): Promise<import('../lib/api-types').StageDataPointsResponse> {
+    return this.get<import('../lib/api-types').StageDataPointsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/stages/${encodeURIComponent(stageName)}/points?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getPlanCompletionSessions(projectId: string, agentSlug: string, from: string, to: string): Promise<import('../lib/api-types').PlanCompletionSessionsResponse> {
+    return this.get<import('../lib/api-types').PlanCompletionSessionsResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/plan-completion/sessions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    )
+  }
+
+  async getMetricsTimeline(projectId: string, agentSlug: string, since: string, stage?: string): Promise<import('../lib/api-types').MetricsTimelineResponse> {
+    const params = `since=${encodeURIComponent(since)}${stage ? `&stage=${encodeURIComponent(stage)}` : ''}`
+    return this.get<import('../lib/api-types').MetricsTimelineResponse>(
+      `/projects/${projectId}/agents/${agentSlug}/metrics/timeline?${params}`
+    )
+  }
+
+  // ============================================================================
+  // Public Status / Health (No auth required)
+  // ============================================================================
+
+  async getPublicHealth(): Promise<PublicHealthResponse> {
+    const url = `${this.getBaseUrl()}/health/public`
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw {
+        statusCode: response.status,
+        timestamp: new Date().toISOString(),
+        path: '/health/public',
+        message: response.statusText,
+      } as ApiError
+    }
+    return response.json()
+  }
+
+  async startMediaTest(): Promise<MediaTestSession> {
+    const url = `${this.getBaseUrl()}/health/media-test/start`
+    const response = await fetch(url, { method: 'POST' })
+    if (!response.ok) {
+      let message = response.statusText
+      try {
+        const data = await response.json()
+        if (data?.message) message = data.message
+      } catch {}
+      throw {
+        statusCode: response.status,
+        timestamp: new Date().toISOString(),
+        path: '/health/media-test/start',
+        message,
+      } as ApiError
+    }
+    return response.json()
   }
 }
 

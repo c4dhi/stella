@@ -40,7 +40,7 @@ src/
 
 ## Database Schema
 
-See [Database Schema](/docs/architecture/database) for the complete data model. Key models for authentication:
+See [Database Schema](../architecture/database.md) for the complete data model. Key models for authentication:
 
 ### User Model
 
@@ -314,6 +314,6 @@ async findAll(userId: string) {
 
 ## See Also
 
-- [Database Schema](/docs/architecture/database) - Complete data model
-- [Frontend Integration](/docs/integration/frontend)
-- [Environment Variables](/docs/architecture/environment-variables)
+- [Database Schema](../architecture/database.md) - Complete data model
+- [Frontend Integration](../integration/frontend.md)
+- [Environment Variables](../architecture/environment-variables.md)

@@ -68,7 +68,25 @@ class CompleteTaskTool(BaseTool):
         Returns:
             ToolResult with success status and any state changes
         """
-        result = await self._client.complete_task(task_id, reasoning)
+        pending_tasks = await self._client.get_pending_tasks()
+        pending_ids = {t.get("id") for t in pending_tasks if t.get("id")}
+        resolved_task_id = task_id
+
+        # The model occasionally sends task descriptions instead of IDs.
+        # Recover safely only when the description maps to exactly one pending task.
+        if resolved_task_id not in pending_ids:
+            matches = [t for t in pending_tasks if t.get("description") == task_id]
+            if len(matches) == 1 and matches[0].get("id"):
+                resolved_task_id = matches[0]["id"]
+            else:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"Invalid task_id '{task_id}'. Use an exact task ID from pending tasks."
+                    ),
+                )
+
+        result = await self._client.complete_task(resolved_task_id, reasoning)
 
         if not result["success"]:
             return ToolResult(
@@ -79,11 +97,16 @@ class CompleteTaskTool(BaseTool):
         return ToolResult(
             success=True,
             data={
-                "task_id": task_id,
+                "task_id": resolved_task_id,
                 "task_completed": result.get("task_completed"),
                 "transitioned": result.get("transitioned", False),
                 "new_state_id": result.get("new_state_id"),
                 "new_state_title": result.get("new_state_title"),
                 "progress": result.get("progress"),
+                # Propagated from backend — set when plan reached __end__.
+                # The expert runner reads this to signal session completion upstream.
+                "session_completed": result.get("session_completed", False),
+                "farewell_message": result.get("farewell_message"),
+                "summary_behavior": result.get("summary_behavior"),
             }
         )

@@ -140,6 +140,6 @@ If you outgrow stella-light-agent:
 
 ## See Also
 
-- [stella-agent](/docs/agents/stella-agent) - Full-featured agent
-- [Agents Overview](/docs/agents/overview) - Agent comparison
-- [First Agent](/docs/getting-started/first-agent) - Deployment guide
+- [stella-agent](./stella-agent/index.md) - Full-featured agent
+- [Agents Overview](./overview.md) - Agent comparison
+- [First Agent](../getting-started/first-agent.md) - Deployment guide

@@ -132,5 +132,5 @@ If no `pipeline_config` is present, the agent raises an error — configuration 
 
 ## See Also
 
-- [Pipeline Schema Reference](/docs/agents/stella-v2/pipeline-schema) — Full `pipelineSchema` format for defining configurable pipelines
-- [stella-v2 Overview](/docs/agents/stella-v2) — Architecture and design rationale
+- [Pipeline Schema Reference](./pipeline-schema.md) — Full `pipelineSchema` format for defining configurable pipelines
+- [stella-v2 Overview](./index.md) — Architecture and design rationale

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AgentsService } from '../agents/agents.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { LiveKitService } from '../livekit/livekit.service';
+import { EncryptionService } from '../env-var-templates/encryption.service';
 
 interface ParticipantJoinedEvent {
   roomName: string;
@@ -37,6 +38,8 @@ export class WebhooksService {
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
     private livekitService: LiveKitService,
+    // Used to decrypt manualEnvVarsEncrypted when recreating an agent from lastAgentConfig.
+    private encryptionService: EncryptionService,
     @Inject(forwardRef(() => AgentsService))
     private agentsService: AgentsService,
     @Inject(forwardRef(() => SessionsService))
@@ -62,6 +65,62 @@ export class WebhooksService {
    */
   private isAgentParticipant(identity: string): boolean {
     return identity.startsWith('agent-');
+  }
+
+  /**
+   * Finalize CLOSING -> CLOSED when the last agent leaves the room.
+   * This keeps session cleanup aligned with actual agent shutdown.
+   */
+  private async finalizeClosingSessionOnAgentLeave(
+    sessionId: string,
+    participantIdentity: string,
+    roomName: string,
+  ): Promise<void> {
+    if (!this.isAgentParticipant(participantIdentity)) return;
+
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { id: true, status: true, projectId: true, name: true },
+    });
+
+    if (!session || session.status !== 'CLOSING') return;
+
+    // Finalize only after all agents are actually gone from the room.
+    const remaining = await this.countRoomParticipants(roomName);
+    if (remaining.agents > 0) return;
+
+    const closedAt = new Date();
+    const finalizeResult = await this.prisma.session.updateMany({
+      where: {
+        id: sessionId,
+        status: 'CLOSING',
+      },
+      data: {
+        status: 'CLOSED',
+        closedAt,
+        recorderShouldJoin: false,
+      },
+    });
+
+    // updateMany keeps this idempotent under concurrent webhook deliveries.
+    if (finalizeResult.count === 0) return;
+
+    const revokedInvitations = await this.prisma.invitation.updateMany({
+      where: {
+        sessionId,
+        status: { in: ['PENDING', 'ACCEPTED'] },
+      },
+      data: { status: 'REVOKED' },
+    });
+
+    if (revokedInvitations.count > 0) {
+      this.logger.log(
+        `Session ${sessionId}: auto-revoked ${revokedInvitations.count} invitation(s) on close finalization`,
+      );
+    }
+
+    this.sessionsService.emitSessionClosed(sessionId, session.projectId, session.name);
+    this.logger.log(`Session ${sessionId} finalized to CLOSED after last agent disconnected`);
   }
 
   /**
@@ -345,7 +404,7 @@ export class WebhooksService {
 
     if (!session) return;
 
-    // Save the first agent's config for respawning later
+    // Save the first agent's config so spawnOrResumeAgent() can recreate it later.
     const firstAgent = session.agents[0];
     if (firstAgent) {
       const agentConfig = {
@@ -354,9 +413,10 @@ export class WebhooksService {
         agentType: firstAgent.agentType,
         agentConfig: firstAgent.agentConfig,
         envVarTemplateId: firstAgent.envVarTemplateId,
-        // Preserve previously stored manual env vars for on_demand resume.
-        // AgentInstance doesn't persist envVars separately, so keep them in session.lastAgentConfig.
-        envVars: (session.lastAgentConfig as any)?.envVars || {},
+        // Store the encrypted manual vars from AgentInstance rather than plain JSON.
+        // spawnOrResumeAgent() will decrypt this before calling agentsService.create(),
+        // closing the gap where manual env vars were previously persisted as plaintext.
+        manualEnvVarsEncrypted: firstAgent.manualEnvVarsEncrypted || null,
       };
 
       await this.prisma.session.update({
@@ -438,6 +498,14 @@ export class WebhooksService {
           return;
         }
 
+        // Recover manual env vars for the new agent:
+        // - If paused via pauseAgents(), manualEnvVarsEncrypted is the ciphertext from AgentInstance.
+        // - If set via startJoinPublicProject(), envVars is plain JSON from publicAgentConfig (not yet encrypted).
+        // Either way, agentsService.create() will re-encrypt whatever we pass as envVars.
+        const manualEnvVars = config.manualEnvVarsEncrypted
+          ? this.encryptionService.decrypt(config.manualEnvVarsEncrypted)
+          : config.envVars || {};
+
         const agent = await this.agentsService.create(
           session.id,
           {
@@ -446,7 +514,7 @@ export class WebhooksService {
             agentType: config.agentType || 'stella-agent',
             config: config.agentConfig || {},
             envVarTemplateId: config.envVarTemplateId,
-            envVars: config.envVars || {},
+            envVars: manualEnvVars,
           },
           projectMembership.userId,
         );
@@ -561,6 +629,8 @@ export class WebhooksService {
 
       // Handle participant inactivity for recorder/agent management
       await this.handleParticipantInactivity(room.sessionId, participantIdentity);
+      // If this was an agent leave during CLOSING, finalize the session close now.
+      await this.finalizeClosingSessionOnAgentLeave(room.sessionId, participantIdentity, roomName);
 
     } catch (error) {
       this.logger.error(

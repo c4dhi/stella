@@ -26,6 +26,18 @@ class ProgressAdapter:
     """Converts gRPC state machine state to generic SDK ProgressState."""
 
     @staticmethod
+    def _priority_value(value: Any) -> int:
+        """Normalize transition priority (supports int-like strings)."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return 100
+        return 100
+
+    @staticmethod
     def deliverable_status_to_item_status(status: str) -> ItemStatus:
         mapping = {
             "pending": ItemStatus.PENDING,

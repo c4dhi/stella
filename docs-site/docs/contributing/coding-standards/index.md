@@ -18,7 +18,7 @@ Consistent code style makes the codebase easier to read and maintain. This guide
 
 ## Standards by Component
 
-### [TypeScript (Backend)](/docs/contributing/coding-standards/typescript)
+### [TypeScript (Backend)](./typescript.md)
 
 NestJS backend code conventions including:
 - Formatting with Prettier
@@ -26,7 +26,7 @@ NestJS backend code conventions including:
 - Naming conventions
 - Service and DTO examples
 
-### [Python (Agents)](/docs/contributing/coding-standards/python)
+### [Python (Agents)](./python.md)
 
 Python agent code conventions including:
 - Formatting with Black
@@ -34,14 +34,14 @@ Python agent code conventions including:
 - Type checking with mypy
 - Agent and tool examples
 
-### [React (Frontend)](/docs/contributing/coding-standards/react)
+### [React (Frontend)](./react.md)
 
 React frontend code conventions including:
 - Component structure
 - File organization
 - Custom hooks patterns
 
-### [Git & Commits](/docs/contributing/coding-standards/git)
+### [Git & Commits](./git.md)
 
 Version control best practices including:
 - Branch naming conventions
@@ -49,7 +49,7 @@ Version control best practices including:
 - Commit message guidelines
 - Git workflow and tips
 
-### [Testing](/docs/contributing/coding-standards/testing)
+### [Testing](./testing.md)
 
 Testing standards for all components:
 - Backend testing with Jest

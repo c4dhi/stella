@@ -18,17 +18,19 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Configuration
-PID_DIR="/tmp/stella-ai-k8s"
-NAMESPACE="ai-agents"
+# Configuration (inherit from environment or use defaults)
+NAMESPACE="${KUBERNETES_NAMESPACE:-ai-agents}"
+_ns_suffix=""
+[[ "$NAMESPACE" != "ai-agents" ]] && _ns_suffix="-${NAMESPACE}"
+PID_DIR="${STELLA_AI_TEMP_DIR:-/tmp}/stella-ai-k8s${_ns_suffix}"
 FOREGROUND=true  # Default to foreground mode
 mkdir -p "$PID_DIR"
 
 # Services to port-forward: "service:local_port:remote_port"
 SERVICES=(
-    "frontend-ui:8080:8080"
-    "session-management-server:3000:3000"
-    "postgres:5432:5432"
+    "frontend-ui:${FRONTEND_PORT:-8080}:8080"
+    "session-management-server:${BACKEND_PORT:-3000}:3000"
+    "postgres:${POSTGRES_PORT:-5432}:5432"
 )
 
 # Child PIDs for cleanup

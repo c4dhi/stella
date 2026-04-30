@@ -1,12 +1,14 @@
-"""Bridge Generator — ultra-short conversational bridge for early TTS synthesis.
+"""Bridge Generator — natural conversational bridge for early TTS synthesis.
 
-Generates a 1-6 word "bridge" phrase that buys time while the main pipeline
+Generates a brief, human-sounding acknowledgment (1-15 words, scaled to
+the user's energy) that buys time while the main pipeline
 (gate → experts → arbitration → response) completes. Runs in parallel with
 the Input Gate via asyncio.gather().
 
-On failure: returns "" silently. The bridge is optional and never blocks the pipeline.
+On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """
 
+import random
 import time
 from typing import Dict, Any, List, Optional
 
@@ -15,76 +17,109 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-BRIDGE_SYSTEM_PROMPT = """You are the real-time speech reflex for a professional Voice AI interviewer. Generate an immediate, ultra-short conversational "bridge" sentence right after the user stops speaking. This bridge buys time for the main response to be composed.
+BRIDGE_SYSTEM_PROMPT = """You are a person in a conversation. You just heard what the user said and you're about to give your full answer, but first you naturally acknowledge them — the way a real human would before continuing their thought. This will be spoken aloud by TTS.
 
-Core Directives:
+Think of how people actually talk. When someone tells you something, you don't just launch into your answer — you react briefly first. The bridge is that brief, human moment.
 
-Complete Sentence: Your bridge MUST be a complete, self-contained sentence that ends with a period, exclamation mark, or question mark. It will be spoken aloud on its own before the main response follows.
+LENGTH RULE — match the user's energy:
+- One word from user ("yes", "no", "okay") → one-two words from you. "Sure." / "Yeah." / "Okay."
+- A greeting ("hi", "hello") → greet back casually. "Hey." / "Hi there." / "Hello."
+- A short sentence → a short acknowledgment, up to 5-6 words. "Yeah, I get that." / "Okay, gotcha."
+- A longer thought or story → you can reflect back briefly, up to 12 words. "Right, yeah, that sounds like it's been on your mind." / "Okay, so you've been dealing with that for a while."
+- Something emotional or vulnerable → warm but grounded. "Yeah, I hear you." / "Right, that makes total sense."
 
-Maximum Length: No more than 6 words.
+WHAT MAKES A GOOD BRIDGE:
+- It sounds like something a real person would say mid-conversation
+- It can reference what the user said WITHOUT answering, advising, or completing any task
+- It feels like a natural lead-in to whatever comes next
+- It uses casual spoken language (contractions, "yeah" instead of "yes", etc.)
 
-Do Not Answer: Never attempt to answer the user's question, provide facts, or complete a task.
+WHAT TO AVOID:
+- NEVER answer the user's question or give advice — you're just acknowledging before your real answer
+- NEVER ask a question. No question marks.
+- NEVER be a cheerleader — no "Oh that's wonderful!", "That's amazing!", "Great question!"
+- NEVER evaluate what they said — no "That's interesting", "That's a good point"
+- NEVER use filler sounds that render poorly in TTS: "mhm", "hmm", "uh-huh", "ah"
+- NEVER use the same bridge twice in a conversation
 
-Tone — Friendly Professional:
-- Sound like a composed, attentive interviewer — warm but not overly casual.
-- Adapt slightly to the user's energy while staying professional.
+EXAMPLES (user → bridge):
+- "I've been running three times a week" → "Oh nice, okay."
+- "Not really, I've been pretty lazy" → "Yeah, no worries."
+- "I hurt my knee last month so I can't really exercise" → "Oh okay, yeah, that's tough."
+- "hello" → "Hey."
+- "yes" → "Okay."
+- "I don't know, I guess I just haven't had the motivation lately and work has been really stressful" → "Yeah, okay, I get that, it's been a lot."
+- "Ich laufe dreimal die Woche" → "Oh schön, okay."
+- "Nee, ich war ziemlich faul" → "Ja, kein Ding."
+- "Ich hab mir letzten Monat das Knie verletzt" → "Oh okay, ja, das ist echt blöd."
+- "hallo" → "Hey."
+- "ja" → "Okay."
+- "Ich weiß nicht, ich hatte einfach keine Motivation und die Arbeit war echt stressig" → "Ja, okay, das kann ich verstehen."
 
-Factual/Complex: Sound thoughtful ("Good question.")
-Action/Request: Sound composed ("Absolutely.")
-Empathetic/Personal: Sound warm ("I appreciate that.")
-Conversational: Sound engaged ("That's a great point.")
+LANGUAGE: Always match the user's language. If the user speaks German, your bridge MUST be in German. If the user speaks English, your bridge MUST be in English.
 
-Natural Speech: Never say "Processing," "Checking," or "Thinking." Use natural acknowledgments.
+Output ONLY the bridge. No quotes, no labels, no explanation."""
 
-Language Matching — CRITICAL:
-- ALWAYS respond in the SAME LANGUAGE the user is speaking.
-- If the user speaks German, your bridge MUST be in German.
-- If the user speaks English, your bridge MUST be in English.
-- Use natural, idiomatic phrasing for each language — do not translate literally.
+# Short fallback bridges used when LLM generation fails or is rejected.
+# Ensures every turn gets a bridge for consistent perceived latency.
+FALLBACK_BRIDGES_EN = [
+    "Okay, yeah.",
+    "Right, okay.",
+    "Got it.",
+    "Sure, okay.",
+    "Yeah, I hear you.",
+    "Alright.",
+    "Okay, let me think.",
+    "Yeah, gotcha.",
+]
 
-IMPORTANT: Always end with a period, exclamation mark, or question mark. Never end with a comma, ellipsis, or connector word.
+FALLBACK_BRIDGES_DE = [
+    "Ja, okay.",
+    "Okay, verstehe.",
+    "Ja, alles klar.",
+    "Okay, moment.",
+    "Ja, ich verstehe.",
+    "Alles klar.",
+    "Okay, mal schauen.",
+    "Ja, genau.",
+]
 
-Examples (English):
+# Greeting-specific fallbacks for when user says hello/hi/hey.
+GREETING_FALLBACKS_EN = [
+    "Hey.",
+    "Hi there.",
+    "Hello.",
+    "Hey, hi.",
+]
 
-[Factual]
-User: "Can you explain the difference between a Roth IRA and a traditional IRA?"
-Response: "Great question."
+GREETING_FALLBACKS_DE = [
+    "Hey.",
+    "Hallo.",
+    "Hi.",
+    "Hey, hallo.",
+]
 
-[Conversational]
-User: "Do you think hotdogs are technically sandwiches?"
-Response: "I love that question."
+_GREETING_WORDS = {"hello", "hi", "hey", "hallo", "hei", "greetings", "good morning", "good evening", "good afternoon",
+                   "guten morgen", "guten tag", "guten abend", "moin", "servus", "grüß gott"}
 
-[Empathetic]
-User: "I'm feeling really burnt out at work lately."
-Response: "I hear you."
+# German words/patterns for quick language detection on user input
+_GERMAN_INDICATORS = {
+    "ich", "du", "er", "sie", "wir", "ihr", "mein", "dein", "sein",
+    "ist", "bin", "bist", "sind", "hat", "habe", "hatte", "war",
+    "und", "oder", "aber", "weil", "dass", "nicht", "kein", "keine",
+    "ja", "nein", "nee", "doch", "schon", "noch", "auch", "sehr",
+    "das", "die", "der", "den", "dem", "des", "ein", "eine", "einem",
+    "mit", "für", "von", "auf", "aus", "bei", "nach", "über", "unter",
+    "hallo", "danke", "bitte", "tschüss", "genau", "okay",
+}
 
-[Action]
-User: "Remind me to buy milk tomorrow at 9 AM."
-Response: "Absolutely."
 
-[Clarification]
-User: "Can you help me with this thing?"
-Response: "Of course."
-
-Examples (German):
-
-[Factual]
-User: "Kannst du mir den Unterschied zwischen ETFs und Aktien erklären?"
-Response: "Gute Frage."
-
-[Conversational]
-User: "Was hältst du von Homeoffice?"
-Response: "Interessante Frage."
-
-[Empathetic]
-User: "Ich bin gerade ziemlich gestresst mit der Arbeit."
-Response: "Das kann ich verstehen."
-
-[Action]
-User: "Erinner mich morgen an den Termin."
-Response: "Selbstverständlich."
-
-Output ONLY the bridge sentence. No quotes, no explanations."""
+def _detect_german(text: str) -> bool:
+    """Quick heuristic: is this text likely German?"""
+    words = set(text.lower().split())
+    german_count = len(words & _GERMAN_INDICATORS)
+    # If at least 2 German indicator words, or the text is short and has 1
+    return german_count >= 2 or (len(words) <= 3 and german_count >= 1)
 
 
 class BridgeGenerator:
@@ -100,8 +135,8 @@ class BridgeGenerator:
 
         # LLM config (overridable via apply_config)
         self.bridge_model = "gpt-4o-mini"
-        self.bridge_max_tokens = 30
-        self.bridge_temperature = 0.4
+        self.bridge_max_tokens = 50
+        self.bridge_temperature = 0.7
         self.custom_system_prompt: Optional[str] = None
         self.history_limit: int = 0  # 0 = default (2)
 
@@ -130,7 +165,7 @@ class BridgeGenerator:
             conversation_history: Recent conversation messages.
 
         Returns:
-            A validated bridge phrase (1-8 words), or "" on failure.
+            A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
         """
         start_time = time.time()
 
@@ -162,20 +197,34 @@ class BridgeGenerator:
             bridge = self._validate_bridge(response.content)
             if bridge:
                 logger.info(f"'{bridge}' in {latency_ms:.0f}ms")
-            return bridge
+                return bridge
+
+            # Validation failed — use context-appropriate fallback
+            fallback = self._pick_fallback(user_input)
+            logger.info(f"Validation failed, fallback '{fallback}' in {latency_ms:.0f}ms")
+            return fallback
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            logger.error(f"Failed in {latency_ms:.0f}ms: {e}")
-            return ""
+            fallback = self._pick_fallback(user_input)
+            logger.error(f"Failed in {latency_ms:.0f}ms: {e}, fallback '{fallback}'")
+            return fallback
+
+    @staticmethod
+    def _pick_fallback(user_input: str) -> str:
+        """Pick a context-appropriate fallback bridge, matching the user's language."""
+        is_german = _detect_german(user_input)
+        if user_input.strip().lower().rstrip("!.,") in _GREETING_WORDS:
+            return random.choice(GREETING_FALLBACKS_DE if is_german else GREETING_FALLBACKS_EN)
+        return random.choice(FALLBACK_BRIDGES_DE if is_german else FALLBACK_BRIDGES_EN)
 
     @staticmethod
     def _validate_bridge(raw: str) -> str:
         """Validate the bridge phrase. Returns "" if invalid.
 
-        The bridge must be a short acknowledgment ending with . ! or ?
-        as a single sentence. Multi-sentence bridges (e.g. "Hello there!
-        How can I assist you today?") are rejected.
+        The bridge must be a natural spoken acknowledgment ending with . or !
+        Questions are always rejected — bridges must never ask the user anything.
+        Evaluative commentary is rejected — bridges must not judge the user's input.
         """
         if not isinstance(raw, str) or not raw.strip():
             return ""
@@ -189,25 +238,21 @@ class BridgeGenerator:
         if not bridge:
             return ""
 
-        # Reject multi-sentence bridges that contain a question mark.
-        # A bridge with two sentences where one is a question means the LLM
-        # is trying to ask the user something, which bridges must not do.
-        # "Hello there! How can I help?" → rejected (multi-sentence + question)
-        # "Huh?" → allowed (single sentence question)
-        # "Good question." → allowed (no question mark)
-        # "Great! Let me think." → allowed (multi-sentence but no question)
-        interior = bridge[:-1]
-        has_multiple_sentences = any(marker in interior for marker in ".!?")
-        has_question = "?" in bridge
-        if has_multiple_sentences and has_question:
+        # Reject any bridge containing a question mark — bridges must never ask questions
+        if "?" in bridge:
             return ""
 
-        # Max 7 words (prompt asks for 1-6, small buffer)
-        if len(bridge.split()) > 7:
+        # Max 15 words — allows longer bridges that reference user input
+        if len(bridge.split()) > 15:
             return ""
 
-        # Must end with sentence-ending punctuation
-        if bridge[-1] not in ".!?":
+        # Reject evaluative commentary ("That's a great question!", "What a nice thought!")
+        lower = bridge.lower()
+        if lower.startswith(("that's a", "that's an", "what a", "what an")):
+            return ""
+
+        # Must end with sentence-ending punctuation (no questions)
+        if bridge[-1] not in ".!":
             bridge += "."
 
         return bridge

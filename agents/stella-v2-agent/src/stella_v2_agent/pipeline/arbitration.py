@@ -38,7 +38,13 @@ _DEFAULT_FLAGGING_VERDICTS: Dict[str, set] = {
     "timekeeper": {"slowing", "stuck", "force_advance"},
 }
 
-_DEFAULT_GATE_FAILURE_MESSAGE = "I'm sorry, I didn't quite catch that. Could you say that again?"
+_DEFAULT_GATE_FAILURE_MESSAGE = "Sorry, I didn't quite catch that. Could you say it again?"
+# Optional locale-keyed overrides. The active message is selected by Arbitration.apply_config()
+# from the plan's `language` field, with explicit `gate_failure_message` taking precedence.
+_GATE_FAILURE_MESSAGES_BY_LANG: Dict[str, str] = {
+    "en": _DEFAULT_GATE_FAILURE_MESSAGE,
+    "de": "Entschuldigung, das hab ich leider nicht verstanden. Könntest du das nochmal sagen?",
+}
 
 
 class Arbitration:
@@ -59,10 +65,20 @@ class Arbitration:
         """Apply configuration overrides from Agent Configurator."""
         if "tone_map" in config and isinstance(config["tone_map"], dict):
             self._tone_map.update(config["tone_map"])
+        # Pick a locale-appropriate default before any explicit override.
+        lang = config.get("language")
+        if isinstance(lang, str):
+            lang_key = lang.split("-")[0].lower()
+            if lang_key in _GATE_FAILURE_MESSAGES_BY_LANG:
+                self._gate_failure_message = _GATE_FAILURE_MESSAGES_BY_LANG[lang_key]
         if "gate_failure_message" in config:
             self._gate_failure_message = str(config["gate_failure_message"])
 
-    def resolve(self, verdicts: List[ExpertVerdict]) -> ArbitrationResult:
+    @property
+    def gate_failure_message(self) -> str:
+        return self._gate_failure_message
+
+    def resolve(self, verdicts: List[ExpertVerdict], sm_context: Optional[Dict[str, Any]] = None) -> ArbitrationResult:
         """Resolve expert verdicts into a ResponseDirective.
 
         Args:
@@ -152,16 +168,25 @@ class Arbitration:
             if isinstance(signals, list) and signals:
                 directive.deliverable_signals = [s for s in signals if isinstance(s, str)]
 
-        # 4. Handle timekeeper — only set follow-up if probing didn't already
+        # 4. Handle timekeeper — when stuck, override probing with a direct
+        #    redirect toward the pending deliverable to prevent going in circles.
         timekeeper_verdict = self._find_verdict(sorted_verdicts, "timekeeper")
         if timekeeper_verdict and timekeeper_verdict.success:
             if timekeeper_verdict.verdict in ("stuck", "force_advance"):
-                # Timekeeper can suggest deliverables and force transitions,
-                # but this is handled in agent.py post-response processing.
-                # Only override the follow-up if probing didn't already set one.
-                if not directive.ask_followup and timekeeper_verdict.recommendation:
-                    directive.ask_followup = True
-                    directive.followup_question = timekeeper_verdict.recommendation
+                # Build a specific redirect using pending deliverable info
+                redirect = timekeeper_verdict.recommendation or ""
+                if sm_context:
+                    pending = [
+                        d.get("description", d.get("key", ""))
+                        for d in sm_context.get("deliverables", [])
+                        if d.get("status") == "pending"
+                    ]
+                    if pending:
+                        redirect = f"Ask directly about: {', '.join(pending[:2])}. Do not ask follow-up questions about other topics."
+
+                # Timekeeper "stuck" overrides probing — force the redirect
+                directive.ask_followup = True
+                directive.followup_question = redirect
 
         # 5. Build expert summary
         summary_parts = []

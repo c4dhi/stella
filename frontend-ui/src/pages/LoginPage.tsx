@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Eye,
@@ -233,10 +233,16 @@ export default function LoginPage() {
         </OnboardingCard>
 
         {/* Footer */}
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-2">
           <p className="text-content-tertiary dark:text-content-inverse-tertiary text-xs">
             Secure • Private • Encrypted
           </p>
+          <Link
+            to="/status"
+            className="inline-block text-content-tertiary dark:text-content-inverse-tertiary hover:text-content-secondary dark:hover:text-content-inverse-secondary text-xs underline-offset-2 hover:underline"
+          >
+            System status
+          </Link>
         </div>
       </motion.div>
     </OnboardingLayout>

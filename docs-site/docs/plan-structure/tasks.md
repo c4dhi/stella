@@ -70,7 +70,7 @@ Whether this task must be completed before the state can transition.
 
 ### `deliverables`
 
-An array of specific pieces of information to collect during this task. See [Deliverables](/docs/plan-structure/deliverables) for full details.
+An array of specific pieces of information to collect during this task. See [Deliverables](./deliverables.md) for full details.
 
 ## Task Completion
 
@@ -257,5 +257,5 @@ Combine required core tasks with optional enhancement tasks:
 
 ## Next Steps
 
-- [Deliverables](/docs/plan-structure/deliverables) — Configure data collection specifications
-- [Examples](/docs/plan-structure/examples) — See complete plan examples
+- [Deliverables](./deliverables.md) — Configure data collection specifications
+- [Examples](./examples.md) — See complete plan examples

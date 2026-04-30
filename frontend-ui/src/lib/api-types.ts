@@ -642,12 +642,26 @@ export interface PlanTask {
   deliverables: PlanDeliverable[]
 }
 
-/**
- * State transition definition.
- */
 // Keep this union aligned with backend StateTransition.condition_type in state-machine.service.ts.
+/**
+ * Supported transition condition types for state routing.
+ *
+ * Condition config reference:
+ * - all_tasks_complete: no config required
+ * - turn_count_exceeded: { turns: number, scope: "without_progress" | "total" }
+ * - deliverable_value: { key: string, value: string | number | boolean }
+ * - deliverable_value_in: { key: string, values: Array<string | number | boolean> }
+ * - deliverable_value_numeric:
+ *   - { key: string, operator: "gt"|"gte"|"lt"|"lte"|"eq"|"neq", value: number }
+ *   - { key: string, operator: "between", min: number, max: number, inclusive?: boolean }
+ * - deliverable_exists: { key: string }
+ * - all_of: { conditions: Array<{ condition_type, condition_config }> }
+ * - any_of: { conditions: Array<{ condition_type, condition_config }> }
+ * - compound: { operator: "and" | "or", conditions: Array<{ condition_type, condition_config }> }
+ */
 export type StateTransitionConditionType =
   | 'all_tasks_complete'
+  | 'goal_achieved'
   | 'turn_count_exceeded'
   | 'deliverable_value'
   | 'deliverable_value_in'
@@ -657,11 +671,19 @@ export type StateTransitionConditionType =
   | 'any_of'
   | 'deliverable_exists'
 
+/**
+ * One outgoing transition from a source state to a target state.
+ *
+ * Evaluation behavior:
+ * - Transitions are checked by ascending `priority` (lower number first).
+ * - First matched condition wins.
+ * - `priority` defaults to backend behavior when omitted.
+ */
 export interface StateTransition {
-  target_state_id: string
+  target_state_id: string          // Destination state ID
   condition_type: StateTransitionConditionType
-  priority?: number
-  condition_config?: Record<string, unknown>
+  priority?: number                // Lower value = higher precedence
+  condition_config?: Record<string, unknown> // Shape depends on condition_type
 }
 
 /**
@@ -689,7 +711,13 @@ export interface PlanState {
   goal?: StateGoal                 // Only used when type === 'goal'
 }
 
-// Session context field for collecting participant information
+/**
+ * One pre-session input field shown before the conversation starts.
+ *
+ * Notes:
+ * - `options` applies only when `type === "select"`.
+ * - `default_value` uses snake_case for SDK compatibility.
+ */
 export interface SessionContextField {
   id: string
   label: string
@@ -704,25 +732,72 @@ export interface SessionContext {
   fields: SessionContextField[]
 }
 
+/**
+ * Absolute node position in the Plan Builder canvas.
+ */
 export interface PlanCanvasPosition {
   x: number
   y: number
 }
 
-export interface PlanCanvasMetadata {
-  state_positions?: Record<string, PlanCanvasPosition>
-  show_end_node?: boolean
-  end_node_position?: PlanCanvasPosition
-  end_state_ids?: string[]
+/**
+ * Configuration for the End node, stored in PlanCanvasMetadata.
+ * Consumed by the backend when the state machine transitions to the end state.
+ */
+export interface EndNodeConfig {
+  farewell_message?: string            // Final message the agent sends before the session closes
+  summary_behavior?: 'none' | 'brief' | 'full'  // Whether to summarize the conversation on exit
 }
 
+/**
+ * Visual metadata persisted by the Plan Builder canvas.
+ *
+ * Stored at: `metadata.plan_builder.canvas`
+ *
+ * Notes:
+ * - `end_node_position` is UI layout only.
+ * - `end_state_ids` marks states connected to the visual End node.
+ * - `end_node_config` configures end-state runtime behavior (farewell, summary).
+ */
+export interface PlanCanvasMetadata {
+  show_end_node?: boolean                               // Whether End node is visible
+  end_node_position?: PlanCanvasPosition                // End node canvas coordinates
+  end_state_ids?: string[]                              // State IDs connected to End node in UI
+  end_node_config?: EndNodeConfig                       // End-state runtime behavior
+}
+
+/**
+ * Determines when the agent is started for a session.
+ * - immediate: start at session creation/start
+ * - on_demand: start when interaction begins
+ */
 export type AgentSpawnMode = 'immediate' | 'on_demand'
 
+/**
+ * Start-node metadata persisted by the Plan Builder.
+ *
+ * Stored at: `metadata.plan_builder.start`
+ */
 export interface PlanStartMetadata {
   agent_spawn_mode?: AgentSpawnMode
+  on_participant_join?: ParticipantEventMessageConfig
+  on_participant_left?: ParticipantEventMessageConfig
 }
 
+export interface ParticipantEventMessageConfig {
+  enabled?: boolean
+  message_template?: string
+}
+
+/**
+ * Optional plan metadata container.
+ *
+ * Known Plan Builder keys:
+ * - `plan_builder.canvas`: visual node/edge layout metadata
+ * - `plan_builder.start`: start-node behavior metadata
+ */
 export interface PlanMetadata {
+  nodePositions?: Record<string, PlanCanvasPosition>
   plan_builder?: {
     canvas?: PlanCanvasMetadata
     start?: PlanStartMetadata
@@ -737,6 +812,13 @@ export interface PlanMetadata {
  * Note: id, title, description, initial_state_id are optional here because
  * they may come from the parent PlanTemplate when stored in the database.
  * When passed to the agent, these should be populated from PlanTemplate fields.
+ *
+ * Execution-focused fields:
+ * - `states`, `initial_state_id`, `system_prompt`, `session_context`
+ *
+ * Builder metadata:
+ * - `metadata.plan_builder.start` for start-node behavior
+ * - `metadata.plan_builder.canvas` for visual canvas state
  */
 export interface PlanContent {
   id?: string                      // Plan identifier (optional, from template)
@@ -1121,6 +1203,105 @@ export interface TranscriptExport {
 }
 
 // ============================================================================
+// Agent Analytics Types
+// ============================================================================
+
+export interface StageLatency {
+  stage: string
+  count: number
+  mean_ms: number
+  p5_ms: number
+  p25_ms: number
+  p50_ms: number
+  p75_ms: number
+  p95_ms: number
+  min_ms: number
+  max_ms: number
+  stddev_ms: number
+}
+
+export interface OutlierStage {
+  stage: string
+  sessionMean_ms: number
+  globalP50_ms: number
+}
+
+export interface OutlierSession {
+  sessionId: string
+  sessionName: string
+  createdAt: string
+  outlierStages: OutlierStage[]
+}
+
+export interface MetricsSummary {
+  planCompletion: { totalSessions: number; completedPlans: number; avgCompletionRate: number } | null
+  safetyRouting: { totalTurns: number; safeTurns: number; unsafeTurns: number; interceptionRate: number } | null
+  stateTransitions: { totalTransitions: number; expectedTransitions: number; accuracy: number } | null
+  bridgeGeneration: { totalBridges: number; avgBridgeDuration_ms: number } | null
+  bridgeDuration: { count: number; avg_ms: number } | null
+  ttfr: { count: number; avg_ms: number } | null
+}
+
+export interface AgentMetricsResponse {
+  agentSlug: string
+  projectId: string
+  dateRange: { from: string; to: string }
+  totalSessions: number
+  totalTurns: number
+  stages: StageLatency[]
+  outlierSessions: OutlierSession[]
+  summary: MetricsSummary
+}
+
+export interface StageDataPoint {
+  sessionId: string
+  sessionName: string
+  avg_timing_ms: number
+  count: number
+  timestamp: string
+}
+
+export interface StageDataPointsResponse {
+  points: StageDataPoint[]
+}
+
+export interface SessionStagePoint {
+  stage: string
+  timing_ms: number
+  timestamp: string
+}
+
+export interface SessionAnalyticsResponse {
+  sessionId: string
+  totalTurns: number
+  stages: StageLatency[]
+  summary: MetricsSummary
+  rawPoints: SessionStagePoint[]
+}
+
+export interface PlanCompletionSession {
+  sessionId: string
+  sessionName: string
+  completionRate: number
+  reachedEnd: boolean
+  timestamp: string
+}
+
+export interface PlanCompletionSessionsResponse {
+  sessions: PlanCompletionSession[]
+}
+
+export interface MetricsTimelinePoint {
+  timestamp: string
+  timing_ms: number
+  sessionId: string
+}
+
+export interface MetricsTimelineResponse {
+  points: MetricsTimelinePoint[]
+}
+
+// ============================================================================
 // Admin Dashboard Types
 // ============================================================================
 
@@ -1313,4 +1494,28 @@ export interface UpdateAgentConfigurationDto {
   description?: string
   configuration?: AgentConfigurationPayload
   agentVersion?: string
+}
+
+export type PublicHealthComponentStatus = 'operational' | 'degraded' | 'down'
+
+export type PublicHealthComponentId = 'api' | 'database' | 'realtime' | 'stt' | 'tts'
+
+export interface PublicHealthComponent {
+  id: PublicHealthComponentId
+  status: PublicHealthComponentStatus
+  lastCheckedAt: string
+}
+
+export interface PublicHealthResponse {
+  status: PublicHealthComponentStatus
+  components: PublicHealthComponent[]
+  generatedAt: string
+}
+
+export interface MediaTestSession {
+  roomName: string
+  token: string
+  livekitUrl: string
+  expiresAt: string
+  ttlSeconds: number
 }

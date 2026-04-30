@@ -62,7 +62,7 @@ class ResponseGenerator:
 
         # LLM config (overridable via apply_config)
         self.response_model = "gpt-4o-mini"
-        self.response_max_tokens = 150
+        self.response_max_tokens = 200
         self.response_temperature = 0.7
         self.custom_persona: Optional[str] = None
         self.custom_guidelines: Optional[str] = None
@@ -128,7 +128,7 @@ class ResponseGenerator:
         if bridge:
             messages.insert(1, LLMMessage(
                 role="system",
-                content=f'You already said "{bridge}" out loud. Continue naturally from there — do NOT repeat it, do NOT re-greet, do NOT add another acknowledgment. Just pick up mid-thought as if you already started talking.',
+                content=f'You already said "{bridge}" out loud as a natural acknowledgment. Now continue with your actual response. The combined output (bridge + your continuation) will be spoken as one seamless utterance, so it MUST flow naturally as a single conversation turn.\n\nRules:\n- Do NOT repeat or rephrase anything already covered in the bridge\n- Do NOT comment on the bridge (no "I\'m glad to hear that", no "That said...")\n- Do NOT add another greeting or acknowledgment\n- Pick up right where the bridge left off — your continuation should feel like the same person kept talking\n- Example: bridge "Oh nice, okay." → you continue with "So three times a week is solid." → spoken together: "Oh nice, okay. So three times a week is solid."\n- Example: bridge "Yeah, okay, I get that, it\'s been a lot." → you continue with "Let\'s talk about what might work for you right now." → spoken together: "Yeah, okay, I get that, it\'s been a lot. Let\'s talk about what might work for you right now."',
             ))
             messages.append(LLMMessage(role="assistant", content=bridge))
 
@@ -155,7 +155,7 @@ class ResponseGenerator:
             )
         )
 
-        # If bridge was emitted, include it in accumulated so chunks contain full text
+        # Prepend bridge text so TTS speaks bridge + response as one seamless utterance
         accumulated = (bridge + " ") if bridge else ""
         try:
             while True:
