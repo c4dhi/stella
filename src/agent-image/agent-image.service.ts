@@ -37,6 +37,9 @@ export class AgentImageService {
   private readonly isProduction: boolean;  // Production uses K3s (needs containerd import)
   private readonly isRunningInK8s: boolean;
   private readonly hasDockerSocket: boolean;
+  // Explicit container runtime for the readiness probe. Decoupled from NODE_ENV so
+  // a non-k3s "production" deploy doesn't get stuck NotReady on a missing k3s CLI.
+  private readonly containerRuntime: 'k3s' | 'docker' | 'none';
 
   // Registry of known agent types and their build contexts
   // Paths are relative to stella-backend/ directory (the new context)
@@ -83,6 +86,15 @@ export class AgentImageService {
     const nodeEnv = this.configService.get<string>('NODE_ENV', 'local');
     this.isProduction = nodeEnv === 'production';
 
+    // CONTAINER_RUNTIME defaults to 'k3s' only for the production-in-K8s case
+    // (the original implicit assumption); otherwise 'none' so readiness stays green.
+    const explicitRuntime = this.configService.get<string>('CONTAINER_RUNTIME');
+    if (explicitRuntime === 'k3s' || explicitRuntime === 'docker' || explicitRuntime === 'none') {
+      this.containerRuntime = explicitRuntime;
+    } else {
+      this.containerRuntime = this.isProduction && !!process.env.KUBERNETES_SERVICE_HOST ? 'k3s' : 'none';
+    }
+
     // In K8s, use the mounted workspace path from AGENT_WORKSPACE_ROOT env var
     // Otherwise, compute it relative to this file's location
     if (this.isRunningInK8s && process.env.AGENT_WORKSPACE_ROOT) {
@@ -99,6 +111,7 @@ export class AgentImageService {
     this.logger.log(`AgentImageService initialized`);
     this.logger.log(`Workspace root: ${this.workspaceRoot}`);
     this.logger.log(`Environment: ${nodeEnv} (${this.isProduction ? 'K3s/containerd' : 'OrbStack/Docker'})`);
+    this.logger.log(`Container runtime (readiness probe): ${this.containerRuntime}`);
     this.logger.log(`Running in K8s: ${this.isRunningInK8s}`);
     this.logger.log(`Docker socket available: ${this.hasDockerSocket}`);
 
@@ -108,7 +121,7 @@ export class AgentImageService {
 
     // Surface containerd reachability at boot so a stale-socket scenario fails loud,
     // not silently the first time a user tries to create an agent.
-    if (this.isProduction) {
+    if (this.containerRuntime === 'k3s') {
       this.checkContainerdHealth()
         .then((result) => {
           if (result.ok) {
@@ -128,7 +141,7 @@ export class AgentImageService {
    * so the pod is taken out of rotation if the host socket goes stale.
    */
   async checkContainerdHealth(): Promise<{ ok: boolean; error?: string }> {
-    if (!this.isProduction) {
+    if (this.containerRuntime !== 'k3s') {
       return { ok: true };
     }
     try {
