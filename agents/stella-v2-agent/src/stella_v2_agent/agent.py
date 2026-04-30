@@ -40,6 +40,7 @@ from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
 from stella_v2_agent.adapters import ProgressAdapter
+from stella_v2_agent.utils import normalize_transition_priority
 import logging
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,7 @@ class StellaV2Agent(BaseAgent):
         self._plan_system_prompt: Optional[str] = None
         self._plan_config: Optional[Dict[str, Any]] = None  # stored for context building
         self._custom_history_limit: int = 20  # overridable via pipeline_config thresholds
+        self._last_known_state_id: Optional[str] = None
         self._last_state_id: Optional[str] = None  # for detecting state transitions between turns
         self._last_post_response_state_id: Optional[str] = None  # for analytics emission
         self._turn_counter: int = 0  # monotonic turn counter for analytics
@@ -505,6 +507,13 @@ class StellaV2Agent(BaseAgent):
 
         # Emit final progress for this turn.
         if full_state:
+            current_state_id = full_state.get("current_state_id")
+            last_transition = self._build_last_transition_metadata(
+                from_state_id=self._last_known_state_id,
+                to_state_id=current_state_id,
+            )
+            self._last_known_state_id = current_state_id
+
             progress_state = ProgressAdapter.from_full_state_dict(
                 full_state,
                 started_at=self._session_started_at,
@@ -784,7 +793,7 @@ class StellaV2Agent(BaseAgent):
             return None
 
         matching.sort(
-            key=lambda t: self._priority_value(t.get("priority"))
+            key=lambda t: normalize_transition_priority(t.get("priority"))
         )
         winner = matching[0]
 
@@ -795,18 +804,6 @@ class StellaV2Agent(BaseAgent):
             "condition_config": winner.get("condition_config", {}),
             "priority": winner.get("priority"),
         }
-
-    @staticmethod
-    def _priority_value(value: Any) -> int:
-        """Normalize transition priority (supports int-like strings)."""
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str):
-            try:
-                return int(value.strip())
-            except (ValueError, TypeError):
-                return 100
-        return 100
 
     def _find_config_file(self, relative_path: str) -> Optional[str]:
         """Find a config file by trying multiple locations."""

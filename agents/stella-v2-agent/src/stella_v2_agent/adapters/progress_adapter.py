@@ -19,6 +19,7 @@ from stella_agent_sdk.progress import (
     ProgressGroup,
     ProgressState,
 )
+from stella_v2_agent.utils import normalize_transition_priority
 
 
 class ProgressAdapter:
@@ -82,7 +83,7 @@ class ProgressAdapter:
                     })
 
                 transitions_by_state[state_id].sort(
-                    key=lambda t: cls._priority_value(t.get("priority"))
+                    key=lambda t: normalize_transition_priority(t.get("priority"))
                 )
 
         for state in full_state.get("states", []):
@@ -119,11 +120,12 @@ class ProgressAdapter:
                         if is_active and status_str == "pending" and not current_item_id:
                             current_item_id = d.get("key")
                 else:
-                    # Task with no deliverables — represent as a single item
-                    # so the frontend can display it
+                    # Task with no deliverables: emit one task-level item
+                    # so frontend state groups are never empty.
                     task_status = task.get("status", "pending")
+                    task_item_id = f"task_{task.get('id', 'unknown')}"
                     item = ProgressItem(
-                        id=f"task_{task.get('id', 'unknown')}",
+                        id=task_item_id,
                         label=task.get("description", "Task"),
                         status=cls.deliverable_status_to_item_status(task_status),
                         description=task.get("instruction", ""),
@@ -135,6 +137,10 @@ class ProgressAdapter:
                         },
                     )
                     items.append(item)
+
+                    # Track first pending item in the active state
+                    if is_active and task_status == "pending" and not current_item_id:
+                        current_item_id = task_item_id
 
             # Determine group status
             all_completed = items and all(

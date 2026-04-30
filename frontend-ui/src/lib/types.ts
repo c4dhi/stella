@@ -372,6 +372,12 @@ export interface TodoList {
     status: StateStatus
     is_current: boolean
     completed_at?: string
+    transitions?: Array<{
+      target_state_id: string
+      condition_type: string
+      priority?: number
+      condition_config?: Record<string, any>
+    }>
     tasks: Array<{
       id: string
       description: string
@@ -400,6 +406,13 @@ export interface TodoList {
   }
   conversation_age_minutes: number
   last_updated: string
+  last_transition?: {
+    from_state_id?: string
+    to_state_id?: string
+    condition_type?: string
+    condition_config?: Record<string, any>
+    priority?: number
+  } | null
 
   // Legacy support
   /** @deprecated Use states instead */

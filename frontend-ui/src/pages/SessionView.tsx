@@ -508,6 +508,29 @@ export default function SessionView() {
           return group.execution_mode === 'sequential' ? 'sequential' as StateType : 'flexible' as StateType
         }
 
+        const extractTransitionsFromGroup = (group: any) => {
+          const rawTransitions = group?.metadata?.transitions
+          if (!Array.isArray(rawTransitions)) return []
+
+          const toPriority = (value: unknown): number | undefined => {
+            if (typeof value === 'number' && Number.isFinite(value)) return value
+            if (typeof value === 'string' && value.trim() !== '') {
+              const parsed = Number(value)
+              if (Number.isFinite(parsed)) return parsed
+            }
+            return undefined
+          }
+
+          return rawTransitions
+            .map((transition: any) => ({
+              target_state_id: transition?.target_state_id || transition?.target || '',
+              condition_type: transition?.condition_type || transition?.condition || 'all_tasks_complete',
+              priority: toPriority(transition?.priority),
+              condition_config: transition?.condition_config,
+            }))
+            .filter((transition: any) => transition.target_state_id)
+        }
+
         // Convert generic SDK ProgressState to TodoList format
         const todoList: TodoList = {
           initialized: true,
@@ -542,6 +565,7 @@ export default function SessionView() {
               status: group.status as StateStatus,
               is_current: group.is_current,
               completed_at: group.completed_at || undefined,
+              transitions: extractTransitionsFromGroup(group),
               tasks: tasks,
             }
           }) || [],
@@ -566,6 +590,7 @@ export default function SessionView() {
           },
           conversation_age_minutes: data.elapsed_minutes || 0,
           last_updated: data.last_updated || new Date().toISOString(),
+          last_transition: data.metadata?.last_transition || null,
         }
 
         // Extract agent info from metadata
