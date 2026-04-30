@@ -76,11 +76,11 @@ class BaseAgent(ABC):
         self._last_progress_payload: Optional[Dict[str, Any]] = None
         # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
         self._sentence_buffer: str = ""
-        # Current sentence source for analytics ("bridge" or "response")
-        self._current_sentence_source: str = "response"
         # Set to True by the agent when the plan reaches __end__.
         # run_audio_loop checks this after each turn and exits cleanly.
         self._session_completed: bool = False
+        # Current sentence source for analytics ("bridge" or "response")
+        self._current_sentence_source: str = "response"
         # Agent identity (set by run_agent from environment variables)
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
@@ -530,8 +530,28 @@ class BaseAgent(ABC):
 
         async for event in self.audio.audio_in():
             if event.is_final and event.text.strip():
-                # Create AgentInput and route through process()
-                input_msg = AgentInput.text_input(self._session_id or "", event.text)
+                # Drain any stacked transcripts — only process the latest one.
+                # This prevents message pileup when the user speaks while the
+                # agent is still responding (transcripts queued during gate-open window).
+                latest_event = event
+                while not self.audio._transcript_queue.empty():
+                    try:
+                        next_event = self.audio._transcript_queue.get_nowait()
+                        if next_event.is_final and next_event.text.strip():
+                            logger.info(f"[DRAIN] Discarding stacked transcript: '{latest_event.text[:50]}'")
+                            latest_event = next_event
+                    except asyncio.QueueEmpty:
+                        break
+                event = latest_event
+
+                # Create AgentInput and route through process(). Forward the STT
+                # transcript_id as turn_id so audio-stage and agent-stage analytics
+                # events share a single key for downstream joins.
+                input_msg = AgentInput.text_input(
+                    self._session_id or "",
+                    event.text,
+                    turn_id=getattr(event, "transcript_id", None),
+                )
 
                 # Process and stream response
                 self._is_processing = True
@@ -547,11 +567,13 @@ class BaseAgent(ABC):
                             # Get or create transcript_id for this response stream
                             if current_transcript_id is None:
                                 current_transcript_id = output.transcript_id or f"response_{uuid.uuid4().hex[:8]}"
-                                # Capture first-text timestamp for TTFT measurement
-                                self.audio._turn_first_text_ts = time.perf_counter()
-                                # Detect bridge vs response from transcript_id prefix
+                                # Detect bridge vs response from transcript_id prefix (legacy)
                                 tid = current_transcript_id
-                                self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_")) else "response"
+                                self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_") or tid.startswith("bridge_")) else "response"
+
+                            # Explicit tts_source metadata overrides prefix detection
+                            if output.metadata.get("tts_source"):
+                                self._current_sentence_source = output.metadata["tts_source"]
 
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
@@ -588,6 +610,9 @@ class BaseAgent(ABC):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
                                     self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    # After bridge sentence dispatched, revert to "response" for subsequent text
+                                    if self._current_sentence_source == "bridge":
+                                        self._current_sentence_source = "response"
 
                             if output.is_final:
                                 # Flush any remaining partial sentence to TTS
@@ -732,6 +757,20 @@ class BaseAgent(ABC):
                 # If the plan reached __end__ during this turn, stop accepting new input.
                 # The farewell has already been spoken; exit the loop cleanly.
                 if self._session_completed:
+                    # Wait for any remaining TTS audio to finish playing on the
+                    # client before sending the completion signal and disconnecting.
+                    # flush_speech_queue (in the finally block above) ensures all
+                    # sentences are synthesized, but the client needs extra time
+                    # to play the audio through speakers.
+                    await asyncio.sleep(3)
+
+                    # Notify frontend that session is complete (triggers completion overlay).
+                    await self.audio._room.publish_data({
+                        "type": "session_completed",
+                        "data": {}
+                    })
+                    # Brief delay to ensure the data message is delivered before disconnect.
+                    await asyncio.sleep(1)
                     logger.info("Session completed — exiting audio loop")
                     break
 

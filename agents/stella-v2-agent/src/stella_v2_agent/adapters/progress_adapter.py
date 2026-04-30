@@ -25,6 +25,18 @@ class ProgressAdapter:
     """Converts gRPC state machine state to generic SDK ProgressState."""
 
     @staticmethod
+    def _priority_value(value: Any) -> int:
+        """Normalize transition priority (supports int-like strings)."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return 100
+        return 100
+
+    @staticmethod
     def deliverable_status_to_item_status(status: str) -> ItemStatus:
         mapping = {
             "pending": ItemStatus.PENDING,
@@ -39,6 +51,8 @@ class ProgressAdapter:
         cls,
         full_state: Dict[str, Any],
         started_at: Optional[str] = None,
+        plan: Optional[Dict[str, Any]] = None,
+        last_transition: Optional[Dict[str, Any]] = None,
     ) -> ProgressState:
         """Build ProgressState from a gRPC get_full_state() response dict.
 
@@ -49,37 +63,78 @@ class ProgressAdapter:
         current_group_id: Optional[str] = None
         current_item_id: Optional[str] = None
 
+        transitions_by_state: Dict[str, List[Dict[str, Any]]] = {}
+        if plan and isinstance(plan.get("states"), list):
+            for plan_state in plan.get("states", []):
+                state_id = plan_state.get("id")
+                if not state_id:
+                    continue
+                transitions_by_state[state_id] = []
+                for transition in plan_state.get("transitions", []) or []:
+                    target = transition.get("target_state_id")
+                    if not target:
+                        continue
+                    transitions_by_state[state_id].append({
+                        "target_state_id": target,
+                        "condition_type": transition.get("condition_type", "all_tasks_complete"),
+                        "priority": transition.get("priority"),
+                        "condition_config": transition.get("condition_config", {}),
+                    })
+
+                transitions_by_state[state_id].sort(
+                    key=lambda t: cls._priority_value(t.get("priority"))
+                )
+
         for state in full_state.get("states", []):
             items: List[ProgressItem] = []
             is_active = state.get("status") == "active"
 
             for task in state.get("tasks", []):
-                for d in task.get("deliverables", []):
-                    status_str = d.get("status", "pending")
-                    is_discovered = d.get("discovered", False)
+                task_deliverables = task.get("deliverables", [])
+                if task_deliverables:
+                    for d in task_deliverables:
+                        status_str = d.get("status", "pending")
+                        is_discovered = d.get("discovered", False)
+                        item = ProgressItem(
+                            id=d.get("key"),
+                            label=d.get("description"),
+                            status=cls.deliverable_status_to_item_status(status_str),
+                            description=f"Task: {task.get('description', '')}",
+                            required=False if is_discovered else d.get("required", True),
+                            value=d.get("value"),
+                            confidence=d.get("confidence"),
+                            collected_at=d.get("collected_at"),
+                            metadata={
+                                "task_id": task.get("id"),
+                                "task_description": task.get("description"),
+                                "deliverable_type": d.get("type", "string"),
+                                "acceptance_criteria": d.get("acceptance_criteria"),
+                                "reasoning": d.get("reasoning"),
+                                "discovered": is_discovered,
+                            },
+                        )
+                        items.append(item)
+
+                        # Track first pending item in the active state
+                        if is_active and status_str == "pending" and not current_item_id:
+                            current_item_id = d.get("key")
+                else:
+                    # Task with no deliverables — represent as a single item
+                    # so the frontend can display it
+                    task_status = task.get("status", "pending")
                     item = ProgressItem(
-                        id=d.get("key"),
-                        label=d.get("description"),
-                        status=cls.deliverable_status_to_item_status(status_str),
-                        description=f"Task: {task.get('description', '')}",
-                        required=False if is_discovered else d.get("required", True),
-                        value=d.get("value"),
-                        confidence=d.get("confidence"),
-                        collected_at=d.get("collected_at"),
+                        id=f"task_{task.get('id', 'unknown')}",
+                        label=task.get("description", "Task"),
+                        status=cls.deliverable_status_to_item_status(task_status),
+                        description=task.get("instruction", ""),
+                        required=task.get("required", True),
                         metadata={
                             "task_id": task.get("id"),
                             "task_description": task.get("description"),
-                            "deliverable_type": d.get("type", "string"),
-                            "acceptance_criteria": d.get("acceptance_criteria"),
-                            "reasoning": d.get("reasoning"),
-                            "discovered": is_discovered,
+                            "is_task_item": True,
                         },
                     )
                     items.append(item)
-
-                    # Track first pending item in the active state
-                    if is_active and status_str == "pending" and not current_item_id:
-                        current_item_id = d.get("key")
 
             # Determine group status
             all_completed = items and all(
@@ -99,7 +154,10 @@ class ProgressAdapter:
                 else ExecutionMode.FLEXIBLE
             )
 
-            group_metadata: Dict[str, Any] = {"state_type": state_type}
+            group_metadata: Dict[str, Any] = {
+                "state_type": state_type,
+                "transitions": transitions_by_state.get(state.get("id"), []),
+            }
             if state_type == "goal":
                 group_metadata["goal_objective"] = state.get("goal_objective", "")
                 group_metadata["goal_context"] = state.get("goal_context", "")
@@ -151,5 +209,6 @@ class ProgressAdapter:
                     "turns_without_progress", 0
                 ),
                 "architecture": "stella_v2_pipeline",
+                "last_transition": last_transition,
             },
         )

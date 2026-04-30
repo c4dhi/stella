@@ -3,21 +3,19 @@
 Takes the list of expert names from the Input Gate, runs them all in parallel
 via asyncio.gather(), and returns structured ExpertVerdict objects.
 
-Target latency: ~150-300ms wall-clock (parallelized).
+All experts (including task_extraction) run as foreground — their results
+are needed before response generation to ensure accurate state context.
 
-Background experts (e.g. task_extraction) run concurrently but do NOT block
-the response pipeline. Their results are collected via await after
-response streaming has already started.
+Target latency: ~300-500ms wall-clock (parallelized).
 
-Timeout per expert: configurable via EXPERT_TIMEOUT_MS env var (default: 5000ms).
-Background expert timeout: BACKGROUND_EXPERT_TIMEOUT_MS env var (default: 15000ms).
+Timeout per expert: configurable via EXPERT_TIMEOUT_MS env var (default: 15000ms).
 On timeout: returns a failure verdict for that expert.
 """
 
 import asyncio
 import os
 import time
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Optional
 
 from stella_agent_sdk.tools import ToolRegistry
 
@@ -33,9 +31,9 @@ logger = logging.getLogger(__name__)
 class ExpertPool:
     """Runs selected experts in parallel and collects their verdicts.
 
-    Splits experts into two tracks:
-    - Foreground: needed for arbitration/response (blocks pipeline)
-    - Background: only needed post-response (runs concurrently, collected later)
+    All experts run as foreground and block until complete. This ensures
+    task_extraction results (deliverable collection, state transitions)
+    are available before response generation, preventing stale context.
 
     Experts with can_call_functions=True receive tools from the tool_registry
     and execute in tool-calling mode instead of JSON mode.
@@ -50,12 +48,10 @@ class ExpertPool:
         self._runner = ExpertRunner(llm_service)
         self._registry = expert_registry
         self._tool_registry = tool_registry
-        self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "5000"))
-        self._bg_timeout_ms = int(os.environ.get("BACKGROUND_EXPERT_TIMEOUT_MS", "15000"))
+        self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "15000"))
 
         # Configurable sets (overridable via apply_config)
         self._always_run: set = set(self._registry.get_always_triggered_names())
-        self._background_experts: set = {"task_extraction"}
 
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
         """Set or update the tool registry (called after session start)."""
@@ -65,26 +61,18 @@ class ExpertPool:
         """Apply configuration overrides from Agent Configurator."""
         if "always_run" in config:
             self._always_run = set(config["always_run"])
-        if "background_experts" in config:
-            self._background_experts = set(config["background_experts"])
 
-    async def run_foreground(
+    async def run(
         self,
         expert_names: List[str],
         user_input: str,
         conversation_history: List[Dict[str, str]],
         sm_context: Dict[str, Any],
-    ) -> Tuple[List[ExpertVerdict], Optional[asyncio.Task]]:
-        """Run experts, returning foreground verdicts immediately and a background task.
+    ) -> List[ExpertVerdict]:
+        """Run all experts in parallel and return their verdicts.
 
-        Foreground experts block until complete (needed for arbitration).
-        Background experts (task_extraction) are launched concurrently
-        but returned as an asyncio.Task to be awaited later.
-
-        Returns:
-            Tuple of (foreground_verdicts, background_task_or_None).
-            Await the background task after response streaming to get
-            background verdicts.
+        All experts block until complete — results are needed for
+        arbitration and accurate state context before response generation.
         """
         # Ensure always-run experts are included
         names_set = set(expert_names)
@@ -93,48 +81,19 @@ class ExpertPool:
                 expert_names = list(expert_names) + [name]
 
         if not expert_names:
-            return [], None
+            return []
 
-        fg_timeout_seconds = self._timeout_ms / 1000.0
-        bg_timeout_seconds = self._bg_timeout_ms / 1000.0
+        timeout_seconds = self._timeout_ms / 1000.0
 
-        # Split into foreground and background
-        fg_names = [n for n in expert_names if n not in self._background_experts]
-        bg_names = [n for n in expert_names if n in self._background_experts]
-
-        # Launch background experts immediately (don't await yet)
-        # Background experts get a longer timeout since they don't block the response
-        bg_task: Optional[asyncio.Task] = None
-        if bg_names:
-            bg_task = asyncio.create_task(
-                self._run_experts(bg_names, user_input, conversation_history, sm_context, bg_timeout_seconds)
-            )
-
-        # Run foreground experts and wait for them
         start_time = time.time()
-        fg_verdicts = await self._run_experts(
-            fg_names, user_input, conversation_history, sm_context, fg_timeout_seconds
+        verdicts = await self._run_experts(
+            expert_names, user_input, conversation_history, sm_context, timeout_seconds
         )
 
         total_ms = (time.time() - start_time) * 1000
-        logger.info(
-            f"Foreground: {len(fg_verdicts)} experts in {total_ms:.0f}ms "
-            f"| Background: {len(bg_names)} launched"
-        )
+        logger.info(f"Expert Pool: {len(verdicts)} experts in {total_ms:.0f}ms")
 
-        return fg_verdicts, bg_task
-
-    async def collect_background(
-        self, bg_task: Optional[asyncio.Task]
-    ) -> List[ExpertVerdict]:
-        """Await background expert results. Call after response streaming."""
-        if bg_task is None:
-            return []
-        try:
-            return await bg_task
-        except Exception as e:
-            logger.error(f"Background experts failed: {e}")
-            return []
+        return verdicts
 
     async def _run_experts(
         self,
