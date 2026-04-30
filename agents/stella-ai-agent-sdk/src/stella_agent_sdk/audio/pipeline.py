@@ -312,14 +312,15 @@ class AudioPipeline:
                     logger.info("STT reconnection successful")
 
                 await self._run_stt_stream_inner()
-                # If we exit cleanly (pipeline stopped), don't retry
+                # If we exit cleanly (pipeline stopped), don't restart
                 if not self._is_listening:
                     break
-                # If inner completed without error but we're still listening,
-                # it means the stream ended unexpectedly - retry
-                retry_count += 1
-                logger.warning(f"STT stream ended unexpectedly, retrying ({retry_count}/{max_retries})...")
-                await asyncio.sleep(base_delay)
+                # Clean return while still listening means the audio source
+                # ended (e.g., participant unsubscribed their track on mute).
+                # Restart immediately so STT is ready for the next utterance,
+                # and reset retry_count since this is not an error path.
+                retry_count = 0
+                logger.info("STT stream ended (audio paused), restarting...")
             except asyncio.CancelledError:
                 logger.debug("STT stream task cancelled")
                 break
