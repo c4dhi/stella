@@ -55,6 +55,9 @@ class ChatterBoxProvider(TTSProvider):
         self._exaggeration = float(os.getenv('CHATTERBOX_EXAGGERATION', '0.5'))
         self._cfg_weight = float(os.getenv('CHATTERBOX_CFG_WEIGHT', '0.5'))
         self._audio_prompt_path = os.getenv('CHATTERBOX_AUDIO_PROMPT', None)
+        self._trim_rms_threshold = float(os.getenv('CHATTERBOX_TRIM_RMS_THRESHOLD', '0.01'))
+        self._trim_tail_ms = int(os.getenv('CHATTERBOX_TRIM_TAIL_MS', '100'))
+        self._trim_min_removal_ms = int(os.getenv('CHATTERBOX_TRIM_MIN_REMOVAL_MS', '50'))
 
     @property
     def name(self) -> str:
@@ -275,11 +278,49 @@ class ChatterBoxProvider(TTSProvider):
                 audio_data = audio_data / max_val
 
             sample_rate = self._model.sr  # 24000
+            # Trim common trailing model artifacts/noise while keeping a short natural decay tail.
+            audio_data = self._trim_trailing_artifacts(audio_data, sample_rate)
             return audio_data, sample_rate
 
         except Exception as e:
             print(f"[ChatterBox] Chunk synthesis failed: {e}")
             return None
+
+    def _trim_trailing_artifacts(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Trim trailing low-energy artifacts from generated audio."""
+        if len(audio) == 0:
+            return audio
+
+        window_size = int(0.02 * sample_rate)  # 20ms RMS windows
+        if len(audio) < window_size * 2:
+            return audio
+
+        last_speech_sample = len(audio)
+        for i in range(len(audio) - window_size, 0, -window_size):
+            window = audio[i:i + window_size]
+            rms = np.sqrt(np.mean(window ** 2))
+            if rms > self._trim_rms_threshold:
+                last_speech_sample = i + window_size
+                break
+
+        tail_padding_samples = int((self._trim_tail_ms / 1000.0) * sample_rate)
+        trim_point = min(last_speech_sample + tail_padding_samples, len(audio))
+        if trim_point >= len(audio):
+            return audio
+
+        removed_ms = ((len(audio) - trim_point) / sample_rate) * 1000.0
+        trimmed_audio = audio[:trim_point]
+
+        # Fade out the very end to avoid a click after hard trimming.
+        fade_samples = min(int(0.01 * sample_rate), len(trimmed_audio))  # 10ms
+        if fade_samples > 0:
+            fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+            trimmed_audio[-fade_samples:] *= fade
+
+        if removed_ms >= self._trim_min_removal_ms:
+            print(f"[ChatterBox] Trimmed {removed_ms:.0f}ms trailing artifacts")
+
+        return trimmed_audio
 
     async def synthesize(
         self,
