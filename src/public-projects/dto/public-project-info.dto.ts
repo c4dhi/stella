@@ -12,6 +12,7 @@ export class PublicProjectInfoDto {
   agentIcon?: string;
   visualizerType?: string;
   visualizerLocked: boolean;
+  maxSessionDurationSeconds?: number;
   isExpired: boolean;
   isEnabled: boolean;
 }

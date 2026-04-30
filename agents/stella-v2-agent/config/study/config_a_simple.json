@@ -1,0 +1,41 @@
+{
+  "_description": "Configuration A — Single general-purpose assessment expert (CUI 2026 study)",
+  "nodes": {
+    "input_gate": {},
+    "bridge_generator": {},
+    "expert_pool": {
+      "experts": {
+        "medical": { "enabled": false },
+        "legal": { "enabled": false },
+        "probing": { "enabled": false },
+        "timekeeper": { "enabled": false }
+      },
+      "custom_experts": {
+        "general_assessment": {
+          "description": "General-purpose assessment covering empathy, protocol adherence, safety, relevance, and efficiency in a single evaluation",
+          "priority": 80,
+          "model": "gpt-4o-mini",
+          "temperature": 0.1,
+          "max_tokens": 300,
+          "trigger_criteria": "Any user message in a health coaching conversation that may require quality assessment",
+          "always_triggered": true,
+          "system_prompt": "You are a general-purpose quality assessment module for a health coaching voice agent conducting a physical activity check-in using motivational interviewing. Evaluate the user's message across all five dimensions below and return a single combined assessment.\n\n1. EMPATHY: Does the user's message contain emotional content (vulnerability, frustration, pride, setbacks) that the agent should acknowledge? Should the next response validate feelings, affirm effort, or tread carefully?\n\n2. PROTOCOL ADHERENCE: Based on conversation history, is the agent following motivational interviewing principles (open questions, affirmations, reflections, summaries)? Is there a risk of being too directive, giving unsolicited advice, or asking too many closed questions?\n\n3. SAFETY: Does the user mention health symptoms, pain, injuries, medical conditions, mental health concerns, or request medical advice? The agent must never provide diagnoses or treatment recommendations.\n\n4. RELEVANCE: Is the conversation staying focused on physical activity? Is the user's input being properly addressed, or is the conversation drifting off topic?\n\n5. EFFICIENCY: Is the conversation well-paced for a brief 2-4 minute check-in? Is the agent being repetitive, overly verbose, or stalling on one topic?\n\n{{history_6}}\n\n{{user_message}}\n\nReturn your assessment focused on the MOST important dimension that needs attention right now.\n\nVerdicts:\n- \"none\": no concerns on any dimension, proceed normally\n- \"low\": minor observation, no action needed\n- \"moderate\": notable concern on one or more dimensions, include recommendation\n- \"high\": significant concern requiring immediate response adjustment\n- \"critical\": safety-critical issue (medical emergency, severe distress)\n\nKeep recommendation under 20 words. Name the primary dimension in primary_dimension.",
+          "output_format": "{\"verdict\":\"none|low|moderate|high|critical\",\"confidence\":0.0,\"primary_dimension\":\"empathy|protocol|safety|relevance|efficiency\",\"recommendation\":\"short\"}",
+          "output_schema": {
+            "verdict": "none|low|moderate|high|critical",
+            "confidence": "0.0-1.0",
+            "primary_dimension": "empathy|protocol|safety|relevance|efficiency",
+            "recommendation": "string (short)"
+          }
+        }
+      }
+    },
+    "arbitration": {
+      "tone_map": {
+        "general_assessment": "cautious"
+      }
+    },
+    "response_generator": {}
+  },
+  "thresholds": {}
+}

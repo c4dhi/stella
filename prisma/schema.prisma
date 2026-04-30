@@ -71,6 +71,7 @@ model Project {
   publicAgentConfig      Json?      // { name, icon, plan?, config?, pipelineConfig?, envVarTemplateId?, envVars? }
   publicVisualizerType   String?
   publicVisualizerLocked Boolean    @default(false)
+  publicMaxSessionDurationSeconds Int? // null = no limit (default). Max 7200 (2h).
   publicExpiresAt        DateTime?
   publicEnabled          Boolean    @default(true)
 
@@ -323,6 +324,9 @@ model Invitation {
   // Avatar/visualizer settings
   visualizerType  String?          // e.g., "sphere", "face", "galaxy", "rainy", "snowy", "christmas", "sunny"
   visualizerLocked Boolean         @default(false) // If true, participant can't change visualizer
+
+  // Max session duration (from first agent message). null = no limit. Max 7200 (2h).
+  maxSessionDurationSeconds Int?
 
   // Status tracking
   status          InvitationStatus @default(PENDING)

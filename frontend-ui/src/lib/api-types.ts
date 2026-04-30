@@ -409,6 +409,9 @@ export interface CreateInvitationDto {
   visualizerType?: string
   visualizerLocked?: boolean
   expiresInHours?: number
+  // Max session duration in seconds (measured from first agent message).
+  // null/undefined = no limit (default). Max 7200 (2h).
+  maxSessionDurationSeconds?: number | null
 }
 
 export interface CreateInvitationResponse {
@@ -421,6 +424,7 @@ export interface InvitationDetails {
   customMessage?: string | null
   visualizerType?: string | null
   visualizerLocked: boolean
+  maxSessionDurationSeconds?: number | null
   sessionName?: string | null
   status: InvitationStatus
   // Participant info for rejoin scenarios
@@ -443,6 +447,7 @@ export interface AcceptInvitationResponse {
   }
   visualizerType?: string | null
   visualizerLocked: boolean
+  maxSessionDurationSeconds?: number | null
 }
 
 // ============================================================================
@@ -960,6 +965,8 @@ export interface UpdatePublicConfigDto {
   visualizerLocked?: boolean
   expiresAt?: string
   enabled?: boolean
+  // Max session duration in seconds. null = no limit (default). Max 7200 (2h).
+  maxSessionDurationSeconds?: number | null
 }
 
 /**
@@ -971,6 +978,7 @@ export interface PublicProjectInfo {
   agentIcon?: string
   visualizerType?: string
   visualizerLocked: boolean
+  maxSessionDurationSeconds?: number | null
   isExpired: boolean
   isEnabled: boolean
 }
@@ -1029,6 +1037,7 @@ export interface ProjectWithPublicConfig extends Project {
   publicAgentConfig?: PublicAgentConfig
   publicVisualizerType?: string
   publicVisualizerLocked: boolean
+  publicMaxSessionDurationSeconds?: number | null
   publicExpiresAt?: string
   publicEnabled: boolean
 }
