@@ -286,6 +286,7 @@ export default function ReadinessCheck({
       )}
       {showAudioOutModal && (
         <AudioOutputModal
+          micStream={micStream}
           onResolve={(r) => interactiveResolverRef.current?.(r)}
         />
       )}

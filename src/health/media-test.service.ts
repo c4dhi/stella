@@ -27,19 +27,29 @@ export class MediaTestService {
     this.recentByIp.set(ip, Date.now())
 
     const roomName = `health-media-test-${randomUUID()}`
-    const identity = `readiness-${randomUUID().slice(0, 8)}`
-    const token = await this.livekit.createToken(
-      roomName,
-      identity,
-      'Readiness check',
-      `${TOKEN_TTL_SECONDS}s`,
-    )
+    const publisherIdentity = `readiness-pub-${randomUUID().slice(0, 8)}`
+    const listenerIdentity = `readiness-sub-${randomUUID().slice(0, 8)}`
+    const [token, listenerToken] = await Promise.all([
+      this.livekit.createToken(
+        roomName,
+        publisherIdentity,
+        'Readiness publisher',
+        `${TOKEN_TTL_SECONDS}s`,
+      ),
+      this.livekit.createToken(
+        roomName,
+        listenerIdentity,
+        'Readiness listener',
+        `${TOKEN_TTL_SECONDS}s`,
+      ),
+    ])
     const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000)
     expiresAt.setMilliseconds(0)
 
     return {
       roomName,
       token,
+      listenerToken,
       livekitUrl: this.livekit.getPublicServerUrl(),
       expiresAt: expiresAt.toISOString(),
       ttlSeconds: TOKEN_TTL_SECONDS,

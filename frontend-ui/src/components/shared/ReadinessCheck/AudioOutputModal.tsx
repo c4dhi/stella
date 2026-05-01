@@ -1,49 +1,128 @@
-import { useRef, useState } from 'react'
-import { Volume2, Play } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Volume2, Loader2, CheckCircle2, XCircle, Headphones } from 'lucide-react'
+import {
+  Room,
+  RoomEvent,
+  ConnectionState,
+  LocalAudioTrack,
+  RemoteTrack,
+  RemoteTrackPublication,
+  RemoteParticipant,
+  Track,
+} from 'livekit-client'
 import { CheckResult } from './types'
 import { ModalShell } from './MicLevelModal'
+import { apiClient } from '../../../services/ApiClient'
 
 interface Props {
+  micStream: MediaStream | null
   onResolve: (result: CheckResult) => void
 }
 
-export default function AudioOutputModal({ onResolve }: Props) {
-  const [played, setPlayed] = useState(false)
-  const [playing, setPlaying] = useState(false)
-  const ctxRef = useRef<AudioContext | null>(null)
+type Phase = 'idle' | 'connecting' | 'streaming' | 'failed'
 
-  const playTone = async () => {
-    if (playing) return
-    setPlaying(true)
-    setPlayed(true)
+export default function AudioOutputModal({ micStream, onResolve }: Props) {
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [errorDetail, setErrorDetail] = useState<string | null>(null)
+
+  const audioElRef = useRef<HTMLAudioElement | null>(null)
+  const resourcesRef = useRef<{
+    pubRoom: Room | null
+    subRoom: Room | null
+    track: LocalAudioTrack | null
+  }>({ pubRoom: null, subRoom: null, track: null })
+
+  const teardown = () => {
+    const r = resourcesRef.current
     try {
-      const Ctx = window.AudioContext || (window as any).webkitAudioContext
-      const ctx = new Ctx()
-      ctxRef.current = ctx
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.frequency.value = 440
-      osc.type = 'sine'
-      gain.gain.setValueAtTime(0, ctx.currentTime)
-      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.05)
-      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.9)
-      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.0)
-      osc.connect(gain).connect(ctx.destination)
-      osc.start()
-      osc.stop(ctx.currentTime + 1.05)
-      setTimeout(() => {
-        setPlaying(false)
-        ctx.close().catch(() => {})
-      }, 1100)
-    } catch {
-      setPlaying(false)
+      r.track?.stop()
+    } catch {}
+    r.pubRoom?.disconnect().catch(() => {})
+    r.subRoom?.disconnect().catch(() => {})
+    if (audioElRef.current) {
+      audioElRef.current.srcObject = null
     }
+    resourcesRef.current = { pubRoom: null, subRoom: null, track: null }
   }
 
   const finish = (result: CheckResult) => {
-    ctxRef.current?.close().catch(() => {})
+    teardown()
     onResolve(result)
   }
+
+  const start = async () => {
+    if (!micStream) {
+      setPhase('failed')
+      setErrorDetail('Microphone unavailable — cannot run the round-trip test.')
+      return
+    }
+    const micTrack = micStream.getAudioTracks()[0]
+    if (!micTrack) {
+      setPhase('failed')
+      setErrorDetail('Microphone unavailable — cannot run the round-trip test.')
+      return
+    }
+    setPhase('connecting')
+    try {
+      let session
+      try {
+        session = await apiClient.startMediaTest()
+      } catch (err: any) {
+        setPhase('failed')
+        setErrorDetail(
+          err?.statusCode === 429
+            ? err.message || 'Please wait a moment before retrying.'
+            : 'Could not open a test room on the server.',
+        )
+        return
+      }
+
+      const subRoom = new Room()
+      const pubRoom = new Room()
+      resourcesRef.current.pubRoom = pubRoom
+      resourcesRef.current.subRoom = subRoom
+
+      subRoom.on(
+        RoomEvent.TrackSubscribed,
+        (
+          track: RemoteTrack,
+          _pub: RemoteTrackPublication,
+          _participant: RemoteParticipant,
+        ) => {
+          if (track.kind !== Track.Kind.Audio) return
+          const remoteMs = track.mediaStreamTrack
+          if (!remoteMs || !audioElRef.current) return
+          // Live playback as audio arrives back from the server.
+          audioElRef.current.srcObject = new MediaStream([remoteMs])
+          audioElRef.current.play().catch(() => {})
+        },
+      )
+
+      await subRoom.connect(session.livekitUrl, session.listenerToken)
+      if (subRoom.state !== ConnectionState.Connected) {
+        throw new Error('Could not connect listener to the realtime gateway')
+      }
+      await pubRoom.connect(session.livekitUrl, session.token)
+      if (pubRoom.state !== ConnectionState.Connected) {
+        throw new Error('Could not connect publisher to the realtime gateway')
+      }
+
+      const localTrack = new LocalAudioTrack(micTrack.clone())
+      resourcesRef.current.track = localTrack
+      await pubRoom.localParticipant.publishTrack(localTrack)
+      setPhase('streaming')
+    } catch (err) {
+      setPhase('failed')
+      setErrorDetail((err as Error)?.message || 'Audio round-trip failed')
+      teardown()
+    }
+  }
+
+  useEffect(() => {
+    start()
+    return () => teardown()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <ModalShell
@@ -60,54 +139,99 @@ export default function AudioOutputModal({ onResolve }: Props) {
             Test your speakers
           </h3>
           <p className="text-sm text-content-secondary dark:text-content-inverse-secondary">
-            Press play and listen for a short tone.
+            {phase === 'streaming'
+              ? 'Speak into your microphone — your voice is going to the server and back. You should hear yourself with a short delay.'
+              : phase === 'connecting'
+              ? 'Opening a test room on the server…'
+              : phase === 'failed'
+              ? errorDetail || 'Audio round-trip failed.'
+              : 'Starting the round-trip test…'}
           </p>
         </div>
       </div>
 
-      <div className="my-6 flex justify-center">
-        <button
-          type="button"
-          onClick={playTone}
-          disabled={playing}
-          className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-sky-600 hover:bg-sky-700 text-white font-medium text-sm disabled:opacity-60 transition-colors"
-        >
-          <Play className="w-4 h-4" fill="currentColor" />
-          {playing ? 'Playing tone…' : played ? 'Play again' : 'Play tone'}
-        </button>
-      </div>
+      {phase === 'connecting' && (
+        <div className="my-6 flex items-center gap-3 text-sm text-content-secondary dark:text-content-inverse-secondary">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Connecting publisher and listener…
+        </div>
+      )}
 
-      {played && !playing && (
-        <div className="space-y-3">
-          <p className="text-center text-sm text-content-primary dark:text-content-inverse-primary">
-            Did you hear it?
-          </p>
-          <div className="grid grid-cols-2 gap-2">
+      {phase === 'streaming' && (
+        <div className="my-6 rounded-md border border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-3 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+          <Headphones className="w-4 h-4 mt-0.5 shrink-0" />
+          Use headphones to avoid feedback. If you hear an echo loop, take them off and stop the test.
+        </div>
+      )}
+
+      {phase === 'failed' && (
+        <div className="my-6 flex items-center gap-3 text-sm text-rose-600 dark:text-rose-400">
+          <XCircle className="w-4 h-4" />
+          {errorDetail || 'The audio round-trip failed.'}
+        </div>
+      )}
+
+      {/* Hidden audio sink — playback happens through the user's selected output device. */}
+      <audio ref={audioElRef} autoPlay playsInline className="hidden" />
+
+      <div className="flex justify-between items-center gap-3">
+        {phase === 'streaming' ? (
+          <>
             <button
               type="button"
               onClick={() =>
                 finish({
                   id: 'audioOutput',
                   status: 'fail',
-                  detail: 'Tone was not audible. Check volume and output device.',
+                  detail: 'User did not hear themselves through the speakers',
                 })
               }
-              className="px-4 py-2 rounded-md border border-border dark:border-border-dark text-sm font-medium hover:bg-neutral-50 dark:hover:bg-surface-dark-tertiary"
+              className="text-xs text-content-secondary dark:text-content-inverse-secondary hover:underline"
             >
-              No
+              I don't hear anything
             </button>
             <button
               type="button"
               onClick={() =>
-                finish({ id: 'audioOutput', status: 'pass', detail: 'Tone heard' })
+                finish({
+                  id: 'audioOutput',
+                  status: 'pass',
+                  detail: 'Round-trip audio audible to user',
+                })
               }
-              className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
             >
-              Yes, I heard it
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              I hear myself
             </button>
-          </div>
-        </div>
-      )}
+          </>
+        ) : phase === 'failed' ? (
+          <>
+            <span />
+            <button
+              type="button"
+              onClick={() =>
+                finish({
+                  id: 'audioOutput',
+                  status: 'fail',
+                  detail: errorDetail || 'Audio round-trip failed',
+                })
+              }
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-medium"
+            >
+              Close
+            </button>
+          </>
+        ) : (
+          <>
+            <span />
+            <span className="inline-flex items-center gap-1.5 text-xs text-content-tertiary dark:text-content-inverse-tertiary">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Connecting
+            </span>
+          </>
+        )}
+      </div>
     </ModalShell>
   )
 }
