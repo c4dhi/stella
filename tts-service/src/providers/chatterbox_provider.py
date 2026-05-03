@@ -109,7 +109,8 @@ class ChatterBoxProvider(TTSProvider):
             device = torch.device(self._device)
             _original_torch_load = torch.load
             def _patched_torch_load(*args, **kwargs):
-                kwargs.setdefault('map_location', device)
+                # Force CPU/GPU remap even if caller passes its own map_location.
+                kwargs['map_location'] = device
                 return _original_torch_load(*args, **kwargs)
 
             # Check if models are cached locally
@@ -118,12 +119,27 @@ class ChatterBoxProvider(TTSProvider):
                 loop = asyncio.get_event_loop()
                 torch.load = _patched_torch_load
                 try:
-                    self._model = await loop.run_in_executor(
-                        None,
-                        lambda: ChatterboxMultilingualTTS.from_local(
-                            Path(cache_dir), device
+                    try:
+                        self._model = await loop.run_in_executor(
+                            None,
+                            lambda: ChatterboxMultilingualTTS.from_local(
+                                Path(cache_dir), device
+                            )
                         )
-                    )
+                    except RuntimeError as e:
+                        # Some cached checkpoints were saved with CUDA storages.
+                        # On CPU-only nodes, fall back to a fresh CPU-compatible load.
+                        err = str(e)
+                        if "deserialize object on a CUDA device" in err and self._device == "cpu":
+                            print("[ChatterBox] Local cache is CUDA-bound on CPU runtime, falling back to from_pretrained...")
+                            self._model = await loop.run_in_executor(
+                                None,
+                                lambda: ChatterboxMultilingualTTS.from_pretrained(
+                                    device=device
+                                )
+                            )
+                        else:
+                            raise
                 finally:
                     torch.load = _original_torch_load
             else:
