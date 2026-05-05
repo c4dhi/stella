@@ -8,6 +8,7 @@ from typing import Optional, Tuple, List
 import numpy as np
 
 from .base import TTSProvider
+from latency_probe import run_latency_probe
 
 # Check if chatterbox is available
 try:
@@ -140,6 +141,8 @@ class ChatterBoxProvider(TTSProvider):
             self._initialized = True
             print(f"[ChatterBox] Initialized successfully (device={self._device}, "
                   f"sr={self._model.sr}, language={self._default_language})")
+            if os.getenv("MODEL_LATENCY_PROBE_ENABLED", "false").lower() == "true":
+                asyncio.create_task(self._run_latency_probe())
             return True
 
         except Exception as e:
@@ -147,6 +150,26 @@ class ChatterBoxProvider(TTSProvider):
             import traceback
             traceback.print_exc()
             return False
+
+    async def _run_latency_probe(self) -> None:
+        async def infer_once() -> None:
+            result = await self.synthesize("Hello World.")
+            if result is None:
+                raise RuntimeError("ChatterBox synthesize returned no audio")
+            if torch is not None and torch.cuda.is_available():
+                torch.cuda.synchronize()
+
+        await run_latency_probe(
+            provider=self.name,
+            provider_type="tts",
+            inference_fn=infer_once,
+            metadata={
+                "model": "chatterbox-multilingual",
+                "voice": "",
+                "device": self._device or "",
+                "language": self._default_language,
+            },
+        )
 
     def _resolve_language(self, language: Optional[str]) -> str:
         """Resolve language code, defaulting to configured language."""
