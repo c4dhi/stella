@@ -120,6 +120,8 @@ get_var_metadata() {
         VAD_AUDIO_INACTIVITY_TIMEOUT_MS) echo "stt|text|optional|1500|1500|Force endpoint on audio inactivity (ms)||" ;;
         VAD_RMS_THRESHOLD)     echo "stt|text|optional|0.008|0.01|Energy gate for background noise filtering||" ;;
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
+        MODEL_LATENCY_PROBE_ENABLED) echo "stt|boolean|optional|false|false|Enable model latency probe logging at provider startup||" ;;
+        MODEL_LATENCY_IDLE_WINDOWS) echo "stt|text|optional|10,30,60,120,300,600|10,30,60,120,300,600|Comma-separated idle windows in seconds for latency probe||" ;;
 
         # --- TTS ---
         TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,elevenlabs,auto|" ;;
@@ -177,6 +179,8 @@ ALL_VARIABLES=(
     "VAD_AUDIO_INACTIVITY_TIMEOUT_MS"
     "VAD_RMS_THRESHOLD"
     "PARTIAL_INTERVAL_MS"
+    "MODEL_LATENCY_PROBE_ENABLED"
+    "MODEL_LATENCY_IDLE_WINDOWS"
     "TTS_PROVIDER"
     "ELEVENLABS_VOICE_ID"
     "ELEVENLABS_MODEL_ID"
