@@ -8,6 +8,7 @@ Follows industry best practices (LiveKit, OpenAI Realtime, Deepgram, Pipecat):
 """
 
 import os
+import asyncio
 import time
 import uuid
 from typing import List, Optional
@@ -15,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 import numpy as np
 
 from .base import STTProvider, STTSession
+from latency_probe import run_latency_probe
 import stt_pb2
 
 # Try to import faster-whisper
@@ -720,6 +722,8 @@ class WhisperProvider(STTProvider):
 
             self.model_ready = True
             print(f"[WhisperProvider] Initialization complete")
+            if os.getenv("MODEL_LATENCY_PROBE_ENABLED", "false").lower() == "true":
+                asyncio.create_task(self._run_latency_probe())
             return True
 
         except Exception as e:
@@ -802,6 +806,39 @@ class WhisperProvider(STTProvider):
             import traceback
             traceback.print_exc()
             return False
+
+    async def _run_latency_probe(self) -> None:
+        if not self.whisper_model:
+            return
+
+        async def infer_once() -> None:
+            dummy_audio = np.full(16000, 0.001, dtype=np.float32)
+            segments, _ = self.whisper_model.transcribe(
+                dummy_audio,
+                language=self.language,
+                beam_size=self.beam_size,
+                vad_filter=False,
+                word_timestamps=False,
+                condition_on_previous_text=False,
+                temperature=0.0,
+            )
+            for _ in segments:
+                pass
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                torch.cuda.synchronize()
+
+        await run_latency_probe(
+            provider=self.name,
+            provider_type="stt",
+            inference_fn=infer_once,
+            metadata={
+                "model": self.model_size,
+                "device": self.device,
+                "compute_type": self.compute_type,
+                "language": self.language or "",
+                "beam_size": self.beam_size,
+            },
+        )
 
     def create_session(self, session_id: str, participant_id: str) -> Optional[WhisperSession]:
         """Create a new transcription session."""
