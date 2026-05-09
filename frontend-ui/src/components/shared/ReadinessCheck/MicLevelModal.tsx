@@ -5,13 +5,15 @@ import { CheckResult } from './types'
 interface Props {
   stream: MediaStream
   onResolve: (result: CheckResult) => void
+  onRecorded?: (recording: AudioBuffer) => void
 }
 
 const PASS_THRESHOLD = 12
 const PASS_DURATION_MS = 400
 const AUTO_FAIL_MS = 15_000
+const MAX_RECORDING_SECONDS = 8
 
-export default function MicLevelModal({ stream, onResolve }: Props) {
+export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) {
   const [level, setLevel] = useState(0)
   const [peak, setPeak] = useState(0)
   const [status, setStatus] = useState<'listening' | 'detected'>('listening')
@@ -19,11 +21,42 @@ export default function MicLevelModal({ stream, onResolve }: Props) {
   const rafRef = useRef<number | null>(null)
   const aboveSinceRef = useRef<number | null>(null)
   const resolvedRef = useRef(false)
+  const recordedChunksRef = useRef<Float32Array[]>([])
+  const recordedSampleRateRef = useRef<number>(48000)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const recordedSamplesRef = useRef<number>(0)
+
+  const buildRecording = (): AudioBuffer | null => {
+    const chunks = recordedChunksRef.current
+    if (!chunks.length) return null
+    const sampleRate = recordedSampleRateRef.current
+    const total = chunks.reduce((s, c) => s + c.length, 0)
+    if (total < sampleRate * 0.3) return null
+    const ctx = ctxRef.current
+    if (!ctx) return null
+    const buffer = ctx.createBuffer(1, total, sampleRate)
+    const out = buffer.getChannelData(0)
+    let offset = 0
+    for (const c of chunks) {
+      out.set(c, offset)
+      offset += c.length
+    }
+    return buffer
+  }
 
   const finish = (result: CheckResult) => {
     if (resolvedRef.current) return
     resolvedRef.current = true
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    if (result.status === 'pass') {
+      const recording = buildRecording()
+      if (recording && onRecorded) onRecorded(recording)
+    }
+    try {
+      processorRef.current?.disconnect()
+      sourceRef.current?.disconnect()
+    } catch {}
     ctxRef.current?.close().catch(() => {})
     onResolve(result)
   }
@@ -32,10 +65,28 @@ export default function MicLevelModal({ stream, onResolve }: Props) {
     const Ctx = window.AudioContext || (window as any).webkitAudioContext
     const ctx = new Ctx()
     ctxRef.current = ctx
+    recordedSampleRateRef.current = ctx.sampleRate
     const source = ctx.createMediaStreamSource(stream)
+    sourceRef.current = source
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 1024
     source.connect(analyser)
+    const maxSamples = Math.floor(ctx.sampleRate * MAX_RECORDING_SECONDS)
+    const processor = ctx.createScriptProcessor(4096, 1, 1)
+    processor.onaudioprocess = (e) => {
+      if (resolvedRef.current) return
+      if (recordedSamplesRef.current >= maxSamples) return
+      const input = e.inputBuffer.getChannelData(0)
+      const remaining = maxSamples - recordedSamplesRef.current
+      const slice = remaining < input.length ? input.subarray(0, remaining) : input
+      recordedChunksRef.current.push(new Float32Array(slice))
+      recordedSamplesRef.current += slice.length
+    }
+    source.connect(processor)
+    const silentGain = ctx.createGain()
+    silentGain.gain.value = 0
+    processor.connect(silentGain).connect(ctx.destination)
+    processorRef.current = processor
     const buf = new Uint8Array(analyser.frequencyBinCount)
     const startedAt = Date.now()
 

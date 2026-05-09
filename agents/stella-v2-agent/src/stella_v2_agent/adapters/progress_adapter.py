@@ -54,7 +54,38 @@ class ProgressAdapter:
             is_active = state.get("status") == "active"
 
             for task in state.get("tasks", []):
-                for d in task.get("deliverables", []):
+                task_deliverables = task.get("deliverables", []) or []
+
+                # Tasks without deliverables would otherwise produce zero
+                # ProgressItems and disappear from the frontend to-do list.
+                # Emit a sentinel item so the task remains visible.
+                if not task_deliverables:
+                    task_status_str = task.get("status", "pending")
+                    task_status_map = {
+                        "pending": ItemStatus.PENDING,
+                        "in_progress": ItemStatus.IN_PROGRESS,
+                        "completed": ItemStatus.COMPLETED,
+                        "skipped": ItemStatus.SKIPPED,
+                    }
+                    sentinel = ProgressItem(
+                        id=task.get("id"),
+                        label=task.get("description"),
+                        status=task_status_map.get(task_status_str, ItemStatus.PENDING),
+                        description=task.get("instruction", "") or task.get("description", ""),
+                        required=task.get("required", True),
+                        metadata={
+                            "task_id": task.get("id"),
+                            "task_description": task.get("description"),
+                            "is_task_item": True,
+                        },
+                    )
+                    items.append(sentinel)
+
+                    if is_active and task_status_str == "pending" and not current_item_id:
+                        current_item_id = task.get("id")
+                    continue
+
+                for d in task_deliverables:
                     status_str = d.get("status", "pending")
                     is_discovered = d.get("discovered", False)
                     item = ProgressItem(

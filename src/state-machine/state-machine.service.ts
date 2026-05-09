@@ -544,7 +544,7 @@ export class StateMachineService {
       const goalDelKeys = (currentState.goal?.deliverables || [])
         .filter(d => d.required !== false)
         .map(d => d.key);
-      const goalComplete = goalDelKeys.every(k => k in deliverables);
+      const goalComplete = goalDelKeys.length > 0 && goalDelKeys.every(k => k in deliverables);
 
       if (goalComplete && !state.completedTasks.includes('__goal__')) {
         updatedCompletedTasks = [...state.completedTasks, '__goal__'];
@@ -555,7 +555,7 @@ export class StateMachineService {
       const taskDeliverableKeys = (foundTask.deliverables || [])
         .filter(d => d.required !== false)
         .map(d => d.key);
-      const taskComplete = taskDeliverableKeys.every(k => k in deliverables);
+      const taskComplete = taskDeliverableKeys.length > 0 && taskDeliverableKeys.every(k => k in deliverables);
 
       if (taskComplete && !state.completedTasks.includes(foundTask.id)) {
         updatedCompletedTasks = [...state.completedTasks, foundTask.id];
@@ -660,8 +660,12 @@ export class StateMachineService {
         const requiredKeys = taskDeliverables
           .filter(d => d.required !== false)
           .map(d => d.key);
-        const allCollected = requiredKeys.every(k => k in deliverables);
-        if (allCollected) continue; // Task is effectively complete
+        // Only treat as effectively complete when there is at least one required
+        // deliverable and all of them are collected — otherwise an all-optional
+        // task would be filtered out before the conversation even starts.
+        if (requiredKeys.length > 0 && requiredKeys.every(k => k in deliverables)) {
+          continue;
+        }
       }
 
       pendingTasks.push({
@@ -1816,14 +1820,20 @@ export class StateMachineService {
         if (completedTasks.includes(task.id)) {
           taskStatus = 'completed';
         } else if (hasDeliverables) {
-          // Check if all required deliverables are collected
+          // Check if all required deliverables are collected.
+          // Guard against vacuous truth: a task whose deliverables are all optional
+          // would otherwise be reported as completed before any work happens.
           const requiredKeys = taskDeliverables
             .filter(d => d.required !== false)
             .map(d => d.key);
-          const allCollected = requiredKeys.every(k => k in deliverables);
-          if (allCollected) {
-            taskStatus = 'completed';
-          } else if (requiredKeys.some(k => k in deliverables)) {
+          if (requiredKeys.length > 0) {
+            const allCollected = requiredKeys.every(k => k in deliverables);
+            if (allCollected) {
+              taskStatus = 'completed';
+            } else if (requiredKeys.some(k => k in deliverables)) {
+              taskStatus = 'in_progress';
+            }
+          } else if (taskDeliverables.some(d => d.key in deliverables)) {
             taskStatus = 'in_progress';
           }
         }

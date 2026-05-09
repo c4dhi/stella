@@ -2,6 +2,7 @@ import { Room, createLocalAudioTrack, ConnectionState } from 'livekit-client'
 import { CheckResult } from './types'
 import { getRuntimeConfig } from '../../../config/runtime'
 import { apiClient } from '../../../services/ApiClient'
+import type { MediaTestSession } from '../../../lib/api-types'
 import {
   checkMicrophonePermission,
   requestMicrophoneAccess,
@@ -199,29 +200,37 @@ export async function runWebSocketCheck(): Promise<CheckResult> {
   }
 }
 
-export async function runLivekitPublishCheck(): Promise<CheckResult> {
-  let session
+export type MediaTestStartResult =
+  | { ok: true; session: MediaTestSession }
+  | { ok: false; skipped: boolean; detail: string }
+
+export async function startMediaTestSession(): Promise<MediaTestStartResult> {
   try {
-    session = await apiClient.startMediaTest()
+    const session = await apiClient.startMediaTest()
+    return { ok: true, session }
   } catch (err: any) {
     if (err?.statusCode === 429) {
       return {
-        id: 'livekitPublish',
-        status: 'skipped',
+        ok: false,
+        skipped: true,
         detail: err.message || 'Try again in a moment.',
       }
     }
     return {
-      id: 'livekitPublish',
-      status: 'fail',
+      ok: false,
+      skipped: false,
       detail: 'Could not start the audio test session.',
     }
   }
+}
 
+export async function runLivekitPublishCheck(
+  session: MediaTestSession,
+): Promise<CheckResult> {
   const room = new Room()
   let track: Awaited<ReturnType<typeof createLocalAudioTrack>> | null = null
   try {
-    await room.connect(session.livekitUrl, session.token)
+    await room.connect(session.livekitUrl, session.publisherToken)
     if (room.state !== ConnectionState.Connected) {
       return {
         id: 'livekitPublish',

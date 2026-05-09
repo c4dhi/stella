@@ -15,7 +15,9 @@ import {
   runWebRtcCheck,
   runWebSocketCheck,
   runLivekitPublishCheck,
+  startMediaTestSession,
 } from './checks'
+import type { MediaTestSession } from '../../../lib/api-types'
 import { stopStream } from '../../../lib/mediaDevices'
 import MicLevelModal from './MicLevelModal'
 import AudioOutputModal from './AudioOutputModal'
@@ -58,6 +60,21 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
   skipped: 'Skipped',
 }
 
+const FAILURE_HINTS: Partial<Record<CheckId, string>> = {
+  network:
+    'Try a different network or temporarily disable any VPN/proxy you may have enabled.',
+  webrtc:
+    'Your network may block UDP traffic. Corporate firewalls or restrictive Wi-Fi often cause this — try a mobile hotspot to compare.',
+  websocket:
+    'A firewall or proxy may be blocking the realtime gateway. Try a different network if possible.',
+  livekitPublish:
+    'Audio could not reach the server. This is usually caused by a firewall blocking real-time media; a personal or mobile network typically works.',
+  micPermission:
+    'Allow microphone access in your browser settings (look for the camera/mic icon in the address bar) and rerun the test.',
+  audioOutput:
+    'Check your system volume, the selected output device, and that nothing else is muting playback.',
+}
+
 function isReady(checks: CheckResult[], required: CheckId[]): boolean {
   if (required.length === 0) return checks.every((c) => c.status !== 'fail' && c.status !== 'pending' && c.status !== 'running')
   return required.every((id) => checks.find((c) => c.id === id)?.status === 'pass')
@@ -82,6 +99,8 @@ export default function ReadinessCheck({
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const [showMicModal, setShowMicModal] = useState(false)
   const [showAudioOutModal, setShowAudioOutModal] = useState(false)
+  const [recordedAudio, setRecordedAudio] = useState<AudioBuffer | null>(null)
+  const [mediaSession, setMediaSession] = useState<MediaTestSession | null>(null)
   const interactiveResolverRef = useRef<((r: CheckResult) => void) | null>(null)
 
   const onChangeRef = useRef(onChange)
@@ -102,46 +121,66 @@ export default function ReadinessCheck({
       interactiveResolverRef.current = resolve
     })
 
-  const runStep = async (id: CheckId, currentMicStream: MediaStream | null): Promise<{
+  const runStep = async (
+    id: CheckId,
+    currentMicStream: MediaStream | null,
+    currentSession: MediaTestSession | null,
+  ): Promise<{
     result: CheckResult
     stream: MediaStream | null
+    session: MediaTestSession | null
   }> => {
-    if (id === 'browser') return { result: await runBrowserCheck(), stream: currentMicStream }
-    if (id === 'network') return { result: await runNetworkCheck(), stream: currentMicStream }
-    if (id === 'webrtc') return { result: await runWebRtcCheck(), stream: currentMicStream }
-    if (id === 'websocket') return { result: await runWebSocketCheck(), stream: currentMicStream }
-    if (id === 'livekitPublish') return { result: await runLivekitPublishCheck(), stream: currentMicStream }
+    const wrap = (result: CheckResult) => ({
+      result,
+      stream: currentMicStream,
+      session: currentSession,
+    })
+    if (id === 'browser') return wrap(await runBrowserCheck())
+    if (id === 'network') return wrap(await runNetworkCheck())
+    if (id === 'webrtc') return wrap(await runWebRtcCheck())
+    if (id === 'websocket') return wrap(await runWebSocketCheck())
+    if (id === 'livekitPublish') {
+      let session = currentSession
+      if (!session) {
+        const start = await startMediaTestSession()
+        if (!start.ok) {
+          return wrap({
+            id: 'livekitPublish',
+            status: start.skipped ? 'skipped' : 'fail',
+            detail: start.detail,
+          })
+        }
+        session = start.session
+        setMediaSession(session)
+      }
+      const result = await runLivekitPublishCheck(session)
+      return { result, stream: currentMicStream, session }
+    }
     if (id === 'micPermission') {
       const { result, stream } = await runMicPermissionCheck()
       setMicStream(stream)
-      return { result, stream }
+      return { result, stream, session: currentSession }
     }
     if (id === 'micLevel') {
       if (!currentMicStream) {
-        return {
-          result: {
-            id: 'micLevel',
-            status: 'skipped',
-            detail: 'Microphone unavailable',
-          },
-          stream: currentMicStream,
-        }
+        return wrap({
+          id: 'micLevel',
+          status: 'skipped',
+          detail: 'Microphone unavailable',
+        })
       }
       setShowMicModal(true)
       const result = await waitForInteractive()
       setShowMicModal(false)
-      return { result, stream: currentMicStream }
+      return wrap(result)
     }
     if (id === 'audioOutput') {
       setShowAudioOutModal(true)
       const result = await waitForInteractive()
       setShowAudioOutModal(false)
-      return { result, stream: currentMicStream }
+      return wrap(result)
     }
-    return {
-      result: { id, status: 'skipped' },
-      stream: currentMicStream,
-    }
+    return wrap({ id, status: 'skipped' })
   }
 
   const start = async () => {
@@ -149,15 +188,23 @@ export default function ReadinessCheck({
     setRunning(true)
     setCompleted(false)
     setResults(enabled.map((id) => ({ id, status: 'pending' })))
+    setRecordedAudio(null)
+    setMediaSession(null)
     let stream: MediaStream | null = null
+    let session: MediaTestSession | null = null
     try {
       for (let i = 0; i < enabled.length; i++) {
         const id = enabled[i]
         setActiveIndex(i)
         update(id, { status: 'running' })
         try {
-          const { result, stream: newStream } = await runStep(id, stream)
+          const { result, stream: newStream, session: newSession } = await runStep(
+            id,
+            stream,
+            session,
+          )
           stream = newStream
+          session = newSession
           update(id, result)
         } catch (err) {
           update(id, { status: 'fail', detail: (err as Error).message })
@@ -166,6 +213,7 @@ export default function ReadinessCheck({
     } finally {
       stopStream(stream)
       setMicStream(null)
+      setMediaSession(null)
       setActiveIndex(-1)
       setRunning(false)
       setCompleted(true)
@@ -184,8 +232,19 @@ export default function ReadinessCheck({
   }, [])
 
   const passCount = results.filter((c) => c.status === 'pass').length
+  const warnCount = results.filter((c) => c.status === 'warn').length
+  const failCount = results.filter((c) => c.status === 'fail').length
+  const skipCount = results.filter((c) => c.status === 'skipped').length
   const totalCount = results.length
   const overallReady = completed && isReady(results, required)
+  const completedSummary = (() => {
+    const parts: string[] = []
+    parts.push(`${passCount} passed`)
+    if (warnCount) parts.push(`${warnCount} warning${warnCount === 1 ? '' : 's'}`)
+    if (failCount) parts.push(`${failCount} failed`)
+    if (skipCount) parts.push(`${skipCount} skipped`)
+    return parts.join(' · ')
+  })()
 
   return (
     <div>
@@ -196,8 +255,8 @@ export default function ReadinessCheck({
             {!running && !completed && 'Walks you through a few quick tests of your browser, microphone, and network.'}
             {running && `Step ${activeIndex + 1} of ${totalCount} — ${CHECK_LABELS[enabled[activeIndex] ?? 'browser']}`}
             {completed && (overallReady
-              ? `${passCount} of ${totalCount} checks passed. You're good to go.`
-              : `${passCount} of ${totalCount} checks passed.`)}
+              ? `${completedSummary} — you're good to go.`
+              : completedSummary)}
           </p>
         </div>
         {!running && (
@@ -261,8 +320,13 @@ export default function ReadinessCheck({
                     {CHECK_LABELS[c.id]}
                   </div>
                   {c.detail && (
-                    <div className="text-xs text-content-secondary dark:text-content-inverse-secondary mt-0.5 truncate">
+                    <div className="text-xs text-content-secondary dark:text-content-inverse-secondary mt-0.5">
                       {c.detail}
+                    </div>
+                  )}
+                  {c.status === 'fail' && FAILURE_HINTS[c.id] && (
+                    <div className="text-xs text-rose-700 dark:text-rose-300 mt-1 leading-relaxed">
+                      {FAILURE_HINTS[c.id]}
                     </div>
                   )}
                 </div>
@@ -281,11 +345,14 @@ export default function ReadinessCheck({
       {showMicModal && micStream && (
         <MicLevelModal
           stream={micStream}
+          onRecorded={(buf) => setRecordedAudio(buf)}
           onResolve={(r) => interactiveResolverRef.current?.(r)}
         />
       )}
       {showAudioOutModal && (
         <AudioOutputModal
+          session={mediaSession}
+          recording={recordedAudio}
           onResolve={(r) => interactiveResolverRef.current?.(r)}
         />
       )}
