@@ -1,4 +1,4 @@
-import React, { useState, memo, useCallback } from 'react'
+import React, { useState, memo, useCallback, useMemo } from 'react'
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 
 interface StateDeliverable {
@@ -32,6 +32,7 @@ interface StateItem {
   status: StateStatus
   is_current: boolean
   completed_at?: string
+  transitions?: StateTransition[]
   tasks: StateTask[]
 }
 
@@ -39,6 +40,58 @@ interface StateListProps {
   states: StateItem[]
   currentStateId: string | null
   deliverables: Record<string, any>
+  lastTransition?: {
+    from_state_id?: string
+    to_state_id?: string
+    condition_type?: string
+    condition_config?: Record<string, any>
+    priority?: number
+  } | null
+}
+
+interface StateTransition {
+  target_state_id: string
+  condition_type: string
+  priority?: number
+  condition_config?: Record<string, any>
+}
+
+interface ProjectedState {
+  state: StateItem
+  transition: StateTransition
+}
+
+const normalizeTransitions = (state: StateItem | undefined | null): StateTransition[] => {
+  if (!state || !Array.isArray(state.transitions)) return []
+  return state.transitions.filter(transition => Boolean(transition?.target_state_id))
+}
+
+const getTransitionPriority = (priority: unknown): number => {
+  if (typeof priority === 'number' && Number.isFinite(priority)) return priority
+  if (typeof priority === 'string' && priority.trim() !== '') {
+    const parsed = Number(priority)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 100
+}
+
+const formatConditionLabel = (transition: StateTransition): string => {
+  const key = transition.condition_config?.key
+  const value = transition.condition_config?.value
+
+  switch (transition.condition_type) {
+    case 'all_tasks_complete':
+      return 'all tasks complete'
+    case 'deliverable_exists':
+      return typeof key === 'string' ? `${key} exists` : 'deliverable exists'
+    case 'deliverable_value':
+      if (typeof key === 'string' && value !== undefined) {
+        return `${key} = ${String(value)}`
+      }
+      return 'deliverable value matched'
+    default:
+      return transition.condition_type.replace(/_/g, ' ')
+  }
 }
 
 const ProcessingModeIcon = memo(({ type }: { type: StateType }) => {
@@ -401,7 +454,88 @@ const StateCard = memo(({ state, index, isCurrentState }: { state: StateItem; in
   )
 })
 
-export default function StateList({ states, currentStateId }: StateListProps) {
+const ProjectedStateRow = memo(({
+  projected
+}: {
+  projected: ProjectedState
+}) => {
+  const conditionLabel = formatConditionLabel(projected.transition)
+
+  return (
+    <div className="rounded-lg border p-3 border-neutral-200/60 dark:border-neutral-700/60 bg-neutral-50/70 dark:bg-neutral-800/60 opacity-85">
+      <div className="flex items-start gap-3">
+        <div className="mt-1">
+          <div className="w-3 h-3 rounded-full border border-neutral-300 dark:border-neutral-600" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-[12px] font-medium truncate text-neutral-700 dark:text-neutral-300">
+              {projected.state.title}
+            </h4>
+            <span className="text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider bg-neutral-200 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+              Possible
+            </span>
+          </div>
+          <div className="text-[9px] text-neutral-500 dark:text-neutral-400 mt-1">
+            via {conditionLabel}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+export default function StateList({ states, currentStateId, lastTransition }: StateListProps) {
+  const stateById = useMemo(
+    () => new Map(states.map(state => [state.id, state])),
+    [states]
+  )
+
+  const routeView = useMemo(() => {
+    const currentState = states.find(state => state.id === currentStateId) || states.find(state => state.is_current) || null
+    const visitedStates = states.filter(state =>
+      state.status === StateStatus.COMPLETED || state.id === currentState?.id || state.status === StateStatus.IN_PROGRESS
+    )
+
+    if (!currentState) {
+      return {
+        visitedStates,
+        possibleStates: [] as ProjectedState[],
+      }
+    }
+
+    const sortedTransitions = normalizeTransitions(currentState).sort(
+      (a, b) => getTransitionPriority(a.priority) - getTransitionPriority(b.priority)
+    )
+
+    const candidates = sortedTransitions
+      .map((transition): ProjectedState | null => {
+        const targetState = stateById.get(transition.target_state_id)
+        if (!targetState || targetState.id === currentState.id) return null
+        return {
+          state: targetState,
+          transition,
+        }
+      })
+      .filter((candidate): candidate is ProjectedState => Boolean(candidate))
+
+    const dedupedByTarget = new Map<string, ProjectedState>()
+    candidates.forEach(candidate => {
+      if (!dedupedByTarget.has(candidate.state.id)) {
+        dedupedByTarget.set(candidate.state.id, candidate)
+      }
+    })
+
+    const possibleStates = Array.from(dedupedByTarget.values()).sort(
+      (a, b) => getTransitionPriority(a.transition.priority) - getTransitionPriority(b.transition.priority)
+    )
+
+    return {
+      visitedStates,
+      possibleStates,
+    }
+  }, [states, currentStateId, stateById])
+
   if (!states || states.length === 0) {
     return (
       <div className="text-center py-8">
@@ -419,12 +553,35 @@ export default function StateList({ states, currentStateId }: StateListProps) {
           States
         </div>
         <div className="text-[10px] text-neutral-400 dark:text-neutral-500 tracking-wide">
-          {states.filter(s => s.status === StateStatus.COMPLETED).length} / {states.length}
+          {routeView.visitedStates.filter(s => s.status === StateStatus.COMPLETED).length} completed
         </div>
       </div>
 
       <div className="space-y-3">
-        {states.map((state, index) => (
+        {lastTransition?.from_state_id && lastTransition?.to_state_id && (
+          <div className="rounded-lg border border-emerald-200/70 dark:border-emerald-700/50 bg-emerald-50/50 dark:bg-emerald-900/20 p-3">
+            <div className="text-[9px] font-medium tracking-wider text-emerald-600 dark:text-emerald-400 uppercase">
+              Branch Chosen
+            </div>
+            <div className="text-[11px] text-emerald-800 dark:text-emerald-200 mt-1">
+              {(stateById.get(lastTransition.from_state_id || '')?.title || lastTransition.from_state_id)}
+              {' → '}
+              {(stateById.get(lastTransition.to_state_id || '')?.title || lastTransition.to_state_id)}
+            </div>
+            {lastTransition.condition_type && (
+              <div className="text-[9px] text-emerald-700/80 dark:text-emerald-300/80 mt-1">
+                Condition met: {formatConditionLabel({
+                  target_state_id: lastTransition.to_state_id,
+                  condition_type: lastTransition.condition_type,
+                  priority: lastTransition.priority,
+                  condition_config: lastTransition.condition_config,
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {routeView.visitedStates.map((state, index) => (
           <StateCard
             key={state.id}
             state={state}
@@ -432,6 +589,20 @@ export default function StateList({ states, currentStateId }: StateListProps) {
             isCurrentState={currentStateId === state.id}
           />
         ))}
+
+        {routeView.possibleStates.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <div className="text-[9px] font-medium tracking-wider text-neutral-400 dark:text-neutral-500 uppercase">
+              Possible Next States
+            </div>
+            {routeView.possibleStates.map(candidate => (
+              <ProjectedStateRow
+                key={`${candidate.state.id}-${candidate.transition.condition_type}`}
+                projected={candidate}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

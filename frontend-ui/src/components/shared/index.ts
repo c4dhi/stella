@@ -1,6 +1,8 @@
 export { default as VisualizerSelectionStep } from './VisualizerSelectionStep'
 export { default as ExpirationSelectionStep, DEFAULT_EXPIRATION_OPTIONS, INVITATION_EXPIRATION_OPTIONS } from './ExpirationSelectionStep'
 export type { ExpirationOption } from './ExpirationSelectionStep'
+export { default as SessionDurationSelectionStep, DEFAULT_SESSION_DURATION_OPTIONS } from './SessionDurationSelectionStep'
+export type { SessionDurationOption } from './SessionDurationSelectionStep'
 export { default as AgentGalleryStep } from './AgentGalleryStep'
 export { default as PlanSelectionStep } from './PlanSelectionStep'
 export { default as EnvVarsSelectionStep } from './EnvVarsSelectionStep'

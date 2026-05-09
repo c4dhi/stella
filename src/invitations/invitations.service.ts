@@ -75,6 +75,7 @@ export class InvitationsService {
         customMessage: dto.customMessage,
         visualizerType: dto.visualizerType,
         visualizerLocked: dto.visualizerLocked ?? false,
+        maxSessionDurationSeconds: dto.maxSessionDurationSeconds ?? null,
         expiresAt,
       },
     });
@@ -263,6 +264,7 @@ export class InvitationsService {
       customMessage: invitation.customMessage,
       visualizerType: invitation.visualizerType,
       visualizerLocked: invitation.visualizerLocked,
+      maxSessionDurationSeconds: invitation.maxSessionDurationSeconds,
       sessionName: invitation.session.name,
       status: invitation.status,
       // Include participant info for rejoin scenarios
@@ -356,6 +358,7 @@ export class InvitationsService {
       },
       visualizerType: invitation.visualizerType,
       visualizerLocked: invitation.visualizerLocked,
+      maxSessionDurationSeconds: invitation.maxSessionDurationSeconds,
     };
   }
 
@@ -455,6 +458,7 @@ export class InvitationsService {
       },
       visualizerType: invitation.visualizerType,
       visualizerLocked: invitation.visualizerLocked,
+      maxSessionDurationSeconds: invitation.maxSessionDurationSeconds,
     };
   }
 

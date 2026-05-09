@@ -24,6 +24,7 @@ import {
   ExpirationSelectionStep,
   EnvVarsSelectionStep,
   DEFAULT_EXPIRATION_OPTIONS,
+  SessionDurationSelectionStep,
 } from '../shared'
 
 interface ProjectModalProps {
@@ -34,7 +35,7 @@ interface ProjectModalProps {
   onProjectUpdated?: (project: Project) => void
 }
 
-type Step = 'basic' | 'agent' | 'configure' | 'configuration' | 'plan' | 'envvars' | 'visualizer' | 'expiration' | 'complete'
+type Step = 'basic' | 'agent' | 'configure' | 'configuration' | 'plan' | 'envvars' | 'visualizer' | 'duration' | 'expiration' | 'complete'
 type ProjectType = 'private' | 'public'
 type EnvVarsView = 'select' | 'edit'
 
@@ -55,7 +56,8 @@ const STEPS_CONFIG: { id: Step; number: number; label: string }[] = [
   { id: 'plan', number: 4, label: 'Plan' },
   { id: 'envvars', number: 5, label: 'Env Vars' },
   { id: 'visualizer', number: 6, label: 'Visualizer' },
-  { id: 'expiration', number: 7, label: 'Expiration' },
+  { id: 'duration', number: 7, label: 'Session Duration' },
+  { id: 'expiration', number: 8, label: 'Expiration' },
 ]
 
 export default function ProjectModal({
@@ -108,6 +110,9 @@ export default function ProjectModal({
   // Expiration
   const [expiresInHours, setExpiresInHours] = useState<number | undefined>(undefined)
 
+  // Max session duration (seconds); null = no limit (default)
+  const [maxSessionDurationSeconds, setMaxSessionDurationSeconds] = useState<number | null>(null)
+
   // Submission
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,7 +136,7 @@ export default function ProjectModal({
     if (agentRequirements.requiresPlan) {
       s.push('plan')
     }
-    s.push('envvars', 'visualizer', 'expiration')
+    s.push('envvars', 'visualizer', 'duration', 'expiration')
     return s
   }, [agentRequirements.requiresPlan, agentRequirements.supportsConfigurator, selectedAgentType?.pipelineSchema])
 
@@ -193,6 +198,7 @@ export default function ProjectModal({
         setVisualizerType(undefined)
         setVisualizerLocked(false)
         setExpiresInHours(undefined)
+        setMaxSessionDurationSeconds(null)
       }
     }
   }, [isOpen, project])
@@ -288,6 +294,8 @@ export default function ProjectModal({
         return true
       case 'visualizer':
         return true
+      case 'duration':
+        return true
       case 'expiration':
         return true
       default:
@@ -371,6 +379,7 @@ export default function ProjectModal({
               ? new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString()
               : undefined,
             enabled: true,
+            maxSessionDurationSeconds,
           }
 
           await apiClient.updateProjectPublicConfig(newProject.id, publicConfig)
@@ -415,6 +424,7 @@ export default function ProjectModal({
       case 'plan': return 'Select Plan'
       case 'envvars': return 'Environment Variables'
       case 'visualizer': return 'Choose Visualizer'
+      case 'duration': return 'Session Duration'
       case 'expiration': return 'Set Expiration'
       case 'complete': return 'Project Created'
       default: return ''
@@ -430,6 +440,7 @@ export default function ProjectModal({
       case 'plan': return 'Select a conversation plan for this agent'
       case 'envvars': return 'Configure API keys and secrets for this agent'
       case 'visualizer': return 'Set a default visualizer for participants'
+      case 'duration': return 'Optionally cap how long each session runs after the agent starts speaking'
       case 'expiration': return 'Set how long the public link remains valid'
       case 'complete': return 'Share this link with participants'
       default: return ''
@@ -977,6 +988,23 @@ export default function ProjectModal({
                     visualizerLocked={visualizerLocked}
                     onVisualizerTypeChange={setVisualizerType}
                     onVisualizerLockedChange={setVisualizerLocked}
+                  />
+                </motion.div>
+              )}
+
+              {/* Session Duration Step */}
+              {step === 'duration' && (
+                <motion.div
+                  key="duration"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <SessionDurationSelectionStep
+                    maxSessionDurationSeconds={maxSessionDurationSeconds}
+                    onMaxSessionDurationSecondsChange={setMaxSessionDurationSeconds}
                   />
                 </motion.div>
               )}

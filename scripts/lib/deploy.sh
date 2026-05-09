@@ -1043,11 +1043,11 @@ deploy_services() {
         # Apply PVCs sequentially so output and failure source are unambiguous.
         # We disable errexit temporarily to capture command output and exit codes.
         set +e
-        stt_output=$(kubectl apply -f "$stt_manifest" 2>&1)
+        stt_output=$(kubectl apply -f "$(prepare_manifest "$stt_manifest")" 2>&1)
         stt_exit=$?
         # Only apply TTS PVC if STT apply succeeded; this keeps logs easier to reason about.
         if [[ $stt_exit -eq 0 ]]; then
-            tts_output=$(kubectl apply -f "$tts_manifest" 2>&1)
+            tts_output=$(kubectl apply -f "$(prepare_manifest "$tts_manifest")" 2>&1)
             tts_exit=$?
         fi
         set -e

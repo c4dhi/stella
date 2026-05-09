@@ -100,6 +100,10 @@ spec:
         - configMapRef:
             name: stella-ai-config
         env:
+        # K3S: # explicit runtime flag for the readiness probe so checkContainerdHealth()
+        # K3S: # only gates on `k3s ctr version` when we are actually deployed onto k3s.
+        # K3S: - name: CONTAINER_RUNTIME
+        # K3S:   value: "k3s"
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
@@ -160,8 +164,12 @@ spec:
         # Mount Docker socket for building images
         - name: docker-sock
           mountPath: /var/run/docker.sock
-        # K3S: - name: k3s-containerd-sock
-        # K3S:   mountPath: /run/k3s/containerd/containerd.sock
+        # K3s containerd socket: mount the parent directory (not the socket file)
+        # so the pod transparently picks up a recreated socket if k3s restarts.
+        # The "# K3S: " prefix is stripped by scripts/lib/deploy.sh on k3s targets
+        # and removed entirely on non-k3s targets.
+        # K3S: - name: k3s-containerd-dir
+        # K3S:   mountPath: /run/k3s/containerd
         # K3S: - name: k3s-binary
         # K3S:   mountPath: /usr/local/bin/k3s
         # K3S:   readOnly: true
@@ -176,28 +184,41 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
+        # Liveness: only checks the Node process is alive. A broken containerd
+        # should not crash-loop the pod.
         livenessProbe:
           httpGet:
             path: /health
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
+        # Readiness: also pings k3s containerd. If the host socket goes stale
+        # (e.g. k3s restarts), the pod is removed from rotation until it recovers.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: 3000
           initialDelaySeconds: 10
+          periodSeconds: 15
+          failureThreshold: 3
+        # Startup: gives the pod up to 60s to reach a ready state on first boot
+        # before liveness/readiness kick in.
+        startupProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
           periodSeconds: 5
+          failureThreshold: 12
       volumes:
       # Docker socket from host (for building images)
       - name: docker-sock
         hostPath:
           path: /var/run/docker.sock
           type: Socket
-      # K3S: - name: k3s-containerd-sock
+      # K3S: - name: k3s-containerd-dir
       # K3S:   hostPath:
-      # K3S:     path: /run/k3s/containerd/containerd.sock
-      # K3S:     type: Socket
+      # K3S:     path: /run/k3s/containerd
+      # K3S:     type: Directory
       # K3S: - name: k3s-binary
       # K3S:   hostPath:
       # K3S:     path: /usr/local/bin/k3s

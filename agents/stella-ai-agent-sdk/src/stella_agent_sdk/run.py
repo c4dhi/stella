@@ -38,9 +38,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import time
-from typing import Optional, Dict, Any
+import uuid
+from typing import Optional, Dict, Any, Coroutine
 
 import jwt
 
@@ -54,6 +56,79 @@ from stella_agent_sdk.services.agent_server_client import AgentServerClient
 from stella_agent_sdk.messages.types import OutputType
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_participant_event_config(agent_config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Extract and normalize participant event message config from AGENT_CONFIG.
+
+    Expected source path (set by Plan Builder Start node):
+    agent_config.plan.metadata.plan_builder.start
+      - on_participant_join: { enabled: bool, message_template: str }
+      - on_participant_left: { enabled: bool, message_template: str }
+
+    This function is defensive because AGENT_CONFIG is untyped JSON at runtime:
+    missing/non-dict nodes are treated as absent and defaults are applied.
+
+    Returns:
+        {
+            "joined": {"enabled": bool, "template": str},
+            "left": {"enabled": bool, "template": str},
+        }
+    """
+    plan = agent_config.get("plan")
+    metadata = plan.get("metadata") if isinstance(plan, dict) else None
+    plan_builder = metadata.get("plan_builder") if isinstance(metadata, dict) else None
+    start_cfg = plan_builder.get("start") if isinstance(plan_builder, dict) else None
+
+    join_cfg_raw = start_cfg.get("on_participant_join") if isinstance(start_cfg, dict) else None
+    left_cfg_raw = start_cfg.get("on_participant_left") if isinstance(start_cfg, dict) else None
+
+    join_enabled = isinstance(join_cfg_raw, dict) and join_cfg_raw.get("enabled") is True
+    left_enabled = isinstance(left_cfg_raw, dict) and left_cfg_raw.get("enabled") is True
+
+    join_template = (
+        join_cfg_raw.get("message_template")
+        if isinstance(join_cfg_raw, dict) and isinstance(join_cfg_raw.get("message_template"), str)
+        else ""
+    )
+    left_template = (
+        left_cfg_raw.get("message_template")
+        if isinstance(left_cfg_raw, dict) and isinstance(left_cfg_raw.get("message_template"), str)
+        else ""
+    )
+
+    return {
+        "joined": {"enabled": join_enabled, "template": join_template},
+        "left": {"enabled": left_enabled, "template": left_template},
+    }
+
+
+def _render_message_template(template: str, variables: Dict[str, str]) -> str:
+    """Render `{variable}` placeholders in a message template.
+
+    Supported placeholder syntax is `{key}` where `key` is alphanumeric/underscore.
+    Any placeholder without a matching entry in `variables` is replaced with an
+    empty string, so rendering never raises due to missing keys.
+    """
+    return re.sub(r"\{([a-zA-Z0-9_]+)\}", lambda m: variables.get(m.group(1), ""), template)
+
+
+def _is_registered_participant_identity(identity: str) -> bool:
+    """Check whether a LiveKit identity should trigger participant event speech.
+
+    The join/left TTS feature should only fire for real invited/registered
+    session participants. In this codebase those identities are generated with
+    the ``participant-`` prefix (for both invitation and manual registration
+    flows). Other identities such as organizer/admin (``human``), agents
+    (``agent-*``), and system participants are intentionally excluded.
+
+    Args:
+        identity: LiveKit participant identity from room callbacks.
+
+    Returns:
+        ``True`` only for identities that start with ``participant-``.
+    """
+    return isinstance(identity, str) and identity.startswith("participant-")
 
 
 async def run_agent_from_env(agent: BaseAgent) -> None:
@@ -138,6 +213,12 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
     logger.info(f"Agent config: {agent_config}")
     logger.info(f"Room: {room_name}, Identity: {identity}, Session: {session_id}")
     logger.info(f"STT: {stt_address}, TTS: {tts_address}")
+    participant_event_config = _parse_participant_event_config(agent_config)
+    logger.info(
+        "Participant event speech config: joined=%s, left=%s",
+        participant_event_config["joined"]["enabled"],
+        participant_event_config["left"]["enabled"],
+    )
 
     # Agent server address for registration (gRPC)
     # GRPC_SERVER is set by kubernetes.service.ts when deploying agent pods
@@ -310,6 +391,65 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             await agent_server_client.disconnect()
             agent_server_client = None
 
+        # Track participant event tasks so they are not left unmanaged.
+        participant_event_tasks: set[asyncio.Task[Any]] = set()
+
+        def spawn_participant_event_task(coro: Coroutine[Any, Any, None]) -> None:
+            task = asyncio.create_task(coro)
+            participant_event_tasks.add(task)
+            task.add_done_callback(participant_event_tasks.discard)
+
+        async def emit_participant_event_message(
+            event_type: str,
+            participant_identity: str,
+        ) -> None:
+            """Render and speak configured join/left event messages.
+
+            Called by LiveKit participant callbacks in this runtime.
+            Behavior:
+            - Reads normalized event config from ``participant_event_config``.
+            - Returns early when event is disabled or template is blank.
+            - Ignores non-participant identities (agent/admin/system).
+            - Renders template placeholders using participant/agent variables.
+            - Publishes rendered text as final agent text and speaks it via TTS.
+            """
+            try:
+                cfg = participant_event_config.get(event_type, {})
+                if cfg.get("enabled") is not True:
+                    return
+
+                if not _is_registered_participant_identity(participant_identity):
+                    logger.info(
+                        "[PARTICIPANT %s] Skipping non-participant identity: %s",
+                        event_type.upper(),
+                        participant_identity,
+                    )
+                    return
+
+                template = cfg.get("template") or ""
+                if not isinstance(template, str) or not template.strip():
+                    return
+
+                participant_name = room_manager.get_participant_name(participant_identity) or participant_identity
+                variables = {
+                    "participant_name": participant_name,
+                    "agent_name": agent_name,
+                }
+                rendered = _render_message_template(template, variables).strip()
+                if not rendered:
+                    return
+
+                transcript_id = f"participant_event_{event_type}_{uuid.uuid4().hex[:8]}"
+                await audio_pipeline.publish_text(rendered, is_final=True, transcript_id=transcript_id)
+                await audio_pipeline.speak(rendered)
+                logger.info("[PARTICIPANT %s] Spoke configured message: %s", event_type.upper(), rendered)
+            except Exception:
+                logger.exception(
+                    "[PARTICIPANT %s] Failed to emit configured message for identity: %s",
+                    event_type.upper(),
+                    participant_identity,
+                )
+
         # 10c. Register callback to re-send progress when new participants join
         def on_participant_joined(participant_identity: str):
             # Use the agent's stored progress payload (updated by audio loop)
@@ -331,7 +471,21 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             else:
                 logger.warning(f"[PARTICIPANT JOINED] {participant_identity} - no progress payload to send!")
 
+            spawn_participant_event_task(emit_participant_event_message("joined", participant_identity))
+
+        def on_participant_left(participant_identity: str):
+            """
+            Handle participant left event. Currently only emits a TTS message if enabled and configured.
+
+            Args:
+                participant_identity: The LiveKit identity of the participant who left
+            """
+            logger.info(f"[PARTICIPANT LEFT] {participant_identity}")
+            spawn_participant_event_task(emit_participant_event_message("left", participant_identity))
+
+        # Register participant event callbacks with RoomManager
         room_manager.on_participant_joined(on_participant_joined)
+        room_manager.on_participant_left(on_participant_left)
 
         # 10d. Send progress to any participants already in the room
         if agent._last_progress_payload and room_manager._room:

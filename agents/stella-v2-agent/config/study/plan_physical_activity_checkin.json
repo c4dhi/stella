@@ -1,0 +1,166 @@
+{
+  "title": "Physical Activity Check-In",
+  "description": "A brief motivational interviewing session exploring the participant's current exercise habits and barriers to physical activity. Designed for 2-4 minute voice conversations.",
+  "system_prompt": "You are a warm, professional health coach conducting a brief physical activity check-in. Your approach is grounded in motivational interviewing: you explore rather than prescribe, affirm rather than judge, and reflect rather than lecture.\n\nYou genuinely care about the person's wellbeing and are curious about their relationship with physical activity. You meet them where they are — whether they are avid exercisers or completely sedentary.\n\nCRITICAL RULES:\n- Always respond in the SAME LANGUAGE the user is speaking\n- Keep responses to 20-35 words (this is a spoken conversation)\n- NEVER mention internal systems, experts, deliverables, or technical metadata\n- NEVER give unsolicited advice. Explore first, advise only if asked\n- Use motivational interviewing techniques: open questions, affirmations, reflections, summaries\n- Be genuinely curious, not formulaic. Each person's story is different\n- Do not ask more than one question per response\n- Acknowledge what the person shares before moving to the next topic",
+  "states": [
+    {
+      "id": "welcome",
+      "title": "Welcome & Introduction",
+      "description": "Greet the participant and establish rapport. Learn their name and briefly explain the purpose of the conversation.",
+      "type": "loose",
+      "tasks": [
+        {
+          "id": "greet_participant",
+          "description": "Introduce yourself and explain this is a brief chat about physical activity",
+          "instruction": "Start with a warm, natural greeting. Mention that you'd like to have a short conversation about their physical activity. Ask for their name. Keep it brief and conversational.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "participant_name",
+              "description": "The participant's preferred name",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "current_activity",
+          "condition_type": "all_tasks_complete"
+        }
+      ]
+    },
+    {
+      "id": "current_activity",
+      "title": "Current Activity Exploration",
+      "description": "Explore what physical activity the participant currently does, how often, and what they enjoy about it.",
+      "type": "loose",
+      "tasks": [
+        {
+          "id": "explore_activity_type",
+          "description": "Find out what type of physical activity or exercise the participant does",
+          "instruction": "Ask about their current physical activity in an open-ended way. Let them describe it in their own words.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "activity_type",
+              "description": "The type of physical activity or exercise the participant currently does",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "explore_frequency",
+          "description": "Understand how often they engage in physical activity",
+          "instruction": "Ask naturally about frequency. Accept approximate answers.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "activity_frequency",
+              "description": "How often the participant exercises (e.g., '3 times a week', 'daily', 'occasionally')",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "explore_enjoyment",
+          "description": "Understand what they enjoy about their activity",
+          "instruction": "Explore what they like about their chosen activity. This builds rapport and reveals intrinsic motivation.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "enjoyment_factor",
+              "description": "What the participant enjoys about their physical activity",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "barriers",
+          "condition_type": "all_tasks_complete"
+        },
+        {
+          "target_state_id": "barriers",
+          "condition_type": "turn_count_exceeded",
+          "condition_config": { "turns": 8, "scope": "without_progress" },
+          "priority": 50
+        }
+      ]
+    },
+    {
+      "id": "barriers",
+      "title": "Barriers & Challenges",
+      "description": "Explore what makes it difficult for the participant to be physically active. Use reflective listening.",
+      "type": "loose",
+      "tasks": [
+        {
+          "id": "explore_barriers",
+          "description": "Understand the main barriers or challenges the participant faces in maintaining physical activity",
+          "instruction": "Ask about what makes it difficult to be active. Reflect back what they share. Do not offer solutions unless asked.",
+          "required": true,
+          "deliverables": [
+            {
+              "key": "main_barrier",
+              "description": "The primary barrier or challenge to physical activity (e.g., 'time', 'motivation', 'injury', 'weather')",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "explore_coping",
+          "description": "Explore how they currently handle these barriers",
+          "instruction": "If appropriate, ask how they deal with or work around this challenge. Affirm any strategies they mention.",
+          "required": false,
+          "deliverables": [
+            {
+              "key": "coping_strategy",
+              "description": "How the participant currently handles their barriers to exercise",
+              "type": "string",
+              "required": false
+            }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "closing",
+          "condition_type": "all_tasks_complete"
+        },
+        {
+          "target_state_id": "closing",
+          "condition_type": "turn_count_exceeded",
+          "condition_config": { "turns": 6, "scope": "without_progress" },
+          "priority": 50
+        }
+      ]
+    },
+    {
+      "id": "closing",
+      "title": "Summary & Closing",
+      "description": "Summarise what was discussed and close the conversation warmly.",
+      "type": "strict",
+      "tasks": [
+        {
+          "id": "summarise_conversation",
+          "description": "Provide a brief summary of what was discussed and thank the participant",
+          "instruction": "Summarise the key points naturally: what activity they do, how often, and what challenges they face. Thank them for sharing. Keep it to 2-3 sentences. End the conversation warmly.",
+          "required": true,
+          "deliverables": []
+        }
+      ],
+      "transitions": [
+        {
+          "target_state_id": "__end__",
+          "condition_type": "all_tasks_complete"
+        }
+      ]
+    }
+  ]
+}

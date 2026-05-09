@@ -238,9 +238,9 @@ export default function AudioOutputModal({ session, recording, onResolve }: Prop
                   detail: 'Audio roundtrip not heard. Check speaker volume and output device.',
                 })
               }
-              className="px-4 py-2 rounded-md border border-border dark:border-border-dark text-sm font-medium hover:bg-neutral-50 dark:hover:bg-surface-dark-tertiary"
+              className="text-xs text-content-secondary dark:text-content-inverse-secondary hover:underline"
             >
-              No
+              I don't hear anything
             </button>
             <button
               type="button"
@@ -251,7 +251,7 @@ export default function AudioOutputModal({ session, recording, onResolve }: Prop
                   detail: 'Audio roundtrip confirmed',
                 })
               }
-              className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
             >
               Yes, I heard myself
             </button>

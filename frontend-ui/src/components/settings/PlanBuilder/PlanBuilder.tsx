@@ -24,6 +24,11 @@ import PlanEndEditor from './PlanEndEditor'
 import PlanJsonViewer from './PlanJsonViewer'
 import PlanCanvas from './PlanCanvas'
 import { getDefaultStatePosition } from './planCanvasLayout'
+import {
+  DEFAULT_JOIN_MESSAGE,
+  DEFAULT_LEFT_MESSAGE,
+  extractParticipantEventConfig,
+} from './participantEventConfig'
 
 interface PlanBuilderProps {
   template?: PlanTemplate
@@ -468,6 +473,12 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
   const [systemPrompt, setSystemPrompt] = useState(template?.content.system_prompt || '')
   const [sessionContext, setSessionContext] = useState<SessionContext>(template?.content.session_context || { fields: [] })
   const [agentSpawnMode, setAgentSpawnMode] = useState<AgentSpawnMode>(extractSpawnMode(template?.content.metadata))
+  const [onParticipantJoin, setOnParticipantJoin] = useState(
+    extractParticipantEventConfig(template?.content.metadata?.plan_builder?.start?.on_participant_join, 'on_participant_join')
+  )
+  const [onParticipantLeft, setOnParticipantLeft] = useState(
+    extractParticipantEventConfig(template?.content.metadata?.plan_builder?.start?.on_participant_left, 'on_participant_left')
+  )
   const [states, setStates] = useState<PlanState[]>(initialStates)
   const [initialStateId, setInitialStateId] = useState<string | null>(
     template?.content.initial_state_id || template?.content.states?.[0]?.id || null
@@ -572,7 +583,6 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
     for (const id of incompleteTransitionIdSet) ids.add(id)
     return ids
   }, [ambiguousTransitionIdSet, incompleteTransitionIdSet])
-
   const buildContent = (): PlanContent => ({
     states: states.map((state) => normalizeTransitionsForStateType(state)),
     ...(initialStateId ? { initial_state_id: initialStateId } : {}),
@@ -585,6 +595,8 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         start: {
           ...(metadata.plan_builder?.start || {}),
           agent_spawn_mode: agentSpawnMode,
+          on_participant_join: onParticipantJoin,
+          on_participant_left: onParticipantLeft,
         },
         canvas: {
           ...stripLegacyCanvasStatePositions(metadata.plan_builder?.canvas),
@@ -946,6 +958,14 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
         setSystemPrompt(content.system_prompt || '')
         setSessionContext(content.session_context || { fields: [] })
         setAgentSpawnMode(extractSpawnMode(importedMetadata))
+        setOnParticipantJoin(extractParticipantEventConfig(
+          importedMetadata?.plan_builder?.start?.on_participant_join,
+          'on_participant_join',
+        ))
+        setOnParticipantLeft(extractParticipantEventConfig(
+          importedMetadata?.plan_builder?.start?.on_participant_left,
+          'on_participant_left',
+        ))
         setMetadata(nextMetadata)
         setAutoFitKey((prev) => prev + 1)
 
@@ -1403,9 +1423,13 @@ export default function PlanBuilder({ template, onSave, onCancel, onBack, isFrom
                       initialStateId={initialStateId}
                       spawnMode={agentSpawnMode}
                       sessionContext={sessionContext}
+                      onParticipantJoin={onParticipantJoin}
+                      onParticipantLeft={onParticipantLeft}
                       onInitialStateChange={handleInitialStateChange}
                       onSpawnModeChange={(mode) => { setAgentSpawnMode(mode); markChanged() }}
                       onSessionContextChange={(context) => { setSessionContext(context); markChanged() }}
+                      onParticipantJoinChange={(config) => { setOnParticipantJoin(config); markChanged() }}
+                      onParticipantLeftChange={(config) => { setOnParticipantLeft(config); markChanged() }}
                     />
                   </motion.div>
                 ) : selectedTransitionData && selectedTransitionState ? (

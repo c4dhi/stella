@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, X } from 'lucide-react'
+import { Mic, X, CheckCircle2 } from 'lucide-react'
 import { CheckResult } from './types'
 
 interface Props {
@@ -9,17 +9,17 @@ interface Props {
 }
 
 const PASS_THRESHOLD = 12
-const PASS_DURATION_MS = 400
-const AUTO_FAIL_MS = 15_000
+const MIN_TALK_MS = 4000
+const AUTO_FAIL_MS = 25_000
 const MAX_RECORDING_SECONDS = 8
 
 export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) {
   const [level, setLevel] = useState(0)
   const [peak, setPeak] = useState(0)
-  const [status, setStatus] = useState<'listening' | 'detected'>('listening')
+  const [thresholdReached, setThresholdReached] = useState(false)
+  const [minElapsed, setMinElapsed] = useState(false)
   const ctxRef = useRef<AudioContext | null>(null)
   const rafRef = useRef<number | null>(null)
-  const aboveSinceRef = useRef<number | null>(null)
   const resolvedRef = useRef(false)
   const recordedChunksRef = useRef<Float32Array[]>([])
   const recordedSampleRateRef = useRef<number>(48000)
@@ -89,6 +89,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
     processorRef.current = processor
     const buf = new Uint8Array(analyser.frequencyBinCount)
     const startedAt = Date.now()
+    const minTimer = setTimeout(() => setMinElapsed(true), MIN_TALK_MS)
 
     const tick = () => {
       analyser.getByteTimeDomainData(buf)
@@ -99,24 +100,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
       }
       setLevel(max)
       setPeak((p) => Math.max(p, max))
-
-      if (max >= PASS_THRESHOLD) {
-        if (aboveSinceRef.current === null) aboveSinceRef.current = Date.now()
-        if (Date.now() - aboveSinceRef.current >= PASS_DURATION_MS) {
-          setStatus('detected')
-          setTimeout(() => {
-            finish({
-              id: 'micLevel',
-              status: 'pass',
-              metric: max,
-              detail: 'Audio detected',
-            })
-          }, 600)
-          return
-        }
-      } else {
-        aboveSinceRef.current = null
-      }
+      if (max >= PASS_THRESHOLD) setThresholdReached(true)
 
       if (Date.now() - startedAt > AUTO_FAIL_MS) {
         finish({
@@ -131,6 +115,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
     rafRef.current = requestAnimationFrame(tick)
 
     return () => {
+      clearTimeout(minTimer)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       ctx.close().catch(() => {})
     }
@@ -139,6 +124,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
   const levelPct = Math.min(100, Math.round((level / 64) * 100))
   const peakPct = Math.min(100, Math.round((peak / 64) * 100))
   const thresholdPct = Math.round((PASS_THRESHOLD / 64) * 100)
+  const canContinue = thresholdReached && minElapsed
 
   return (
     <ModalShell
@@ -155,9 +141,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
             Test your microphone
           </h3>
           <p className="text-sm text-content-secondary dark:text-content-inverse-secondary">
-            {status === 'detected'
-              ? 'Got it — your microphone is working.'
-              : 'Speak into your microphone now. Say a few words.'}
+            Speak into your microphone for a few seconds and watch the bar move.
           </p>
         </div>
       </div>
@@ -166,9 +150,7 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
         <div className="relative h-4 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
           <div
             className={`absolute inset-y-0 left-0 transition-[width] duration-75 ${
-              status === 'detected'
-                ? 'bg-emerald-500'
-                : level >= PASS_THRESHOLD
+              level >= PASS_THRESHOLD
                 ? 'bg-sky-500'
                 : 'bg-neutral-400 dark:bg-neutral-600'
             }`}
@@ -185,12 +167,11 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
         </div>
         <div className="flex justify-between mt-1.5 text-[10px] uppercase tracking-wider text-content-tertiary dark:text-content-inverse-tertiary">
           <span>Quiet</span>
-          <span style={{ position: 'absolute', left: 'unset' }} />
           <span>Loud</span>
         </div>
       </div>
 
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3">
         <button
           type="button"
           onClick={() =>
@@ -204,9 +185,30 @@ export default function MicLevelModal({ stream, onResolve, onRecorded }: Props) 
         >
           I can't get this to work
         </button>
-        <span className="text-xs text-content-tertiary dark:text-content-inverse-tertiary">
-          {status === 'detected' ? 'Detected' : 'Listening…'}
-        </span>
+        <button
+          type="button"
+          disabled={!canContinue}
+          onClick={() =>
+            finish({
+              id: 'micLevel',
+              status: 'pass',
+              metric: peak,
+              detail: 'Audio detected',
+            })
+          }
+          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            canContinue
+              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+              : 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-500 cursor-not-allowed'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          {canContinue
+            ? 'Continue'
+            : !minElapsed
+            ? 'Keep talking…'
+            : 'Waiting for audio…'}
+        </button>
       </div>
     </ModalShell>
   )

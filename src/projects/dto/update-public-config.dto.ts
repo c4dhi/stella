@@ -6,6 +6,9 @@ import {
   IsUUID,
   ValidateNested,
   IsObject,
+  IsInt,
+  Min,
+  Max,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -76,4 +79,11 @@ export class UpdatePublicConfigDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  // Max session duration in seconds; null/undefined = no limit (default). Max 7200 (2h).
+  @IsOptional()
+  @IsInt()
+  @Min(60)
+  @Max(7200)
+  maxSessionDurationSeconds?: number | null;
 }
