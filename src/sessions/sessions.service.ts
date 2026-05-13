@@ -1540,13 +1540,16 @@ export class SessionsService {
       includeDebug?: boolean;
       includeMetadata?: boolean;
       includeDeliverables?: boolean;
-      mode?: 'transcript' | 'verdicts' | 'full';
+      mode?: 'transcript' | 'verdicts' | 'full' | 'custom';
+      types?: string[];
     } = {},
   ) {
     const includeDeliverables = options.includeDeliverables !== false;
-    // `mode` takes precedence over `includeDebug` when set. Default = transcript.
-    const mode: 'transcript' | 'verdicts' | 'full' =
-      options.mode ?? (options.includeDebug ? 'full' : 'transcript');
+    // Resolution order: explicit `types` → `mode` → legacy `includeDebug` → default `transcript`.
+    const mode: 'transcript' | 'verdicts' | 'full' | 'custom' =
+      options.types && options.types.length > 0
+        ? 'custom'
+        : options.mode ?? (options.includeDebug ? 'full' : 'transcript');
 
     // Fetch session with project info
     const session = await this.prisma.session.findUnique({
@@ -1580,12 +1583,18 @@ export class SessionsService {
     // Sub-agent verdict types — surfaced by `mode=verdicts` alongside the chat.
     const verdictMessageTypes = ['expert_status', 'safety_check'];
 
+    // Whitelist of every selectable message type — used to filter the
+    // caller-supplied `types` list to known/safe values.
+    const allowedTypes = new Set<string>([...chatMessageTypes, ...debugMessageTypes]);
+
     const messageTypes =
-      mode === 'full'
-        ? [...chatMessageTypes, ...debugMessageTypes]
-        : mode === 'verdicts'
-          ? [...chatMessageTypes, ...verdictMessageTypes]
-          : chatMessageTypes;
+      mode === 'custom'
+        ? (options.types ?? []).filter((t) => allowedTypes.has(t))
+        : mode === 'full'
+          ? [...chatMessageTypes, ...debugMessageTypes]
+          : mode === 'verdicts'
+            ? [...chatMessageTypes, ...verdictMessageTypes]
+            : chatMessageTypes;
 
     // Deliverable data comes from SessionState.deliverables (populated by gRPC setDeliverable calls),
     // NOT from Message rows — the set_deliverable tool only calls gRPC, not LiveKit data messages.
@@ -1675,6 +1684,7 @@ export class SessionsService {
         projectName: session.project.name,
         exportedAt: new Date().toISOString(),
         mode,
+        selectedTypes: mode === 'custom' ? messageTypes : undefined,
         status: session.status,
         createdAt: session.createdAt.toISOString(),
         closedAt: session.closedAt?.toISOString() || null,

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { apiClient } from '../../services/ApiClient'
 import { useThemeStore } from '../../store/themeStore'
 import type { LogEntry } from '../../lib/api-types'
+import TranscriptDownloadModal from './TranscriptDownloadModal'
 
 interface MonitorLogsModalProps {
   isOpen: boolean
@@ -13,11 +14,9 @@ interface MonitorLogsModalProps {
 export default function MonitorLogsModal({ isOpen, onClose, sessionId }: MonitorLogsModalProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false)
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
   const logsEndRef = useRef<HTMLDivElement>(null)
-  const downloadMenuRef = useRef<HTMLDivElement>(null)
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
 
@@ -34,34 +33,6 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
     }
   }
 
-  // Download transcript with selected mode.
-  // 'transcript' (default): conversation only — clean output for sharing.
-  // 'verdicts': conversation + sub-agent verdicts (expert_status, safety_check).
-  const handleDownloadTranscript = async (mode: 'transcript' | 'verdicts' | 'full') => {
-    if (!sessionId || isDownloading) return
-
-    try {
-      setIsDownloading(true)
-      setIsDownloadMenuOpen(false)
-      await apiClient.downloadTranscript(sessionId, { mode })
-    } catch (err) {
-      console.error('Failed to download transcript:', err)
-    } finally {
-      setIsDownloading(false)
-    }
-  }
-
-  // Close the download menu when clicking outside it.
-  useEffect(() => {
-    if (!isDownloadMenuOpen) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
-        setIsDownloadMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [isDownloadMenuOpen])
 
   // Auto-refresh logs every 3 seconds
   useEffect(() => {
@@ -176,76 +147,29 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                     </svg>
                   </button>
 
-                  {/* Download Transcript dropdown */}
-                  <div ref={downloadMenuRef} className="relative">
-                    <button
-                      onClick={() => setIsDownloadMenuOpen((open) => !open)}
-                      disabled={!sessionId || isDownloading}
-                      className={`p-2 rounded-lg transition-colors ${
-                        !sessionId || isDownloading
-                          ? 'opacity-40 cursor-not-allowed'
-                          : isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
-                      }`}
-                      title={sessionId ? 'Download transcript' : 'Select a session to download transcript'}
+                  {/* Download Transcript button — opens type picker */}
+                  <button
+                    onClick={() => setIsDownloadModalOpen(true)}
+                    disabled={!sessionId}
+                    className={`p-2 rounded-lg transition-colors ${
+                      !sessionId
+                        ? 'opacity-40 cursor-not-allowed'
+                        : isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                    }`}
+                    title={sessionId ? 'Download transcript…' : 'Select a session to download transcript'}
+                  >
+                    <svg
+                      className={`w-4 h-4 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
                     >
-                      <svg
-                        className={`w-4 h-4 ${isDownloading ? 'animate-pulse' : ''} ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                    </button>
-                    {isDownloadMenuOpen && sessionId && (
-                      <div
-                        className={`absolute right-0 mt-1 w-64 rounded-lg shadow-lg border z-10 ${
-                          isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-neutral-200'
-                        }`}
-                      >
-                        <button
-                          onClick={() => handleDownloadTranscript('transcript')}
-                          className={`w-full text-left px-3 py-2 text-xs rounded-t-lg ${
-                            isDark ? 'text-zinc-200 hover:bg-white/10' : 'text-neutral-800 hover:bg-neutral-100'
-                          }`}
-                        >
-                          <div className="font-medium">Transcript only</div>
-                          <div className={`text-[11px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                            Conversation messages
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => handleDownloadTranscript('verdicts')}
-                          className={`w-full text-left px-3 py-2 text-xs border-t ${
-                            isDark
-                              ? 'text-zinc-200 hover:bg-white/10 border-zinc-700'
-                              : 'text-neutral-800 hover:bg-neutral-100 border-neutral-200'
-                          }`}
-                        >
-                          <div className="font-medium">Transcript + sub-agent verdicts</div>
-                          <div className={`text-[11px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                            Includes expert evaluations and safety checks
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => handleDownloadTranscript('full')}
-                          className={`w-full text-left px-3 py-2 text-xs rounded-b-lg border-t ${
-                            isDark
-                              ? 'text-zinc-200 hover:bg-white/10 border-zinc-700'
-                              : 'text-neutral-800 hover:bg-neutral-100 border-neutral-200'
-                          }`}
-                        >
-                          <div className="font-medium">Full debug export</div>
-                          <div className={`text-[11px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                            All messages including debug, decisions, plan updates
-                          </div>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </button>
 
                   {/* Close button */}
                   <button
@@ -330,6 +254,13 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
             </div>
           </motion.div>
         </>
+      )}
+      {sessionId && (
+        <TranscriptDownloadModal
+          isOpen={isDownloadModalOpen}
+          onClose={() => setIsDownloadModalOpen(false)}
+          sessionId={sessionId}
+        />
       )}
     </AnimatePresence>
   )

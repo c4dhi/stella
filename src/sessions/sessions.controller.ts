@@ -228,9 +228,10 @@ export class SessionsController {
     @Query('includeMetadata') includeMetadata?: string,
     @Query('includeDeliverables') includeDeliverables?: string,
     @Query('mode') mode?: string,
+    @Query('types') types?: string,
   ) {
     try {
-      const allowedModes = ['transcript', 'verdicts', 'full'] as const;
+      const allowedModes = ['transcript', 'verdicts', 'full', 'custom'] as const;
       type TranscriptMode = (typeof allowedModes)[number];
       const resolvedMode: TranscriptMode | undefined = allowedModes.includes(
         mode as TranscriptMode,
@@ -238,11 +239,16 @@ export class SessionsController {
         ? (mode as TranscriptMode)
         : undefined;
 
+      const parsedTypes = types
+        ? types.split(',').map((t) => t.trim()).filter(Boolean)
+        : undefined;
+
       const transcript = await this.sessionsService.exportTranscript(sessionId, {
         includeDebug: includeDebug === 'true',
         includeMetadata: includeMetadata === 'true',
         includeDeliverables: includeDeliverables !== 'false',
         mode: resolvedMode,
+        types: parsedTypes,
       });
 
       // Generate filename with session name or ID; suffix reflects export mode.
@@ -253,7 +259,9 @@ export class SessionsController {
           ? '-with-verdicts'
           : transcript.meta.mode === 'full'
             ? '-full'
-            : '';
+            : transcript.meta.mode === 'custom'
+              ? '-custom'
+              : '';
       const filename = `transcript-${safeName}${modeSuffix}-${new Date().toISOString().split('T')[0]}.json`;
 
       // Set response headers for file download

@@ -802,7 +802,8 @@ class SessionManagementClient {
       includeDebug?: boolean
       includeMetadata?: boolean
       includeDeliverables?: boolean
-      mode?: 'transcript' | 'verdicts' | 'full'
+      mode?: 'transcript' | 'verdicts' | 'full' | 'custom'
+      types?: string[]
     }
   ): Promise<void> {
     const params = new URLSearchParams()
@@ -810,6 +811,7 @@ class SessionManagementClient {
     if (options?.includeMetadata) params.append('includeMetadata', 'true')
     if (options?.includeDeliverables === false) params.append('includeDeliverables', 'false')
     if (options?.mode) params.append('mode', options.mode)
+    if (options?.types && options.types.length > 0) params.append('types', options.types.join(','))
 
     const queryString = params.toString()
     const path = `/sessions/${sessionId}/transcript${queryString ? `?${queryString}` : ''}`
