@@ -1528,34 +1528,6 @@ export class SessionsService {
 
   /**
    * Return the distinct messageType values actually stored for a session,
-   * with counts. Used by the download picker to only show types that
-   * exist in this session's data.
-   */
-  async getTranscriptMessageTypes(sessionId: string) {
-    const session = await this.prisma.session.findUnique({
-      where: { id: sessionId },
-      select: { id: true },
-    });
-    if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
-    }
-
-    const grouped = await this.prisma.message.groupBy({
-      by: ['messageType'],
-      where: { sessionId },
-      _count: { _all: true },
-    });
-
-    return {
-      sessionId,
-      types: grouped
-        .map((g) => ({ messageType: g.messageType, count: g._count._all }))
-        .sort((a, b) => b.count - a.count),
-    };
-  }
-
-  /**
-   * Return the distinct messageType values actually stored for a session,
    * with counts. Used by the transcript download picker so it only shows
    * types that exist in this session's data.
    */
