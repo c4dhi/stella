@@ -37,7 +37,7 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
   // Download transcript with selected mode.
   // 'transcript' (default): conversation only — clean output for sharing.
   // 'verdicts': conversation + sub-agent verdicts (expert_status, safety_check).
-  const handleDownloadTranscript = async (mode: 'transcript' | 'verdicts') => {
+  const handleDownloadTranscript = async (mode: 'transcript' | 'verdicts' | 'full') => {
     if (!sessionId || isDownloading) return
 
     try {
@@ -219,7 +219,7 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                         </button>
                         <button
                           onClick={() => handleDownloadTranscript('verdicts')}
-                          className={`w-full text-left px-3 py-2 text-xs rounded-b-lg border-t ${
+                          className={`w-full text-left px-3 py-2 text-xs border-t ${
                             isDark
                               ? 'text-zinc-200 hover:bg-white/10 border-zinc-700'
                               : 'text-neutral-800 hover:bg-neutral-100 border-neutral-200'
@@ -228,6 +228,19 @@ export default function MonitorLogsModal({ isOpen, onClose, sessionId }: Monitor
                           <div className="font-medium">Transcript + sub-agent verdicts</div>
                           <div className={`text-[11px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
                             Includes expert evaluations and safety checks
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => handleDownloadTranscript('full')}
+                          className={`w-full text-left px-3 py-2 text-xs rounded-b-lg border-t ${
+                            isDark
+                              ? 'text-zinc-200 hover:bg-white/10 border-zinc-700'
+                              : 'text-neutral-800 hover:bg-neutral-100 border-neutral-200'
+                          }`}
+                        >
+                          <div className="font-medium">Full debug export</div>
+                          <div className={`text-[11px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                            All messages including debug, decisions, plan updates
                           </div>
                         </button>
                       </div>
