@@ -282,7 +282,7 @@ export default function ChatView({
           messageType: 'processing' as const,
           dataSource: 'db' as const,
         }
-      } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification'].includes(messageType)) {
+      } else if (['complete_todo_list', 'plan_progress_update', 'plan_deliverable_update', 'state_change_notification', 'progress_update', 'task_progress_update'].includes(messageType)) {
         // Task update messages - don't display in chat (handled by task panel)
         return null
       } else if (messageType === 'participant_event' || messageType === 'participant_joined' || messageType === 'participant_left') {

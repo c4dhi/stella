@@ -711,7 +711,7 @@ export class SessionsService {
       'debug', 'decision_stream', 'expert_status', 'prompt_execution',
       'safety_check', 'plan_progress_update', 'plan_deliverable_update',
       'state_change_notification', 'complete_todo_list', 'llm_config',
-      'task_progress_update', 'progress_update'
+      'task_progress_update', 'progress_update', 'task_update'
     ];
 
     const messageTypes = options.includeDebug
@@ -1571,7 +1571,7 @@ export class SessionsService {
       'debug', 'decision_stream', 'expert_status', 'prompt_execution',
       'safety_check', 'plan_progress_update', 'plan_deliverable_update',
       'state_change_notification', 'complete_todo_list', 'llm_config',
-      'task_progress_update', 'progress_update'
+      'task_progress_update', 'progress_update', 'task_update'
     ];
 
     const messageTypes = options.includeDebug
