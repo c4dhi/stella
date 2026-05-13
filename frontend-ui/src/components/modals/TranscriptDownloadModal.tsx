@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiClient } from '../../services/ApiClient'
 import { useThemeStore } from '../../store/themeStore'
@@ -9,85 +9,46 @@ interface TranscriptDownloadModalProps {
   sessionId: string
 }
 
-// Grouped, user-facing labels for each message type. The keys must match
-// the messageType values stored in the database / accepted by the backend.
-const TYPE_GROUPS: Array<{
-  label: string
-  description: string
-  types: Array<{ key: string; label: string }>
-}> = [
-  {
-    label: 'Conversation',
-    description: 'Spoken / typed messages between user and agent',
-    types: [
-      { key: 'user_text', label: 'User text' },
-      { key: 'agent_text', label: 'Agent text' },
-      { key: 'transcript', label: 'Transcript (final)' },
-      { key: 'transcript_chunk', label: 'Transcript chunks (partial)' },
-    ],
-  },
-  {
-    label: 'Participant events',
-    description: 'Joins, leaves, and other participant lifecycle events',
-    types: [
-      { key: 'participant_joined', label: 'Participant joined' },
-      { key: 'participant_left', label: 'Participant left' },
-      { key: 'participant_event', label: 'Other participant events' },
-    ],
-  },
-  {
-    label: 'Sub-agent verdicts',
-    description: 'Expert evaluations and safety checks',
-    types: [
-      { key: 'expert_status', label: 'Expert verdicts' },
-      { key: 'safety_check', label: 'Safety checks' },
-    ],
-  },
-  {
-    label: 'Decisions & prompts',
-    description: 'Reasoning streams and LLM prompt execution',
-    types: [
-      { key: 'decision_stream', label: 'Decision stream' },
-      { key: 'prompt_execution', label: 'Prompt execution' },
-      { key: 'llm_config', label: 'LLM config' },
-    ],
-  },
-  {
-    label: 'Plan & state',
-    description: 'Plan progress, deliverables, and state transitions',
-    types: [
-      { key: 'plan_progress_update', label: 'Plan progress update' },
-      { key: 'plan_deliverable_update', label: 'Plan deliverable update' },
-      { key: 'state_change_notification', label: 'State change notification' },
-      { key: 'complete_todo_list', label: 'Complete todo list' },
-      { key: 'task_progress_update', label: 'Task progress update' },
-      { key: 'progress_update', label: 'Progress update' },
-      { key: 'task_update', label: 'Task update' },
-    ],
-  },
-  {
-    label: 'Diagnostics',
-    description: 'Low-level debug entries',
-    types: [{ key: 'debug', label: 'Debug' }],
-  },
+// Friendly labels + grouping for known messageType values. Unknown types
+// are rendered under "Other" using their raw key.
+const TYPE_META: Record<string, { label: string; group: string }> = {
+  user_text: { label: 'User text', group: 'Conversation' },
+  agent_text: { label: 'Agent text', group: 'Conversation' },
+  transcript: { label: 'Transcript', group: 'Conversation' },
+  transcript_chunk: { label: 'Transcript chunks (partial)', group: 'Conversation' },
+  participant_joined: { label: 'Participant joined', group: 'Participant events' },
+  participant_left: { label: 'Participant left', group: 'Participant events' },
+  participant_event: { label: 'Other participant events', group: 'Participant events' },
+  expert_status: { label: 'Expert verdicts', group: 'Sub-agent verdicts' },
+  safety_check: { label: 'Safety checks', group: 'Sub-agent verdicts' },
+  decision_stream: { label: 'Decision stream', group: 'Decisions & prompts' },
+  prompt_execution: { label: 'Prompt execution', group: 'Decisions & prompts' },
+  llm_config: { label: 'LLM config', group: 'Decisions & prompts' },
+  task_update: { label: 'Task update', group: 'Plan & state' },
+  state_change: { label: 'State change', group: 'Plan & state' },
+  deliverable: { label: 'Deliverable', group: 'Plan & state' },
+  debug: { label: 'Debug', group: 'Diagnostics' },
+  system: { label: 'System', group: 'Diagnostics' },
+}
+
+const GROUP_ORDER = [
+  'Conversation',
+  'Participant events',
+  'Sub-agent verdicts',
+  'Decisions & prompts',
+  'Plan & state',
+  'Diagnostics',
+  'Other',
 ]
 
-const DEFAULT_SELECTION = new Set<string>([
+// Types selected by default when the modal opens — the "clean transcript" set.
+const DEFAULT_SELECTED = new Set<string>([
   'user_text',
   'agent_text',
   'transcript',
-  'transcript_chunk',
 ])
 
-const PRESET_VERDICTS = new Set<string>([
-  ...DEFAULT_SELECTION,
-  'expert_status',
-  'safety_check',
-])
-
-const ALL_TYPES = new Set<string>(
-  TYPE_GROUPS.flatMap((g) => g.types.map((t) => t.key)),
-)
+type AvailableType = { messageType: string; count: number }
 
 export default function TranscriptDownloadModal({
   isOpen,
@@ -96,9 +57,39 @@ export default function TranscriptDownloadModal({
 }: TranscriptDownloadModalProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
-  const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_SELECTION))
+  const [available, setAvailable] = useState<AvailableType[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [includeMetadata, setIncludeMetadata] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
+
+  // Fetch the actual messageTypes stored for this session whenever the modal opens.
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    setAvailable(null)
+    setLoadError(null)
+    apiClient
+      .getTranscriptMessageTypes(sessionId)
+      .then((res) => {
+        if (cancelled) return
+        setAvailable(res.types)
+        // Seed selection with default set ∩ available.
+        const seed = new Set<string>()
+        for (const t of res.types) {
+          if (DEFAULT_SELECTED.has(t.messageType)) seed.add(t.messageType)
+        }
+        setSelected(seed)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.error('Failed to load message types:', err)
+        setLoadError('Could not load available message types.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, sessionId])
 
   const toggle = (key: string) => {
     setSelected((prev) => {
@@ -109,23 +100,22 @@ export default function TranscriptDownloadModal({
     })
   }
 
-  const toggleGroup = (types: Array<{ key: string }>) => {
-    const allOn = types.every((t) => selected.has(t.key))
+  const toggleGroup = (types: AvailableType[]) => {
+    const allOn = types.every((t) => selected.has(t.messageType))
     setSelected((prev) => {
       const next = new Set(prev)
       for (const t of types) {
-        if (allOn) next.delete(t.key)
-        else next.add(t.key)
+        if (allOn) next.delete(t.messageType)
+        else next.add(t.messageType)
       }
       return next
     })
   }
 
-  const applyPreset = (preset: 'transcript' | 'verdicts' | 'full') => {
-    if (preset === 'transcript') setSelected(new Set(DEFAULT_SELECTION))
-    else if (preset === 'verdicts') setSelected(new Set(PRESET_VERDICTS))
-    else setSelected(new Set(ALL_TYPES))
+  const selectAll = () => {
+    setSelected(new Set((available ?? []).map((t) => t.messageType)))
   }
+  const clearAll = () => setSelected(new Set())
 
   const handleDownload = async () => {
     if (selected.size === 0 || isDownloading) return
@@ -143,8 +133,15 @@ export default function TranscriptDownloadModal({
     }
   }
 
-  const selectedCount = selected.size
-  const totalCount = ALL_TYPES.size
+  // Group the available types by their configured group; unknown types → "Other".
+  const grouped = new Map<string, AvailableType[]>()
+  for (const t of available ?? []) {
+    const group = TYPE_META[t.messageType]?.group ?? 'Other'
+    const list = grouped.get(group) ?? []
+    list.push(t)
+    grouped.set(group, list)
+  }
+  const orderedGroups = GROUP_ORDER.filter((g) => grouped.has(g))
 
   return (
     <AnimatePresence>
@@ -202,104 +199,130 @@ export default function TranscriptDownloadModal({
                 </button>
               </div>
 
-              <div className={`px-6 py-3 border-b flex items-center gap-2 text-xs ${
-                isDark ? 'border-zinc-800 text-zinc-400' : 'border-neutral-200 text-neutral-600'
-              }`}>
-                <span>Presets:</span>
-                <button
-                  onClick={() => applyPreset('transcript')}
-                  className={`px-2 py-1 rounded ${
-                    isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
-                  }`}
-                >
-                  Transcript only
-                </button>
-                <button
-                  onClick={() => applyPreset('verdicts')}
-                  className={`px-2 py-1 rounded ${
-                    isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
-                  }`}
-                >
-                  + Verdicts
-                </button>
-                <button
-                  onClick={() => applyPreset('full')}
-                  className={`px-2 py-1 rounded ${
-                    isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
-                  }`}
-                >
-                  Everything
-                </button>
-              </div>
+              {available && available.length > 0 && (
+                <div className={`px-6 py-3 border-b flex items-center justify-between gap-2 text-xs ${
+                  isDark ? 'border-zinc-800 text-zinc-400' : 'border-neutral-200 text-neutral-600'
+                }`}>
+                  <span>{available.length} type{available.length === 1 ? '' : 's'} stored in this session</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={selectAll}
+                      className={`px-2 py-1 rounded ${
+                        isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                      }`}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      onClick={clearAll}
+                      className={`px-2 py-1 rounded ${
+                        isDark ? 'hover:bg-white/10' : 'hover:bg-neutral-100'
+                      }`}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="flex-1 overflow-auto px-6 py-4 space-y-5">
-                {TYPE_GROUPS.map((group) => {
-                  const allOn = group.types.every((t) => selected.has(t.key))
-                  const someOn = group.types.some((t) => selected.has(t.key))
+                {loadError && (
+                  <div className={`text-xs ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+                    {loadError}
+                  </div>
+                )}
+                {!available && !loadError && (
+                  <div className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                    Loading available message types…
+                  </div>
+                )}
+                {available && available.length === 0 && (
+                  <div className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
+                    This session has no stored messages yet.
+                  </div>
+                )}
+
+                {orderedGroups.map((group) => {
+                  const types = grouped.get(group)!
+                  const allOn = types.every((t) => selected.has(t.messageType))
                   return (
-                    <div key={group.label}>
+                    <div key={group}>
                       <div className="flex items-center justify-between mb-1.5">
-                        <div>
-                          <div className={`text-xs font-medium uppercase tracking-wide ${
-                            isDark ? 'text-zinc-300' : 'text-neutral-700'
-                          }`}>
-                            {group.label}
-                          </div>
-                          <div className={`text-[11px] ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                            {group.description}
-                          </div>
+                        <div className={`text-xs font-medium uppercase tracking-wide ${
+                          isDark ? 'text-zinc-300' : 'text-neutral-700'
+                        }`}>
+                          {group}
                         </div>
                         <button
-                          onClick={() => toggleGroup(group.types)}
+                          onClick={() => toggleGroup(types)}
                           className={`text-[11px] px-2 py-0.5 rounded ${
                             isDark ? 'text-zinc-400 hover:bg-white/10' : 'text-neutral-600 hover:bg-neutral-100'
                           }`}
                         >
-                          {allOn ? 'Clear' : someOn ? 'Select all' : 'Select all'}
+                          {allOn ? 'Clear' : 'Select all'}
                         </button>
                       </div>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pl-1">
-                        {group.types.map((t) => (
-                          <label
-                            key={t.key}
-                            className={`flex items-center gap-2 text-xs cursor-pointer py-0.5 ${
-                              isDark ? 'text-zinc-300' : 'text-neutral-700'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected.has(t.key)}
-                              onChange={() => toggle(t.key)}
-                              className="rounded"
-                            />
-                            {t.label}
-                          </label>
-                        ))}
+                      <div className="space-y-1 pl-1">
+                        {types.map((t) => {
+                          const label = TYPE_META[t.messageType]?.label ?? t.messageType
+                          return (
+                            <label
+                              key={t.messageType}
+                              className={`flex items-center justify-between gap-2 text-xs cursor-pointer py-0.5 ${
+                                isDark ? 'text-zinc-300' : 'text-neutral-700'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={selected.has(t.messageType)}
+                                  onChange={() => toggle(t.messageType)}
+                                  className="rounded"
+                                />
+                                <span className="truncate">{label}</span>
+                                {label !== t.messageType && (
+                                  <span className={`text-[10px] font-mono ${
+                                    isDark ? 'text-zinc-600' : 'text-neutral-400'
+                                  }`}>
+                                    {t.messageType}
+                                  </span>
+                                )}
+                              </span>
+                              <span className={`text-[10px] tabular-nums ${
+                                isDark ? 'text-zinc-500' : 'text-neutral-500'
+                              }`}>
+                                {t.count}
+                              </span>
+                            </label>
+                          )
+                        })}
                       </div>
                     </div>
                   )
                 })}
 
-                <div className={`pt-3 border-t ${isDark ? 'border-zinc-800' : 'border-neutral-200'}`}>
-                  <label className={`flex items-center gap-2 text-xs cursor-pointer ${
-                    isDark ? 'text-zinc-300' : 'text-neutral-700'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={includeMetadata}
-                      onChange={(e) => setIncludeMetadata(e.target.checked)}
-                      className="rounded"
-                    />
-                    Include raw message metadata (verbose)
-                  </label>
-                </div>
+                {available && available.length > 0 && (
+                  <div className={`pt-3 border-t ${isDark ? 'border-zinc-800' : 'border-neutral-200'}`}>
+                    <label className={`flex items-center gap-2 text-xs cursor-pointer ${
+                      isDark ? 'text-zinc-300' : 'text-neutral-700'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={includeMetadata}
+                        onChange={(e) => setIncludeMetadata(e.target.checked)}
+                        className="rounded"
+                      />
+                      Include raw message metadata (verbose)
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className={`flex items-center justify-between px-6 py-3 border-t ${
                 isDark ? 'border-zinc-800' : 'border-neutral-200'
               }`}>
                 <span className={`text-xs ${isDark ? 'text-zinc-500' : 'text-neutral-500'}`}>
-                  {selectedCount} of {totalCount} types selected
+                  {selected.size} type{selected.size === 1 ? '' : 's'} selected
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -314,9 +337,9 @@ export default function TranscriptDownloadModal({
                   </button>
                   <button
                     onClick={handleDownload}
-                    disabled={selectedCount === 0 || isDownloading}
+                    disabled={selected.size === 0 || isDownloading}
                     className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                      selectedCount === 0 || isDownloading
+                      selected.size === 0 || isDownloading
                         ? 'opacity-40 cursor-not-allowed bg-neutral-300 text-neutral-600'
                         : isDark
                           ? 'bg-zinc-100 text-zinc-900 hover:bg-white'

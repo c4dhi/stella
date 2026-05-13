@@ -796,6 +796,16 @@ class SessionManagementClient {
    * Download transcript for a session as a JSON file.
    * Triggers a browser download of the complete conversation transcript.
    */
+  /**
+   * Get the distinct messageType values present in a session, with counts.
+   * Used by the transcript download picker.
+   */
+  async getTranscriptMessageTypes(
+    sessionId: string,
+  ): Promise<{ sessionId: string; types: Array<{ messageType: string; count: number }> }> {
+    return this.request(`/sessions/${sessionId}/transcript/types`)
+  }
+
   async downloadTranscript(
     sessionId: string,
     options?: {

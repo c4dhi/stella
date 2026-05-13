@@ -220,6 +220,11 @@ export class SessionsController {
     return this.sessionsService.getMessagesSince(sessionId, since);
   }
 
+  @Get('sessions/:sessionId/transcript/types')
+  async getTranscriptMessageTypes(@Param('sessionId') sessionId: string) {
+    return this.sessionsService.getTranscriptMessageTypes(sessionId);
+  }
+
   @Get('sessions/:sessionId/transcript')
   async exportTranscript(
     @Param('sessionId') sessionId: string,
