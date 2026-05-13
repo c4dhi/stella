@@ -1540,9 +1540,13 @@ export class SessionsService {
       includeDebug?: boolean;
       includeMetadata?: boolean;
       includeDeliverables?: boolean;
+      mode?: 'transcript' | 'verdicts' | 'full';
     } = {},
   ) {
     const includeDeliverables = options.includeDeliverables !== false;
+    // `mode` takes precedence over `includeDebug` when set. Default = transcript.
+    const mode: 'transcript' | 'verdicts' | 'full' =
+      options.mode ?? (options.includeDebug ? 'full' : 'transcript');
 
     // Fetch session with project info
     const session = await this.prisma.session.findUnique({
@@ -1573,10 +1577,15 @@ export class SessionsService {
       'state_change_notification', 'complete_todo_list', 'llm_config',
       'task_progress_update', 'progress_update', 'task_update'
     ];
+    // Sub-agent verdict types — surfaced by `mode=verdicts` alongside the chat.
+    const verdictMessageTypes = ['expert_status', 'safety_check'];
 
-    const messageTypes = options.includeDebug
-      ? [...chatMessageTypes, ...debugMessageTypes]
-      : chatMessageTypes;
+    const messageTypes =
+      mode === 'full'
+        ? [...chatMessageTypes, ...debugMessageTypes]
+        : mode === 'verdicts'
+          ? [...chatMessageTypes, ...verdictMessageTypes]
+          : chatMessageTypes;
 
     // Deliverable data comes from SessionState.deliverables (populated by gRPC setDeliverable calls),
     // NOT from Message rows — the set_deliverable tool only calls gRPC, not LiveKit data messages.
@@ -1665,6 +1674,7 @@ export class SessionsService {
         projectId: session.projectId,
         projectName: session.project.name,
         exportedAt: new Date().toISOString(),
+        mode,
         status: session.status,
         createdAt: session.createdAt.toISOString(),
         closedAt: session.closedAt?.toISOString() || null,
