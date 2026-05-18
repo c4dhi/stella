@@ -153,6 +153,7 @@ class AudioPipeline:
         self._turn_bridge_tts_first_byte_emitted: bool = False
         self._turn_response_tts_first_byte_emitted: bool = False
         self._last_response_tts_done_elapsed: float = 0
+        self._last_response_tts_playout_done_elapsed: float = 0
 
         # Register data message handler for text input from frontend
         self._room.on_data_received(self._handle_data_message)
@@ -1009,6 +1010,7 @@ class AudioPipeline:
         self._turn_bridge_tts_first_byte_emitted = False
         self._turn_response_tts_first_byte_emitted = False
         self._last_response_tts_done_elapsed = 0
+        self._last_response_tts_playout_done_elapsed = 0
 
     async def _prefetch_sentence(self, sentence: str, voice=None, speed=1.0, language=None):
         """Pre-synthesize a sentence and return all audio chunks as a list.
@@ -1128,13 +1130,19 @@ class AudioPipeline:
                 # Play the current sentence's audio
                 await self._play_prefetched(chunks, source=source)
 
-                # Emit tts_done events after each sentence completes
+                # Emit tts_done events after each sentence completes.
+                # capture_frame is real-time paced, so the AudioSource still holds
+                # `queued_duration` seconds of audio at this point. Add it to get the
+                # wall-clock moment the last sample exits the source (audible end).
                 if self.turn_anchor_ts > 0:
                     elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
+                    playout_elapsed = elapsed + self._room.queued_audio_duration * 1000
                     if source == "bridge":
                         asyncio.create_task(self._emit_analytics_event("bridge_tts_done", elapsed))
+                        asyncio.create_task(self._emit_analytics_event("bridge_tts_playout_done", playout_elapsed))
                     else:
                         self._last_response_tts_done_elapsed = elapsed
+                        self._last_response_tts_playout_done_elapsed = playout_elapsed
 
         except asyncio.CancelledError:
             logger.info("[TTS] Speech worker cancelled")
@@ -1149,6 +1157,9 @@ class AudioPipeline:
             if hasattr(self, '_last_response_tts_done_elapsed') and self._last_response_tts_done_elapsed > 0:
                 asyncio.create_task(self._emit_analytics_event("response_tts_done", self._last_response_tts_done_elapsed))
                 self._last_response_tts_done_elapsed = 0
+            if hasattr(self, '_last_response_tts_playout_done_elapsed') and self._last_response_tts_playout_done_elapsed > 0:
+                asyncio.create_task(self._emit_analytics_event("response_tts_playout_done", self._last_response_tts_playout_done_elapsed))
+                self._last_response_tts_playout_done_elapsed = 0
             self._is_speaking = False
             self.open_transcript_gate()
             logger.info("[TTS] Speech worker stopped")

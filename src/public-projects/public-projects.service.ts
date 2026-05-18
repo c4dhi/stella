@@ -199,11 +199,16 @@ export class PublicProjectsService {
     // Get agent config from JSON
     const agentConfig = project.publicAgentConfig as PublicAgentConfig | null;
 
-    // 2. Create a new session
-    const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
+    // 2. Create a new session (placeholder name; updated below with session id)
     const session = await this.sessionsService.create(project.id, {
-      name: sessionName,
+      name: `PS - pending - ${new Date().toISOString().slice(0, 16)}`,
     });
+    const finalSessionName = `PS - ${session.id} - ${new Date().toISOString().slice(0, 16)}`;
+    await this.prisma.session.update({
+      where: { id: session.id },
+      data: { name: finalSessionName },
+    });
+    session.name = finalSessionName;
 
     this.logger.log(
       `Created session ${session.id} for public project ${project.id}`,
@@ -288,17 +293,22 @@ export class PublicProjectsService {
     };
 
     // Create session with on_demand mode - agent will be spawned when human joins
-    const sessionName = `Public Session - ${new Date().toISOString().slice(0, 16)}`;
     const session = await this.sessionsService.create(project.id, {
-      name: sessionName,
+      name: `PS - pending - ${new Date().toISOString().slice(0, 16)}`,
       agentSpawnMode: 'on_demand', // Agent spawned via webhook when human joins
     });
 
-    // Store agent config for later spawning (cast to satisfy Prisma's JsonValue type)
+    const finalSessionName = `PS - ${session.id} - ${new Date().toISOString().slice(0, 16)}`;
+
+    // Store agent config for later spawning and finalize the session name with its id
     await this.prisma.session.update({
       where: { id: session.id },
-      data: { lastAgentConfig: lastAgentConfig as any },
+      data: {
+        lastAgentConfig: lastAgentConfig as any,
+        name: finalSessionName,
+      },
     });
+    session.name = finalSessionName;
 
     this.logger.log(
       `Created on_demand session ${session.id} for public project ${project.id}`,

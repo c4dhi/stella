@@ -116,6 +116,12 @@ spec:
               name: stella-ai-config
               key: TTS_PROVIDER
               optional: true
+        - name: PIPER_VOICE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PIPER_VOICE
+              optional: true
         volumeMounts:
         - name: model-cache
           mountPath: /models
@@ -152,6 +158,12 @@ spec:
             configMapKeyRef:
               name: stella-ai-config
               key: TTS_PROVIDER
+              optional: true
+        - name: PIPER_VOICE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: PIPER_VOICE
               optional: true
         - name: ONNX_PROVIDER
           valueFrom:

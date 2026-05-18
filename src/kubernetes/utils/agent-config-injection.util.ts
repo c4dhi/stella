@@ -28,6 +28,7 @@ export interface SecretDataBuildInput {
   livekitApiSecret: string
   roomName: string
   ttsProvider: string
+  ttsLanguage?: string
   agentConfig: Record<string, unknown>
   customEnvVars?: Record<string, string>
 }
@@ -82,7 +83,7 @@ export function buildPodEnvVars(input: PodEnvBuildInput): Array<{ name: string; 
 export function buildSecretStringData(input: SecretDataBuildInput): Record<string, string> {
   const agentConfigJson = JSON.stringify(input.agentConfig || {})
 
-  return {
+  const base: Record<string, string> = {
     LIVEKIT_URL: input.livekitUrl,
     LIVEKIT_API_KEY: input.livekitApiKey,
     LIVEKIT_API_SECRET: input.livekitApiSecret,
@@ -90,6 +91,12 @@ export function buildSecretStringData(input: SecretDataBuildInput): Record<strin
     IDENTITY: `agent-${input.agentId}`,
     TTS_PROVIDER: input.ttsProvider,
     AGENT_CONFIG: agentConfigJson,
+  }
+  if (input.ttsLanguage) {
+    base.TTS_LANGUAGE = input.ttsLanguage
+  }
+  return {
+    ...base,
     ...(input.customEnvVars || {}),
   }
 }

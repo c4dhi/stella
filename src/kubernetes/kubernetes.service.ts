@@ -21,6 +21,7 @@ export interface AgentPodConfig {
   livekitApiKey: string;
   livekitApiSecret: string;
   ttsProvider: string;
+  ttsLanguage?: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
   agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
@@ -265,6 +266,7 @@ export class KubernetesService {
         livekitApiSecret: config.livekitApiSecret,
         roomName: config.roomName,
         ttsProvider: config.ttsProvider,
+        ttsLanguage: config.ttsLanguage,
         agentConfig: config.agentConfig || {},
         customEnvVars: config.resolvedEnvVars,
       }),

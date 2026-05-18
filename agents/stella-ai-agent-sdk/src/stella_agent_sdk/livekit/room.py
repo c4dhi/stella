@@ -593,6 +593,13 @@ class RoomManager:
         except Exception as e:
             logger.error(f"Error publishing audio: {e}")
 
+    @property
+    def queued_audio_duration(self) -> float:
+        """Seconds of audio currently buffered in the AudioSource (queued but not yet played out)."""
+        if not self._audio_source:
+            return 0.0
+        return self._audio_source.queued_duration
+
     def _process_reverse_stream_24k(self, audio_int16: np.ndarray) -> None:
         """
         Process TTS audio through AEC reverse stream (far-end reference).
