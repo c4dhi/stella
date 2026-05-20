@@ -1,8 +1,13 @@
 # TTS Service Dockerfile
-# Supports Edge TTS (cloud) and Kokoro (local ONNX) providers
-# Build arg ENABLE_GPU=true for CUDA support
+# Supports Kokoro, ChatterBox, and (optionally) Piper providers.
+# Build args:
+#   ENABLE_GPU=true     -> CUDA support
+#   ENABLE_PIPER=true   -> include the Piper provider (GPL-3.0, opt-in)
+#   TTS_PROVIDER        -> "all" | "kokoro" | "chatterbox" | "piper"
+#                          (controls which deps get installed)
 
 ARG ENABLE_GPU=false
+ARG ENABLE_PIPER=false
 
 # ============================================================================
 # CPU-only base image
@@ -73,6 +78,18 @@ ARG TTS_PROVIDER=all
 # Copy requirements and install base Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Piper TTS (GPL-3.0) is opt-in. Installed when ENABLE_PIPER=true or when
+# TTS_PROVIDER is explicitly set to "piper" (in which case the user has
+# accepted the GPL by selecting it). Default builds remain license-clean.
+ARG ENABLE_PIPER
+COPY requirements-piper.txt .
+RUN if [ "$ENABLE_PIPER" = "true" ] || [ "$TTS_PROVIDER" = "piper" ]; then \
+        echo "[TTS] Installing Piper TTS (GPL-3.0 opt-in)..." && \
+        pip install --no-cache-dir -r requirements-piper.txt; \
+    else \
+        echo "[TTS] Skipping Piper TTS (set ENABLE_PIPER=true to include)"; \
+    fi
 
 # Install ONNX Runtime (needed by piper and kokoro)
 ARG ENABLE_GPU

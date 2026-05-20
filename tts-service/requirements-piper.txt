@@ -1,0 +1,12 @@
+# Optional Piper TTS provider.
+#
+# LICENSE NOTICE: piper-tts is licensed under GPL-3.0 (via its espeak-ng
+# dependency). Installing this file makes the resulting tts-service container
+# a GPL-3.0 covered work. STELLA itself is distributed under a permissive
+# license; the Piper provider is shipped as an optional add-on so the core
+# project remains license-clean by default.
+#
+# Install via: pip install -r requirements-piper.txt
+# Or build the image with: --build-arg ENABLE_PIPER=true
+
+piper-tts>=1.2.0
