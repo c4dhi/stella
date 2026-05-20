@@ -68,8 +68,8 @@ const componentDetails: Record<string, ComponentInfo> = {
   tts: {
     id: 'tts',
     label: 'TTS',
-    sublabel: 'Kokoro / Edge',
-    description: 'Text-to-Speech gRPC service. Supports Kokoro for local synthesis or EdgeTTS for cloud-based Microsoft voices.',
+    sublabel: 'Piper / Kokoro',
+    description: 'Text-to-Speech gRPC service. Supports Piper for fast CPU synthesis, Kokoro for GPU synthesis, and ChatterBox for multilingual voices.',
     color: '#f472b6',
   },
 };

@@ -9,13 +9,13 @@ class TTSProvider(ABC):
     """Abstract base class for TTS providers.
 
     All TTS providers must implement this interface to ensure consistent
-    behavior across different engines (Edge TTS, Kokoro, etc.).
+    behavior across different engines (Piper, Kokoro, etc.).
     """
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Return the provider name (e.g., 'edge_tts', 'kokoro')."""
+        """Return the provider name (e.g., 'piper', 'kokoro')."""
         pass
 
     @property

@@ -3,7 +3,6 @@ grpcio>=1.60.0
 grpcio-tools>=1.60.0
 
 # TTS Engines
-edge-tts>=7.2.7
 kokoro-onnx>=0.4.0
 piper-tts>=1.2.0
 huggingface_hub>=0.20.0
