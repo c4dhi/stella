@@ -73,7 +73,7 @@ data:
   WHISPER_INITIAL_PROMPT: "${WHISPER_INITIAL_PROMPT}"            # Domain context prompt for improved accuracy
 
   # Text-to-Speech (TTS) Provider
-  # Options: piper (fast local CPU), kokoro (local GPU), elevenlabs (best quality), edge_tts (free cloud), auto
+  # Options: piper (fast local CPU), kokoro (local GPU), chatterbox (multilingual), elevenlabs (best quality), auto
   TTS_PROVIDER: "${TTS_PROVIDER}"
   ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID}"
   ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TTS gRPC Service supporting Edge TTS and Kokoro providers.
+TTS gRPC Service supporting Piper, Kokoro, and ChatterBox providers.
 Provides a standardized gRPC interface for text-to-speech synthesis.
 """
 
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-from providers import EdgeTTSProvider, KokoroProvider, PiperProvider, ChatterBoxProvider, TTSProvider
+from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, TTSProvider
 
 
 class TTSEngine:
@@ -36,26 +36,23 @@ class TTSEngine:
             print(f"[TTS Engine] TTS_PROVIDER={tts_provider}")
 
             # Create providers
-            edge_provider = EdgeTTSProvider()
             kokoro_provider = KokoroProvider()
             piper_provider = PiperProvider()
             chatterbox_provider = ChatterBoxProvider()
 
             # Determine priority based on TTS_PROVIDER
             if tts_provider == 'piper':
-                primary_providers = [piper_provider, edge_provider, kokoro_provider]
+                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
             elif tts_provider == 'chatterbox':
-                primary_providers = [chatterbox_provider, piper_provider, edge_provider]
+                primary_providers = [chatterbox_provider, piper_provider, kokoro_provider]
             elif tts_provider == 'kokoro':
-                primary_providers = [kokoro_provider, piper_provider, edge_provider]
-            elif tts_provider == 'edge_tts':
-                primary_providers = [edge_provider, piper_provider, kokoro_provider]
+                primary_providers = [kokoro_provider, piper_provider, chatterbox_provider]
             elif tts_provider == 'auto':
-                # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro, then Edge
-                primary_providers = [piper_provider, chatterbox_provider, kokoro_provider, edge_provider]
+                # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro
+                primary_providers = [piper_provider, chatterbox_provider, kokoro_provider]
             else:
                 # Default to Piper
-                primary_providers = [piper_provider, edge_provider, kokoro_provider]
+                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
 
             # Try to initialize providers in priority order
             for provider in primary_providers:

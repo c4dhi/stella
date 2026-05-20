@@ -36,6 +36,6 @@ message AudioChunk {
 
 message HealthResponse {
   bool healthy = 1;
-  string provider = 2;          // Active TTS provider (edge_tts, kokoro)
+  string provider = 2;          // Active TTS provider (piper, kokoro, chatterbox)
   string version = 3;
 }

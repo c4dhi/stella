@@ -155,16 +155,17 @@ Configure the speech synthesis provider and settings.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `TTS_PROVIDER` | No | `edge_tts` | TTS provider: `kokoro` (fast local), `elevenlabs` (best quality), `edge_tts` (free cloud), or `auto` (fallback chain) |
+| `TTS_PROVIDER` | No | `piper` | TTS provider: `piper` (fast local CPU), `kokoro` (fast local GPU), `chatterbox` (multilingual), `elevenlabs` (best quality), or `auto` (fallback chain) |
 
 **Provider Comparison:**
 
 | Provider | Latency | Quality | Cost | Notes |
 |----------|---------|---------|------|-------|
-| `kokoro` | 50-100ms | Good | Free | GPU-accelerated, best for low latency |
+| `piper` | 30-80ms | Good | Free | CPU-only, lowest latency |
+| `kokoro` | 50-100ms | Good | Free | GPU-accelerated |
+| `chatterbox` | 100-200ms | Good | Free | Multilingual |
 | `elevenlabs` | 200-300ms | Excellent | Paid | Best voice quality |
-| `edge_tts` | 200-300ms | Good | Free | Microsoft Azure voices |
-| `auto` | Varies | Varies | Mixed | Fallback: kokoro → elevenlabs → edge_tts |
+| `auto` | Varies | Varies | Mixed | Fallback: piper → chatterbox → kokoro |
 
 <details>
 <summary><strong>ElevenLabs Configuration</strong></summary>
