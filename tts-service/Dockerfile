@@ -1,8 +1,11 @@
 # TTS Service Dockerfile
-# Supports Edge TTS (cloud) and Kokoro (local ONNX) providers
-# Build arg ENABLE_GPU=true for CUDA support
+# Supports Kokoro, ChatterBox, and (optionally) Piper providers.
+# Build args:
+#   ENABLE_GPU=true     -> CUDA support
+#   ENABLE_PIPER=true   -> include the Piper provider (GPL-3.0, opt-in)
 
 ARG ENABLE_GPU=false
+ARG ENABLE_PIPER=false
 
 # ============================================================================
 # CPU-only base image
@@ -66,6 +69,17 @@ WORKDIR /app
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Piper TTS (GPL-3.0) is opt-in. Default builds remain license-clean; enable
+# with --build-arg ENABLE_PIPER=true.
+ARG ENABLE_PIPER
+COPY requirements-piper.txt .
+RUN if [ "$ENABLE_PIPER" = "true" ]; then \
+        echo "[TTS] Installing Piper TTS (GPL-3.0 opt-in)..." && \
+        pip install --no-cache-dir -r requirements-piper.txt; \
+    else \
+        echo "[TTS] Skipping Piper TTS (set ENABLE_PIPER=true to include)"; \
+    fi
 
 # Install ChatterBox TTS dependencies explicitly, then ChatterBox itself with --no-deps
 # This avoids the numpy conflict (chatterbox pins numpy<1.26, kokoro needs numpy>=2.0)

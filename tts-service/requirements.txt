@@ -4,8 +4,13 @@ grpcio-tools>=1.60.0
 
 # TTS Engines
 kokoro-onnx>=0.4.0
-piper-tts>=1.2.0
 huggingface_hub>=0.20.0
+
+# Note: piper-tts is an OPTIONAL provider, installed via requirements-piper.txt.
+# It is GPL-3.0 licensed (via its espeak-ng dependency), so it is excluded from
+# the default build to keep the image free of copyleft obligations. To enable it,
+# build the image with --build-arg ENABLE_PIPER=true (the deploy script does this
+# by default).
 
 # Audio Processing
 numpy>=1.24.0

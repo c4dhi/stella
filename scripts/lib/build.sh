@@ -971,7 +971,10 @@ build_images() {
     # Core services
     start_parallel_build "session-management-server" "session-management-server:${IMAGE_TAG}" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:${IMAGE_TAG}" "./stt-service" "$gpu_args"
-    start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$gpu_args"
+    # Piper TTS is GPL-3.0 and opt-in. Internal deploys default to including it;
+    # set ENABLE_PIPER=false to build a permissive-license-only image.
+    local tts_args="$gpu_args --build-arg ENABLE_PIPER=${ENABLE_PIPER:-true}"
+    start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$tts_args"
     start_parallel_build "frontend-ui" "frontend-ui:${IMAGE_TAG}" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:${IMAGE_TAG}" "./message-recorder-python"
 
