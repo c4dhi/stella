@@ -31,9 +31,11 @@ def download_silero_vad():
     print("[Silero VAD Download] Cloning silero-vad repository...")
 
     try:
-        # Clone the repo directly (shallow clone for smaller size)
+        # Pinned to v6.2.1 — upstream has been MIT since v4. Do not move to an
+        # unpinned ref without re-verifying the license.
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", "https://github.com/snakers4/silero-vad.git", local_repo],
+            ["git", "clone", "--depth", "1", "--branch", "v6.2.1",
+             "https://github.com/snakers4/silero-vad.git", local_repo],
             capture_output=True,
             text=True,
             check=True
