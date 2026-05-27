@@ -12,9 +12,9 @@ explicitly opted into** at build time:
   installed; the resulting image becomes a GPL-3.0 covered work and must be
   redistributed under GPL-3.0 terms.
 
-The project's deploy script (`scripts/lib/build.sh`) defaults to
-`ENABLE_PIPER=true` because internal deployments accept the GPL. Anyone
-publishing a downstream image should choose explicitly.
+Both the Dockerfile and the project's deploy script (`scripts/lib/build.sh`)
+default to `ENABLE_PIPER=false`. Internal deployments that want Piper must set
+`ENABLE_PIPER=true` explicitly.
 
 Source code for the Piper provider integration (`src/providers/piper_provider.py`)
 remains under the project's primary license; only the bundled `piper-tts`
