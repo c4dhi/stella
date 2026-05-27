@@ -370,6 +370,30 @@ set_defaults() {
     # GPU Configuration (default - will be auto-detected in production)
     export ENABLE_GPU="${ENABLE_GPU:-false}"
 
+    # Voxtral Configuration. Provider stays inert unless TTS_PROVIDER=voxtral.
+    # When selected we:
+    #   - flip ENABLE_VOXTRAL so the Dockerfile installs Apache-2.0 inference deps,
+    #   - auto-enable ENABLE_GPU (4B model is not realistic on CPU),
+    #   - default VOXTRAL_DTYPE / VOXTRAL_MODEL_ID,
+    #   - leave VOXTRAL_ACCEPT_NC_LICENSE=false. The operator must set it to
+    #     "true" explicitly to allow the init container to download weights.
+    export ENABLE_VOXTRAL="${ENABLE_VOXTRAL:-false}"
+    export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
+    export VOXTRAL_DTYPE="${VOXTRAL_DTYPE:-}"
+    export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
+    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
+        export ENABLE_VOXTRAL="true"
+        if [[ "$ENABLE_GPU" != "true" ]]; then
+            export ENABLE_GPU="true"
+            verbose "TTS_PROVIDER=voxtral: auto-enabled ENABLE_GPU (4B model needs a GPU)"
+        fi
+        if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" != "true" ]]; then
+            warning "TTS_PROVIDER=voxtral selected. Voxtral weights are CC-BY-NC-4.0 (non-commercial)."
+            warning "Set VOXTRAL_ACCEPT_NC_LICENSE=true to acknowledge the license and let the init"
+            warning "container download the weights, OR pre-populate /models/voxtral on the PVC."
+        fi
+    fi
+
     # ONNX Provider (auto-set based on GPU)
     if [[ -z "${ONNX_PROVIDER:-}" ]]; then
         if [[ "$ENABLE_GPU" == "true" ]]; then

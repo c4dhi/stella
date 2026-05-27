@@ -5,6 +5,8 @@
 # - Kokoro model: ~300MB (kokoro-v1.0.onnx)
 # - Kokoro voices: ~200MB (voices-v1.0.bin)
 # - ChatterBox multilingual: ~2GB (ve.pt, t3_mtl23ls_v2.safetensors, s3gen.pt, etc.)
+# - Voxtral 4B TTS (opt-in, CC-BY-NC-4.0): ~8GB. Operator-supplied — STELLA
+#   does NOT download these. Bump storage to >=20Gi when enabling Voxtral.
 # =============================================================================
 
 apiVersion: v1

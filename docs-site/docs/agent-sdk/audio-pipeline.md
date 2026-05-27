@@ -166,6 +166,58 @@ pipeline = AudioPipeline(
 )
 ```
 
+### Voxtral (opt-in, non-commercial weights)
+
+Local Voxtral 4B TTS (`mistralai/Voxtral-4B-TTS-2603`). This is an **opt-in**
+provider: STELLA ships the integration code but does **not** download or
+bundle the model weights, which are released under **CC-BY-NC-4.0**
+(non-commercial use only). Operators who enable Voxtral are responsible for
+downloading the weights and complying with the model license themselves.
+
+To enable Voxtral:
+
+1. Build the TTS service with the opt-in flag — this installs the
+   (Apache-2.0) inference dependencies. STELLA does not fetch any weights:
+
+   ```bash
+   docker build --build-arg ENABLE_VOXTRAL=true -t stella/tts-service tts-service/
+   ```
+
+2. As the operator, download the weights yourself (this step is your
+   acceptance of CC-BY-NC-4.0):
+
+   ```bash
+   huggingface-cli download mistralai/Voxtral-4B-TTS-2603 \
+     --local-dir /models/voxtral-4b-tts
+   ```
+
+3. Point the provider at the weights at runtime:
+
+   ```bash
+   TTS_PROVIDER=voxtral
+   VOXTRAL_MODEL_PATH=/models/voxtral-4b-tts
+   VOXTRAL_DEVICE=auto       # auto | cuda | cpu | mps
+   VOXTRAL_DTYPE=bfloat16    # bfloat16 | float16 | float32
+   ```
+
+```python
+pipeline = AudioPipeline(
+    tts_provider="voxtral",
+)
+```
+
+**Pros:**
+- High quality, expressive multilingual voice
+- Local inference, no API costs
+
+**Cons:**
+- Non-commercial license on the weights (operator obligation)
+- ~4B parameters — GPU strongly recommended
+- Weights must be obtained and stored by the operator
+
+See `NOTICE.md` and `tts-service/NOTICE.md` for the full license split between
+STELLA's permissively-licensed code and the operator-supplied CC-BY-NC weights.
+
 ## Pipeline Methods
 
 ### speech_to_text

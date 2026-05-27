@@ -1,11 +1,17 @@
 # TTS Service Dockerfile
-# Supports Kokoro, ChatterBox, and (optionally) Piper providers.
+# Supports Kokoro, ChatterBox, and (optionally) Piper / Voxtral providers.
 # Build args:
-#   ENABLE_GPU=true     -> CUDA support
-#   ENABLE_PIPER=true   -> include the Piper provider (GPL-3.0, opt-in)
+#   ENABLE_GPU=true      -> CUDA support
+#   ENABLE_PIPER=true    -> include the Piper provider (GPL-3.0, opt-in)
+#   ENABLE_VOXTRAL=true  -> install Voxtral inference deps (Apache-2.0).
+#                           NO model weights are downloaded; the operator
+#                           must supply them at runtime via
+#                           VOXTRAL_MODEL_PATH and accept the CC-BY-NC-4.0
+#                           model license themselves.
 
 ARG ENABLE_GPU=false
 ARG ENABLE_PIPER=false
+ARG ENABLE_VOXTRAL=false
 
 # ============================================================================
 # CPU-only base image
@@ -97,6 +103,19 @@ RUN pip install --no-cache-dir \
     spacy-pkuseg \
     transformers
 RUN pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6
+
+# Voxtral TTS is opt-in. Only the inference dependencies (Apache-2.0) are
+# installed here; STELLA never downloads or bundles the model weights, which
+# are CC-BY-NC-4.0. Operators that opt in must supply weights at runtime via
+# VOXTRAL_MODEL_PATH and accept the model's non-commercial license terms.
+ARG ENABLE_VOXTRAL
+COPY requirements-voxtral.txt .
+RUN if [ "$ENABLE_VOXTRAL" = "true" ]; then \
+        echo "[TTS] Installing Voxtral inference deps (model weights NOT bundled — CC-BY-NC-4.0 weights are the operator's responsibility)..." && \
+        pip install --no-cache-dir -r requirements-voxtral.txt; \
+    else \
+        echo "[TTS] Skipping Voxtral (set ENABLE_VOXTRAL=true to install inference deps)"; \
+    fi
 
 # Install ONNX Runtime (GPU or CPU based on build arg)
 ARG ENABLE_GPU

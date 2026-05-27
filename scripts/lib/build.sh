@@ -973,7 +973,10 @@ build_images() {
     start_parallel_build "stt-service" "stt-service:${IMAGE_TAG}" "./stt-service" "$gpu_args"
     # Piper TTS is GPL-3.0 and opt-in. Default off to keep builds license-clean;
     # set ENABLE_PIPER=true to include Piper (resulting image becomes GPL-3.0).
-    local tts_args="$gpu_args --build-arg ENABLE_PIPER=${ENABLE_PIPER:-false}"
+    # Voxtral is opt-in too: ENABLE_VOXTRAL=true installs the Apache-2.0
+    # inference deps. Model weights are CC-BY-NC-4.0 and must be supplied by
+    # the operator at runtime — STELLA never downloads or ships them.
+    local tts_args="$gpu_args --build-arg ENABLE_PIPER=${ENABLE_PIPER:-false} --build-arg ENABLE_VOXTRAL=${ENABLE_VOXTRAL:-false}"
     start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$tts_args"
     start_parallel_build "frontend-ui" "frontend-ui:${IMAGE_TAG}" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:${IMAGE_TAG}" "./message-recorder-python"

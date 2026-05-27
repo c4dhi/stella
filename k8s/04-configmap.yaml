@@ -73,10 +73,18 @@ data:
   WHISPER_INITIAL_PROMPT: "${WHISPER_INITIAL_PROMPT}"            # Domain context prompt for improved accuracy
 
   # Text-to-Speech (TTS) Provider
-  # Options: piper (fast local CPU), kokoro (local GPU), chatterbox (multilingual), elevenlabs (best quality), auto
+  # Options: piper (fast local CPU), kokoro (local GPU), chatterbox (multilingual), voxtral (4B local, non-commercial weights), elevenlabs (best quality), auto
   TTS_PROVIDER: "${TTS_PROVIDER}"
   ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID}"
   ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"
+
+  # Voxtral (only used when TTS_PROVIDER=voxtral)
+  # The model weights are CC-BY-NC-4.0. The init container will only download
+  # them if VOXTRAL_ACCEPT_NC_LICENSE=true — that flag is the operator's
+  # explicit acceptance of the non-commercial license terms.
+  VOXTRAL_MODEL_ID: "${VOXTRAL_MODEL_ID}"
+  VOXTRAL_DTYPE: "${VOXTRAL_DTYPE}"
+  VOXTRAL_ACCEPT_NC_LICENSE: "${VOXTRAL_ACCEPT_NC_LICENSE}"
 
   # ONNX Runtime Provider Configuration
   # Set by start-k8s.sh based on ENABLE_GPU setting

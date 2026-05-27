@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, TTSProvider
+from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, VoxtralProvider, TTSProvider
 
 
 class TTSEngine:
@@ -39,14 +39,20 @@ class TTSEngine:
             kokoro_provider = KokoroProvider()
             piper_provider = PiperProvider()
             chatterbox_provider = ChatterBoxProvider()
+            voxtral_provider = VoxtralProvider()
 
-            # Determine priority based on TTS_PROVIDER
+            # Determine priority based on TTS_PROVIDER. Voxtral is never in
+            # the default fallback chain — it is CC-BY-NC-licensed weights
+            # supplied by the operator, so it must be opted into explicitly
+            # via TTS_PROVIDER=voxtral.
             if tts_provider == 'piper':
                 primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
             elif tts_provider == 'chatterbox':
                 primary_providers = [chatterbox_provider, piper_provider, kokoro_provider]
             elif tts_provider == 'kokoro':
                 primary_providers = [kokoro_provider, piper_provider, chatterbox_provider]
+            elif tts_provider == 'voxtral':
+                primary_providers = [voxtral_provider, piper_provider, kokoro_provider, chatterbox_provider]
             elif tts_provider == 'auto':
                 # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro
                 primary_providers = [piper_provider, chatterbox_provider, kokoro_provider]

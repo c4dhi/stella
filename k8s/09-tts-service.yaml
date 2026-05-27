@@ -104,8 +104,39 @@ spec:
               echo "[TTS Init] ChatterBox model download complete"
             fi
 
-          elif [ "$TTS_PROVIDER" != "piper" ] && [ "$TTS_PROVIDER" != "kokoro" ]; then
-            echo "[TTS Init] TTS_PROVIDER=$TTS_PROVIDER - no local models needed"
+          fi
+
+          # ================================================================
+          # Voxtral 4B TTS (when TTS_PROVIDER=voxtral)
+          #
+          # Weights are CC-BY-NC-4.0 (non-commercial). STELLA only downloads
+          # them when the operator explicitly sets
+          # VOXTRAL_ACCEPT_NC_LICENSE=true in the ConfigMap — that env var
+          # constitutes the operator's acceptance of the model license.
+          # ================================================================
+          if [ "$TTS_PROVIDER" = "voxtral" ]; then
+            if [ "${VOXTRAL_ACCEPT_NC_LICENSE:-false}" != "true" ]; then
+              echo "[TTS Init] TTS_PROVIDER=voxtral but VOXTRAL_ACCEPT_NC_LICENSE!=true."
+              echo "[TTS Init] The Voxtral model is CC-BY-NC-4.0 (non-commercial)."
+              echo "[TTS Init] Set VOXTRAL_ACCEPT_NC_LICENSE=true in the ConfigMap to"
+              echo "[TTS Init] acknowledge the license and let the init container fetch"
+              echo "[TTS Init] the weights, OR populate /models/voxtral yourself."
+            else
+              VOXTRAL_VERSION_FILE="/models/voxtral/.version"
+              VOXTRAL_VERSION="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
+
+              if [ -f "$VOXTRAL_VERSION_FILE" ] && [ "$(cat $VOXTRAL_VERSION_FILE)" = "$VOXTRAL_VERSION" ]; then
+                echo "[TTS Init] Voxtral weights already present (version: $VOXTRAL_VERSION)"
+              else
+                echo "[TTS Init] Downloading Voxtral weights ($VOXTRAL_VERSION) — operator has"
+                echo "[TTS Init] accepted CC-BY-NC-4.0 by setting VOXTRAL_ACCEPT_NC_LICENSE=true."
+                mkdir -p /models/voxtral
+                pip install --no-cache-dir --quiet "huggingface_hub[cli]>=0.20.0"
+                huggingface-cli download "$VOXTRAL_VERSION" --local-dir /models/voxtral
+                echo "$VOXTRAL_VERSION" > "$VOXTRAL_VERSION_FILE"
+                echo "[TTS Init] Voxtral weight download complete"
+              fi
+            fi
           fi
 
           echo "[TTS Init] Model initialization complete!"
@@ -115,6 +146,24 @@ spec:
             configMapKeyRef:
               name: stella-ai-config
               key: TTS_PROVIDER
+              optional: true
+        - name: VOXTRAL_ACCEPT_NC_LICENSE
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VOXTRAL_ACCEPT_NC_LICENSE
+              optional: true
+        - name: VOXTRAL_MODEL_ID
+          valueFrom:
+            configMapKeyRef:
+              name: stella-ai-config
+              key: VOXTRAL_MODEL_ID
+              optional: true
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: stella-secrets
+              key: HF_TOKEN
               optional: true
         volumeMounts:
         - name: model-cache
@@ -144,6 +193,10 @@ spec:
         - name: model-cache
           mountPath: /root/.cache/piper
           subPath: piper
+        # VOXTRAL: - name: model-cache
+        # VOXTRAL:   mountPath: /models/voxtral
+        # VOXTRAL:   subPath: voxtral
+        # VOXTRAL:   readOnly: true
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -165,13 +218,31 @@ spec:
           value: "/root/.cache/chatterbox"
         - name: PIPER_CACHE_DIR
           value: "/root/.cache/piper"
+        # Voxtral (auto-enabled when TTS_PROVIDER=voxtral). Weights are
+        # CC-BY-NC-4.0 and not shipped by STELLA — the init container will
+        # only download them if VOXTRAL_ACCEPT_NC_LICENSE=true is set in the
+        # ConfigMap (explicit operator acceptance of the model license).
+        # VOXTRAL: - name: VOXTRAL_MODEL_PATH
+        # VOXTRAL:   value: "/models/voxtral"
+        # VOXTRAL: - name: VOXTRAL_DEVICE
+        # VOXTRAL:   value: "auto"
+        # VOXTRAL: - name: VOXTRAL_DTYPE
+        # VOXTRAL:   valueFrom:
+        # VOXTRAL:     configMapKeyRef:
+        # VOXTRAL:       name: stella-ai-config
+        # VOXTRAL:       key: VOXTRAL_DTYPE
+        # VOXTRAL:       optional: true
+        # VOXTRAL: - name: PYTORCH_ENABLE_MPS_FALLBACK
+        # VOXTRAL:   value: "1"
         resources:
           requests:
-            memory: "2Gi"
+            # VOXTRAL_DISABLE: memory: "2Gi"
+            # VOXTRAL: memory: "10Gi"
             cpu: "250m"
             # GPU: nvidia.com/gpu: "1"
           limits:
-            memory: "6Gi"
+            # VOXTRAL_DISABLE: memory: "6Gi"
+            # VOXTRAL: memory: "16Gi"
             cpu: "2000m"
             # GPU: nvidia.com/gpu: "1"
         readinessProbe:
@@ -180,7 +251,8 @@ spec:
             - python
             - -c
             - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
-          initialDelaySeconds: 10
+          # VOXTRAL_DISABLE: initialDelaySeconds: 10
+          # VOXTRAL: initialDelaySeconds: 90
           periodSeconds: 10
           timeoutSeconds: 5
         livenessProbe:
@@ -189,7 +261,8 @@ spec:
             - python
             - -c
             - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
-          initialDelaySeconds: 30
+          # VOXTRAL_DISABLE: initialDelaySeconds: 30
+          # VOXTRAL: initialDelaySeconds: 120
           periodSeconds: 30
           timeoutSeconds: 10
       # ======================================================================

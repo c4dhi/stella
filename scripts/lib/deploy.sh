@@ -124,6 +124,9 @@ generate_configmap() {
         -e "s|\${LIVEKIT_TURN_DOMAIN}|${LIVEKIT_TURN_DOMAIN:-localhost}|g" \
         -e "s|\${ELEVENLABS_VOICE_ID}|${ELEVENLABS_VOICE_ID:-}|g" \
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
+        -e "s|\${VOXTRAL_MODEL_ID}|${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}|g" \
+        -e "s|\${VOXTRAL_DTYPE}|${VOXTRAL_DTYPE:-}|g" \
+        -e "s|\${VOXTRAL_ACCEPT_NC_LICENSE}|${VOXTRAL_ACCEPT_NC_LICENSE:-false}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
         -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
@@ -286,6 +289,30 @@ generate_gpu_manifests() {
             sed -i '/# GPU:   value: "all"/{s/# GPU: //;}' "$sms_manifest"
         fi
         verbose "GPU manifests: runtimeClassName=nvidia + NVIDIA_VISIBLE_DEVICES=all (shared GPU mode)"
+    fi
+
+    # Enable Voxtral TTS provider manifest lines when TTS_PROVIDER=voxtral.
+    # Strips the `# VOXTRAL: ` marker prefix (uncommenting the block) and
+    # deletes `# VOXTRAL_DISABLE: ` lines (which hold the lower-resource
+    # defaults used by every other provider). Mirrors the `# GPU: ` pattern.
+    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
+        verbose "Enabling Voxtral TTS manifest lines (mount, env, resources, probes)"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            sed -i '' 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+        else
+            sed -i 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+        fi
+    else
+        # Non-Voxtral providers: drop the VOXTRAL: lines, keep the DISABLE defaults.
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            sed -i '' '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+        else
+            sed -i '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+        fi
     fi
 
     # NOTE: Custom DNS is now applied globally via apply_dns_to_all_manifests()

@@ -1,0 +1,22 @@
+# Voxtral TTS — OPTIONAL provider, installed only when ENABLE_VOXTRAL=true.
+#
+# IMPORTANT — license note for operators:
+#
+#   The integration code under `src/providers/voxtral_provider.py` is part of
+#   STELLA and is distributed under STELLA's permissive license. The Python
+#   packages listed below (transformers, mistral-common, etc.) are themselves
+#   permissively licensed (Apache-2.0) and do NOT contaminate the image.
+#
+#   However, the *model weights* this provider loads
+#   (`mistralai/Voxtral-4B-TTS-2603`) are released under
+#   **Creative Commons Attribution-NonCommercial 4.0 (CC-BY-NC-4.0)**.
+#
+#   STELLA does NOT bundle, download, or distribute these weights. Operators
+#   who choose to enable Voxtral are responsible for obtaining the weights
+#   themselves and complying with the CC-BY-NC-4.0 terms — including the
+#   restriction against commercial use.
+#
+#   See `tts-service/NOTICE.md` for the full opt-in policy.
+
+transformers>=4.46.0
+mistral-common>=1.5.0

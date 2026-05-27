@@ -122,11 +122,15 @@ get_var_metadata() {
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
 
         # --- TTS ---
-        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,elevenlabs,auto|" ;;
+        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,chatterbox,voxtral,elevenlabs,auto|" ;;
         ELEVENLABS_VOICE_ID)   echo "tts|text|optional|Xb7hH8MSUJpSbSDYk0k2|Xb7hH8MSUJpSbSDYk0k2|ElevenLabs voice ID||" ;;
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
+        ENABLE_VOXTRAL)        echo "tts|boolean|optional|false|false|Install Voxtral inference deps in tts-service image (Apache-2.0). Auto-enabled when TTS_PROVIDER=voxtral.||" ;;
+        VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights||" ;;
+        VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device)|,bfloat16,float16,float32|" ;;
+        VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|Acknowledge CC-BY-NC-4.0 on Voxtral weights (required to download)||" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -182,6 +186,10 @@ ALL_VARIABLES=(
     "ELEVENLABS_MODEL_ID"
     "ELEVENLABS_STABILITY"
     "ELEVENLABS_SIMILARITY_BOOST"
+    "ENABLE_VOXTRAL"
+    "VOXTRAL_MODEL_ID"
+    "VOXTRAL_DTYPE"
+    "VOXTRAL_ACCEPT_NC_LICENSE"
     "ENABLE_GPU"
     "ONNX_PROVIDER"
     "KUBERNETES_NAMESPACE"
@@ -325,6 +333,8 @@ get_option_description() {
         # TTS Provider
         TTS_PROVIDER:piper)      echo "Fast local TTS via Piper (CPU-friendly)" ;;
         TTS_PROVIDER:kokoro)     echo "Fast local TTS (50-100ms, GPU-accelerated)" ;;
+        TTS_PROVIDER:chatterbox) echo "Local multilingual TTS (EN/DE, GPU recommended)" ;;
+        TTS_PROVIDER:voxtral)    echo "Local Voxtral 4B TTS (GPU required; CC-BY-NC-4.0 weights, operator-supplied)" ;;
         TTS_PROVIDER:elevenlabs) echo "Premium cloud TTS (best quality, costs apply)" ;;
         TTS_PROVIDER:auto)       echo "Automatic fallback chain" ;;
 
