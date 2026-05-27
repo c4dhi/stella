@@ -340,6 +340,14 @@ configure_section() {
     while [[ $var_idx -lt $num_vars ]]; do
         local var_name="${var_array[$var_idx]}"
 
+        # Hide provider-specific knobs when their provider isn't selected
+        # (e.g. Voxtral license acknowledgement only matters when the user
+        # actually picked TTS_PROVIDER=voxtral earlier in the section).
+        if should_skip_wizard_var "$var_name" "$(get_config_value TTS_PROVIDER)"; then
+            ((var_idx++))
+            continue
+        fi
+
         # Clear screen to stderr
         printf '\033[2J\033[H' >&2
 

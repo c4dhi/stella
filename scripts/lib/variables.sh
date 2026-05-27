@@ -129,8 +129,8 @@ get_var_metadata() {
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
         ENABLE_VOXTRAL)        echo "tts|boolean|optional|false|false|Install Voxtral inference deps in tts-service image (Apache-2.0). Auto-enabled when TTS_PROVIDER=voxtral.||" ;;
         VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights||" ;;
-        VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device)|,bfloat16,float16,float32|" ;;
-        VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|Acknowledge CC-BY-NC-4.0 on Voxtral weights (required to download)||" ;;
+        VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device: bf16 on Ampere+ GPUs, fp16 on MPS/T4, fp32 on CPU)|,bfloat16,float16,float32|" ;;
+        VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -246,6 +246,25 @@ get_category_vars() {
             echo "$var_name"
         fi
     done
+}
+
+# Return 0 (true) when a variable should be skipped in the wizard given the
+# currently-selected values. Provider-specific knobs are noise unless the
+# user picked that provider — most importantly, the CC-BY-NC license
+# acknowledgement should only appear when the user has actually chosen
+# Voxtral. The caller passes the current TTS_PROVIDER value so this helper
+# works for both wizard implementations.
+# Usage: should_skip_wizard_var "VAR_NAME" "current_tts_provider"
+should_skip_wizard_var() {
+    local var_name="$1"
+    local tts_provider="${2:-}"
+
+    case "$var_name" in
+        ENABLE_VOXTRAL|VOXTRAL_*)
+            [[ "$tts_provider" != "voxtral" ]] && return 0
+            ;;
+    esac
+    return 1
 }
 
 # Check if variable is required for given environment

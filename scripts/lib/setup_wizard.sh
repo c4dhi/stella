@@ -439,6 +439,12 @@ setup_configure_section() {
     while [[ $var_idx -lt $num_vars ]]; do
         local var_name="${var_array[$var_idx]}"
 
+        # Hide provider-specific knobs when their provider isn't selected.
+        if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
+            ((var_idx++))
+            continue
+        fi
+
         # Clear screen
         printf '\033[2J\033[H'
 
@@ -623,6 +629,12 @@ configure_optional_section() {
 
     while [[ $var_idx -lt $num_vars ]]; do
         local var_name="${var_array[$var_idx]}"
+
+        # Hide provider-specific knobs when their provider isn't selected.
+        if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
+            ((var_idx++))
+            continue
+        fi
 
         # Clear screen
         printf '\033[2J\033[H'
