@@ -294,12 +294,10 @@ section_menu() {
                 fi
                 ;;
             UP|k|K)
-                ((selected--))
-                [[ $selected -lt 0 ]] && selected=$((num_options - 1))
+                selected=$(( (selected - 1 + num_options) % num_options ))
                 ;;
             DOWN|j|J)
-                ((selected++))
-                [[ $selected -ge $num_options ]] && selected=0
+                selected=$(( (selected + 1) % num_options ))
                 ;;
         esac
     done
