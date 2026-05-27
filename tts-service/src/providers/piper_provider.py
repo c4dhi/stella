@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from .base import TTSProvider
+from latency_probe import run_latency_probe
 
 # Check if piper is available
 try:
@@ -89,6 +90,8 @@ class PiperProvider(TTSProvider):
 
             self._initialized = True
             print(f"[Piper] Initialized successfully with voice: {self._default_voice}")
+            if os.getenv("MODEL_LATENCY_PROBE_ENABLED", "false").lower() == "true":
+                asyncio.create_task(self._run_latency_probe())
             return True
 
         except Exception as e:
@@ -96,6 +99,24 @@ class PiperProvider(TTSProvider):
             import traceback
             traceback.print_exc()
             return False
+
+    async def _run_latency_probe(self) -> None:
+        async def infer_once() -> None:
+            result = await self.synthesize("Hello World.")
+            if result is None:
+                raise RuntimeError("Piper synthesize returned no audio")
+
+        await run_latency_probe(
+            provider=self.name,
+            provider_type="tts",
+            inference_fn=infer_once,
+            metadata={
+                "model": self._default_voice,
+                "voice": self._default_voice,
+                "device": "cpu",
+                "language": "",
+            },
+        )
 
     async def synthesize(
         self,

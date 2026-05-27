@@ -1,5 +1,6 @@
 """Sherpa-ONNX STT provider - lightweight streaming model."""
 
+import asyncio
 import os
 import time
 import uuid
@@ -7,6 +8,7 @@ from typing import List, Optional
 import numpy as np
 
 from .base import STTProvider, STTSession
+from latency_probe import run_latency_probe
 import stt_pb2
 
 # Try to import sherpa-onnx
@@ -328,10 +330,35 @@ class SherpaProvider(STTProvider):
         if self.recognizer:
             self.model_ready = True
             print(f"[SherpaProvider] Model ready at: {model_dir}")
+            if os.getenv("MODEL_LATENCY_PROBE_ENABLED", "false").lower() == "true":
+                asyncio.create_task(self._run_latency_probe())
             return True
         else:
             print("[SherpaProvider] Failed to create recognizer")
             return False
+
+    async def _run_latency_probe(self) -> None:
+        if not self.recognizer:
+            return
+
+        async def infer_once() -> None:
+            waveform = np.full(16000, 0.001, dtype=np.float32)
+            stream = self.recognizer.create_stream()
+            stream.accept_waveform(sample_rate=16000, waveform=waveform)
+            while self.recognizer.is_ready(stream):
+                self.recognizer.decode_stream(stream)
+            self.recognizer.get_result(stream)
+
+        await run_latency_probe(
+            provider=self.name,
+            provider_type="stt",
+            inference_fn=infer_once,
+            metadata={
+                "model": "sherpa-onnx-streaming-zipformer-en-2023-06-21",
+                "device": "cpu",
+                "onnx_provider": os.getenv("ONNX_PROVIDER", "CPUExecutionProvider"),
+            },
+        )
 
     def _create_recognizer(self):
         """Create a new sherpa-onnx recognizer instance."""

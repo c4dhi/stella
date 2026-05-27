@@ -7,6 +7,7 @@ from typing import Optional, Tuple, List
 import numpy as np
 
 from .base import TTSProvider
+from latency_probe import run_latency_probe
 
 # Check if kokoro-onnx is available
 try:
@@ -120,6 +121,8 @@ class KokoroProvider(TTSProvider):
 
             self._initialized = True
             print(f"[Kokoro] Initialized successfully with voice: {self._default_voice}")
+            if os.getenv("MODEL_LATENCY_PROBE_ENABLED", "false").lower() == "true":
+                asyncio.create_task(self._run_latency_probe())
             return True
 
         except Exception as e:
@@ -127,6 +130,25 @@ class KokoroProvider(TTSProvider):
             import traceback
             traceback.print_exc()
             return False
+
+    async def _run_latency_probe(self) -> None:
+        async def infer_once() -> None:
+            result = await self.synthesize("Hello World.")
+            if result is None:
+                raise RuntimeError("Kokoro synthesize returned no audio")
+
+        await run_latency_probe(
+            provider=self.name,
+            provider_type="tts",
+            inference_fn=infer_once,
+            metadata={
+                "model": "kokoro-v1.0.onnx",
+                "voice": self._default_voice,
+                "device": os.getenv("ONNX_PROVIDER", "CPUExecutionProvider"),
+                "onnx_provider": os.getenv("ONNX_PROVIDER", "CPUExecutionProvider"),
+                "language": "",
+            },
+        )
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
         """Split text into chunks that fit within Kokoro's 510 token limit.
