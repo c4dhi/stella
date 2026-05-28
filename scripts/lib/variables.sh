@@ -266,8 +266,14 @@ should_skip_wizard_var() {
     local tts_provider="${2:-}"
 
     case "$var_name" in
-        ENABLE_VOXTRAL|VOXTRAL_*|HF_TOKEN)
+        ENABLE_VOXTRAL|VOXTRAL_*)
             [[ "$tts_provider" != "voxtral" ]] && return 0
+            ;;
+        HF_TOKEN)
+            [[ "$tts_provider" != "voxtral" ]] && return 0
+            ;;
+        ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|ELEVENLABS_MODEL_ID|ELEVENLABS_STABILITY|ELEVENLABS_SIMILARITY_BOOST)
+            [[ "$tts_provider" != "elevenlabs" ]] && return 0
             ;;
     esac
     return 1
