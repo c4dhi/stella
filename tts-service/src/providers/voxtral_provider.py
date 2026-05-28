@@ -34,6 +34,13 @@ except ImportError:
     AutoProcessor = None
     AutoModel = None
 
+try:
+    from transformers import BitsAndBytesConfig
+    BNB_AVAILABLE = True
+except ImportError:
+    BNB_AVAILABLE = False
+    BitsAndBytesConfig = None
+
 
 DEFAULT_SAMPLE_RATE = 24000
 
@@ -114,6 +121,46 @@ class VoxtralProvider(TTSProvider):
             return torch.float16
         return torch.float32
 
+    def _build_quantization_config(self, device: str):
+        """Return a BitsAndBytesConfig when 4-bit/8-bit load is requested.
+
+        Driven by env vars so the same image can run full-precision on a beefy
+        GPU (L4/A100) and 4-bit on a tight one (T4) without rebuilding.
+        Returns None when quant is disabled or not viable on this device.
+        """
+        load_4bit = os.getenv("VOXTRAL_LOAD_IN_4BIT", "false").lower() == "true"
+        load_8bit = os.getenv("VOXTRAL_LOAD_IN_8BIT", "false").lower() == "true"
+
+        if not (load_4bit or load_8bit):
+            return None
+
+        if device != "cuda":
+            print(
+                f"[Voxtral] Ignoring VOXTRAL_LOAD_IN_{'4BIT' if load_4bit else '8BIT'}=true: "
+                f"bitsandbytes requires CUDA but device={device}. Running unquantized."
+            )
+            return None
+
+        if not BNB_AVAILABLE:
+            print(
+                "[Voxtral] VOXTRAL_LOAD_IN_4BIT/8BIT was requested but bitsandbytes is "
+                "not installed. Rebuild the image with ENABLE_VOXTRAL=true."
+            )
+            return None
+
+        if load_4bit:
+            quant_type = os.getenv("VOXTRAL_4BIT_QUANT_TYPE", "nf4")
+            print(f"[Voxtral] Loading in 4-bit ({quant_type}) via bitsandbytes")
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type=quant_type,
+                bnb_4bit_use_double_quant=True,
+            )
+
+        print("[Voxtral] Loading in 8-bit via bitsandbytes")
+        return BitsAndBytesConfig(load_in_8bit=True)
+
     async def initialize(self) -> bool:
         if not VOXTRAL_DEPS_AVAILABLE:
             print("[Voxtral] transformers/torch not installed — build with ENABLE_VOXTRAL=true to opt in")
@@ -158,6 +205,8 @@ class VoxtralProvider(TTSProvider):
                 lambda: AutoProcessor.from_pretrained(self._model_path, trust_remote_code=True),
             )
 
+            quant_config = self._build_quantization_config(self._device)
+
             load_kwargs = dict(
                 torch_dtype=self._dtype,
                 trust_remote_code=True,
@@ -165,10 +214,17 @@ class VoxtralProvider(TTSProvider):
             )
             if attn_impl:
                 load_kwargs["attn_implementation"] = attn_impl
+            if quant_config is not None:
+                # bitsandbytes handles device placement during load via
+                # device_map; .to(device) afterwards is unsupported.
+                load_kwargs["quantization_config"] = quant_config
+                load_kwargs["device_map"] = self._device
 
             def _load_model():
                 model = AutoModel.from_pretrained(self._model_path, **load_kwargs)
-                return model.to(self._device).eval()
+                if quant_config is None:
+                    model = model.to(self._device)
+                return model.eval()
 
             self._model = await loop.run_in_executor(None, _load_model)
 

@@ -28,8 +28,8 @@ opt-in TTS provider. The licensing split here is important:
 - The provider **code** at `src/providers/voxtral_provider.py` is part of
   STELLA and is distributed under the project's primary permissive license.
 - The Python **inference dependencies** in `requirements-voxtral.txt`
-  (`transformers`, `mistral-common`) are Apache-2.0 — they do not
-  contaminate the image.
+  (`transformers`, `mistral-common`, `bitsandbytes`) are Apache-2.0 / MIT
+  — they do not contaminate the image.
 - The Voxtral **model weights** themselves are released under
   **Creative Commons Attribution-NonCommercial 4.0 (CC-BY-NC-4.0)**.
 

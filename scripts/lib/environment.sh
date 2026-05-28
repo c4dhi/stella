@@ -381,6 +381,8 @@ set_defaults() {
     export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
     export VOXTRAL_DTYPE="${VOXTRAL_DTYPE:-}"
     export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
+    export VOXTRAL_LOAD_IN_4BIT="${VOXTRAL_LOAD_IN_4BIT:-false}"
+    export VOXTRAL_LOAD_IN_8BIT="${VOXTRAL_LOAD_IN_8BIT:-false}"
     if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
         export ENABLE_VOXTRAL="true"
         if [[ "$ENABLE_GPU" != "true" ]]; then

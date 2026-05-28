@@ -127,6 +127,8 @@ generate_configmap() {
         -e "s|\${VOXTRAL_MODEL_ID}|${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}|g" \
         -e "s|\${VOXTRAL_DTYPE}|${VOXTRAL_DTYPE:-}|g" \
         -e "s|\${VOXTRAL_ACCEPT_NC_LICENSE}|${VOXTRAL_ACCEPT_NC_LICENSE:-false}|g" \
+        -e "s|\${VOXTRAL_LOAD_IN_4BIT}|${VOXTRAL_LOAD_IN_4BIT:-false}|g" \
+        -e "s|\${VOXTRAL_LOAD_IN_8BIT}|${VOXTRAL_LOAD_IN_8BIT:-false}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
         -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \

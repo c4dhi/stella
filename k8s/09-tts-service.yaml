@@ -234,6 +234,18 @@ spec:
         # VOXTRAL:       optional: true
         # VOXTRAL: - name: PYTORCH_ENABLE_MPS_FALLBACK
         # VOXTRAL:   value: "1"
+        # VOXTRAL: - name: VOXTRAL_LOAD_IN_4BIT
+        # VOXTRAL:   valueFrom:
+        # VOXTRAL:     configMapKeyRef:
+        # VOXTRAL:       name: stella-ai-config
+        # VOXTRAL:       key: VOXTRAL_LOAD_IN_4BIT
+        # VOXTRAL:       optional: true
+        # VOXTRAL: - name: VOXTRAL_LOAD_IN_8BIT
+        # VOXTRAL:   valueFrom:
+        # VOXTRAL:     configMapKeyRef:
+        # VOXTRAL:       name: stella-ai-config
+        # VOXTRAL:       key: VOXTRAL_LOAD_IN_8BIT
+        # VOXTRAL:       optional: true
         resources:
           requests:
             # VOXTRAL_DISABLE: memory: "2Gi"

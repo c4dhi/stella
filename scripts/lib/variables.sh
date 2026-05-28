@@ -131,6 +131,8 @@ get_var_metadata() {
         VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights||" ;;
         VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device: bf16 on Ampere+ GPUs, fp16 on MPS/T4, fp32 on CPU)|,bfloat16,float16,float32|" ;;
         VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
+        VOXTRAL_LOAD_IN_4BIT)  echo "tts|boolean|optional|false|false|Load Voxtral in 4-bit via bitsandbytes (CUDA only). ~2.5GB VRAM, recommended for Tesla T4 / shared GPUs. Leave false on L4/A100.||" ;;
+        VOXTRAL_LOAD_IN_8BIT)  echo "tts|boolean|optional|false|false|Load Voxtral in 8-bit via bitsandbytes (CUDA only). ~5GB VRAM. Usually 4bit is the better choice.||" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -190,6 +192,8 @@ ALL_VARIABLES=(
     "VOXTRAL_MODEL_ID"
     "VOXTRAL_DTYPE"
     "VOXTRAL_ACCEPT_NC_LICENSE"
+    "VOXTRAL_LOAD_IN_4BIT"
+    "VOXTRAL_LOAD_IN_8BIT"
     "ENABLE_GPU"
     "ONNX_PROVIDER"
     "KUBERNETES_NAMESPACE"

@@ -20,3 +20,8 @@
 
 transformers>=4.46.0
 mistral-common>=1.5.0
+# bitsandbytes powers VOXTRAL_LOAD_IN_4BIT / _8BIT (CUDA-only). Adding it to the
+# default opt-in image keeps the env-var-driven on-switch self-contained; the
+# package is MIT-licensed so the image's license posture is unchanged. It is a
+# no-op when the quant knobs are left at their defaults.
+bitsandbytes>=0.43.0; platform_system == "Linux"

@@ -215,6 +215,12 @@ pipeline = AudioPipeline(
 - ~4B parameters — GPU strongly recommended
 - Weights must be obtained and stored by the operator
 
+**Low-VRAM CUDA GPUs (e.g. Tesla T4 16 GB):** set
+`VOXTRAL_LOAD_IN_4BIT=true` to load via bitsandbytes nf4 quantization
+(~2.5 GB VRAM, bf16 compute, near-zero quality loss). Leave it `false` on
+L4 / A100 / etc. where the full bf16 model fits with headroom. The env
+var is CUDA-only — it is silently ignored on MPS/CPU.
+
 See `NOTICE.md` and `tts-service/NOTICE.md` for the full license split between
 STELLA's permissively-licensed code and the operator-supplied CC-BY-NC weights.
 
