@@ -134,6 +134,7 @@ get_var_metadata() {
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading the Voxtral weights. Get one at https://huggingface.co/settings/tokens after clicking 'Agree' on the model card.||" ;;
         VOXTRAL_LOAD_IN_4BIT)  echo "tts|boolean|optional|false|false|Load Voxtral in 4-bit via bitsandbytes (CUDA only). ~2.5GB VRAM, recommended for Tesla T4 / shared GPUs. Leave false on L4/A100.||" ;;
         VOXTRAL_LOAD_IN_8BIT)  echo "tts|boolean|optional|false|false|Load Voxtral in 8-bit via bitsandbytes (CUDA only). ~5GB VRAM. Usually 4bit is the better choice.||" ;;
+        VOXTRAL_QUANTIZATION)  echo "tts|select|optional|none|none|Voxtral quantization (CUDA only). none = full precision; 4bit = ~2.5GB VRAM (recommended for Tesla T4 / shared GPUs); 8bit = ~5GB VRAM|none,4bit,8bit|" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -194,6 +195,7 @@ ALL_VARIABLES=(
     "VOXTRAL_DTYPE"
     "VOXTRAL_ACCEPT_NC_LICENSE"
     "HF_TOKEN"
+    "VOXTRAL_QUANTIZATION"
     "VOXTRAL_LOAD_IN_4BIT"
     "VOXTRAL_LOAD_IN_8BIT"
     "ENABLE_GPU"
@@ -266,6 +268,10 @@ should_skip_wizard_var() {
     local tts_provider="${2:-}"
 
     case "$var_name" in
+        VOXTRAL_LOAD_IN_4BIT|VOXTRAL_LOAD_IN_8BIT)
+            # Set via the combined VOXTRAL_QUANTIZATION prompt; never asked directly.
+            return 0
+            ;;
         ENABLE_VOXTRAL|VOXTRAL_*)
             [[ "$tts_provider" != "voxtral" ]] && return 0
             ;;
