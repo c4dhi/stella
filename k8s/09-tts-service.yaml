@@ -131,8 +131,8 @@ spec:
                 echo "[TTS Init] Downloading Voxtral weights ($VOXTRAL_VERSION) — operator has"
                 echo "[TTS Init] accepted CC-BY-NC-4.0 by setting VOXTRAL_ACCEPT_NC_LICENSE=true."
                 mkdir -p /models/voxtral
-                pip install --no-cache-dir --quiet "huggingface_hub[cli]>=0.20.0"
-                huggingface-cli download "$VOXTRAL_VERSION" --local-dir /models/voxtral
+                pip install --no-cache-dir --quiet "huggingface_hub>=0.34.0"
+                hf download "$VOXTRAL_VERSION" --local-dir /models/voxtral
                 echo "$VOXTRAL_VERSION" > "$VOXTRAL_VERSION_FILE"
                 echo "[TTS Init] Voxtral weight download complete"
               fi
