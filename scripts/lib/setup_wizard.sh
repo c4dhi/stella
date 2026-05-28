@@ -213,8 +213,8 @@ run_setup_wizard() {
         configure_optional_settings "$env"
     fi
 
-    # Required initial admin bootstrap credentials
-    collect_initial_admin_credentials "$project_dir" "$env"
+    # Initial admin bootstrap — its own skippable chapter.
+    admin_bootstrap_section "$project_dir" "$env"
 
     # Review screen
     wizard_clear_screen
@@ -227,8 +227,12 @@ run_setup_wizard() {
         value=$(get_wizard_config "$var_name")
         config_lines+=("${var_name}=${value}")
     done
-    config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}") # add admin email to the config
-    config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}") # add admin password to the config
+    if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]]; then
+        config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}")
+    fi
+    if [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+        config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}")
+    fi
 
     wizard_review_screen "${config_lines[@]}"
 
@@ -270,6 +274,66 @@ escape_env_value() {
     value="${value//\\/\\\\}"
     value="${value//\"/\\\"}"
     echo "$value"
+}
+
+admin_bootstrap_section() {
+    local project_dir="$1"
+    local env="$2"
+
+    printf '\033[2J\033[H'
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "  👤  ${BOLD}INITIAL ADMIN ACCOUNT${NC}"
+    echo -e "  ${DIM}Bootstrap a system-admin login for first sign-in. Skip if you${NC}"
+    echo -e "  ${DIM}plan to create the admin manually (e.g. via SQL).${NC}"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local options=("Configure" "Skip section")
+    local selected=0
+    local num_options=${#options[@]}
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm${NC}"
+    echo ""
+    for ((i=0; i<num_options; i++)); do echo ""; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A'; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r"
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}${options[$i]}${NC}"
+            else
+                printf "    ${DIM}${options[$i]}${NC}"
+            fi
+            printf '\033[K'
+            echo ""
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                wizard_restore_terminal
+                wizard_show_cursor
+                if [[ "${options[$selected]}" == "Configure" ]]; then
+                    collect_initial_admin_credentials "$project_dir" "$env"
+                else
+                    INITIAL_ADMIN_EMAIL_VALUE=""
+                    INITIAL_ADMIN_PASSWORD_VALUE=""
+                    rm -f "$(get_admin_bootstrap_file "$project_dir" "$env")" 2>/dev/null || true
+                fi
+                return 0
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
 }
 
 collect_initial_admin_credentials() {
