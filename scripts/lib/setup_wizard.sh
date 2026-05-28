@@ -139,6 +139,36 @@ get_setup_vars() {
 SETUP_MENU_RESULT=""
 
 # =============================================================================
+# Chapter tab bar — shows the full wizard outline on every section card so
+# the operator can see where they are and what is still to come.
+# =============================================================================
+WIZARD_CHAPTERS=()
+WIZARD_OPTIONAL_OFFSET=0
+WIZARD_ADMIN_OFFSET=0
+
+wizard_chapter_tabs() {
+    local current_global_idx="$1"   # 1-based
+    local total=${#WIZARD_CHAPTERS[@]}
+    [[ $total -eq 0 ]] && return 0
+
+    echo ""
+    printf "  "
+    local i
+    for ((i=0; i<total; i++)); do
+        local label="${WIZARD_CHAPTERS[$i]}"
+        local human=$((i + 1))
+        if (( human < current_global_idx )); then
+            printf "${GREEN}✓ %s${NC}   " "$label"
+        elif (( human == current_global_idx )); then
+            printf "${CYAN}${BOLD}◐ %s${NC}   " "$label"
+        else
+            printf "${DIM}○ %s${NC}   " "$label"
+        fi
+    done
+    echo ""
+}
+
+# =============================================================================
 # Main Setup Flow
 # =============================================================================
 
@@ -172,6 +202,21 @@ run_setup_wizard() {
     else
         categories=("${SETUP_CATEGORIES_LOCAL[@]}")
     fi
+
+    # Build the global chapter list used by the tab bar so every section
+    # card can show where the operator is in the overall flow.
+    local -a optional_categories=("stt" "tts" "gpu")
+    WIZARD_CHAPTERS=()
+    local _cat
+    for _cat in "${categories[@]}"; do
+        WIZARD_CHAPTERS+=("$(get_category_name "$_cat")")
+    done
+    WIZARD_OPTIONAL_OFFSET=${#WIZARD_CHAPTERS[@]}
+    for _cat in "${optional_categories[@]}"; do
+        WIZARD_CHAPTERS+=("$(get_category_name "$_cat")")
+    done
+    WIZARD_ADMIN_OFFSET=${#WIZARD_CHAPTERS[@]}
+    WIZARD_CHAPTERS+=("Admin")
 
     local current_section=0
     local -a section_history=()
@@ -281,6 +326,7 @@ admin_bootstrap_section() {
     local env="$2"
 
     printf '\033[2J\033[H'
+    wizard_chapter_tabs "$((WIZARD_ADMIN_OFFSET + 1))"
     echo ""
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -426,6 +472,7 @@ setup_section_menu() {
     name=$(get_category_name "$category")
     desc=$(get_category_description "$category")
 
+    wizard_chapter_tabs "$current_idx"
     echo ""
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -619,6 +666,7 @@ optional_section_menu() {
     name=$(get_category_name "$category")
     desc=$(get_category_description "$category")
 
+    wizard_chapter_tabs "$((WIZARD_OPTIONAL_OFFSET + current_idx))"
     echo ""
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
