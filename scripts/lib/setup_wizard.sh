@@ -248,13 +248,8 @@ run_setup_wizard() {
         esac
     done
 
-    # Optional configuration prompt
-    printf '\033[2J\033[H'
-    echo ""
-    echo -e "  ${GREEN}✓${NC} ${BOLD}Required configuration complete!${NC}"
-    echo ""
-
-    if wizard_confirm "Configure optional settings? (STT, TTS, GPU)" "n"; then
+    # Optional-settings gate — match the rest of the chapter cards.
+    if optional_settings_intro_section; then
         configure_optional_settings "$env"
     fi
 
@@ -319,6 +314,60 @@ escape_env_value() {
     value="${value//\\/\\\\}"
     value="${value//\"/\\\"}"
     echo "$value"
+}
+
+optional_settings_intro_section() {
+    printf '\033[2J\033[H'
+    wizard_chapter_tabs "$((WIZARD_OPTIONAL_OFFSET + 1))"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "  ${GREEN}✓${NC} ${BOLD}Required configuration complete.${NC}"
+    echo ""
+    echo -e "  ⚙️   ${BOLD}OPTIONAL SETTINGS${NC}"
+    echo -e "  ${DIM}Speech-to-Text, Text-to-Speech, and GPU acceleration.${NC}"
+    echo -e "  ${DIM}Skip to accept sensible defaults for all three.${NC}"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local options=("Configure" "Skip section")
+    local selected=0
+    local num_options=${#options[@]}
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm${NC}"
+    echo ""
+    for ((i=0; i<num_options; i++)); do echo ""; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A'; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r"
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}${options[$i]}${NC}"
+            else
+                printf "    ${DIM}${options[$i]}${NC}"
+            fi
+            printf '\033[K'
+            echo ""
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                wizard_restore_terminal
+                wizard_show_cursor
+                [[ "${options[$selected]}" == "Configure" ]] && return 0
+                return 1
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
 }
 
 admin_bootstrap_section() {
