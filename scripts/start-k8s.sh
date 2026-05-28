@@ -309,6 +309,15 @@ main() {
             info "Reconfigured — stopping any running services before fresh start..."
             stop_services
             echo ""
+
+            # After an inline wizard run, deploy in the background so the
+            # operator gets their shell back rather than being trapped in
+            # a foreground "Press Ctrl+C to stop" loop right after setup.
+            if [[ "$DAEMON_MODE" != "true" ]]; then
+                info "Post-wizard deploy: switching to daemon mode (-d)"
+                DAEMON_MODE=true
+                export DAEMON_MODE
+            fi
         else
             error "Cannot start without configuration"
             echo ""

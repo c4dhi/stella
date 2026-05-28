@@ -1471,40 +1471,62 @@ check_service_runtime_status() {
         fi
 
     elif [[ "$service" == "tts-service" ]]; then
-        # Check primary provider (use "Primary provider" log line to avoid matching fallback)
-        if echo "$logs" | grep -iq "Primary provider.*chatterbox"; then
-            status="CPU"
-            provider="chatterbox"
-            details="ChatterBox Multilingual TTS (local)"
-            # Check if using CUDA
-            if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+        # Parse the "Primary provider: <name>" log line first — it's the
+        # authoritative signal from the TTS engine itself. Take the LAST
+        # occurrence in case the pod restarted and re-logged.
+        local primary
+        primary=$(echo "$logs" | grep -i "Primary provider:" | tail -1 \
+            | sed -E 's/.*[Pp]rimary [Pp]rovider:[[:space:]]*([A-Za-z]+).*/\1/' \
+            | tr '[:upper:]' '[:lower:]')
+
+        case "$primary" in
+            voxtral)
                 status="CUDA"
-                details="ChatterBox Multilingual TTS (CUDA)"
-            fi
-        elif echo "$logs" | grep -iq "Primary provider.*piper"; then
-            status="CPU"
-            provider="piper"
-            details="Piper TTS (local CPU)"
-        # Check for Kokoro CUDA success
-        elif echo "$logs" | grep -iq "CUDAExecutionProvider"; then
-            if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                provider="voxtral"
+                details="Voxtral 4B TTS (CUDA)"
+                ;;
+            chatterbox)
+                provider="chatterbox"
+                if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+                    status="CUDA"
+                    details="ChatterBox Multilingual TTS (CUDA)"
+                else
+                    status="CPU"
+                    details="ChatterBox Multilingual TTS (local)"
+                fi
+                ;;
+            kokoro)
+                provider="kokoro"
+                if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                    status="CPU"
+                    details="Kokoro CUDA failed, running on CPU"
+                else
+                    status="CUDA"
+                    details="Kokoro ONNX (CUDA)"
+                fi
+                ;;
+            piper)
                 status="CPU"
                 provider="piper"
-                details="Kokoro CUDA failed, fell back to Piper"
-            else
-                status="CUDA"
-                provider="kokoro"
-                details="Kokoro ONNX (CUDA)"
-            fi
-        elif echo "$logs" | grep -iq "Primary provider.*kokoro"; then
-            status="CUDA"
-            provider="kokoro"
-            details="Kokoro ONNX"
-        elif echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
-            status="CPU"
-            provider="piper"
-            details="Piper TTS (Local CPU)"
-        fi
+                details="Piper TTS (local CPU)"
+                ;;
+            elevenlabs)
+                status="Cloud"
+                provider="elevenlabs"
+                details="ElevenLabs (cloud API)"
+                ;;
+            *)
+                # No "Primary provider:" line yet — fall back to inferring
+                # from device/runtime traces so we still report something
+                # useful while the pod is mid-startup.
+                if echo "$logs" | grep -iq "CUDAExecutionProvider" \
+                   && ! echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                    status="CUDA"
+                    provider="kokoro"
+                    details="Kokoro ONNX (CUDA)"
+                fi
+                ;;
+        esac
     fi
 
     echo "$status|$provider|$details"
@@ -1555,6 +1577,38 @@ show_gpu_status() {
             echo ""
             warning "GPU enabled but some services fell back to CPU"
             echo -e "   ${DIM}Check: kubectl logs -n $KUBERNETES_NAMESPACE -l app=stt-service --tail=50${NC}"
+        fi
+    fi
+
+    # Surface a TTS provider mismatch loudly — operators set TTS_PROVIDER
+    # in the env file expecting that exact provider, so silently falling
+    # back to a different one (e.g. voxtral weights missing → kokoro)
+    # has bitten us before. Dump the failure log so the cause is obvious.
+    local configured_tts="${TTS_PROVIDER:-piper}"
+    configured_tts="$(echo "$configured_tts" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$configured_tts" != "auto" && -n "$tts_provider" && "$tts_provider" != "unknown" \
+          && "$tts_provider" != "$configured_tts" ]]; then
+        echo ""
+        warning "TTS provider mismatch: configured=${configured_tts}, running=${tts_provider}"
+        echo -e "   ${DIM}The requested provider failed to initialize and the engine fell back.${NC}"
+        echo ""
+        local tts_pod
+        tts_pod=$(kubectl get pods -n "$KUBERNETES_NAMESPACE" -l app=tts-service \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [[ -n "$tts_pod" ]]; then
+            local err_lines
+            err_lines=$(kubectl logs "$tts_pod" -n "$KUBERNETES_NAMESPACE" --tail=200 2>/dev/null \
+                | grep -iE "Initialization failed|initialization failed|not available|error|traceback|license" \
+                | grep -viE "NGC-DL-CONTAINER-LICENSE|nvidia-deep-learning-container-license" \
+                | tail -15)
+            if [[ -n "$err_lines" ]]; then
+                echo -e "   ${DIM}Relevant log lines from ${tts_pod}:${NC}"
+                while IFS= read -r line; do
+                    echo -e "   ${YELLOW}│${NC} ${line}"
+                done <<< "$err_lines"
+                echo ""
+            fi
+            echo -e "   ${DIM}Full logs: kubectl logs -n $KUBERNETES_NAMESPACE $tts_pod${NC}"
         fi
     fi
 }

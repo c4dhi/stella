@@ -848,8 +848,8 @@ wizard_success_screen() {
     local env_file="$1"
     local mode="$2"
 
-    local start_cmd="./scripts/start-k8s.sh"
-    [[ "$mode" == "production" ]] && start_cmd="./scripts/start-k8s.sh --production"
+    local start_cmd="./scripts/start-k8s.sh -d"
+    [[ "$mode" == "production" ]] && start_cmd="./scripts/start-k8s.sh --production -d"
 
     echo ""
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
