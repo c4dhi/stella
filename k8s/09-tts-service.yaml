@@ -162,8 +162,8 @@ spec:
         - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
-              name: stella-secrets
-              key: HF_TOKEN
+              name: stella-ai-secrets
+              key: huggingface-token
               optional: true
         volumeMounts:
         - name: model-cache

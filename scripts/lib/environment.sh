@@ -383,6 +383,7 @@ set_defaults() {
     export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
     export VOXTRAL_LOAD_IN_4BIT="${VOXTRAL_LOAD_IN_4BIT:-false}"
     export VOXTRAL_LOAD_IN_8BIT="${VOXTRAL_LOAD_IN_8BIT:-false}"
+    export HF_TOKEN="${HF_TOKEN:-}"
     if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
         export ENABLE_VOXTRAL="true"
         if [[ "$ENABLE_GPU" != "true" ]]; then
@@ -393,6 +394,12 @@ set_defaults() {
             warning "TTS_PROVIDER=voxtral selected. Voxtral weights are CC-BY-NC-4.0 (non-commercial)."
             warning "Set VOXTRAL_ACCEPT_NC_LICENSE=true to acknowledge the license and let the init"
             warning "container download the weights, OR pre-populate /models/voxtral on the PVC."
+        fi
+        if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" == "true" && -z "${HF_TOKEN:-}" ]]; then
+            warning "TTS_PROVIDER=voxtral with auto-download enabled but HF_TOKEN is empty."
+            warning "Mistral gates the Voxtral repo: visit https://huggingface.co/mistralai/Voxtral-4B-TTS-2603"
+            warning "and click 'Agree', then create a token at https://huggingface.co/settings/tokens and"
+            warning "set HF_TOKEN=hf_... in your .env. Without it the init container will 401."
         fi
     fi
 

@@ -394,6 +394,7 @@ create_secrets() {
         --from-literal=livekit-api-secret="$LIVEKIT_API_SECRET" \
         --from-literal=livekit-webhook-secret="${LIVEKIT_WEBHOOK_SECRET:-webhook-secret}" \
         --from-literal=elevenlabs-api-key="${ELEVENLABS_API_KEY:-}" \
+        --from-literal=huggingface-token="${HF_TOKEN:-}" \
         --from-literal=env-var-encryption-key="${ENV_VAR_ENCRYPTION_KEY:-}" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
