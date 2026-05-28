@@ -873,6 +873,12 @@ configure_optional_settings() {
 
 WIZARD_HAS_EXISTING_CONFIG="false"
 
+# Variables present in the existing .env file that the wizard doesn't
+# know about (custom keys the operator added manually). Preserved
+# verbatim and re-emitted at the end of the regenerated file so they
+# survive a save.
+WIZARD_PASSTHROUGH_LINES=()
+
 load_existing_config() {
     local env_file="$1"
 
@@ -881,6 +887,7 @@ load_existing_config() {
     fi
 
     WIZARD_HAS_EXISTING_CONFIG="true"
+    WIZARD_PASSTHROUGH_LINES=()
 
     # Read existing environment file
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -899,11 +906,16 @@ load_existing_config() {
             var_value="${var_value#\'}"
             var_value="${var_value%\'}"
 
-            # Only load if we have metadata for this variable
+            # NODE_ENV is re-emitted by the writer; drop it here.
+            [[ "$var_name" == "NODE_ENV" ]] && continue
+
             local meta
             meta=$(get_var_metadata "$var_name")
             if [[ -n "$meta" ]]; then
                 set_wizard_config "$var_name" "$var_value"
+            else
+                # Unknown var — keep verbatim so save doesn't drop it.
+                WIZARD_PASSTHROUGH_LINES+=("$line")
             fi
         fi
     done < "$env_file"
@@ -1032,6 +1044,20 @@ save_configuration() {
         echo "# ============================================================================"
         echo "NODE_ENV=$env"
         echo ""
+
+        # Re-emit any custom variables the operator had in the prior .env
+        # that the wizard schema doesn't know about — drop them, and you
+        # silently lose the operator's manual config.
+        if [[ ${#WIZARD_PASSTHROUGH_LINES[@]} -gt 0 ]]; then
+            echo "# ============================================================================"
+            echo "# Custom Variables (preserved from existing $env_file)"
+            echo "# ============================================================================"
+            local _line
+            for _line in "${WIZARD_PASSTHROUGH_LINES[@]}"; do
+                echo "$_line"
+            done
+            echo ""
+        fi
 
         # Add admin credentials used during setup
         if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]] || [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
