@@ -301,6 +301,14 @@ main() {
 
             # Reload environment after setup
             load_environment
+
+            # The operator just reconfigured the system; any previously
+            # running services were started against the old config (or
+            # the wrong env). Stop them before starting fresh so we don't
+            # end up with mixed-state pods.
+            info "Reconfigured — stopping any running services before fresh start..."
+            stop_services
+            echo ""
         else
             error "Cannot start without configuration"
             echo ""
