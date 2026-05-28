@@ -371,24 +371,22 @@ set_defaults() {
     export ENABLE_GPU="${ENABLE_GPU:-false}"
 
     # Voxtral Configuration. Provider stays inert unless TTS_PROVIDER=voxtral.
-    # When selected we:
-    #   - flip ENABLE_VOXTRAL so the Dockerfile installs Apache-2.0 inference deps,
-    #   - auto-enable ENABLE_GPU (4B model is not realistic on CPU),
-    #   - default VOXTRAL_DTYPE / VOXTRAL_MODEL_ID,
+    # Voxtral runs out-of-process in a vllm-omni sidecar (image: tts-vllm-omni),
+    # so the tts-service image no longer needs an opt-in build flag. When
+    # TTS_PROVIDER=voxtral we:
+    #   - auto-enable ENABLE_GPU (vllm needs CUDA),
     #   - leave VOXTRAL_ACCEPT_NC_LICENSE=false. The operator must set it to
     #     "true" explicitly to allow the init container to download weights.
-    export ENABLE_VOXTRAL="${ENABLE_VOXTRAL:-false}"
     export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
-    export VOXTRAL_DTYPE="${VOXTRAL_DTYPE:-}"
     export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
-    export VOXTRAL_LOAD_IN_4BIT="${VOXTRAL_LOAD_IN_4BIT:-false}"
-    export VOXTRAL_LOAD_IN_8BIT="${VOXTRAL_LOAD_IN_8BIT:-false}"
+    export VOXTRAL_DEFAULT_VOICE="${VOXTRAL_DEFAULT_VOICE:-casual_male}"
+    export VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.85}"
+    export VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
     export HF_TOKEN="${HF_TOKEN:-}"
     if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        export ENABLE_VOXTRAL="true"
         if [[ "$ENABLE_GPU" != "true" ]]; then
             export ENABLE_GPU="true"
-            verbose "TTS_PROVIDER=voxtral: auto-enabled ENABLE_GPU (4B model needs a GPU)"
+            verbose "TTS_PROVIDER=voxtral: auto-enabled ENABLE_GPU (vllm needs CUDA)"
         fi
         if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" != "true" ]]; then
             warning "TTS_PROVIDER=voxtral selected. Voxtral weights are CC-BY-NC-4.0 (non-commercial)."

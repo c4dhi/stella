@@ -193,10 +193,6 @@ spec:
         - name: model-cache
           mountPath: /root/.cache/piper
           subPath: piper
-        # VOXTRAL: - name: model-cache
-        # VOXTRAL:   mountPath: /models/voxtral
-        # VOXTRAL:   subPath: voxtral
-        # VOXTRAL:   readOnly: true
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -218,43 +214,27 @@ spec:
           value: "/root/.cache/chatterbox"
         - name: PIPER_CACHE_DIR
           value: "/root/.cache/piper"
-        # Voxtral (auto-enabled when TTS_PROVIDER=voxtral). Weights are
-        # CC-BY-NC-4.0 and not shipped by STELLA — the init container will
-        # only download them if VOXTRAL_ACCEPT_NC_LICENSE=true is set in the
-        # ConfigMap (explicit operator acceptance of the model license).
-        # VOXTRAL: - name: VOXTRAL_MODEL_PATH
-        # VOXTRAL:   value: "/models/voxtral"
-        # VOXTRAL: - name: VOXTRAL_DEVICE
-        # VOXTRAL:   value: "auto"
-        # VOXTRAL: - name: VOXTRAL_DTYPE
+        # Voxtral (auto-enabled when TTS_PROVIDER=voxtral). The provider in
+        # this container is a thin HTTP client of the vllm-omni sidecar
+        # below — it only needs to know where to find the sidecar and which
+        # voice to use by default. All real inference happens in the sidecar.
+        # VOXTRAL: - name: VOXTRAL_VLLM_URL
+        # VOXTRAL:   value: "http://localhost:8000"
+        # VOXTRAL: - name: VOXTRAL_MODEL_NAME
+        # VOXTRAL:   value: "voxtral"
+        # VOXTRAL: - name: VOXTRAL_DEFAULT_VOICE
         # VOXTRAL:   valueFrom:
         # VOXTRAL:     configMapKeyRef:
         # VOXTRAL:       name: stella-ai-config
-        # VOXTRAL:       key: VOXTRAL_DTYPE
-        # VOXTRAL:       optional: true
-        # VOXTRAL: - name: PYTORCH_ENABLE_MPS_FALLBACK
-        # VOXTRAL:   value: "1"
-        # VOXTRAL: - name: VOXTRAL_LOAD_IN_4BIT
-        # VOXTRAL:   valueFrom:
-        # VOXTRAL:     configMapKeyRef:
-        # VOXTRAL:       name: stella-ai-config
-        # VOXTRAL:       key: VOXTRAL_LOAD_IN_4BIT
-        # VOXTRAL:       optional: true
-        # VOXTRAL: - name: VOXTRAL_LOAD_IN_8BIT
-        # VOXTRAL:   valueFrom:
-        # VOXTRAL:     configMapKeyRef:
-        # VOXTRAL:       name: stella-ai-config
-        # VOXTRAL:       key: VOXTRAL_LOAD_IN_8BIT
+        # VOXTRAL:       key: VOXTRAL_DEFAULT_VOICE
         # VOXTRAL:       optional: true
         resources:
           requests:
-            # VOXTRAL_DISABLE: memory: "2Gi"
-            # VOXTRAL: memory: "10Gi"
+            memory: "2Gi"
             cpu: "250m"
             # GPU: nvidia.com/gpu: "1"
           limits:
-            # VOXTRAL_DISABLE: memory: "6Gi"
-            # VOXTRAL: memory: "16Gi"
+            memory: "6Gi"
             cpu: "2000m"
             # GPU: nvidia.com/gpu: "1"
         readinessProbe:
@@ -278,9 +258,80 @@ spec:
           periodSeconds: 30
           timeoutSeconds: 10
       # ======================================================================
+      # vllm-omni sidecar — only included when TTS_PROVIDER=voxtral.
+      # Serves Voxtral on http://localhost:8000/v1/audio/speech, which the
+      # tts-service container above talks to. Owns the GPU when active.
+      # ======================================================================
+      # VOXTRAL: - name: vllm-omni
+      # VOXTRAL:   image: tts-vllm-omni:latest
+      # VOXTRAL:   imagePullPolicy: IfNotPresent
+      # VOXTRAL:   ports:
+      # VOXTRAL:   - containerPort: 8000
+      # VOXTRAL:     name: http
+      # VOXTRAL:   env:
+      # VOXTRAL:   - name: VOXTRAL_MODEL_PATH
+      # VOXTRAL:     value: "/models/voxtral"
+      # VOXTRAL:   - name: VOXTRAL_SERVED_NAME
+      # VOXTRAL:     value: "voxtral"
+      # VOXTRAL:   - name: VLLM_PORT
+      # VOXTRAL:     value: "8000"
+      # VOXTRAL:   - name: VOXTRAL_GPU_MEMORY_UTILIZATION
+      # VOXTRAL:     valueFrom:
+      # VOXTRAL:       configMapKeyRef:
+      # VOXTRAL:         name: stella-ai-config
+      # VOXTRAL:         key: VOXTRAL_GPU_MEMORY_UTILIZATION
+      # VOXTRAL:         optional: true
+      # VOXTRAL:   - name: VOXTRAL_MAX_MODEL_LEN
+      # VOXTRAL:     valueFrom:
+      # VOXTRAL:       configMapKeyRef:
+      # VOXTRAL:         name: stella-ai-config
+      # VOXTRAL:         key: VOXTRAL_MAX_MODEL_LEN
+      # VOXTRAL:         optional: true
+      # VOXTRAL:   - name: HF_HOME
+      # VOXTRAL:     value: "/models/.hf-cache"
+      # VOXTRAL:   volumeMounts:
+      # VOXTRAL:   - name: model-cache
+      # VOXTRAL:     mountPath: /models/voxtral
+      # VOXTRAL:     subPath: voxtral
+      # VOXTRAL:     readOnly: true
+      # VOXTRAL:   - name: dshm
+      # VOXTRAL:     mountPath: /dev/shm
+      # VOXTRAL:   resources:
+      # VOXTRAL:     requests:
+      # VOXTRAL:       memory: "16Gi"
+      # VOXTRAL:       cpu: "2000m"
+      # VOXTRAL:     limits:
+      # VOXTRAL:       memory: "24Gi"
+      # VOXTRAL:       cpu: "4000m"
+      # VOXTRAL: # NOTE: no nvidia.com/gpu resource request — STELLA's k3s setup
+      # VOXTRAL: # gives GPU access via runtimeClassName: nvidia (enabled by deploy.sh
+      # VOXTRAL: # when ENABLE_GPU=true). Requesting nvidia.com/gpu: 1 here would
+      # VOXTRAL: # exclusively bind the GPU and starve the STT pod.
+      # VOXTRAL:   readinessProbe:
+      # VOXTRAL:     httpGet:
+      # VOXTRAL:       path: /health
+      # VOXTRAL:       port: 8000
+      # VOXTRAL:     initialDelaySeconds: 60
+      # VOXTRAL:     periodSeconds: 10
+      # VOXTRAL:     timeoutSeconds: 5
+      # VOXTRAL:     failureThreshold: 60
+      # VOXTRAL:   livenessProbe:
+      # VOXTRAL:     httpGet:
+      # VOXTRAL:       path: /health
+      # VOXTRAL:       port: 8000
+      # VOXTRAL:     initialDelaySeconds: 600
+      # VOXTRAL:     periodSeconds: 30
+      # VOXTRAL:     timeoutSeconds: 10
+      # ======================================================================
       # Volumes: PersistentVolume for model storage
       # ======================================================================
       volumes:
       - name: model-cache
         persistentVolumeClaim:
           claimName: tts-models-pvc
+      # VOXTRAL: # vllm needs >>64MB of shared memory for IPC; back /dev/shm
+      # VOXTRAL: # with a sizeable tmpfs to prevent CUDA OOM during inference.
+      # VOXTRAL: - name: dshm
+      # VOXTRAL:   emptyDir:
+      # VOXTRAL:     medium: Memory
+      # VOXTRAL:     sizeLimit: 4Gi

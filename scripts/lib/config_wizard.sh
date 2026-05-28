@@ -31,19 +31,8 @@ init_config_values() {
 get_config_value() {
     local key="$1"
     if [[ -f "$CONFIG_VALUES_FILE" ]]; then
-        local stored
         # Missing keys are expected for optional vars; do not fail under pipefail.
-        stored=$(grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true)
-        if [[ "$key" == "VOXTRAL_QUANTIZATION" && -z "$stored" ]]; then
-            local four eight
-            four=$(grep "^VOXTRAL_LOAD_IN_4BIT=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true)
-            eight=$(grep "^VOXTRAL_LOAD_IN_8BIT=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true)
-            if [[ "$four" == "true" ]]; then echo "4bit"
-            elif [[ "$eight" == "true" ]]; then echo "8bit"
-            fi
-            return
-        fi
-        echo "$stored"
+        grep "^${key}=" "$CONFIG_VALUES_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- || true
     fi
 }
 
@@ -57,22 +46,6 @@ set_config_value() {
         mv "${CONFIG_VALUES_FILE}.tmp" "$CONFIG_VALUES_FILE"
         # Add new value
         echo "${key}=${value}" >> "$CONFIG_VALUES_FILE"
-
-        # VOXTRAL_QUANTIZATION is a UI-only knob — expand it into the two
-        # underlying boolean env vars so .env stays the source of truth.
-        if [[ "$key" == "VOXTRAL_QUANTIZATION" ]]; then
-            local four="false" eight="false"
-            case "$value" in
-                4bit) four="true" ;;
-                8bit) eight="true" ;;
-            esac
-            grep -v "^VOXTRAL_LOAD_IN_4BIT=" "$CONFIG_VALUES_FILE" > "${CONFIG_VALUES_FILE}.tmp" 2>/dev/null || true
-            mv "${CONFIG_VALUES_FILE}.tmp" "$CONFIG_VALUES_FILE"
-            echo "VOXTRAL_LOAD_IN_4BIT=${four}" >> "$CONFIG_VALUES_FILE"
-            grep -v "^VOXTRAL_LOAD_IN_8BIT=" "$CONFIG_VALUES_FILE" > "${CONFIG_VALUES_FILE}.tmp" 2>/dev/null || true
-            mv "${CONFIG_VALUES_FILE}.tmp" "$CONFIG_VALUES_FILE"
-            echo "VOXTRAL_LOAD_IN_8BIT=${eight}" >> "$CONFIG_VALUES_FILE"
-        fi
     fi
 }
 
@@ -203,7 +176,6 @@ run_config_wizard() {
     local -a config_lines=()
     for var_name in $(get_config_value_keys); do
         # UI-only synthetic; the underlying booleans appear in their place.
-        [[ "$var_name" == "VOXTRAL_QUANTIZATION" ]] && continue
         local value
         value=$(get_config_value "$var_name")
         config_lines+=("${var_name}=${value}")
@@ -529,7 +501,6 @@ save_full_configuration() {
 
             for var_name in $category_vars; do
                 # UI-only synthetic var — never written to .env
-                [[ "$var_name" == "VOXTRAL_QUANTIZATION" ]] && continue
 
                 local value
                 value=$(get_config_value "$var_name")

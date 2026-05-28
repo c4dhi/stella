@@ -51,20 +51,20 @@ inherit.
 
 ## Optional non-commercial model (opt-in, operator-supplied weights)
 
-### Voxtral TTS (tts-service)
-- Provider code: STELLA's primary permissive license.
-- Inference dependencies (`transformers`, `mistral-common`): Apache-2.0,
-  installed only when `ENABLE_VOXTRAL=true`.
+### Voxtral TTS (tts-service + tts-vllm-omni sidecar)
+- Provider code (`tts-service/src/providers/voxtral_provider.py`): STELLA's
+  primary permissive license. It is a thin HTTP client of a separate
+  inference sidecar and has no Voxtral-specific Python deps.
+- Inference sidecar image (`tts-vllm-omni`): built from
+  `vllm/vllm-openai` (Apache-2.0) + `vllm-omni` (Apache-2.0) +
+  `mistral_common` (Apache-2.0). The image itself embeds no model weights.
 - Model weights (`mistralai/Voxtral-4B-TTS-2603`): **CC-BY-NC-4.0**.
 - STELLA never bundles, downloads, or redistributes the Voxtral weights in
-  any build. The provider refuses to start unless the operator sets
-  `VOXTRAL_MODEL_PATH` to a directory they have populated themselves —
-  thereby accepting the CC-BY-NC-4.0 terms (including the prohibition on
-  commercial use of the weights and their outputs).
-- Default build: `ENABLE_VOXTRAL=false`. Inference deps not installed.
-- Opt-in build: `docker build --build-arg ENABLE_VOXTRAL=true .` installs the
-  Apache-2.0 inference deps. The image itself remains permissively licensed;
-  only operator-supplied weights at runtime carry the CC-BY-NC obligation.
+  any build. The init container only fetches them when the operator
+  explicitly sets `VOXTRAL_ACCEPT_NC_LICENSE=true` in the ConfigMap.
+- Activation: `TTS_PROVIDER=voxtral` builds the sidecar image and enables
+  the sidecar in the K8s manifest. Any other value leaves both inert and
+  the rest of the codebase unchanged.
 - See `tts-service/NOTICE.md` for details.
 
 ## Removed components

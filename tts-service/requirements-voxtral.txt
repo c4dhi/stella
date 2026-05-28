@@ -1,27 +1,4 @@
-# Voxtral TTS — OPTIONAL provider, installed only when ENABLE_VOXTRAL=true.
-#
-# IMPORTANT — license note for operators:
-#
-#   The integration code under `src/providers/voxtral_provider.py` is part of
-#   STELLA and is distributed under STELLA's permissive license. The Python
-#   packages listed below (transformers, mistral-common, etc.) are themselves
-#   permissively licensed (Apache-2.0) and do NOT contaminate the image.
-#
-#   However, the *model weights* this provider loads
-#   (`mistralai/Voxtral-4B-TTS-2603`) are released under
-#   **Creative Commons Attribution-NonCommercial 4.0 (CC-BY-NC-4.0)**.
-#
-#   STELLA does NOT bundle, download, or distribute these weights. Operators
-#   who choose to enable Voxtral are responsible for obtaining the weights
-#   themselves and complying with the CC-BY-NC-4.0 terms — including the
-#   restriction against commercial use.
-#
-#   See `tts-service/NOTICE.md` for the full opt-in policy.
-
-transformers>=4.46.0
-mistral-common>=1.5.0
-# bitsandbytes powers VOXTRAL_LOAD_IN_4BIT / _8BIT (CUDA-only). Adding it to the
-# default opt-in image keeps the env-var-driven on-switch self-contained; the
-# package is MIT-licensed so the image's license posture is unchanged. It is a
-# no-op when the quant knobs are left at their defaults.
-bitsandbytes>=0.43.0; platform_system == "Linux"
+# Voxtral is now served by a separate vllm-omni sidecar; the TTS service
+# itself only needs httpx + soundfile to call it (both in requirements.txt).
+# This file is intentionally empty — kept so older build pipelines that
+# still COPY it don't fail. Safe to delete once nothing references it.

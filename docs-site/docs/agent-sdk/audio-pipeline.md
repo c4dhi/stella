@@ -166,38 +166,39 @@ pipeline = AudioPipeline(
 )
 ```
 
-### Voxtral (opt-in, non-commercial weights)
+### Voxtral (opt-in, non-commercial weights, vllm-omni sidecar)
 
 Local Voxtral 4B TTS (`mistralai/Voxtral-4B-TTS-2603`). This is an **opt-in**
-provider: STELLA ships the integration code but does **not** download or
-bundle the model weights, which are released under **CC-BY-NC-4.0**
-(non-commercial use only). Operators who enable Voxtral are responsible for
-downloading the weights and complying with the model license themselves.
+provider with two important properties:
+
+- **Weights are CC-BY-NC-4.0** (non-commercial). STELLA does not bundle or
+  redistribute them. The init container only downloads them when the
+  operator sets `VOXTRAL_ACCEPT_NC_LICENSE=true` — that flag is the
+  operator's acceptance of the model license.
+- **Inference runs in a separate `vllm-omni` sidecar container** (image:
+  `tts-vllm-omni`). Mistral only ships the model in their native format
+  (no HF `config.json`), so the only supported inference path is via
+  `vllm serve --omni`. The provider in `tts-service` is a thin HTTP client
+  that POSTs to `http://localhost:8000/v1/audio/speech`.
 
 To enable Voxtral:
 
-1. Build the TTS service with the opt-in flag — this installs the
-   (Apache-2.0) inference dependencies. STELLA does not fetch any weights:
+1. Pick `TTS_PROVIDER=voxtral` in the wizard, set
+   `VOXTRAL_ACCEPT_NC_LICENSE=true`, and provide an `HF_TOKEN` whose
+   account has accepted the gated model license on
+   <https://huggingface.co/mistralai/Voxtral-4B-TTS-2603>.
+
+2. Deploy with `./scripts/start-k8s.sh`. The build step compiles the
+   `tts-vllm-omni` sidecar image; the init container downloads the
+   weights to the shared PVC; the sidecar then loads them on cold start
+   (typically 60–180s on an L4).
+
+3. Tuning knobs (all optional):
 
    ```bash
-   docker build --build-arg ENABLE_VOXTRAL=true -t stella/tts-service tts-service/
-   ```
-
-2. As the operator, download the weights yourself (this step is your
-   acceptance of CC-BY-NC-4.0):
-
-   ```bash
-   huggingface-cli download mistralai/Voxtral-4B-TTS-2603 \
-     --local-dir /models/voxtral-4b-tts
-   ```
-
-3. Point the provider at the weights at runtime:
-
-   ```bash
-   TTS_PROVIDER=voxtral
-   VOXTRAL_MODEL_PATH=/models/voxtral-4b-tts
-   VOXTRAL_DEVICE=auto       # auto | cuda | cpu | mps
-   VOXTRAL_DTYPE=bfloat16    # bfloat16 | float16 | float32
+   VOXTRAL_DEFAULT_VOICE=casual_male            # casual_male/casual_female/...
+   VOXTRAL_GPU_MEMORY_UTILIZATION=0.85          # 0.0–1.0; lower if sharing GPU
+   VOXTRAL_MAX_MODEL_LEN=                       # blank = vllm auto-detect
    ```
 
 ```python
@@ -207,19 +208,18 @@ pipeline = AudioPipeline(
 ```
 
 **Pros:**
-- High quality, expressive multilingual voice
+- High quality, expressive multilingual voice (9 languages, 20 presets)
 - Local inference, no API costs
+- Streaming-friendly via vllm's continuous-batching scheduler
 
 **Cons:**
 - Non-commercial license on the weights (operator obligation)
-- ~4B parameters — GPU strongly recommended
-- Weights must be obtained and stored by the operator
-
-**Low-VRAM CUDA GPUs (e.g. Tesla T4 16 GB):** set
-`VOXTRAL_LOAD_IN_4BIT=true` to load via bitsandbytes nf4 quantization
-(~2.5 GB VRAM, bf16 compute, near-zero quality loss). Leave it `false` on
-L4 / A100 / etc. where the full bf16 model fits with headroom. The env
-var is CUDA-only — it is silently ignored on MPS/CPU.
+- Requires **≥16 GB GPU VRAM** per the Mistral model card. L4 (24 GB),
+  A10/A10G, RTX 4090, L40S, A100, H100 all work. **Tesla T4 (15 GB) does
+  not have enough VRAM and is not supported.**
+- No pre-quantized variants compatible with vllm on Turing-era GPUs exist
+  at time of writing — the MLX/MXFP/GGUF community quants don't work in
+  this stack.
 
 See `NOTICE.md` and `tts-service/NOTICE.md` for the full license split between
 STELLA's permissively-licensed code and the operator-supplied CC-BY-NC weights.

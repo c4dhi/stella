@@ -17,6 +17,9 @@ numpy>=1.24.0
 soundfile>=0.12.0
 scipy>=1.11.0
 
+# HTTP client used by the Voxtral provider to call its vllm-omni sidecar.
+httpx>=0.27.0
+
 # Note: chatterbox-tts is installed separately in Dockerfile with --no-deps
 # because it pins numpy<1.26 which conflicts with kokoro-onnx's numpy>=2.0
 
