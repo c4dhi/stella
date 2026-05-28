@@ -160,17 +160,17 @@ run_setup_wizard() {
             configure)
                 if setup_configure_section "$category" "$env"; then
                     section_history+=("$current_section")
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 ;;
             skip)
                 setup_apply_defaults "$category" "$env"
                 section_history+=("$current_section")
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac
@@ -439,7 +439,7 @@ setup_configure_section() {
 
         # Hide provider-specific knobs when their provider isn't selected.
         if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -458,7 +458,7 @@ setup_configure_section() {
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
@@ -473,7 +473,7 @@ setup_configure_section() {
                 continue
             fi
             set_wizard_config "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
@@ -628,7 +628,7 @@ configure_optional_section() {
 
         # Hide provider-specific knobs when their provider isn't selected.
         if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -647,14 +647,14 @@ configure_optional_section() {
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
             fi
         else
             set_wizard_config "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
@@ -698,16 +698,16 @@ configure_optional_settings() {
         case "$OPTIONAL_MENU_RESULT" in
             configure)
                 if configure_optional_section "$category" "$env"; then
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 ;;
             skip)
                 apply_optional_defaults "$category" "$env"
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac

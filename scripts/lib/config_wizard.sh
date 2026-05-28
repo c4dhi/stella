@@ -152,18 +152,18 @@ run_config_wizard() {
             configure)
                 if configure_section "$category" "$env"; then
                     section_history+=("$current_section")
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 # If configure_section returns 1, user backed out - stay on this section
                 ;;
             skip)
                 apply_section_defaults "$category" "$env"
                 section_history+=("$current_section")
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac
@@ -342,7 +342,7 @@ configure_section() {
         # (e.g. Voxtral license acknowledgement only matters when the user
         # actually picked TTS_PROVIDER=voxtral earlier in the section).
         if should_skip_wizard_var "$var_name" "$(get_config_value TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -361,7 +361,7 @@ configure_section() {
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
@@ -376,7 +376,7 @@ configure_section() {
                 continue
             fi
             set_config_value "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
