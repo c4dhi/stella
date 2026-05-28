@@ -158,9 +158,9 @@ wizard_chapter_tabs() {
         local label="${WIZARD_CHAPTERS[$i]}"
         local human=$((i + 1))
         if (( human < current_global_idx )); then
-            printf "${GREEN}✓ %s${NC}   " "$label"
+            printf "✓ %s   " "$label"
         elif (( human == current_global_idx )); then
-            printf "${CYAN}${BOLD}◐ %s${NC}   " "$label"
+            printf "${GREEN}${BOLD}◐ %s${NC}   " "$label"
         else
             printf "${DIM}○ %s${NC}   " "$label"
         fi
