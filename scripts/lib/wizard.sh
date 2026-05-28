@@ -848,6 +848,9 @@ wizard_success_screen() {
     local env_file="$1"
     local mode="$2"
 
+    local start_cmd="./scripts/start-k8s.sh"
+    [[ "$mode" == "production" ]] && start_cmd="./scripts/start-k8s.sh --production"
+
     echo ""
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -858,7 +861,7 @@ wizard_success_screen() {
     echo ""
     echo -e "  ${DIM}You can now start STELLA with:${NC}"
     echo ""
-    echo -e "    ${CYAN}./scripts/start-k8s.sh${NC}"
+    echo -e "    ${CYAN}${start_cmd}${NC}"
     echo ""
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""

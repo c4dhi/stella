@@ -627,6 +627,13 @@ setup_apply_defaults() {
     local category="$1"
     local env="$2"
 
+    # When an existing config was loaded, "Skip section" means leave the
+    # .env file untouched for this category — never inject defaults that
+    # would silently add new variables the operator hadn't set.
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
+
     local vars
     vars=$(get_setup_vars "$category" "$env")
 
@@ -805,6 +812,11 @@ apply_optional_defaults() {
     local category="$1"
     local env="$2"
 
+    # Existing config + skipped optional section ⇒ leave .env untouched.
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
+
     local vars
     vars=$(get_category_vars "$category")
 
@@ -859,12 +871,16 @@ configure_optional_settings() {
 # Configuration Loading
 # =============================================================================
 
+WIZARD_HAS_EXISTING_CONFIG="false"
+
 load_existing_config() {
     local env_file="$1"
 
     if [[ ! -f "$env_file" ]]; then
         return 1
     fi
+
+    WIZARD_HAS_EXISTING_CONFIG="true"
 
     # Read existing environment file
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -899,6 +915,12 @@ load_existing_config() {
 
 apply_all_defaults() {
     local env="$1"
+
+    # Existing config: don't inject defaults for unset vars. The operator
+    # already has a .env; respect what is there (and what is not).
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
 
     # Apply defaults for ALL variables that weren't explicitly set
     for var_name in "${ALL_VARIABLES[@]}"; do
