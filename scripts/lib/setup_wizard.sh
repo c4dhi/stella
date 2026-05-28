@@ -146,6 +146,26 @@ WIZARD_CHAPTERS=()
 WIZARD_OPTIONAL_OFFSET=0
 WIZARD_ADMIN_OFFSET=0
 
+# Replace the single "Optional Settings" placeholder tab with the three
+# real sub-tabs (STT / TTS / GPU). Called when the operator chooses to
+# configure the optional phase so the outline matches what's coming.
+wizard_expand_optional_chapters() {
+    local -a expanded=()
+    local i
+    for ((i=0; i<${#WIZARD_CHAPTERS[@]}; i++)); do
+        if (( i == WIZARD_OPTIONAL_OFFSET )); then
+            expanded+=("$(get_category_name stt)")
+            expanded+=("$(get_category_name tts)")
+            expanded+=("$(get_category_name gpu)")
+        else
+            expanded+=("${WIZARD_CHAPTERS[$i]}")
+        fi
+    done
+    WIZARD_CHAPTERS=("${expanded[@]}")
+    # Admin tab moved right by 2 (3 inserted, 1 removed).
+    WIZARD_ADMIN_OFFSET=$((WIZARD_ADMIN_OFFSET + 2))
+}
+
 wizard_chapter_tabs() {
     local current_global_idx="$1"   # 1-based
     local total=${#WIZARD_CHAPTERS[@]}
@@ -204,17 +224,19 @@ run_setup_wizard() {
     fi
 
     # Build the global chapter list used by the tab bar so every section
-    # card can show where the operator is in the overall flow.
-    local -a optional_categories=("stt" "tts" "gpu")
+    # card can show where the operator is in the overall flow. The
+    # optional STT/TTS/GPU sub-sections are collapsed into a single
+    # "Optional Settings" tab; sub-cards still get their own headers but
+    # the outline stays compact. If the operator declines the optional
+    # phase the tab is left in place (marked done by progression) rather
+    # than expanded.
     WIZARD_CHAPTERS=()
     local _cat
     for _cat in "${categories[@]}"; do
         WIZARD_CHAPTERS+=("$(get_category_name "$_cat")")
     done
     WIZARD_OPTIONAL_OFFSET=${#WIZARD_CHAPTERS[@]}
-    for _cat in "${optional_categories[@]}"; do
-        WIZARD_CHAPTERS+=("$(get_category_name "$_cat")")
-    done
+    WIZARD_CHAPTERS+=("Optional Settings")
     WIZARD_ADMIN_OFFSET=${#WIZARD_CHAPTERS[@]}
     WIZARD_CHAPTERS+=("Admin")
 
@@ -249,7 +271,11 @@ run_setup_wizard() {
     done
 
     # Optional-settings gate — match the rest of the chapter cards.
+    # When the operator opts in, expand the single "Optional Settings"
+    # tab into its STT/TTS/GPU sub-tabs so the outline reflects what's
+    # actually about to happen.
     if optional_settings_intro_section; then
+        wizard_expand_optional_chapters
         configure_optional_settings "$env"
     fi
 
