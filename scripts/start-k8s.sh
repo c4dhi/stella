@@ -291,6 +291,14 @@ main() {
             source "$LIB_DIR/setup_wizard.sh"
             run_setup_wizard "$ENV_FLAG"
 
+            # Inherit the env the wizard picked on its welcome screen
+            # (otherwise ENV_FLAG stays empty and load_environment falls
+            # back to .env.local even after saving .env.production).
+            if [[ -n "${WIZARD_SELECTED_ENV:-}" ]]; then
+                ENV_FLAG="$WIZARD_SELECTED_ENV"
+                export ENV_FLAG
+            fi
+
             # Reload environment after setup
             load_environment
         else

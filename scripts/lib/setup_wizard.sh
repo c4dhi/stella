@@ -149,7 +149,12 @@ WIZARD_ADMIN_OFFSET=0
 # Replace the single "Optional Settings" placeholder tab with the three
 # real sub-tabs (STT / TTS / GPU). Called when the operator chooses to
 # configure the optional phase so the outline matches what's coming.
+# Idempotent — safe to call again after a Back navigation.
 wizard_expand_optional_chapters() {
+    # Already expanded?
+    if [[ "${WIZARD_CHAPTERS[$WIZARD_OPTIONAL_OFFSET]}" != "Optional Settings" ]]; then
+        return 0
+    fi
     local -a expanded=()
     local i
     for ((i=0; i<${#WIZARD_CHAPTERS[@]}; i++)); do
@@ -270,17 +275,28 @@ run_setup_wizard() {
         esac
     done
 
-    # Optional-settings gate — match the rest of the chapter cards.
-    # When the operator opts in, expand the single "Optional Settings"
-    # tab into its STT/TTS/GPU sub-tabs so the outline reflects what's
-    # actually about to happen.
-    if optional_settings_intro_section; then
-        wizard_expand_optional_chapters
-        configure_optional_settings "$env"
-    fi
-
-    # Initial admin bootstrap — its own skippable chapter.
-    admin_bootstrap_section "$project_dir" "$env"
+    # Post-required phase: optional gate + admin bootstrap, with Back
+    # navigation between them.
+    local post_state="optional"
+    while [[ "$post_state" != "done" ]]; do
+        case "$post_state" in
+            optional)
+                if optional_settings_intro_section; then
+                    wizard_expand_optional_chapters
+                    configure_optional_settings "$env"
+                fi
+                post_state="admin"
+                ;;
+            admin)
+                local admin_rc=0
+                admin_bootstrap_section "$project_dir" "$env" || admin_rc=$?
+                case "$admin_rc" in
+                    2)  post_state="optional" ;;  # Back
+                    *)  post_state="done" ;;
+                esac
+                ;;
+        esac
+    done
 
     # Review screen
     wizard_clear_screen
@@ -412,11 +428,11 @@ admin_bootstrap_section() {
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
-    local options=("Configure" "Skip section")
+    local options=("Configure" "Skip section" "Back")
     local selected=0
     local num_options=${#options[@]}
 
-    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm${NC}"
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm  [b] Back${NC}"
     echo ""
     for ((i=0; i<num_options; i++)); do echo ""; done
 
@@ -442,14 +458,26 @@ admin_bootstrap_section() {
             ENTER)
                 wizard_restore_terminal
                 wizard_show_cursor
-                if [[ "${options[$selected]}" == "Configure" ]]; then
-                    collect_initial_admin_credentials "$project_dir" "$env"
-                else
-                    INITIAL_ADMIN_EMAIL_VALUE=""
-                    INITIAL_ADMIN_PASSWORD_VALUE=""
-                    rm -f "$(get_admin_bootstrap_file "$project_dir" "$env")" 2>/dev/null || true
-                fi
-                return 0
+                case "${options[$selected]}" in
+                    Configure)
+                        collect_initial_admin_credentials "$project_dir" "$env"
+                        return 0
+                        ;;
+                    "Skip section")
+                        INITIAL_ADMIN_EMAIL_VALUE=""
+                        INITIAL_ADMIN_PASSWORD_VALUE=""
+                        rm -f "$(get_admin_bootstrap_file "$project_dir" "$env")" 2>/dev/null || true
+                        return 0
+                        ;;
+                    Back)
+                        return 2
+                        ;;
+                esac
+                ;;
+            ESC|b|B)
+                wizard_restore_terminal
+                wizard_show_cursor
+                return 2
                 ;;
             UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
             DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
