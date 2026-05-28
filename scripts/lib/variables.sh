@@ -129,7 +129,7 @@ get_var_metadata() {
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
         ENABLE_VOXTRAL)        echo "tts|boolean|optional|false|false|Install Voxtral inference deps in tts-service image (Apache-2.0). Auto-enabled when TTS_PROVIDER=voxtral.||" ;;
         VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights||" ;;
-        VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device: bf16 on Ampere+ GPUs, fp16 on MPS/T4, fp32 on CPU)|,bfloat16,float16,float32|" ;;
+        VOXTRAL_DTYPE)         echo "tts|select|optional|auto|auto|Voxtral inference dtype (auto = pick per device: bf16 on Ampere+ GPUs, fp16 on MPS/T4, fp32 on CPU)|auto,bfloat16,float16,float32|" ;;
         VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading the Voxtral weights. Get one at https://huggingface.co/settings/tokens after clicking 'Agree' on the model card.||" ;;
         VOXTRAL_LOAD_IN_4BIT)  echo "tts|boolean|optional|false|false|Load Voxtral in 4-bit via bitsandbytes (CUDA only). ~2.5GB VRAM, recommended for Tesla T4 / shared GPUs. Leave false on L4/A100.||" ;;
