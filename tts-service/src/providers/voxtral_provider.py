@@ -29,7 +29,8 @@ use.
 import asyncio
 import io
 import os
-from typing import Optional, Tuple
+import time
+from typing import Optional, Tuple, AsyncGenerator
 
 import numpy as np
 
@@ -52,6 +53,12 @@ DEFAULT_SAMPLE_RATE = 24000
 INIT_READINESS_TIMEOUT_S = 600  # vllm can take minutes to load a 4B model
 INIT_POLL_INTERVAL_S = 5
 SYNTH_TIMEOUT_S = 120
+# Audio format we ask vllm-omni for. Raw PCM streams chunk-by-chunk; WAV
+# only finalizes on stream close, defeating low-latency streaming.
+STREAM_FORMAT = "pcm"
+STREAM_CHANNELS = 1
+STREAM_DTYPE = np.int16
+STREAM_BYTES_PER_SAMPLE = 2
 
 
 class VoxtralProvider(TTSProvider):
@@ -139,7 +146,21 @@ class VoxtralProvider(TTSProvider):
         )
         self._initialized = True
         print("[Voxtral] Ready")
+
+        # Pre-warm the model on the sidecar. vllm keeps weights resident
+        # but JITs CUDA graphs / autotune kernels on the first request, so
+        # we eat that cost here rather than on the user's first utterance.
+        await self._warm_up()
         return True
+
+    async def _warm_up(self) -> None:
+        """Run a tiny synth so the first real request hits warm kernels."""
+        try:
+            t0 = time.time()
+            await self.synthesize("Hi.")
+            print(f"[Voxtral] Warm-up complete in {(time.time() - t0) * 1000:.0f}ms")
+        except Exception as e:
+            print(f"[Voxtral] Warm-up failed (non-fatal): {e}")
 
     async def synthesize(
         self,
@@ -191,6 +212,82 @@ class VoxtralProvider(TTSProvider):
             import traceback
             traceback.print_exc()
             return None
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: float = 1.0,
+        chunk_size: int = 480,
+        language: Optional[str] = None,
+    ) -> AsyncGenerator[Tuple[np.ndarray, bool], None]:
+        """Streaming synthesis via vllm-omni's chunked PCM response.
+
+        We ask vllm-omni for `response_format=pcm` and consume the HTTP
+        body as it arrives — vllm emits PCM bytes as the model produces
+        them, so TTFB is roughly model-prefill + one decoder step.
+        """
+        if not self._initialized or self._client is None:
+            print("[Voxtral] Not initialized")
+            return
+        if not text or not text.strip():
+            return
+
+        payload = {
+            "model": self._model_name,
+            "input": text,
+            "voice": voice or self._default_voice,
+            "response_format": STREAM_FORMAT,
+        }
+
+        leftover = b""
+        first_yielded = False
+        t0 = time.time()
+        bytes_per_chunk = chunk_size * STREAM_BYTES_PER_SAMPLE  # int16 mono
+
+        try:
+            async with self._client.stream("POST", "/v1/audio/speech", json=payload) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    print(f"[Voxtral] vllm returned HTTP {resp.status_code}: {body[:500]!r}")
+                    return
+
+                async for raw in resp.aiter_bytes():
+                    if not raw:
+                        continue
+                    if not first_yielded:
+                        print(f"[Voxtral] First PCM bytes in {(time.time() - t0) * 1000:.0f}ms (stream)")
+
+                    buf = leftover + raw if leftover else raw
+                    full = len(buf) - (len(buf) % bytes_per_chunk)
+                    if full == 0:
+                        leftover = buf
+                        continue
+
+                    # Slice into chunk_size-sized int16 frames; carry the tail.
+                    frames = np.frombuffer(buf[:full], dtype=STREAM_DTYPE)
+                    leftover = buf[full:]
+                    total = len(frames)
+                    for i in range(0, total, chunk_size):
+                        yield (frames[i:i + chunk_size], False)
+                        first_yielded = True
+
+                # End of stream — flush leftover (if any) as the final frame.
+                if leftover:
+                    tail = np.frombuffer(leftover, dtype=STREAM_DTYPE)
+                    yield (tail, True)
+                elif first_yielded:
+                    yield (np.empty(0, dtype=STREAM_DTYPE), True)
+
+            if first_yielded:
+                print(f"[Voxtral] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
+
+        except httpx.TimeoutException:
+            print(f"[Voxtral] streaming timed out after {SYNTH_TIMEOUT_S}s")
+        except Exception as e:  # noqa: BLE001
+            print(f"[Voxtral] Streaming failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def cleanup(self) -> None:
         if self._client is not None:

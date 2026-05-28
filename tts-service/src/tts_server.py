@@ -238,6 +238,58 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
             print(f"[TTS Service] SynthesizeStream error: {e}")
             context.abort(grpc.StatusCode.INTERNAL, str(e))
 
+    async def Warmup(self, request, context):
+        """Warm up the active TTS provider.
+
+        The provider's own initialize() already runs a warm-up at startup,
+        but providers can go cold between requests (e.g. a kokoro pod that's
+        been idle long enough for the GPU context to be reset by the
+        scheduler, or a vllm-omni sidecar that hot-swapped weights). This
+        RPC lets the agent re-prime the model at session start without
+        racing the user's first utterance.
+        """
+        import time
+        t0 = time.time()
+        try:
+            if not self.engine.initialized or self.engine.provider is None:
+                return tts_pb2.WarmupResponse(
+                    success=False,
+                    warmup_time_ms=0,
+                    provider=self.engine.provider_name,
+                    message="TTS engine not initialized",
+                )
+
+            # Run a tiny throwaway synth to prime kernels. Use synthesize
+            # (not synthesize_stream) because we don't actually need the
+            # streamed frames here — just the side-effects of running once.
+            result = await self.engine.provider.synthesize("Hi.")
+            elapsed_ms = int((time.time() - t0) * 1000)
+
+            if result is None:
+                return tts_pb2.WarmupResponse(
+                    success=False,
+                    warmup_time_ms=elapsed_ms,
+                    provider=self.engine.provider_name,
+                    message="Warm-up synthesis returned no audio",
+                )
+
+            print(f"[TTS Service] Warmup completed in {elapsed_ms}ms (session={request.session_id})")
+            return tts_pb2.WarmupResponse(
+                success=True,
+                warmup_time_ms=elapsed_ms,
+                provider=self.engine.provider_name,
+                message="ok",
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - t0) * 1000)
+            print(f"[TTS Service] Warmup error: {e}")
+            return tts_pb2.WarmupResponse(
+                success=False,
+                warmup_time_ms=elapsed_ms,
+                provider=self.engine.provider_name,
+                message=f"warm-up failed: {e}",
+            )
+
     async def HealthCheck(self, request, context):
         """Health check endpoint."""
         return tts_pb2.HealthResponse(
