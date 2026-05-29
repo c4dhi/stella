@@ -85,15 +85,15 @@ get_var_metadata() {
         # --- DATABASE ---
         POSTGRES_DB)           echo "database|text|both|session_management|session_management|PostgreSQL database name||" ;;
         POSTGRES_USER)         echo "database|text|both|postgres|postgres|PostgreSQL username||" ;;
-        POSTGRES_PASSWORD)     echo "database|password|both|||Secure database password||" ;;
+        POSTGRES_PASSWORD)     echo "database|password|both|||Secure database password||openssl rand -hex 24" ;;
 
         # --- SECURITY ---
         JWT_SECRET)            echo "security|generated|both|||JWT signing secret (64+ chars)||openssl rand -base64 48" ;;
         ENV_VAR_ENCRYPTION_KEY) echo "security|generated|both|||Encryption key for stored env vars (64 hex chars)||openssl rand -hex 32" ;;
 
         # --- LIVEKIT ---
-        LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||" ;;
-        LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||" ;;
+        LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||openssl rand -hex 8" ;;
+        LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||openssl rand -hex 24" ;;
         LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL (for K8s pods)||" ;;
         PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL (for browsers)||" ;;
         LIVEKIT_TURN_ENABLED)  echo "livekit|boolean|optional|false|true|Enable TURN server for NAT traversal||" ;;

@@ -826,8 +826,12 @@ wizard_review_screen() {
         local var_name="${line%%=*}"
         local var_value="${line#*=}"
 
-        # Mask only OpenAI API key in review output. The key is too long to be displayed in the review screen.
-        if [[ "$var_name" == "OPENAI_API_KEY" ]] && [[ -n "$var_value" ]]; then
+        # Mask secrets in the review so generated/entered credentials aren't
+        # printed in the clear. Covers password/generated typed vars plus the
+        # admin password and anything that looks like a secret by name.
+        local vtype
+        vtype=$(get_var_meta "$var_name" "type" 2>/dev/null || true)
+        if [[ -n "$var_value" ]] && { [[ "$vtype" == "password" ]] || [[ "$vtype" == "generated" ]] || [[ "$var_name" == *PASSWORD* ]] || [[ "$var_name" == *SECRET* ]] || [[ "$var_name" == *TOKEN* ]]; }; then
             var_value="••••••••"
         fi
 
@@ -940,6 +944,18 @@ wizard_var_input_compact() {
     generator=$(get_var_meta "$var_name" "generator")
     required=$(get_var_meta "$var_name" "required")
 
+    # For generatable secrets, ignore the cross-environment default fallback so
+    # production never silently inherits the local dev credentials (e.g.
+    # devkey/devsecret). Use only the environment's own default — when it's
+    # empty, the input offers to auto-generate a fresh value instead.
+    if [[ -n "$generator" ]]; then
+        if [[ "$env" == "production" ]]; then
+            default=$(get_var_meta "$var_name" "default_prod")
+        else
+            default=$(get_var_meta "$var_name" "default_local")
+        fi
+    fi
+
     local effective="${current:-$default}"
 
     # Compact header
@@ -960,32 +976,58 @@ wizard_var_input_compact() {
             wizard_generated_compact "$var_name" "$current" "$generator" "$auto_gen"
             ;;
         password)
-            wizard_password_compact "$var_name" "$current"
+            # When a generator is defined for a required secret, [Enter] on an
+            # empty field auto-creates a secure value (no override, nothing saved).
+            local auto_gen=""
+            if [[ -n "$generator" ]] && { [[ "$required" == "both" ]] || { [[ "$required" == "production" ]] && [[ "$env" == "production" ]]; }; }; then
+                auto_gen="auto"
+            fi
+            wizard_password_compact "$var_name" "$current" "$default" "$generator" "$auto_gen"
             ;;
         *)
-            wizard_text_compact "$var_name" "$effective"
+            local auto_gen=""
+            if [[ -n "$generator" ]] && { [[ "$required" == "both" ]] || { [[ "$required" == "production" ]] && [[ "$env" == "production" ]]; }; }; then
+                auto_gen="auto"
+            fi
+            wizard_text_compact "$var_name" "$effective" "$generator" "$auto_gen"
             ;;
     esac
 }
 
 # Compact text input
+# Optional generator/auto_gen: when the field has no value and no default and
+# a generator is available, [Enter] creates a secure value instead of leaving
+# the field empty (used for keys like LIVEKIT_API_KEY in production).
 wizard_text_compact() {
     local var_name="$1"
     local effective="$2"
+    local generator="${3:-}"
+    local auto_gen="${4:-}"
 
     local value="$effective"
+    local can_generate=false
+    if [[ -z "$effective" ]] && [[ -n "$generator" ]] && [[ "$auto_gen" == "auto" ]]; then
+        can_generate=true
+    fi
 
     if [[ -n "$effective" ]]; then
         echo -e "  ${DIM}Current:${NC} ${effective}" >&2
+        echo -e "  ${DIM}[Enter] Keep  [Type] Edit  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$can_generate" == "true" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [Type] Set manually  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[Type] Enter value  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] Keep  [Type] Edit  [Ctrl+C] Cancel${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
     wizard_show_cursor
 
     while true; do
-        if [[ "$value" == "$effective" ]] && [[ -n "$value" ]]; then
+        if [[ -z "$value" ]] && [[ "$can_generate" == "true" ]]; then
+            printf "\r  > ${DIM}(blank → auto-generate)${NC} " >&2
+        elif [[ "$value" == "$effective" ]] && [[ -n "$value" ]]; then
             printf "\r  > ${DIM}%s${NC} " "$value" >&2
         else
             printf "\r  > %s " "$value" >&2
@@ -999,7 +1041,11 @@ wizard_text_compact() {
             ENTER)
                 wizard_restore_terminal
                 echo "" >&2
-                echo "$value"
+                if [[ -z "$value" ]] && [[ "$can_generate" == "true" ]]; then
+                    eval "$generator" 2>/dev/null || openssl rand -hex 16
+                else
+                    echo "$value"
+                fi
                 return 0
                 ;;
             ESC)
@@ -1020,18 +1066,40 @@ wizard_text_compact() {
 }
 
 # Compact password input
+# Optional default/generator/auto_gen resolve what [Enter] does on an empty
+# field, in priority order:
+#   1. a previously saved value (current) is kept
+#   2. otherwise a known default is used (e.g. local LiveKit devsecret)
+#   3. otherwise, if a generator is available, a secure value is created
+#   4. otherwise the field stays empty (caller enforces required-not-empty)
+# A value the operator actually types always wins.
 wizard_password_compact() {
     local var_name="$1"
     local current="$2"
+    local default="${3:-}"
+    local generator="${4:-}"
+    local auto_gen="${5:-}"
 
     local value=""
     local has_current=false
     [[ -n "$current" ]] && has_current=true
+    local can_generate=false
+    if [[ -n "$generator" ]] && [[ "$auto_gen" == "auto" ]]; then
+        can_generate=true
+    fi
 
     if [[ "$has_current" == "true" ]]; then
         echo -e "  ${DIM}Current:${NC} ••••••••" >&2
+        echo -e "  ${DIM}[Enter] Keep  [Type] New  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ -n "$default" ]]; then
+        echo -e "  ${DIM}Default:${NC} ${default}" >&2
+        echo -e "  ${DIM}[Enter] Use default  [Type] New  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$can_generate" == "true" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [Type] Set manually  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[Type] Enter value  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] Keep  [Type] New  [Ctrl+C] Cancel${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
@@ -1040,8 +1108,16 @@ wizard_password_compact() {
     while true; do
         # Clear line first, then print (prevents wrapping issues with long input)
         printf "\r\033[K" >&2
-        if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
-            printf "  > ${DIM}(keep current)${NC}" >&2
+        if [[ -z "$value" ]]; then
+            if [[ "$has_current" == "true" ]]; then
+                printf "  > ${DIM}(keep current)${NC}" >&2
+            elif [[ -n "$default" ]]; then
+                printf "  > ${DIM}(use default)${NC}" >&2
+            elif [[ "$can_generate" == "true" ]]; then
+                printf "  > ${DIM}(blank → auto-generate)${NC}" >&2
+            else
+                printf "  > " >&2
+            fi
         else
             # Limit displayed dots to 20, show character count for longer values
             local len=${#value}
@@ -1061,7 +1137,17 @@ wizard_password_compact() {
             ENTER)
                 wizard_restore_terminal
                 echo "" >&2
-                [[ -z "$value" ]] && [[ "$has_current" == "true" ]] && echo "$current" || echo "$value"
+                if [[ -n "$value" ]]; then
+                    echo "$value"
+                elif [[ "$has_current" == "true" ]]; then
+                    echo "$current"
+                elif [[ -n "$default" ]]; then
+                    echo "$default"
+                elif [[ "$can_generate" == "true" ]]; then
+                    eval "$generator" 2>/dev/null || openssl rand -base64 24
+                else
+                    echo ""
+                fi
                 return 0
                 ;;
             ESC)
@@ -1094,8 +1180,13 @@ wizard_generated_compact() {
 
     if [[ "$has_current" == "true" ]]; then
         echo -e "  ${DIM}Current:${NC} ${current:0:20}..." >&2
+        echo -e "  ${DIM}[Enter] Keep  [G] Generate new  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$auto_gen" == "auto" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [G] Generate now  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[G] Generate  [Enter] Accept  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] ${has_current:+Keep}${auto_gen:+Auto-generate}  [G] Generate${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
@@ -1105,7 +1196,7 @@ wizard_generated_compact() {
         if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
             printf "\r  > ${DIM}(keep current)${NC} " >&2
         elif [[ -z "$value" ]] && [[ "$auto_gen" == "auto" ]]; then
-            printf "\r  > ${DIM}(will auto-generate)${NC} " >&2
+            printf "\r  > ${DIM}(blank → auto-generate)${NC} " >&2
         else
             printf "\r  > %.40s " "$value" >&2
         fi
