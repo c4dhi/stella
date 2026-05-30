@@ -381,7 +381,11 @@ configure_section() {
         local current
         current=$(get_config_value "$var_name")
         local value
-        value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        if [[ "$var_name" == "LIVEKIT_URL" ]]; then
+            value=$(wizard_livekit_url_guided "$current" "$env")
+        else
+            value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        fi
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then

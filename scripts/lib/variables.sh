@@ -94,8 +94,8 @@ get_var_metadata() {
         # --- LIVEKIT ---
         LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||openssl rand -hex 8" ;;
         LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||openssl rand -hex 24" ;;
-        LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL (for K8s pods)||" ;;
-        PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL (for browsers)||" ;;
+        LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL the STELLA pods connect to (NOT localhost)||" ;;
+        PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL browsers connect to (wss://your-domain in prod)||" ;;
         LIVEKIT_TURN_ENABLED)  echo "livekit|boolean|optional|false|true|Enable TURN server for NAT traversal||" ;;
         LIVEKIT_TURN_DOMAIN)   echo "livekit|text|optional|||TURN server domain (e.g. turn.example.com)||" ;;
 
@@ -235,6 +235,34 @@ get_var_meta() {
         options)       echo "${7:-}" ;;
         generator)     echo "${8:-}" ;;
         *)             echo "" ;;
+    esac
+}
+
+# Extended, multi-line help for variables that need more than the one-line
+# description (which doubles as the .env comment). Printed by the wizard above
+# the input prompt. Echoes nothing for variables without extended help.
+# Usage: get_var_help "VAR_NAME"  (each line is emitted separately)
+get_var_help() {
+    case "$1" in
+        LIVEKIT_URL)
+            echo "The address STELLA's Kubernetes pods use to reach LiveKit."
+            echo "Pods cannot use 'localhost' — inside a pod that points at the pod"
+            echo "itself, not at the host running LiveKit."
+            echo "• Same machine (LiveKit + STELLA on one server): use this host's"
+            echo "  LAN IP, e.g. ws://10.0.0.5:7880  — never localhost / 127.0.0.1."
+            echo "• Separate machine: use that server's IP or hostname."
+            ;;
+        PUBLIC_LIVEKIT_URL)
+            echo "The address end-user browsers use to reach LiveKit — usually a"
+            echo "public TLS domain in front of your reverse proxy, e.g."
+            echo "wss://livekit.example.com. Browsers need 'wss://' (secure) in"
+            echo "production; plain 'ws://' only works for local development."
+            ;;
+        LIVEKIT_TURN_DOMAIN)
+            echo "Public domain of the TURN server used for NAT traversal when a"
+            echo "direct browser↔LiveKit connection fails, e.g. turn.example.com."
+            echo "Required when TURN is enabled."
+            ;;
     esac
 }
 

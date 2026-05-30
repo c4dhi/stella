@@ -961,6 +961,13 @@ wizard_var_input_compact() {
     # Compact header
     echo -e "  ${BOLD}${var_name}${NC} ${DIM}(${var_idx}/${total_vars})${NC}" >&2
     [[ -n "$description" ]] && echo -e "  ${DIM}${description}${NC}" >&2
+
+    # Extended, multi-line guidance for variables that need it (e.g. why
+    # LIVEKIT_URL must be a routable IP, not localhost).
+    local help_line
+    while IFS= read -r help_line; do
+        [[ -n "$help_line" ]] && echo -e "  ${DIM}${help_line}${NC}" >&2
+    done < <(get_var_help "$var_name")
     echo "" >&2
 
     case "$type" in
@@ -990,6 +997,115 @@ wizard_var_input_compact() {
                 auto_gen="auto"
             fi
             wizard_text_compact "$var_name" "$effective" "$generator" "$auto_gen"
+            ;;
+    esac
+}
+
+# =============================================================================
+# Guided LIVEKIT_URL input
+# =============================================================================
+# LIVEKIT_URL is the address STELLA's Kubernetes pods use to reach the LiveKit
+# server. Pods can't use localhost (that resolves to the pod itself), so on a
+# single-machine deployment the operator must supply the host's LAN IP — a
+# common pitfall. This guided step explains that and asks whether LiveKit runs
+# on the same machine, auto-detecting the host IP for the "same machine" case.
+#
+# Usage: value=$(wizard_livekit_url_guided "$current" "$env")
+# Echoes the chosen URL on stdout (UI on stderr); "__BACK__" for back-nav.
+wizard_livekit_url_guided() {
+    local current="$1"
+    local env="${2:-}"
+    local port="7880"
+
+    # Detect this host's LAN IP to suggest for the same-machine case.
+    local detected_ip=""
+    if command -v get_local_ip >/dev/null 2>&1; then
+        detected_ip=$(get_local_ip 2>/dev/null || true)
+    fi
+    [[ -z "$detected_ip" ]] && detected_ip="127.0.0.1"
+
+    echo -e "  ${BOLD}LIVEKIT_URL${NC} ${DIM}(internal — pods → LiveKit)${NC}" >&2
+    echo -e "  ${DIM}STELLA runs inside Kubernetes. Its pods cannot reach LiveKit via${NC}" >&2
+    echo -e "  ${DIM}'localhost' — that points at the pod itself. They need a routable${NC}" >&2
+    echo -e "  ${DIM}address. Where will the LiveKit server run?${NC}" >&2
+    echo "" >&2
+
+    # Build a dynamic option menu — include "keep current" only when a value
+    # already exists (e.g. loaded from an existing .env).
+    local -a options=()
+    local -a values=()
+    if [[ -n "$current" ]]; then
+        options+=("Keep current: ${current}")
+        values+=("$current")
+    fi
+    options+=("Same machine as STELLA  (use this host's LAN IP: ${detected_ip})")
+    values+=("__SAME__")
+    options+=("Different machine / enter manually")
+    values+=("__MANUAL__")
+
+    local num_options=${#options[@]}
+    local selected=0
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm  [Esc] Back${NC}" >&2
+    echo "" >&2
+    for ((i=0; i<num_options; i++)); do echo "" >&2; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    local choice=""
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A' >&2; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r" >&2
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}[●] ${options[$i]}${NC}" >&2
+            else
+                printf "    ${DIM}[ ] ${options[$i]}${NC}" >&2
+            fi
+            wizard_clear_line >&2
+            echo "" >&2
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                choice="${values[$selected]}"
+                break
+                ;;
+            ESC)
+                wizard_restore_terminal
+                wizard_show_cursor
+                echo "" >&2
+                echo "__BACK__"
+                return 0
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
+
+    wizard_restore_terminal
+    wizard_show_cursor
+    echo "" >&2
+
+    case "$choice" in
+        __SAME__)
+            echo -e "  ${DIM}Suggested: ws://${detected_ip}:${port} — press [Enter] to accept,${NC}" >&2
+            echo -e "  ${DIM}or edit if the detected IP is wrong.${NC}" >&2
+            echo "" >&2
+            wizard_text_input "LIVEKIT_URL" "Internal URL the pods connect to" "" "ws://${detected_ip}:${port}"
+            ;;
+        __MANUAL__)
+            echo -e "  ${DIM}Enter the LiveKit server's address, e.g. ws://livekit-host:${port}${NC}" >&2
+            echo -e "  ${DIM}(use its IP or a DNS name the pods can resolve — not localhost).${NC}" >&2
+            echo "" >&2
+            wizard_text_input "LIVEKIT_URL" "Internal URL the pods connect to" "$current" ""
+            ;;
+        *)
+            # Keep current value.
+            echo "$choice"
             ;;
     esac
 }
