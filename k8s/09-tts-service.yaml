@@ -281,6 +281,12 @@ spec:
       # VOXTRAL:         name: stella-ai-config
       # VOXTRAL:         key: VOXTRAL_GPU_MEMORY_UTILIZATION
       # VOXTRAL:         optional: true
+      # VOXTRAL:   - name: VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION
+      # VOXTRAL:     valueFrom:
+      # VOXTRAL:       configMapKeyRef:
+      # VOXTRAL:         name: stella-ai-config
+      # VOXTRAL:         key: VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION
+      # VOXTRAL:         optional: true
       # VOXTRAL:   - name: VOXTRAL_MAX_MODEL_LEN
       # VOXTRAL:     valueFrom:
       # VOXTRAL:       configMapKeyRef:

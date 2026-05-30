@@ -414,6 +414,9 @@ set_defaults() {
     # engine stalls after weight-load (never binds :8000). See
     # tts-vllm-omni/entrypoint.sh. Operator-overridable / wizard-configurable.
     export VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}"
+    # Stage 1 (acoustic) memory fraction. Blank = keep the packaged 0.1; the
+    # entrypoint only rewrites stage 1 when this is non-empty.
+    export VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION="${VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION:-}"
     export VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
     export HF_TOKEN="${HF_TOKEN:-}"
     if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then

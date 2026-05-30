@@ -9,15 +9,19 @@ set -e
 MODEL_PATH="${VOXTRAL_MODEL_PATH:-/models/voxtral}"
 SERVED_NAME="${VOXTRAL_SERVED_NAME:-voxtral}"
 PORT="${VLLM_PORT:-8000}"
-# Default 0.5, NOT vLLM's usual 0.85. Voxtral TTS is a 2-stage model (LLM
-# backbone + acoustic transformer) and BOTH stages need GPU memory. The sed
-# below stamps this value into every stage in the YAML, so it applies per
-# stage. At 0.85 the backbone grabs almost everything and the engine stalls
-# after weight-load while bringing up stage 2 — it never binds :8000
-# ("Application startup complete" never prints). 0.5/stage suits a 24GB card;
-# operators with bigger/smaller VRAM tune it via VOXTRAL_GPU_MEMORY_UTILIZATION
-# (settable in the config wizard).
+# GPU memory for STAGE 0 — the LM (audio_generation) stage. This is the heavy
+# tenant: it loads ~7.78GiB of weights plus the KV cache, so it needs the lion's
+# share. Packaged default is 0.8; we default to 0.5 to leave room for stage 1
+# AND a co-located STT pod on a shared 24GB card (L4/A10G). Do NOT go below ~0.4
+# or stage 0 can't fit its weights. This value is applied ONLY to stage 0 (see
+# the per-stage rewrite below) — the old "set every stage to one value" approach
+# was the OOM bug: it forced the small acoustic stage to the same large fraction,
+# so stage 1 couldn't fit after stage 0 had taken the card.
 GPU_UTIL="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}"
+# GPU memory for STAGE 1 — the acoustic (audio_tokenizer) stage. It is small;
+# the packaged config uses 0.1. Leave BLANK to keep that packaged value (the
+# safe default); set only to override on an unusual card.
+ACOUSTIC_GPU_UTIL="${VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION:-}"
 MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
 # enforce-eager skips torch.compile/cudagraph capture. Default ON for a
 # reliable first boot (cudagraph capture is a common startup-crash source on
@@ -72,25 +76,59 @@ if [ -z "$STAGE_CONFIGS_PATH" ] || [ ! -f "$STAGE_CONFIGS_PATH" ]; then
     exit 1
 fi
 
-# Copy to a writable location so we can tune gpu_memory_utilization. The 2-stage
-# YAML carries its own per-stage memory budget; the top-level
-# --gpu-memory-utilization flag does not reliably reach both stages, so we patch
-# the YAML the way the upstream recipe does.
+# Copy to a writable location and rewrite the PER-STAGE gpu_memory_utilization.
+#
+# CRITICAL: this model ships an ASYMMETRIC split — stage 0 (the LM) takes the
+# large share because it holds the KV cache; stage 1 (acoustic) only ~0.1. CLI
+# flags like --gpu-memory-utilization do NOT reach the stages (the YAML wins —
+# proven by stage 0 capturing CUDA graphs despite --enforce-eager), so the YAML
+# is the only authoritative control. We edit each stage individually BY
+# stage_id, leaving stage 1 at the packaged value unless explicitly overridden.
+# This must be structural (PyYAML), not sed: both stages have an identical
+# gpu_memory_utilization: line and only parsing can tell them apart. The old
+# blanket sed forced both stages to one value and caused the stage-1 OOM.
 TUNED_CONFIGS_PATH="/tmp/voxtral_tts.yaml"
 cp "$STAGE_CONFIGS_PATH" "$TUNED_CONFIGS_PATH"
-sed -i -E "s|^([[:space:]]*gpu_memory_utilization:[[:space:]]*).*|\1${GPU_UTIL}|g" "$TUNED_CONFIGS_PATH" || true
+STAGE_UTILS=$(python3 - "$TUNED_CONFIGS_PATH" "$GPU_UTIL" "$ACOUSTIC_GPU_UTIL" <<'PY'
+import sys, yaml
+path, s0, s1 = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    cfg = yaml.safe_load(f)
+applied = {}
+for st in cfg.get("stage_args", []) or []:
+    sid = st.get("stage_id")
+    ea = st.setdefault("engine_args", {})
+    if sid == 0 and s0:
+        ea["gpu_memory_utilization"] = float(s0)
+    elif sid == 1 and s1:
+        ea["gpu_memory_utilization"] = float(s1)
+    if sid is not None:
+        applied[sid] = ea.get("gpu_memory_utilization")
+with open(path, "w") as f:
+    yaml.safe_dump(cfg, f, sort_keys=False)
+print(" ".join("stage%s=%s" % (k, applied[k]) for k in sorted(applied)))
+PY
+) || STAGE_UTILS=""
+if [ -z "$STAGE_UTILS" ]; then
+    echo "[vllm-omni] WARNING: could not rewrite per-stage gpu_memory_utilization;" >&2
+    echo "[vllm-omni] using the packaged values (stage0=0.8 stage1=0.1)." >&2
+fi
 
 echo "[vllm-omni] Starting Voxtral via vllm-omni"
 echo "[vllm-omni]   model_path           = $MODEL_PATH"
 echo "[vllm-omni]   served_name          = $SERVED_NAME"
 echo "[vllm-omni]   port                 = $PORT"
-echo "[vllm-omni]   gpu_memory_util      = $GPU_UTIL"
+echo "[vllm-omni]   per-stage gpu_util   = ${STAGE_UTILS:-packaged defaults}"
 echo "[vllm-omni]   stage_configs_path   = $STAGE_CONFIGS_PATH"
-echo "[vllm-omni]   enforce_eager        = $ENFORCE_EAGER"
+echo "[vllm-omni]   enforce_eager        = $ENFORCE_EAGER (note: stage values come from the YAML)"
 [ -n "$MAX_MODEL_LEN" ] && echo "[vllm-omni]   max_model_len        = $MAX_MODEL_LEN"
 
 # NOTE: `vllm-omni serve`, NOT `vllm serve`. Plain vllm ignores --omni/--stage-
 # configs-path and serves the backbone as a text model.
+#
+# We deliberately do NOT pass --gpu-memory-utilization: it does not reach the
+# per-stage engines (the stage YAML is authoritative), and passing it only
+# muddies the logs by implying a single global value that isn't actually used.
 ARGS=(
     "$MODEL_PATH"
     --omni
@@ -98,7 +136,6 @@ ARGS=(
     --served-model-name "$SERVED_NAME"
     --port "$PORT"
     --host 0.0.0.0
-    --gpu-memory-utilization "$GPU_UTIL"
 )
 
 if [ -n "$MAX_MODEL_LEN" ]; then
@@ -146,21 +183,25 @@ voxtral_startup_watchdog() {
                 echo "[vllm-omni] engine loaded the weights but never bound the API port."
                 echo "[vllm-omni]"
                 echo "[vllm-omni] Most likely cause: GPU memory over-subscription. Voxtral TTS"
-                echo "[vllm-omni] is a 2-stage model and VOXTRAL_GPU_MEMORY_UTILIZATION=${GPU_UTIL}"
-                echo "[vllm-omni] is applied PER STAGE, so roughly ${GPU_UTIL}x2 of VRAM is asked"
-                echo "[vllm-omni] for. If that exceeds the card, the second (acoustic) stage is"
-                echo "[vllm-omni] starved and initialization hangs here."
+                echo "[vllm-omni] runs as TWO stages on this GPU, in effect: stage 0 (the LM)"
+                echo "[vllm-omni] then stage 1 (acoustic). Per-stage budgets in use: ${STAGE_UTILS:-packaged}."
+                echo "[vllm-omni] If stage 0 (or a co-located STT pod) takes too much, stage 1"
+                echo "[vllm-omni] can't fit and initialization fails here ('Free memory on device"
+                echo "[vllm-omni] ... is less than desired GPU memory utilization')."
                 echo "[vllm-omni]"
                 echo "[vllm-omni] GPU memory right now:"
                 nvidia-smi --query-gpu=memory.total,memory.used,memory.free \
                     --format=csv,noheader 2>/dev/null | sed 's/^/[vllm-omni]   /' \
                     || echo "[vllm-omni]   (nvidia-smi unavailable)"
                 echo "[vllm-omni]"
-                echo "[vllm-omni] Fix: lower VOXTRAL_GPU_MEMORY_UTILIZATION (try 0.35) in the"
-                echo "[vllm-omni] config wizard or the stella-ai-config ConfigMap, then redeploy."
+                echo "[vllm-omni] Fix: lower stage 0 via VOXTRAL_GPU_MEMORY_UTILIZATION (it is"
+                echo "[vllm-omni] the heavy stage; try 0.45-0.5) in the config wizard or the"
+                echo "[vllm-omni] stella-ai-config ConfigMap, then redeploy. Do NOT go below ~0.4"
+                echo "[vllm-omni] or stage 0 can't load its weights. Freeing a co-located STT pod"
+                echo "[vllm-omni] off this GPU also helps. (Stage 1 default 0.1 rarely needs tuning;"
+                echo "[vllm-omni] override with VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION if needed.)"
                 echo "[vllm-omni] If the GPU snapshot shows plenty free, it is NOT memory — raise"
-                echo "[vllm-omni] VOXTRAL_STARTUP_TIMEOUT (model just slow) or check the stage"
-                echo "[vllm-omni] config / model files."
+                echo "[vllm-omni] VOXTRAL_STARTUP_TIMEOUT (model just slow) or check the stage config."
                 echo "[vllm-omni] ============================================================"
                 echo ""
             } >&2

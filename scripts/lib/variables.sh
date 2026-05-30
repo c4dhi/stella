@@ -131,7 +131,8 @@ get_var_metadata() {
         VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading the Voxtral weights. Get one at https://huggingface.co/settings/tokens after clicking 'Agree' on the model card.||" ;;
         VOXTRAL_DEFAULT_VOICE) echo "tts|select|optional|casual_male|casual_male|Default Voxtral preset voice used when a request doesn't specify one|casual_male,casual_female,formal_male,formal_female|" ;;
-        VOXTRAL_GPU_MEMORY_UTILIZATION) echo "tts|text|optional|0.5|0.5|GPU memory fraction PER STAGE (0.0-1.0). Voxtral TTS is a 2-stage model, so this applies to each stage; on a 24GB card keep it modest (the acoustic stage needs its share) or startup stalls. Raise on bigger GPUs.||" ;;
+        VOXTRAL_GPU_MEMORY_UTILIZATION) echo "tts|text|optional|0.5|0.5|GPU memory fraction for Voxtral STAGE 0 (the LM stage, the heavy one). 0.0-1.0. On a 24GB card 0.5 leaves room for the small acoustic stage and a co-located STT pod. Don't go below ~0.4 (stage 0 must fit its weights).||" ;;
+        VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION) echo "tts|text|optional|||GPU memory fraction for Voxtral STAGE 1 (the acoustic stage, small). Leave blank to keep the packaged 0.1 — only set this to override on an unusual GPU.||" ;;
         VOXTRAL_MAX_MODEL_LEN) echo "tts|text|optional|||Override vllm's auto-detected max context length. Leave blank unless you hit KV-cache OOM and need to cap it.||" ;;
 
         # --- GPU ---
@@ -194,6 +195,7 @@ ALL_VARIABLES=(
     "HF_TOKEN"
     "VOXTRAL_DEFAULT_VOICE"
     "VOXTRAL_GPU_MEMORY_UTILIZATION"
+    "VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION"
     "VOXTRAL_MAX_MODEL_LEN"
     "ENABLE_GPU"
     "ONNX_PROVIDER"
