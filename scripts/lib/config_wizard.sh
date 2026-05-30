@@ -382,7 +382,10 @@ configure_section() {
         current=$(get_config_value "$var_name")
         local value
         if [[ "$var_name" == "LIVEKIT_URL" ]]; then
-            value=$(wizard_livekit_url_guided "$current" "$env")
+            # Guided step owns the whole screen; pass the section header so it
+            # can redraw a clean frame between its two phases. The config
+            # wizard has no chapter tabs, so the chapter index is left empty.
+            value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "")
         else
             value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
         fi

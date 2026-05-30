@@ -1004,17 +1004,44 @@ wizard_var_input_compact() {
 # =============================================================================
 # Guided LIVEKIT_URL input
 # =============================================================================
+# Internal: redraw the full-screen frame (chapter tabs + section header) for
+# the guided LiveKit step. Everything goes to stderr so the caller's command
+# substitution only ever captures the final value on stdout. wizard_chapter_tabs
+# writes to stdout, so it is redirected to stderr here too. Tabs are rendered
+# only when a chapter index is supplied (the setup wizard) and the helper is
+# available; the config wizard passes an empty index and gets just the header.
+_wizard_livekit_frame() {
+    local icon="$1"
+    local name="$2"
+    local chapter_idx="$3"
+
+    printf '\033[2J\033[H' >&2
+    if [[ -n "$chapter_idx" ]] && command -v wizard_chapter_tabs >/dev/null 2>&1; then
+        wizard_chapter_tabs "$chapter_idx" >&2
+    fi
+    echo "" >&2
+    echo -e "  ${icon}  ${BOLD}${name}${NC}" >&2
+    echo "" >&2
+}
+
 # LIVEKIT_URL is the address STELLA's Kubernetes pods use to reach the LiveKit
 # server. Pods can't use localhost (that resolves to the pod itself), so on a
 # single-machine deployment the operator must supply the host's LAN IP — a
 # common pitfall. This guided step explains that and asks whether LiveKit runs
 # on the same machine, auto-detecting the host IP for the "same machine" case.
 #
-# Usage: value=$(wizard_livekit_url_guided "$current" "$env")
+# The step owns the whole screen and redraws the section frame (tabs + header)
+# on each phase, so the menu and the follow-up URL prompt never stack on top of
+# each other and the progress tabs stay visible throughout.
+#
+# Usage: value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "$chapter_idx")
 # Echoes the chosen URL on stdout (UI on stderr); "__BACK__" for back-nav.
 wizard_livekit_url_guided() {
     local current="$1"
     local env="${2:-}"
+    local header_icon="${3:-🌐}"
+    local header_name="${4:-LiveKit WebRTC}"
+    local chapter_idx="${5:-}"
     local port="7880"
 
     # Detect this host's LAN IP to suggest for the same-machine case.
@@ -1024,6 +1051,8 @@ wizard_livekit_url_guided() {
     fi
     [[ -z "$detected_ip" ]] && detected_ip="127.0.0.1"
 
+    # ---- Phase 1: where will LiveKit run? ----
+    _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
     echo -e "  ${BOLD}LIVEKIT_URL${NC} ${DIM}(internal — pods → LiveKit)${NC}" >&2
     echo -e "  ${DIM}STELLA runs inside Kubernetes. Its pods cannot reach LiveKit via${NC}" >&2
     echo -e "  ${DIM}'localhost' — that points at the pod itself. They need a routable${NC}" >&2
@@ -1088,16 +1117,18 @@ wizard_livekit_url_guided() {
 
     wizard_restore_terminal
     wizard_show_cursor
-    echo "" >&2
 
+    # ---- Phase 2: confirm / enter the URL on a freshly redrawn screen ----
     case "$choice" in
         __SAME__)
+            _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
             echo -e "  ${DIM}Suggested: ws://${detected_ip}:${port} — press [Enter] to accept,${NC}" >&2
             echo -e "  ${DIM}or edit if the detected IP is wrong.${NC}" >&2
             echo "" >&2
             wizard_text_input "LIVEKIT_URL" "Internal URL the pods connect to" "" "ws://${detected_ip}:${port}"
             ;;
         __MANUAL__)
+            _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
             echo -e "  ${DIM}Enter the LiveKit server's address, e.g. ws://livekit-host:${port}${NC}" >&2
             echo -e "  ${DIM}(use its IP or a DNS name the pods can resolve — not localhost).${NC}" >&2
             echo "" >&2

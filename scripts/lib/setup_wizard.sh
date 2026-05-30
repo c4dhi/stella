@@ -696,7 +696,18 @@ setup_configure_section() {
         current=$(get_wizard_config "$var_name")
         local value
         if [[ "$var_name" == "LIVEKIT_URL" ]]; then
-            value=$(wizard_livekit_url_guided "$current" "$env")
+            # The guided step owns the whole screen (clears + redraws the
+            # section frame itself), so pass it the section header and the
+            # global chapter index so the progress tabs stay visible.
+            local _chap_idx=""
+            local _ci
+            for ((_ci=0; _ci<${#WIZARD_CHAPTERS[@]}; _ci++)); do
+                if [[ "${WIZARD_CHAPTERS[$_ci]}" == "$name" ]]; then
+                    _chap_idx=$((_ci + 1))
+                    break
+                fi
+            done
+            value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "$_chap_idx")
         else
             value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
         fi
