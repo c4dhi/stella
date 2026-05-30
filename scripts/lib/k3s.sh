@@ -24,6 +24,103 @@ check_setsid() {
 }
 
 # =============================================================================
+# Storage Root Relocation (optional, Linux)
+# =============================================================================
+# When STELLA_DATA_ROOT is set, the disk-heavy stores are moved onto it:
+#   - Docker data-root  (build cache + locally built images)
+#   - K3s --data-dir     (containerd image store + local-path PVCs for Postgres
+#                         and the STT/TTS/Voxtral model caches)
+# A blank STELLA_DATA_ROOT keeps the system defaults (/var/lib/docker,
+# /var/lib/rancher/k3s, /tmp), which always work with no setup. Relocation only
+# takes effect on a FRESH Docker/K3s install — an already-installed K3s keeps
+# its current data-dir (moving it would wipe the cluster), so we warn instead.
+
+# Ensure STELLA_DATA_ROOT exists and is writable. Returns non-zero (with a
+# warning) when it can't be prepared, so callers fall back to system defaults
+# rather than aborting the deploy.
+prepare_storage_root() {
+    local root="${STELLA_DATA_ROOT:-}"
+    [[ -z "$root" ]] && return 1
+
+    if [[ "$OS_TYPE" != "linux" ]]; then
+        verbose "STELLA_DATA_ROOT set, but on $OS_TYPE configure the disk via Docker Desktop/OrbStack settings instead."
+        return 1
+    fi
+
+    [[ -d "$root" && -w "$root" ]] && return 0
+
+    if [[ "$DRY_RUN_MODE" == "true" ]]; then
+        echo -e "   ${ARROW} Would create data root $root ${YELLOW}[dry-run]${NC}"
+        return 0
+    fi
+
+    if sudo mkdir -p "$root" 2>/dev/null && sudo chown "$(id -u):$(id -g)" "$root" 2>/dev/null; then
+        verbose "Prepared data root: $root"
+        return 0
+    fi
+
+    warning "Could not create data root '$root' — keeping default storage locations."
+    return 1
+}
+
+# Report the data-dir the installed K3s is actually using (default when the
+# service file has no --data-dir flag).
+k3s_current_data_dir() {
+    local d
+    d=$(grep -hoErs -- "--data-dir[= ][^ '\"]+" /etc/systemd/system/k3s.service 2>/dev/null \
+        | head -1 | sed -E "s/--data-dir[= ]//")
+    echo "${d:-/var/lib/rancher/k3s}"
+}
+
+# Point Docker's data-root at the external disk. Detects the current root, only
+# acts on a change, backs up daemon.json, and restarts Docker. Never aborts the
+# deploy — degrades to a warning if anything is unsafe.
+ensure_docker_data_root() {
+    [[ "$OS_TYPE" == "linux" ]] || return 0
+    [[ -n "${STELLA_DATA_ROOT:-}" ]] || return 0
+    command_exists docker || return 0
+
+    local target="${STELLA_DATA_ROOT}/docker"
+    local current
+    current=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo "")
+    if [[ "$current" == "$target" ]]; then
+        verbose "Docker data-root already at $target"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN_MODE" == "true" ]]; then
+        echo -e "   ${ARROW} Would set Docker data-root: ${current:-default} -> $target ${YELLOW}[dry-run]${NC}"
+        return 0
+    fi
+
+    local daemon=/etc/docker/daemon.json
+    # Avoid clobbering an existing multi-key daemon.json when jq isn't available.
+    if [[ -s "$daemon" ]] && ! command_exists jq; then
+        warning "Docker already has $daemon and 'jq' is unavailable — not modifying it."
+        echo -e "  ${DIM}Add \"data-root\": \"$target\" to $daemon and restart Docker manually.${NC}"
+        return 0
+    fi
+
+    info "Relocating Docker data-root -> $target (rebuilds image cache there)"
+    sudo mkdir -p "$target" 2>/dev/null || { warning "Cannot create $target — skipping Docker relocation."; return 0; }
+    if [[ -s "$daemon" ]]; then
+        sudo cp "$daemon" "${daemon}.bak.$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
+        sudo sh -c "jq --arg dr '$target' '. + {\"data-root\": \$dr}' '$daemon' > '${daemon}.tmp' && mv '${daemon}.tmp' '$daemon'" \
+            || { warning "Failed to update $daemon — skipping Docker relocation."; return 0; }
+    else
+        sudo mkdir -p /etc/docker 2>/dev/null || true
+        echo "{\"data-root\": \"$target\"}" | sudo tee "$daemon" >/dev/null
+    fi
+
+    if sudo systemctl restart docker 2>/dev/null; then
+        sleep 3
+        verbose "Docker restarted with data-root $target"
+    else
+        warning "Docker data-root written but restart failed — it applies on the next Docker restart."
+    fi
+}
+
+# =============================================================================
 # K3s Setup (Main Function)
 # =============================================================================
 
@@ -91,20 +188,49 @@ setup_k3s_macos() {
 # =============================================================================
 
 setup_k3s_linux() {
+    # Optional: relocate disk-heavy storage onto STELLA_DATA_ROOT. Blank keeps
+    # the system defaults. prepare_storage_root succeeds only when the path is
+    # usable, so a bad value degrades to defaults rather than failing.
+    local relocate=false
+    if [[ -n "${STELLA_DATA_ROOT:-}" ]] && prepare_storage_root; then
+        relocate=true
+        ensure_docker_data_root
+    fi
+
     # Install K3s if not present
     if ! command_exists k3s; then
         verbose "Installing K3s..."
 
         if [[ "$DRY_RUN_MODE" == "true" ]]; then
-            echo -e "   ${ARROW} Would install K3s... ${YELLOW}[dry-run]${NC}"
+            local _dd="default"
+            [[ "$relocate" == "true" ]] && _dd="${STELLA_DATA_ROOT}/k3s"
+            echo -e "   ${ARROW} Would install K3s (data-dir: ${_dd})... ${YELLOW}[dry-run]${NC}"
             return 0
         fi
 
-        # Install K3s with containerd, disable traefik
-        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh - >/dev/null 2>&1
+        # Install K3s with containerd, disable traefik. When relocating, store
+        # all K3s data (containerd images + local-path PVCs) on the data disk.
+        local k3s_exec="--disable traefik"
+        if [[ "$relocate" == "true" ]]; then
+            k3s_exec="$k3s_exec --data-dir ${STELLA_DATA_ROOT}/k3s"
+            verbose "K3s data-dir -> ${STELLA_DATA_ROOT}/k3s"
+        fi
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="$k3s_exec" sh - >/dev/null 2>&1
 
         sleep 5
         verbose "K3s installed"
+    elif [[ "$relocate" == "true" ]]; then
+        # Already installed: relocating the data-dir would wipe the cluster, so
+        # never do it automatically — just flag the mismatch.
+        local cur_dd
+        cur_dd=$(k3s_current_data_dir)
+        if [[ "$cur_dd" != "${STELLA_DATA_ROOT}/k3s" ]]; then
+            warning "K3s is already installed using data-dir '$cur_dd'."
+            echo -e "  ${DIM}Its images and volumes stay there; STELLA_DATA_ROOT only relocates${NC}"
+            echo -e "  ${DIM}Docker. To move K3s too, reinstall it with --data-dir${NC}"
+            echo -e "  ${DIM}${STELLA_DATA_ROOT}/k3s (this resets the cluster — not done${NC}"
+            echo -e "  ${DIM}automatically to avoid data loss).${NC}"
+        fi
     fi
 
     # Start K3s if not running

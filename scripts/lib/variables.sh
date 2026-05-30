@@ -146,7 +146,8 @@ get_var_metadata() {
 
         # --- PRODUCTION ---
         PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com)||" ;;
-        STELLA_AI_TEMP_DIR)    echo "production|text|optional||/mnt/stella-ai-temp|Temp directory for large builds/logs||" ;;
+        STELLA_DATA_ROOT)      echo "production|text|optional|||Base dir for all heavy storage (Docker, K3s images, model/DB volumes); blank = system defaults||" ;;
+        STELLA_AI_TEMP_DIR)    echo "production|text|optional|||Temp dir for builds/logs; blank = STELLA_DATA_ROOT/tmp or /tmp||" ;;
 
         *) echo "" ;;
     esac
@@ -201,6 +202,7 @@ ALL_VARIABLES=(
     "AUTO_DETECT_K8S_DNS"
     "KUBERNETES_DNS_NAMESERVER"
     "PRODUCTION_DOMAIN"
+    "STELLA_DATA_ROOT"
     "STELLA_AI_TEMP_DIR"
 )
 
@@ -262,6 +264,17 @@ get_var_help() {
             echo "Public domain of the TURN server used for NAT traversal when a"
             echo "direct browser↔LiveKit connection fails, e.g. turn.example.com."
             echo "Required when TURN is enabled."
+            ;;
+        STELLA_DATA_ROOT)
+            echo "Where all the heavy storage lives: Docker build cache + images,"
+            echo "the K3s/containerd image store, and the model/database volumes."
+            echo "• Leave BLANK to use system defaults (/var/lib/docker,"
+            echo "  /var/lib/rancher/k3s, /tmp) — always works, no setup needed."
+            echo "• Set to a mounted disk (e.g. /mnt/stella) to run everything"
+            echo "  from there when the internal disk is too small. STELLA then"
+            echo "  points Docker's data-root and K3s's --data-dir at it."
+            echo "Note: relocating only takes effect on a FRESH Docker/K3s install;"
+            echo "an already-installed K3s keeps its current location."
             ;;
     esac
 }

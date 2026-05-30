@@ -155,10 +155,15 @@ load_environment() {
         verbose "No $env_file file found - setup wizard will be offered"
     fi
 
-    # Update temp directory after loading env (the .env file may set
-    # STELLA_AI_TEMP_DIR). Re-resolved with the same graceful /tmp fallback.
+    # Resolve the temp base after loading env. Priority: an explicit
+    # STELLA_AI_TEMP_DIR wins; otherwise derive it from STELLA_DATA_ROOT (so
+    # temp lives on the same disk as the rest of the heavy storage); otherwise
+    # keep the /tmp default from setup_directories. configure_temp_dirs applies
+    # the same graceful /tmp fallback if the chosen base isn't writable.
     if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
         configure_temp_dirs "$STELLA_AI_TEMP_DIR"
+    elif [[ -n "${STELLA_DATA_ROOT:-}" ]]; then
+        configure_temp_dirs "${STELLA_DATA_ROOT}/tmp"
     fi
 
     # Set hardcoded defaults (must come before configure_urls — URLs depend on computed ports)
