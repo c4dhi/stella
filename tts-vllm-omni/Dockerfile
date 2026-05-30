@@ -57,7 +57,9 @@ print('vllm', vllm.__version__, '| torch', torch.__version__, \
 ENV VLLM_PORT=8000
 ENV VOXTRAL_MODEL_PATH=/models/voxtral
 ENV VOXTRAL_SERVED_NAME=voxtral
-ENV VOXTRAL_GPU_MEMORY_UTILIZATION=0.85
+# 0.35 per stage (2-stage model) — see entrypoint.sh. Higher starves the
+# acoustic stage and the engine stalls before binding :8000.
+ENV VOXTRAL_GPU_MEMORY_UTILIZATION=0.35
 
 # The vllm/vllm-openai base sets its own entrypoint to `python -m vllm.entrypoints.openai.api_server`.
 # Override with a small wrapper so we can pass `--omni` and read settings from env.
