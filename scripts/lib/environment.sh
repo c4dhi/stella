@@ -44,6 +44,47 @@ detect_platform() {
 # Directory Setup
 # =============================================================================
 
+# Resolve and create the temp working directories from a requested base.
+#
+# The production default for STELLA_AI_TEMP_DIR is /mnt/stella-ai-temp (a large
+# data disk), but on a freshly-cloned host /mnt is root-owned, so a non-root
+# operator can't create it. Rather than abort the whole deploy with a cryptic
+# "Permission denied" under `set -e`, this falls back to /tmp and tells the
+# operator exactly how to opt into the intended path. Exports TEMP_DIR plus the
+# namespaced PID/LOG/CHECKSUM dirs.
+configure_temp_dirs() {
+    local requested="${1:-/tmp}"
+
+    # Scope temp dirs by namespace to prevent collisions between parallel instances
+    local ns_suffix=""
+    [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
+
+    # Use the requested base only if we can create it AND write to it;
+    # otherwise fall back to /tmp with a clear, actionable warning.
+    local base="$requested"
+    if ! mkdir -p "$base" 2>/dev/null || [[ ! -w "$base" ]]; then
+        if [[ "$base" != "/tmp" ]]; then
+            warning "Temp directory '$base' is not writable — falling back to /tmp."
+            echo -e "  ${DIM}STELLA_AI_TEMP_DIR points at '$base', which this user cannot create.${NC}"
+            echo -e "  ${DIM}To use it (e.g. a large data disk), create it once:${NC}"
+            echo -e "  ${DIM}  sudo mkdir -p $base && sudo chown \"\$USER\":\"\$USER\" $base${NC}"
+            echo -e "  ${DIM}Or set STELLA_AI_TEMP_DIR to a path you own in .env.production.${NC}"
+        fi
+        base="/tmp"
+        mkdir -p "$base" 2>/dev/null || true
+    fi
+
+    export TEMP_DIR="$base"
+    export PID_DIR="${base}/stella-ai-k8s${ns_suffix}"
+    export LOG_DIR="${base}/stella-ai-logs${ns_suffix}"
+    export CHECKSUM_DIR="${base}/stella-ai-checksums${ns_suffix}"
+
+    # Create required directories
+    ensure_dir "$PID_DIR"
+    ensure_dir "$LOG_DIR"
+    ensure_dir "$CHECKSUM_DIR"
+}
+
 setup_directories() {
     # Script and project paths
     # BASH_SOURCE[0] is this file (lib/environment.sh)
@@ -53,19 +94,9 @@ setup_directories() {
     export PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
     export WORKSPACE_ROOT="$(dirname "$PROJECT_DIR")"
 
-    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files)
-    export TEMP_DIR="${STELLA_AI_TEMP_DIR:-/tmp}"
-    # Scope temp dirs by namespace to prevent collisions between parallel instances
-    local ns_suffix=""
-    [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
-    export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
-    export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
-    export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
-
-    # Create required directories
-    ensure_dir "$PID_DIR"
-    ensure_dir "$LOG_DIR"
-    ensure_dir "$CHECKSUM_DIR"
+    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files).
+    # Falls back to /tmp gracefully if the requested base isn't writable.
+    configure_temp_dirs "${STELLA_AI_TEMP_DIR:-/tmp}"
 
     # Prune old logs (older than 1 day) to prevent storage buildup
     find "$LOG_DIR" -type f -name "*.log" -mtime +1 -delete 2>/dev/null || true
@@ -124,17 +155,10 @@ load_environment() {
         verbose "No $env_file file found - setup wizard will be offered"
     fi
 
-    # Update temp directory after loading env
+    # Update temp directory after loading env (the .env file may set
+    # STELLA_AI_TEMP_DIR). Re-resolved with the same graceful /tmp fallback.
     if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
-        export TEMP_DIR="$STELLA_AI_TEMP_DIR"
-        local ns_suffix=""
-        [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
-        export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
-        export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
-        export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
-        ensure_dir "$PID_DIR"
-        ensure_dir "$LOG_DIR"
-        ensure_dir "$CHECKSUM_DIR"
+        configure_temp_dirs "$STELLA_AI_TEMP_DIR"
     fi
 
     # Set hardcoded defaults (must come before configure_urls — URLs depend on computed ports)
