@@ -158,9 +158,13 @@ service_needs_rebuild() {
     # Ensure checksum directory exists
     mkdir -p "$CHECKSUM_DIR" 2>/dev/null || true
 
-    # No cached checksum = needs rebuild
+    # No cached checksum = needs rebuild.
+    # IMPORTANT: do NOT write the checksum here. This function is a pure
+    # predicate — the checksum must only be written by update_service_checksum
+    # AFTER a build is confirmed successful. Writing it at decision time was a
+    # bug: if the build then failed, the checksum was already updated, so every
+    # later deploy saw "unchanged" and silently skipped the still-broken image.
     if [[ ! -f "$cached_checksum_file" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
@@ -168,7 +172,6 @@ service_needs_rebuild() {
     cached_checksum=$(cat "$cached_checksum_file" 2>/dev/null || echo "")
 
     if [[ "$current_checksum" != "$cached_checksum" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
