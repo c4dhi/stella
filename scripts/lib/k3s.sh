@@ -214,6 +214,7 @@ setup_k3s_linux() {
         if [[ "$relocate" == "true" ]]; then
             k3s_exec="$k3s_exec --data-dir ${STELLA_DATA_ROOT}/k3s"
             verbose "K3s data-dir -> ${STELLA_DATA_ROOT}/k3s"
+            info "Persistent volumes (Postgres + models) will live under ${STELLA_DATA_ROOT}/k3s/storage"
         fi
         curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="$k3s_exec" sh - >/dev/null 2>&1
 
@@ -265,6 +266,43 @@ setup_k3s_linux() {
 
     # Wait for node to be ready
     wait_for_node
+
+    # Confirm where dynamically-provisioned PVCs actually land on disk.
+    verify_storage_location
+}
+
+# =============================================================================
+# Storage Location Verification
+# =============================================================================
+# After the cluster is up, report the real on-disk path the local-path
+# provisioner uses for PVCs (Postgres data + STT/TTS models). This is the
+# ground truth that STELLA_DATA_ROOT took effect — read-only, never fails the
+# run. K3s derives this path from --data-dir, so it follows STELLA_DATA_ROOT
+# only on a fresh install.
+verify_storage_location() {
+    [[ "$DRY_RUN_MODE" == "true" ]] && return 0
+
+    local cfg path
+    cfg=$(kubectl -n kube-system get configmap local-path-config \
+        -o jsonpath='{.data.config\.json}' 2>/dev/null) || return 0
+    [[ -n "$cfg" ]] || return 0
+
+    # Extract the first ".../storage" path from nodePathMap[].paths[] (no jq).
+    path=$(echo "$cfg" | grep -oE '"/[^"]+/storage"' | head -1 | tr -d '"')
+    [[ -n "$path" ]] || path="/var/lib/rancher/k3s/storage"
+
+    if [[ -n "${STELLA_DATA_ROOT:-}" ]]; then
+        if [[ "$path" == "${STELLA_DATA_ROOT}"* ]]; then
+            success "Persistent volumes (Postgres + models) -> ${path}"
+        else
+            warning "PVCs are stored at '${path}', NOT under STELLA_DATA_ROOT (${STELLA_DATA_ROOT})."
+            echo -e "  ${DIM}K3s was already installed with a different data-dir, so its storage${NC}"
+            echo -e "  ${DIM}did not move. To relocate, reinstall K3s with${NC}"
+            echo -e "  ${DIM}--data-dir ${STELLA_DATA_ROOT}/k3s (this wipes the cluster).${NC}"
+        fi
+    else
+        verbose "Persistent volumes (Postgres + models) -> ${path}"
+    fi
 }
 
 # =============================================================================

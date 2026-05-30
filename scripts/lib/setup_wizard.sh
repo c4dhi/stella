@@ -100,8 +100,10 @@ get_setup_vars() {
             fi
             ;;
         production)
-            # Production-specific requirements
-            echo "PRODUCTION_DOMAIN LIVEKIT_URL PUBLIC_LIVEKIT_URL"
+            # Production-specific requirements. STELLA_DATA_ROOT is optional
+            # (blank = system defaults) but prompted here so operators on a host
+            # with a dedicated data disk can point all heavy storage at it.
+            echo "PRODUCTION_DOMAIN LIVEKIT_URL PUBLIC_LIVEKIT_URL STELLA_DATA_ROOT"
             ;;
     esac
 }
