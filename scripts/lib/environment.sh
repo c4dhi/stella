@@ -409,11 +409,11 @@ set_defaults() {
     export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
     export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
     export VOXTRAL_DEFAULT_VOICE="${VOXTRAL_DEFAULT_VOICE:-casual_male}"
-    # 0.35, not 0.85: Voxtral TTS is a 2-stage model and this fraction is
+    # 0.5, not 0.85: Voxtral TTS is a 2-stage model and this fraction is
     # applied per stage, so a high value starves the acoustic stage and the
-    # engine stalls after weight-load (never binds :8000). Matches the
-    # verified-working upstream recipe on 24GB cards. See tts-vllm-omni/entrypoint.sh.
-    export VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.35}"
+    # engine stalls after weight-load (never binds :8000). See
+    # tts-vllm-omni/entrypoint.sh. Operator-overridable / wizard-configurable.
+    export VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}"
     export VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
     export HF_TOKEN="${HF_TOKEN:-}"
     if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then

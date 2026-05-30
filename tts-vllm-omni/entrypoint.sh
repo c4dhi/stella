@@ -9,15 +9,15 @@ set -e
 MODEL_PATH="${VOXTRAL_MODEL_PATH:-/models/voxtral}"
 SERVED_NAME="${VOXTRAL_SERVED_NAME:-voxtral}"
 PORT="${VLLM_PORT:-8000}"
-# Default 0.35, NOT vLLM's usual 0.85. Voxtral TTS is a 2-stage model (LLM
+# Default 0.5, NOT vLLM's usual 0.85. Voxtral TTS is a 2-stage model (LLM
 # backbone + acoustic transformer) and BOTH stages need GPU memory. The sed
-# below stamps this value into every stage in the YAML, so 0.35/stage leaves
-# headroom for the second stage on a 24GB card (L4/A10G). At 0.85 the backbone
-# grabs almost everything and the engine stalls after weight-load while
-# bringing up stage 2 — it never binds :8000 ("Application startup complete"
-# never prints). 0.35 is the value from the verified-working upstream recipe.
-# Operators with >24GB can raise VOXTRAL_GPU_MEMORY_UTILIZATION.
-GPU_UTIL="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.35}"
+# below stamps this value into every stage in the YAML, so it applies per
+# stage. At 0.85 the backbone grabs almost everything and the engine stalls
+# after weight-load while bringing up stage 2 — it never binds :8000
+# ("Application startup complete" never prints). 0.5/stage suits a 24GB card;
+# operators with bigger/smaller VRAM tune it via VOXTRAL_GPU_MEMORY_UTILIZATION
+# (settable in the config wizard).
+GPU_UTIL="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}"
 MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
 # enforce-eager skips torch.compile/cudagraph capture. Default ON for a
 # reliable first boot (cudagraph capture is a common startup-crash source on
