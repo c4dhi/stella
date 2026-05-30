@@ -14,20 +14,44 @@
 # (they live on the PVC, downloaded by the tts-service init container).
 
 # vllm publishes an official OpenAI-API image; vllm-omni is an additive
-# extension installed on top. Pin to a tested baseline — operators can
-# override with --build-arg VLLM_BASE_TAG=... once a newer combo is verified.
-ARG VLLM_BASE_TAG=v0.7.3
+# extension installed on top. CRITICAL: the base tag MUST match the vLLM
+# version that vllm-omni was built against, or the install becomes incoherent.
+#
+# Why: vllm-omni's version tracks upstream vLLM (e.g. vllm-omni 0.18.x rebases
+# onto vLLM 0.18.x). Layering vllm-omni>=0.18.0 onto an old base (we used
+# v0.7.3) pip-upgrades transformers and pulls a torchvision that no longer
+# matches the base's torch — producing the two import crashes we saw:
+#   - transformers <-> vLLM mismatch (ProcessorMixin import fails)
+#   - torch <-> torchvision mismatch (torchvision::nms missing)
+# Voxtral-4B-TTS-2603 also simply needs vLLM >= 0.18 to load at all.
+#
+# The fix is NOT to hand-pin torch/torchvision/transformers — the
+# vllm/vllm-openai:vX.Y.Z image already ships a self-consistent set built
+# against that exact vLLM. Match the base tag to the vllm-omni version and
+# both errors disappear at once. v0.18.1 is built against torch 2.10.0, which
+# is the combo verified working for Voxtral TTS.
+ARG VLLM_BASE_TAG=v0.18.1
 FROM vllm/vllm-openai:${VLLM_BASE_TAG}
 
-# vllm-omni adds the `--omni` flag and the audio-output pipeline. The model
-# card pins >=0.18.0; we keep the lower bound the same.
-ARG VLLM_OMNI_VERSION=">=0.18.0"
+# vllm-omni adds the `vllm-omni serve` CLI, the `--omni` flag, and the
+# audio-output pipeline. Pin EXACTLY (==, not >=) to stay coherent with the
+# base's vLLM — a floating lower bound is what let an incompatible build slip
+# in before. 0.18.0 is the release verified against vLLM 0.18.1 for Voxtral TTS.
+ARG VLLM_OMNI_VERSION="==0.18.0"
 RUN pip install --no-cache-dir "vllm-omni${VLLM_OMNI_VERSION}"
 
-# Voxtral uses mistral_common for tokenization; install it explicitly so
-# we don't depend on vllm-omni's transitive deps resolving to a working
-# version.
+# Voxtral uses mistral_common for tokenization (and needs SpeechRequest
+# support for TTS). It normally arrives transitively, but pin a floor so a
+# stale resolution can't break tokenization.
 RUN pip install --no-cache-dir "mistral_common>=1.10.0"
+
+# Fail the build NOW (not at pod start on the GPU node) if the stack is
+# incoherent. This is the cheap guard that would have caught the v0.7.3 base:
+# if these imports succeed the torch/torchvision/transformers/vLLM set is
+# self-consistent.
+RUN python -c "import vllm, vllm_omni, torch, torchvision, transformers, mistral_common; \
+print('vllm', vllm.__version__, '| torch', torch.__version__, \
+'| torchvision', torchvision.__version__, '| transformers', transformers.__version__)"
 
 # Defaults — overridden by env / args from the k8s manifest.
 ENV VLLM_PORT=8000
