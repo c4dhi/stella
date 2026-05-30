@@ -120,6 +120,81 @@ ensure_docker_data_root() {
     fi
 }
 
+# Ensure the NVIDIA Container Toolkit is installed and configured for K3s so a
+# fresh GPU server is self-sufficient. Linux-only, idempotent, honors --dry-run,
+# and degrades to a warning rather than failing — matching ensure_docker_data_root
+# and prepare_storage_root. Three steps, each fixing a problem hit in practice:
+#   1. apt-install nvidia-container-toolkit (NVIDIA's repo) when the
+#      nvidia-container-runtime binary is missing — fixes pods failing with
+#      'no runtime for "nvidia" is configured'.
+#   2. Force the toolkit config to mode = "legacy" — toolkit >=1.19 defaults to
+#      jit-cdi, which fails under K3s with exit status 2.
+#   3. Restart K3s once, and only after a change — K3s registers the nvidia
+#      runtime in its containerd config at startup, so it needs one restart to
+#      pick up the newly-installed binary. Guarded so it never restarts on a
+#      no-op deploy.
+ensure_nvidia_container_toolkit() {
+    [[ "$OS_TYPE" == "linux" ]] || return 0
+
+    local did_change=false
+
+    # Step 1: install the toolkit if the runtime binary is absent.
+    if ! command_exists nvidia-container-runtime; then
+        if [[ "$DRY_RUN_MODE" == "true" ]]; then
+            echo -e "   ${ARROW} Would install nvidia-container-toolkit ${YELLOW}[dry-run]${NC}"
+            return 0
+        fi
+
+        info "Installing NVIDIA Container Toolkit..."
+        local keyring=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        local listfile=/etc/apt/sources.list.d/nvidia-container-toolkit.list
+        if curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey 2>/dev/null \
+                | sudo gpg --dearmor -o "$keyring" 2>/dev/null \
+           && curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list 2>/dev/null \
+                | sed "s#deb https://#deb [signed-by=${keyring}] https://#g" \
+                | sudo tee "$listfile" >/dev/null \
+           && sudo apt-get update >/dev/null 2>&1 \
+           && sudo apt-get install -y nvidia-container-toolkit >/dev/null 2>&1; then
+            did_change=true
+            verbose "nvidia-container-toolkit installed"
+        else
+            warning "Could not install nvidia-container-toolkit automatically."
+            echo -e "  ${DIM}Install it manually: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html${NC}"
+            return 0
+        fi
+    fi
+
+    # Step 2: force legacy mode — the jit-cdi default (toolkit >=1.19) breaks
+    # under K3s with exit status 2.
+    local cfg=/etc/nvidia-container-runtime/config.toml
+    if [[ -f "$cfg" ]] && ! grep -qE '^[[:space:]]*mode[[:space:]]*=[[:space:]]*"legacy"' "$cfg" 2>/dev/null; then
+        if [[ "$DRY_RUN_MODE" == "true" ]]; then
+            echo -e "   ${ARROW} Would set nvidia-container-runtime mode = \"legacy\" ${YELLOW}[dry-run]${NC}"
+        else
+            verbose "Setting nvidia-container-runtime mode = \"legacy\""
+            if grep -qE '^[[:space:]]*mode[[:space:]]*=' "$cfg" 2>/dev/null; then
+                sudo sed -i -E 's|^[[:space:]]*mode[[:space:]]*=.*|mode = "legacy"|' "$cfg" 2>/dev/null \
+                    && did_change=true || warning "Could not set legacy mode in $cfg."
+            else
+                # No mode key present: add one under the [nvidia-container-runtime] table.
+                sudo sed -i -E 's|^[[:space:]]*\[nvidia-container-runtime\][[:space:]]*$|[nvidia-container-runtime]\nmode = "legacy"|' "$cfg" 2>/dev/null \
+                    && did_change=true || warning "Could not set legacy mode in $cfg."
+            fi
+        fi
+    fi
+
+    # Step 3: restart K3s once so it registers the nvidia runtime in its
+    # containerd config — only when something actually changed.
+    if [[ "$did_change" == "true" && "$DRY_RUN_MODE" != "true" ]]; then
+        if sudo systemctl is-active --quiet k3s 2>/dev/null; then
+            verbose "Restarting K3s to register the NVIDIA runtime..."
+            sudo systemctl restart k3s 2>/dev/null \
+                || warning "K3s restart failed — restart it manually to register the NVIDIA runtime."
+            sleep 5
+        fi
+    fi
+}
+
 # =============================================================================
 # K3s Setup (Main Function)
 # =============================================================================
@@ -418,6 +493,11 @@ setup_gpu_support() {
     driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs 2>/dev/null) || driver_version="Unknown"
     set -o pipefail
 
+    # The driver is present (checked above) but the container toolkit may not
+    # be. Install/configure it before relying on the runtime. || true so a
+    # hiccup never aborts the deploy.
+    ensure_nvidia_container_toolkit || true
+
     # Check for nvidia-container-runtime (either in Docker or K3s containerd)
     local nvidia_runtime_found=false
 
@@ -433,8 +513,11 @@ setup_gpu_support() {
         fi
     fi
 
-    # Check if nvidia RuntimeClass already exists in K8s (means runtime was previously configured)
-    if kubectl get runtimeclass nvidia &>/dev/null; then
+    # Authoritative signal on Linux: the runtime binary is actually installed.
+    # (Do NOT trust the nvidia RuntimeClass — K3s ships it by default, so it is
+    # present even when no runtime binary exists, which produced false positives
+    # and pods failing with: no runtime for "nvidia" is configured.)
+    if command_exists nvidia-container-runtime; then
         nvidia_runtime_found=true
     fi
 
