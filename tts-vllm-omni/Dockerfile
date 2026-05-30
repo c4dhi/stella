@@ -49,7 +49,7 @@ RUN pip install --no-cache-dir "mistral_common>=1.10.0"
 # incoherent. This is the cheap guard that would have caught the v0.7.3 base:
 # if these imports succeed the torch/torchvision/transformers/vLLM set is
 # self-consistent.
-RUN python -c "import vllm, vllm_omni, torch, torchvision, transformers, mistral_common; \
+RUN python3 -c "import vllm, vllm_omni, torch, torchvision, transformers, mistral_common; \
 print('vllm', vllm.__version__, '| torch', torch.__version__, \
 '| torchvision', torchvision.__version__, '| transformers', transformers.__version__)"
 
