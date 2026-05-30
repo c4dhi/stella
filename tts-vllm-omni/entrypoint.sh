@@ -24,6 +24,11 @@ MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
 # 24GB cards); flip VOXTRAL_ENFORCE_EAGER=false once the service is stable to
 # recover the compiled-graph latency.
 ENFORCE_EAGER="${VOXTRAL_ENFORCE_EAGER:-true}"
+# Grace period before the startup watchdog complains that the server still
+# isn't serving. Must stay below the pod's liveness initialDelaySeconds (600s
+# in k8s/09-tts-service.yaml) so the diagnostic lands in the logs before the
+# kubelet kills the container. Raise it if your model is genuinely slow to load.
+STARTUP_TIMEOUT="${VOXTRAL_STARTUP_TIMEOUT:-300}"
 
 if [ ! -d "$MODEL_PATH" ]; then
     echo "[vllm-omni] ERROR: VOXTRAL_MODEL_PATH=$MODEL_PATH does not exist or is not a directory." >&2
@@ -103,5 +108,67 @@ fi
 if [ "$ENFORCE_EAGER" = "true" ]; then
     ARGS+=(--enforce-eager)
 fi
+
+# ---------------------------------------------------------------------------
+# Startup watchdog.
+#
+# This model's signature failure is a SILENT stall, not a crash: the engine
+# loads the weights, prints "Loading safetensors ... 100%", then hangs while
+# bringing up the second stage and never binds the API port — so the only
+# clue in the logs is silence and the /health probe gets connection-refused
+# until the pod is killed. Almost always the cause is GPU-memory
+# over-subscription (gpu_memory_utilization is applied PER STAGE on this
+# 2-stage model). We fork a watcher BEFORE exec so it survives as a child of
+# the server process; it polls /health and, if nothing is serving after the
+# grace period, prints an actionable diagnostic (with a live GPU snapshot)
+# instead of leaving the operator staring at a silent log. It self-corrects
+# the log if the start was merely slow.
+# ---------------------------------------------------------------------------
+voxtral_startup_watchdog() {
+    local waited=0
+    local limit=$((STARTUP_TIMEOUT * 3))   # keep watching well past the warning
+    local warned=false
+    local health="http://127.0.0.1:${PORT}/health"
+    while [ "$waited" -lt "$limit" ]; do
+        if python3 -c "import urllib.request,sys; urllib.request.urlopen('${health}', timeout=2)" 2>/dev/null; then
+            if [ "$warned" = "true" ]; then
+                echo "[vllm-omni] Recovered: serving on :${PORT} after ${waited}s — it was just slow to load, not stalled." >&2
+            fi
+            return 0
+        fi
+        if [ "$warned" = "false" ] && [ "$waited" -ge "$STARTUP_TIMEOUT" ]; then
+            warned=true
+            {
+                echo ""
+                echo "[vllm-omni] ============================================================"
+                echo "[vllm-omni] STARTUP STALLED: not serving on :${PORT} after ${STARTUP_TIMEOUT}s."
+                echo "[vllm-omni] If you never saw 'Application startup complete' above, the"
+                echo "[vllm-omni] engine loaded the weights but never bound the API port."
+                echo "[vllm-omni]"
+                echo "[vllm-omni] Most likely cause: GPU memory over-subscription. Voxtral TTS"
+                echo "[vllm-omni] is a 2-stage model and VOXTRAL_GPU_MEMORY_UTILIZATION=${GPU_UTIL}"
+                echo "[vllm-omni] is applied PER STAGE, so roughly ${GPU_UTIL}x2 of VRAM is asked"
+                echo "[vllm-omni] for. If that exceeds the card, the second (acoustic) stage is"
+                echo "[vllm-omni] starved and initialization hangs here."
+                echo "[vllm-omni]"
+                echo "[vllm-omni] GPU memory right now:"
+                nvidia-smi --query-gpu=memory.total,memory.used,memory.free \
+                    --format=csv,noheader 2>/dev/null | sed 's/^/[vllm-omni]   /' \
+                    || echo "[vllm-omni]   (nvidia-smi unavailable)"
+                echo "[vllm-omni]"
+                echo "[vllm-omni] Fix: lower VOXTRAL_GPU_MEMORY_UTILIZATION (try 0.35) in the"
+                echo "[vllm-omni] config wizard or the stella-ai-config ConfigMap, then redeploy."
+                echo "[vllm-omni] If the GPU snapshot shows plenty free, it is NOT memory — raise"
+                echo "[vllm-omni] VOXTRAL_STARTUP_TIMEOUT (model just slow) or check the stage"
+                echo "[vllm-omni] config / model files."
+                echo "[vllm-omni] ============================================================"
+                echo ""
+            } >&2
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+}
+voxtral_startup_watchdog &
 
 exec vllm-omni serve "${ARGS[@]}"
