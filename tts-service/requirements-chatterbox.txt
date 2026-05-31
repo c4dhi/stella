@@ -1,0 +1,18 @@
+# ChatterBox TTS provider — multilingual local TTS.
+# Selected at build time via --build-arg TTS_PROVIDER=chatterbox.
+#
+# ChatterBox pins numpy<1.26 which conflicts with newer providers; we
+# install its real dependencies explicitly and then ChatterBox itself
+# with --no-deps in the Dockerfile.
+
+conformer
+diffusers
+librosa
+omegaconf
+pykakasi
+pyloudnorm
+resemble-perth
+s3tokenizer
+safetensors
+spacy-pkuseg
+transformers

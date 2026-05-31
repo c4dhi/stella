@@ -399,41 +399,42 @@ set_defaults() {
     # GPU Configuration (default - will be auto-detected in production)
     export ENABLE_GPU="${ENABLE_GPU:-false}"
 
-    # Voxtral Configuration. Provider stays inert unless TTS_PROVIDER=voxtral.
-    # Voxtral runs out-of-process in a vllm-omni sidecar (image: tts-vllm-omni),
-    # so the tts-service image no longer needs an opt-in build flag. When
-    # TTS_PROVIDER=voxtral we:
-    #   - auto-enable ENABLE_GPU (vllm needs CUDA),
-    #   - leave VOXTRAL_ACCEPT_NC_LICENSE=false. The operator must set it to
-    #     "true" explicitly to allow the init container to download weights.
-    export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
-    export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
-    export VOXTRAL_DEFAULT_VOICE="${VOXTRAL_DEFAULT_VOICE:-casual_male}"
-    # 0.5, not 0.85: Voxtral TTS is a 2-stage model and this fraction is
-    # applied per stage, so a high value starves the acoustic stage and the
-    # engine stalls after weight-load (never binds :8000). See
-    # tts-vllm-omni/entrypoint.sh. Operator-overridable / wizard-configurable.
-    export VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}"
-    # Stage 1 (acoustic) memory fraction. Blank = keep the packaged 0.1; the
-    # entrypoint only rewrites stage 1 when this is non-empty.
-    export VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION="${VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION:-}"
-    export VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-}"
+    # Qwen3-TTS Configuration. Provider stays inert unless TTS_PROVIDER=qwen3.
+    # Qwen3-TTS runs IN-PROCESS in the tts-service container via the
+    # faster-qwen3-tts library (MIT). No sidecar. The tts-service image is
+    # built single-provider via TTS_PROVIDER, so only qwen3's deps land in
+    # the image when selected. Auto-enables ENABLE_GPU because the
+    # CUDA-graph fast path is the whole point.
+    #
+    # QWEN3_MODEL_ID selects between Qwen3-TTS variants:
+    #   - Qwen/Qwen3-TTS-12Hz-0.6B-Base       (~2GB VRAM, fastest)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-Base       (~5GB VRAM, higher quality)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (voice cloning)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign (instruction-based voice design)
+    export QWEN3_MODEL_ID="${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}"
+    # Reference clip + transcript for the voice-clone API (required even by
+    # Base variants). The bundled clip lives at tts-service/assets/ref_audio.mp3
+    # in the repo, gets baked into the tts-service image, and the init
+    # container copies it to /models/qwen3/ref_audio.mp3 on the PVC if no
+    # operator-supplied clip is present.
+    export QWEN3_REF_AUDIO="${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}"
+    export QWEN3_REF_TEXT="${QWEN3_REF_TEXT:-Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.}"
+    export QWEN3_LANGUAGE="${QWEN3_LANGUAGE:-German}"
+    # Codec frames per streamed yield. 2 ≈ 167ms audio per yield = low TTFB.
+    export QWEN3_CHUNK_SIZE="${QWEN3_CHUNK_SIZE:-2}"
+    # bfloat16 is the recommended dtype on Ampere+; drop to float16 on
+    # cards without bf16 support (e.g. V100/T4).
+    export QWEN3_DTYPE="${QWEN3_DTYPE:-bfloat16}"
     export HF_TOKEN="${HF_TOKEN:-}"
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
+    if [[ "${TTS_PROVIDER:-}" == "qwen3" ]]; then
         if [[ "$ENABLE_GPU" != "true" ]]; then
             export ENABLE_GPU="true"
-            verbose "TTS_PROVIDER=voxtral: auto-enabled ENABLE_GPU (vllm needs CUDA)"
+            verbose "TTS_PROVIDER=qwen3: auto-enabled ENABLE_GPU (faster-qwen3-tts needs CUDA)"
         fi
-        if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" != "true" ]]; then
-            warning "TTS_PROVIDER=voxtral selected. Voxtral weights are CC-BY-NC-4.0 (non-commercial)."
-            warning "Set VOXTRAL_ACCEPT_NC_LICENSE=true to acknowledge the license and let the init"
-            warning "container download the weights, OR pre-populate /models/voxtral on the PVC."
-        fi
-        if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" == "true" && -z "${HF_TOKEN:-}" ]]; then
-            warning "TTS_PROVIDER=voxtral with auto-download enabled but HF_TOKEN is empty."
-            warning "Mistral gates the Voxtral repo: visit https://huggingface.co/mistralai/Voxtral-4B-TTS-2603"
-            warning "and click 'Agree', then create a token at https://huggingface.co/settings/tokens and"
-            warning "set HF_TOKEN=hf_... in your .env. Without it the init container will 401."
+        if [[ -z "$QWEN3_REF_TEXT" ]]; then
+            warning "TTS_PROVIDER=qwen3 but QWEN3_REF_TEXT was explicitly emptied."
+            warning "Either restore the bundled transcript or supply your own pair"
+            warning "(QWEN3_REF_AUDIO on the PVC + QWEN3_REF_TEXT verbatim transcript)."
         fi
     fi
 

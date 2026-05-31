@@ -124,12 +124,12 @@ generate_configmap() {
         -e "s|\${LIVEKIT_TURN_DOMAIN}|${LIVEKIT_TURN_DOMAIN:-localhost}|g" \
         -e "s|\${ELEVENLABS_VOICE_ID}|${ELEVENLABS_VOICE_ID:-}|g" \
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
-        -e "s|\${VOXTRAL_MODEL_ID}|${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}|g" \
-        -e "s|\${VOXTRAL_ACCEPT_NC_LICENSE}|${VOXTRAL_ACCEPT_NC_LICENSE:-false}|g" \
-        -e "s|\${VOXTRAL_DEFAULT_VOICE}|${VOXTRAL_DEFAULT_VOICE:-casual_male}|g" \
-        -e "s|\${VOXTRAL_GPU_MEMORY_UTILIZATION}|${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.5}|g" \
-        -e "s|\${VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION}|${VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION:-}|g" \
-        -e "s|\${VOXTRAL_MAX_MODEL_LEN}|${VOXTRAL_MAX_MODEL_LEN:-}|g" \
+        -e "s|\${QWEN3_MODEL_ID}|${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}|g" \
+        -e "s|\${QWEN3_REF_AUDIO}|${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}|g" \
+        -e "s|\${QWEN3_REF_TEXT}|${QWEN3_REF_TEXT:-}|g" \
+        -e "s|\${QWEN3_LANGUAGE}|${QWEN3_LANGUAGE:-German}|g" \
+        -e "s|\${QWEN3_CHUNK_SIZE}|${QWEN3_CHUNK_SIZE:-2}|g" \
+        -e "s|\${QWEN3_DTYPE}|${QWEN3_DTYPE:-bfloat16}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
         -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
@@ -294,27 +294,27 @@ generate_gpu_manifests() {
         verbose "GPU manifests: runtimeClassName=nvidia + NVIDIA_VISIBLE_DEVICES=all (shared GPU mode)"
     fi
 
-    # Enable Voxtral TTS provider manifest lines when TTS_PROVIDER=voxtral.
-    # Strips the `# VOXTRAL: ` marker prefix (uncommenting the block) and
-    # deletes `# VOXTRAL_DISABLE: ` lines (which hold the lower-resource
+    # Enable Qwen3-TTS provider manifest lines when TTS_PROVIDER=qwen3.
+    # Strips the `# QWEN3: ` marker prefix (uncommenting the block) and
+    # deletes `# QWEN3_DISABLE: ` lines (which hold the lower-resource
     # defaults used by every other provider). Mirrors the `# GPU: ` pattern.
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        verbose "Enabling Voxtral TTS manifest lines (mount, env, resources, probes)"
+    if [[ "${TTS_PROVIDER:-}" == "qwen3" ]]; then
+        verbose "Enabling Qwen3-TTS manifest lines (mount, env, resources, probes)"
         if [[ "$OS_TYPE" == "macos" ]]; then
-            sed -i '' 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '' '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's|# QWEN3: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' '/# QWEN3_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
         else
-            sed -i 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's|# QWEN3: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '/# QWEN3_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
         fi
     else
-        # Non-Voxtral providers: drop the VOXTRAL: lines, keep the DISABLE defaults.
+        # Non-Qwen3 providers: drop the QWEN3: lines, keep the DISABLE defaults.
         if [[ "$OS_TYPE" == "macos" ]]; then
-            sed -i '' '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '' 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' '/# QWEN3: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's|# QWEN3_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
         else
-            sed -i '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '/# QWEN3: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's|# QWEN3_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
         fi
     fi
 
@@ -1481,10 +1481,10 @@ check_service_runtime_status() {
             | tr '[:upper:]' '[:lower:]')
 
         case "$primary" in
-            voxtral)
+            qwen3)
                 status="CUDA"
-                provider="voxtral"
-                details="Voxtral 4B TTS (CUDA)"
+                provider="qwen3"
+                details="Qwen3-TTS via faster-qwen3-tts (CUDA)"
                 ;;
             chatterbox)
                 provider="chatterbox"
@@ -1583,7 +1583,7 @@ show_gpu_status() {
 
     # Surface a TTS provider mismatch loudly — operators set TTS_PROVIDER
     # in the env file expecting that exact provider, so silently falling
-    # back to a different one (e.g. voxtral weights missing → kokoro)
+    # back to a different one (e.g. qwen3 weights missing → kokoro)
     # has bitten us before. Dump the failure log so the cause is obvious.
     local configured_tts="${TTS_PROVIDER:-piper}"
     configured_tts="$(echo "$configured_tts" | tr '[:upper:]' '[:lower:]')"

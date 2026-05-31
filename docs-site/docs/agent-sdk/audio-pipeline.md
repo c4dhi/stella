@@ -166,63 +166,73 @@ pipeline = AudioPipeline(
 )
 ```
 
-### Voxtral (opt-in, non-commercial weights, vllm-omni sidecar)
+### Qwen3-TTS (opt-in, real-time GPU, in-process)
 
-Local Voxtral 4B TTS (`mistralai/Voxtral-4B-TTS-2603`). This is an **opt-in**
-provider with two important properties:
+Local Qwen3-TTS via [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) —
+a CUDA-graph-optimized runtime that hits ~156 ms TTFA on an RTX 4090 with the
+0.6B-Base variant. The Qwen3-TTS weights are **Apache-2.0**, so this provider
+is the recommended GPU option for commercial deployments.
 
-- **Weights are CC-BY-NC-4.0** (non-commercial). STELLA does not bundle or
-  redistribute them. The init container only downloads them when the
-  operator sets `VOXTRAL_ACCEPT_NC_LICENSE=true` — that flag is the
-  operator's acceptance of the model license.
-- **Inference runs in a separate `vllm-omni` sidecar container** (image:
-  `tts-vllm-omni`). Mistral only ships the model in their native format
-  (no HF `config.json`), so the only supported inference path is via
-  `vllm serve --omni`. The provider in `tts-service` is a thin HTTP client
-  that POSTs to `http://localhost:8000/v1/audio/speech`.
+- **Runs in-process** in the `tts-service` container (no sidecar, no HTTP
+  hop). Selected at build time via `--build-arg TTS_PROVIDER=qwen3`; the
+  resulting image carries only Qwen3's dependency tree (torch 2.5.1+cu124
+  + `faster-qwen3-tts`).
+- **Model variant is wizard-selectable** via `QWEN3_MODEL_ID`:
+  - `Qwen/Qwen3-TTS-12Hz-0.6B-Base` (~2 GB VRAM, 156 ms TTFA on 4090) — recommended starting point
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~5 GB VRAM, higher quality)
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (voice cloning from a reference clip)
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` (instruction-based voice design)
+- **Voice-clone API requires a reference WAV** for every variant (including
+  Base). Place a 5–10 s clip on the model PVC and configure
+  `QWEN3_REF_AUDIO` + `QWEN3_REF_TEXT`.
 
-To enable Voxtral:
+To enable Qwen3-TTS:
 
-1. Pick `TTS_PROVIDER=voxtral` in the wizard, set
-   `VOXTRAL_ACCEPT_NC_LICENSE=true`, and provide an `HF_TOKEN` whose
-   account has accepted the gated model license on
-   <https://huggingface.co/mistralai/Voxtral-4B-TTS-2603>.
+1. Pick `TTS_PROVIDER=qwen3` in the wizard and choose a `QWEN3_MODEL_ID`
+   variant. Provide `QWEN3_REF_TEXT` (the transcript of your reference
+   WAV). `HF_TOKEN` is optional for these Apache-2.0 weights.
 
-2. Deploy with `./scripts/start-k8s.sh`. The build step compiles the
-   `tts-vllm-omni` sidecar image; the init container downloads the
-   weights to the shared PVC; the sidecar then loads them on cold start
-   (typically 60–180s on an L4).
+2. Pre-stage a reference WAV at `QWEN3_REF_AUDIO`
+   (default `/models/qwen3/ref_audio.mp3`) on the model PVC. STELLA
+   bundles a German reference clip at `tts-service/assets/ref_audio.mp3`
+   which the init container copies onto the PVC if you don't supply one.
+   The model
+   uses this to condition every utterance — supply a clean, short, single-
+   speaker sample for best results.
 
-3. Tuning knobs (all optional):
+3. Deploy with `./scripts/start-k8s.sh`. The build step compiles a
+   Qwen3-only `tts-service` image; the init container downloads the
+   weights to the shared PVC; the container loads them and captures CUDA
+   graphs at startup (typically 30–90 s on an L4, including warm-up).
+
+4. Tuning knobs (all optional):
 
    ```bash
-   VOXTRAL_DEFAULT_VOICE=casual_male            # casual_male/casual_female/...
-   VOXTRAL_GPU_MEMORY_UTILIZATION=0.85          # 0.0–1.0; lower if sharing GPU
-   VOXTRAL_MAX_MODEL_LEN=                       # blank = vllm auto-detect
+   QWEN3_LANGUAGE=English        # input language label
+   QWEN3_CHUNK_SIZE=2            # codec frames per yield (lower = lower TTFB)
+   QWEN3_DTYPE=bfloat16          # bfloat16 / float16 / float32
    ```
 
 ```python
 pipeline = AudioPipeline(
-    tts_provider="voxtral",
+    tts_provider="qwen3",
 )
 ```
 
 **Pros:**
-- High quality, expressive multilingual voice (9 languages, 20 presets)
-- Local inference, no API costs
-- Streaming-friendly via vllm's continuous-batching scheduler
+- Apache-2.0 weights — commercially usable.
+- Real-time: 156 ms TTFA / 4.78 RTF on a 4090 with the 0.6B variant.
+- Small VRAM footprint (~2 GB for 0.6B) leaves room next to STT on a 24 GB L4.
+- In-process: no sidecar, no HTTP hop, no extra container to manage.
 
 **Cons:**
-- Non-commercial license on the weights (operator obligation)
-- Requires **≥16 GB GPU VRAM** per the Mistral model card. L4 (24 GB),
-  A10/A10G, RTX 4090, L40S, A100, H100 all work. **Tesla T4 (15 GB) does
-  not have enough VRAM and is not supported.**
-- No pre-quantized variants compatible with vllm on Turing-era GPUs exist
-  at time of writing — the MLX/MXFP/GGUF community quants don't work in
-  this stack.
+- GPU-only. No CPU fallback path — use Piper or Kokoro for non-GPU deploys.
+- The fast-path runtime is newer than vllm and has fewer eyes on it in
+  production; expect to lean on logs for the first few rollouts.
+- Requires an operator-supplied reference audio + transcript.
 
-See `NOTICE.md` and `tts-service/NOTICE.md` for the full license split between
-STELLA's permissively-licensed code and the operator-supplied CC-BY-NC weights.
+See `NOTICE.md` for the full license split between STELLA's permissive code,
+the MIT-licensed `faster-qwen3-tts` engine, and the Apache-2.0 weights.
 
 ## Pipeline Methods
 

@@ -122,18 +122,18 @@ get_var_metadata() {
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
 
         # --- TTS ---
-        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,chatterbox,voxtral,elevenlabs,auto|" ;;
+        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,chatterbox,qwen3,elevenlabs,auto|" ;;
         ELEVENLABS_VOICE_ID)   echo "tts|text|optional|Xb7hH8MSUJpSbSDYk0k2|Xb7hH8MSUJpSbSDYk0k2|ElevenLabs voice ID||" ;;
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
-        VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights (downloaded to the PVC by the TTS init container)||" ;;
-        VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
-        HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading the Voxtral weights. Get one at https://huggingface.co/settings/tokens after clicking 'Agree' on the model card.||" ;;
-        VOXTRAL_DEFAULT_VOICE) echo "tts|select|optional|casual_male|casual_male|Default Voxtral preset voice used when a request doesn't specify one|casual_male,casual_female,formal_male,formal_female|" ;;
-        VOXTRAL_GPU_MEMORY_UTILIZATION) echo "tts|text|optional|0.5|0.5|GPU memory fraction for Voxtral STAGE 0 (the LM stage, the heavy one). 0.0-1.0. On a 24GB card 0.5 leaves room for the small acoustic stage and a co-located STT pod. Don't go below ~0.4 (stage 0 must fit its weights).||" ;;
-        VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION) echo "tts|text|optional|||GPU memory fraction for Voxtral STAGE 1 (the acoustic stage, small). Leave blank to keep the packaged 0.1 — only set this to override on an unusual GPU.||" ;;
-        VOXTRAL_MAX_MODEL_LEN) echo "tts|text|optional|||Override vllm's auto-detected max context length. Leave blank unless you hit KV-cache OOM and need to cap it.||" ;;
+        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. 0.6B-Base = fastest (~2GB VRAM, 156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). CustomVoice = voice cloning. VoiceDesign = instruction-based voice design.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice,Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign|" ;;
+        HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading Qwen3-TTS weights. Get one at https://huggingface.co/settings/tokens. Usually optional for Apache-2.0 models, but supplied here in case HF rate-limits anonymous downloads on the init container.||" ;;
+        QWEN3_REF_AUDIO)       echo "tts|text|optional|/models/qwen3/ref_audio.mp3|/models/qwen3/ref_audio.mp3|Path inside the tts-service pod to a 5-10s reference clip (WAV or MP3). The model's voice-clone API requires one (even Base variants). STELLA bundles a German reference clip; replace it on the PVC to swap voices.||" ;;
+        QWEN3_REF_TEXT)        echo "tts|text|optional|Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.|Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.|Verbatim transcript of QWEN3_REF_AUDIO. Required by the voice-clone API. Default matches the bundled German reference clip — replace both together if you swap the WAV.||" ;;
+        QWEN3_LANGUAGE)        echo "tts|select|optional|German|German|Default input language for Qwen3-TTS (overridable per-request). Matches the bundled reference clip; pick a different one to match your own clip.|English,German,French,Spanish,Italian,Portuguese,Polish,Dutch,Chinese,Japanese,Korean|" ;;
+        QWEN3_CHUNK_SIZE)      echo "tts|text|optional|2|2|Codec frames per streamed yield (12Hz codec rate). 2 ≈ 167ms audio per yield, low TTFB. Drop to 1 for absolute minimum TTFB at the cost of more decoder calls.||" ;;
+        QWEN3_DTYPE)           echo "tts|select|optional|bfloat16|bfloat16|Model weight dtype. bfloat16 on Ampere+ (A10/A100/L4/4090/H100). float16 on older cards without bf16 (V100/T4). float32 only for debugging.|bfloat16,float16,float32|" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -190,13 +190,13 @@ ALL_VARIABLES=(
     "ELEVENLABS_MODEL_ID"
     "ELEVENLABS_STABILITY"
     "ELEVENLABS_SIMILARITY_BOOST"
-    "VOXTRAL_MODEL_ID"
-    "VOXTRAL_ACCEPT_NC_LICENSE"
+    "QWEN3_MODEL_ID"
     "HF_TOKEN"
-    "VOXTRAL_DEFAULT_VOICE"
-    "VOXTRAL_GPU_MEMORY_UTILIZATION"
-    "VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION"
-    "VOXTRAL_MAX_MODEL_LEN"
+    "QWEN3_REF_AUDIO"
+    "QWEN3_REF_TEXT"
+    "QWEN3_LANGUAGE"
+    "QWEN3_CHUNK_SIZE"
+    "QWEN3_DTYPE"
     "ENABLE_GPU"
     "ONNX_PROVIDER"
     "KUBERNETES_NAMESPACE"
@@ -299,7 +299,7 @@ get_category_vars() {
 # currently-selected values. Provider-specific knobs are noise unless the
 # user picked that provider — most importantly, the CC-BY-NC license
 # acknowledgement should only appear when the user has actually chosen
-# Voxtral. The caller passes the current TTS_PROVIDER value so this helper
+# Qwen3. The caller passes the current TTS_PROVIDER value so this helper
 # works for both wizard implementations.
 # Usage: should_skip_wizard_var "VAR_NAME" "current_tts_provider"
 should_skip_wizard_var() {
@@ -307,11 +307,11 @@ should_skip_wizard_var() {
     local tts_provider="${2:-}"
 
     case "$var_name" in
-        VOXTRAL_*)
-            [[ "$tts_provider" != "voxtral" ]] && return 0
+        QWEN3_*)
+            [[ "$tts_provider" != "qwen3" ]] && return 0
             ;;
         HF_TOKEN)
-            [[ "$tts_provider" != "voxtral" ]] && return 0
+            [[ "$tts_provider" != "qwen3" ]] && return 0
             ;;
         ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|ELEVENLABS_MODEL_ID|ELEVENLABS_STABILITY|ELEVENLABS_SIMILARITY_BOOST)
             [[ "$tts_provider" != "elevenlabs" ]] && return 0
@@ -406,7 +406,7 @@ get_option_description() {
         TTS_PROVIDER:piper)      echo "Fast local TTS via Piper (CPU-friendly)" ;;
         TTS_PROVIDER:kokoro)     echo "Fast local TTS (50-100ms, GPU-accelerated)" ;;
         TTS_PROVIDER:chatterbox) echo "Local multilingual TTS (EN/DE, GPU recommended)" ;;
-        TTS_PROVIDER:voxtral)    echo "Local Voxtral 4B TTS (GPU required; CC-BY-NC-4.0 weights, operator-supplied)" ;;
+        TTS_PROVIDER:qwen3)      echo "Real-time Qwen3-TTS via faster-qwen3-tts (GPU required; Apache-2.0 weights, 156ms TTFA on 4090)" ;;
         TTS_PROVIDER:elevenlabs) echo "Premium cloud TTS (best quality, costs apply)" ;;
         TTS_PROVIDER:auto)       echo "Automatic fallback chain" ;;
 

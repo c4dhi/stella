@@ -1,0 +1,10 @@
+# Qwen3-TTS provider — in-process inference via faster-qwen3-tts.
+# Selected at build time via --build-arg TTS_PROVIDER=qwen3.
+#
+# - faster-qwen3-tts is MIT (https://github.com/andimarafioti/faster-qwen3-tts).
+# - The Qwen3-TTS model weights are Apache-2.0.
+# - Requires CUDA + torch 2.5.1+ (CUDA-graph capture is unreliable below that).
+#   torch itself is installed by the Dockerfile so it can be pinned to the
+#   matching CUDA wheel index.
+
+faster-qwen3-tts>=0.1.0

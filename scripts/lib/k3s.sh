@@ -29,7 +29,7 @@ check_setsid() {
 # When STELLA_DATA_ROOT is set, the disk-heavy stores are moved onto it:
 #   - Docker data-root  (build cache + locally built images)
 #   - K3s --data-dir     (containerd image store + local-path PVCs for Postgres
-#                         and the STT/TTS/Voxtral model caches)
+#                         and the STT/TTS/Qwen3 model caches)
 # A blank STELLA_DATA_ROOT keeps the system defaults (/var/lib/docker,
 # /var/lib/rancher/k3s, /tmp), which always work with no setup. Relocation only
 # takes effect on a FRESH Docker/K3s install — an already-installed K3s keeps

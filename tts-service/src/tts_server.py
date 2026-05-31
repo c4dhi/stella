@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, VoxtralProvider, TTSProvider
+from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, Qwen3Provider, TTSProvider
 
 
 class TTSEngine:
@@ -35,30 +35,33 @@ class TTSEngine:
             tts_provider = os.getenv('TTS_PROVIDER', 'piper').lower()
             print(f"[TTS Engine] TTS_PROVIDER={tts_provider}")
 
-            # Create providers
+            # Create providers. Each provider's deps are installed only when
+            # the image was built with --build-arg TTS_PROVIDER=<that one>,
+            # so providers other than the chosen one will report
+            # is_available=False and be skipped silently.
             kokoro_provider = KokoroProvider()
             piper_provider = PiperProvider()
             chatterbox_provider = ChatterBoxProvider()
-            voxtral_provider = VoxtralProvider()
+            qwen3_provider = Qwen3Provider()
 
-            # Determine priority based on TTS_PROVIDER. Voxtral is never in
-            # the default fallback chain — it is CC-BY-NC-licensed weights
-            # supplied by the operator, so it must be opted into explicitly
-            # via TTS_PROVIDER=voxtral.
+            # The ordering below is the *intended* preference; the actual
+            # winner is whichever provider's deps the image was built with.
             if tts_provider == 'piper':
-                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
+                primary_providers = [piper_provider]
             elif tts_provider == 'chatterbox':
-                primary_providers = [chatterbox_provider, piper_provider, kokoro_provider]
+                primary_providers = [chatterbox_provider]
             elif tts_provider == 'kokoro':
-                primary_providers = [kokoro_provider, piper_provider, chatterbox_provider]
-            elif tts_provider == 'voxtral':
-                primary_providers = [voxtral_provider, piper_provider, kokoro_provider, chatterbox_provider]
+                primary_providers = [kokoro_provider]
+            elif tts_provider == 'qwen3':
+                primary_providers = [qwen3_provider]
             elif tts_provider == 'auto':
-                # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro
-                primary_providers = [piper_provider, chatterbox_provider, kokoro_provider]
+                # Auto only includes the providers the Dockerfile installs
+                # in `auto` mode (piper + kokoro). Other providers are not
+                # present in an auto-built image.
+                primary_providers = [piper_provider, kokoro_provider]
             else:
-                # Default to Piper
-                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
+                # Default to Piper.
+                primary_providers = [piper_provider]
 
             # Try to initialize providers in priority order
             for provider in primary_providers:
@@ -244,8 +247,8 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
         The provider's own initialize() already runs a warm-up at startup,
         but providers can go cold between requests (e.g. a kokoro pod that's
         been idle long enough for the GPU context to be reset by the
-        scheduler, or a vllm-omni sidecar that hot-swapped weights). This
-        RPC lets the agent re-prime the model at session start without
+        scheduler, or a Qwen3 model whose CUDA-graph cache was evicted).
+        This RPC lets the agent re-prime the model at session start without
         racing the user's first utterance.
         """
         import time

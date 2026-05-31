@@ -7,6 +7,6 @@
 # project remains license-clean by default.
 #
 # Install via: pip install -r requirements-piper.txt
-# Or build the image with: --build-arg ENABLE_PIPER=true
+# Or build the image with: --build-arg TTS_PROVIDER=piper
 
 piper-tts>=1.2.0

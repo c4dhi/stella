@@ -23,6 +23,14 @@ metadata:
     app: tts-service
 spec:
   replicas: 1
+  # Recreate (NOT the default RollingUpdate): this pod pins a single GPU and
+  # requests 16Gi RAM, so a second copy can never co-schedule on the node — a
+  # rolling update leaves the new pod Pending ("Insufficient memory") forever
+  # while the old pod keeps the GPU, wedging the rollout. Recreate tears the old
+  # pod down first, which also guarantees each start gets a clean GPU (no VRAM
+  # left leaked by an overlapping previous instance).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: tts-service
@@ -107,35 +115,35 @@ spec:
           fi
 
           # ================================================================
-          # Voxtral 4B TTS (when TTS_PROVIDER=voxtral)
+          # Qwen3-TTS (when TTS_PROVIDER=qwen3)
           #
-          # Weights are CC-BY-NC-4.0 (non-commercial). STELLA only downloads
-          # them when the operator explicitly sets
-          # VOXTRAL_ACCEPT_NC_LICENSE=true in the ConfigMap — that env var
-          # constitutes the operator's acceptance of the model license.
+          # Qwen3-TTS weights are Apache-2.0. STELLA pre-stages them onto
+          # the PVC so the in-process loader can mmap them on startup
+          # without each pod restart re-downloading several GB. We also
+          # copy the bundled reference clip baked into this image to the
+          # PVC, unless the operator has already staged their own.
           # ================================================================
-          if [ "$TTS_PROVIDER" = "voxtral" ]; then
-            if [ "${VOXTRAL_ACCEPT_NC_LICENSE:-false}" != "true" ]; then
-              echo "[TTS Init] TTS_PROVIDER=voxtral but VOXTRAL_ACCEPT_NC_LICENSE!=true."
-              echo "[TTS Init] The Voxtral model is CC-BY-NC-4.0 (non-commercial)."
-              echo "[TTS Init] Set VOXTRAL_ACCEPT_NC_LICENSE=true in the ConfigMap to"
-              echo "[TTS Init] acknowledge the license and let the init container fetch"
-              echo "[TTS Init] the weights, OR populate /models/voxtral yourself."
-            else
-              VOXTRAL_VERSION_FILE="/models/voxtral/.version"
-              VOXTRAL_VERSION="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
+          if [ "$TTS_PROVIDER" = "qwen3" ]; then
+            QWEN3_VERSION_FILE="/models/qwen3/.version"
+            QWEN3_VERSION="${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}"
 
-              if [ -f "$VOXTRAL_VERSION_FILE" ] && [ "$(cat $VOXTRAL_VERSION_FILE)" = "$VOXTRAL_VERSION" ]; then
-                echo "[TTS Init] Voxtral weights already present (version: $VOXTRAL_VERSION)"
-              else
-                echo "[TTS Init] Downloading Voxtral weights ($VOXTRAL_VERSION) — operator has"
-                echo "[TTS Init] accepted CC-BY-NC-4.0 by setting VOXTRAL_ACCEPT_NC_LICENSE=true."
-                mkdir -p /models/voxtral
-                pip install --no-cache-dir --quiet "huggingface_hub>=0.34.0"
-                hf download "$VOXTRAL_VERSION" --local-dir /models/voxtral
-                echo "$VOXTRAL_VERSION" > "$VOXTRAL_VERSION_FILE"
-                echo "[TTS Init] Voxtral weight download complete"
-              fi
+            if [ -f "$QWEN3_VERSION_FILE" ] && [ "$(cat $QWEN3_VERSION_FILE)" = "$QWEN3_VERSION" ]; then
+              echo "[TTS Init] Qwen3-TTS weights already present (version: $QWEN3_VERSION)"
+            else
+              echo "[TTS Init] Downloading Qwen3-TTS weights ($QWEN3_VERSION)..."
+              mkdir -p /models/qwen3
+              pip install --no-cache-dir --quiet "huggingface_hub>=0.34.0"
+              hf download "$QWEN3_VERSION" --local-dir /models/qwen3
+              echo "$QWEN3_VERSION" > "$QWEN3_VERSION_FILE"
+              echo "[TTS Init] Qwen3-TTS weight download complete"
+            fi
+
+            # Stage the bundled reference clip on the PVC if no operator
+            # override is present. The provider reads QWEN3_REF_AUDIO from
+            # the ConfigMap (default: /models/qwen3/ref_audio.mp3).
+            if [ ! -f /models/qwen3/ref_audio.mp3 ] && [ -f /app/assets/ref_audio.mp3 ]; then
+              echo "[TTS Init] Copying bundled Qwen3 reference clip to /models/qwen3/ref_audio.mp3"
+              cp /app/assets/ref_audio.mp3 /models/qwen3/ref_audio.mp3
             fi
           fi
 
@@ -147,17 +155,11 @@ spec:
               name: stella-ai-config
               key: TTS_PROVIDER
               optional: true
-        - name: VOXTRAL_ACCEPT_NC_LICENSE
+        - name: QWEN3_MODEL_ID
           valueFrom:
             configMapKeyRef:
               name: stella-ai-config
-              key: VOXTRAL_ACCEPT_NC_LICENSE
-              optional: true
-        - name: VOXTRAL_MODEL_ID
-          valueFrom:
-            configMapKeyRef:
-              name: stella-ai-config
-              key: VOXTRAL_MODEL_ID
+              key: QWEN3_MODEL_ID
               optional: true
         - name: HF_TOKEN
           valueFrom:
@@ -193,6 +195,12 @@ spec:
         - name: model-cache
           mountPath: /root/.cache/piper
           subPath: piper
+        # QWEN3: - name: model-cache
+        # QWEN3:   mountPath: /models/qwen3
+        # QWEN3:   subPath: qwen3
+        # QWEN3: - name: model-cache
+        # QWEN3:   mountPath: /models/.hf-cache
+        # QWEN3:   subPath: hf-cache
         env:
         - name: GRPC_PORT
           value: "50052"
@@ -214,20 +222,57 @@ spec:
           value: "/root/.cache/chatterbox"
         - name: PIPER_CACHE_DIR
           value: "/root/.cache/piper"
-        # Voxtral (auto-enabled when TTS_PROVIDER=voxtral). The provider in
-        # this container is a thin HTTP client of the vllm-omni sidecar
-        # below — it only needs to know where to find the sidecar and which
-        # voice to use by default. All real inference happens in the sidecar.
-        # VOXTRAL: - name: VOXTRAL_VLLM_URL
-        # VOXTRAL:   value: "http://localhost:8000"
-        # VOXTRAL: - name: VOXTRAL_MODEL_NAME
-        # VOXTRAL:   value: "voxtral"
-        # VOXTRAL: - name: VOXTRAL_DEFAULT_VOICE
-        # VOXTRAL:   valueFrom:
-        # VOXTRAL:     configMapKeyRef:
-        # VOXTRAL:       name: stella-ai-config
-        # VOXTRAL:       key: VOXTRAL_DEFAULT_VOICE
-        # VOXTRAL:       optional: true
+        # Qwen3-TTS (auto-enabled when TTS_PROVIDER=qwen3). Runs IN-PROCESS
+        # in this container via faster-qwen3-tts (no sidecar). The init
+        # container pre-stages weights at /models/qwen3; QWEN3_REF_AUDIO
+        # must point at a 5-10s reference clip the operator placed on the
+        # PVC (default: /models/qwen3/ref_audio.mp3 — the bundled clip).
+        # QWEN3: - name: QWEN3_MODEL_ID
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_MODEL_ID
+        # QWEN3:       optional: true
+        # QWEN3: - name: QWEN3_MODEL_PATH
+        # QWEN3:   value: "/models/qwen3"
+        # QWEN3: - name: QWEN3_REF_AUDIO
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_REF_AUDIO
+        # QWEN3:       optional: true
+        # QWEN3: - name: QWEN3_REF_TEXT
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_REF_TEXT
+        # QWEN3:       optional: true
+        # QWEN3: - name: QWEN3_LANGUAGE
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_LANGUAGE
+        # QWEN3:       optional: true
+        # QWEN3: - name: QWEN3_CHUNK_SIZE
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_CHUNK_SIZE
+        # QWEN3:       optional: true
+        # QWEN3: - name: QWEN3_DTYPE
+        # QWEN3:   valueFrom:
+        # QWEN3:     configMapKeyRef:
+        # QWEN3:       name: stella-ai-config
+        # QWEN3:       key: QWEN3_DTYPE
+        # QWEN3:       optional: true
+        # QWEN3: - name: HF_HOME
+        # QWEN3:   value: "/models/.hf-cache"
+        # QWEN3: - name: HF_TOKEN
+        # QWEN3:   valueFrom:
+        # QWEN3:     secretKeyRef:
+        # QWEN3:       name: stella-ai-secrets
+        # QWEN3:       key: huggingface-token
+        # QWEN3:       optional: true
         resources:
           requests:
             memory: "2Gi"
@@ -243,8 +288,8 @@ spec:
             - python
             - -c
             - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
-          # VOXTRAL_DISABLE: initialDelaySeconds: 10
-          # VOXTRAL: initialDelaySeconds: 90
+          # QWEN3_DISABLE: initialDelaySeconds: 10
+          # QWEN3: initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
         livenessProbe:
@@ -253,81 +298,10 @@ spec:
             - python
             - -c
             - "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)"
-          # VOXTRAL_DISABLE: initialDelaySeconds: 30
-          # VOXTRAL: initialDelaySeconds: 120
+          # QWEN3_DISABLE: initialDelaySeconds: 30
+          # QWEN3: initialDelaySeconds: 90
           periodSeconds: 30
           timeoutSeconds: 10
-      # ======================================================================
-      # vllm-omni sidecar — only included when TTS_PROVIDER=voxtral.
-      # Serves Voxtral on http://localhost:8000/v1/audio/speech, which the
-      # tts-service container above talks to. Owns the GPU when active.
-      # ======================================================================
-      # VOXTRAL: - name: vllm-omni
-      # VOXTRAL:   image: tts-vllm-omni:latest
-      # VOXTRAL:   imagePullPolicy: IfNotPresent
-      # VOXTRAL:   ports:
-      # VOXTRAL:   - containerPort: 8000
-      # VOXTRAL:     name: http
-      # VOXTRAL:   env:
-      # VOXTRAL:   - name: VOXTRAL_MODEL_PATH
-      # VOXTRAL:     value: "/models/voxtral"
-      # VOXTRAL:   - name: VOXTRAL_SERVED_NAME
-      # VOXTRAL:     value: "voxtral"
-      # VOXTRAL:   - name: VLLM_PORT
-      # VOXTRAL:     value: "8000"
-      # VOXTRAL:   - name: VOXTRAL_GPU_MEMORY_UTILIZATION
-      # VOXTRAL:     valueFrom:
-      # VOXTRAL:       configMapKeyRef:
-      # VOXTRAL:         name: stella-ai-config
-      # VOXTRAL:         key: VOXTRAL_GPU_MEMORY_UTILIZATION
-      # VOXTRAL:         optional: true
-      # VOXTRAL:   - name: VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION
-      # VOXTRAL:     valueFrom:
-      # VOXTRAL:       configMapKeyRef:
-      # VOXTRAL:         name: stella-ai-config
-      # VOXTRAL:         key: VOXTRAL_ACOUSTIC_GPU_MEMORY_UTILIZATION
-      # VOXTRAL:         optional: true
-      # VOXTRAL:   - name: VOXTRAL_MAX_MODEL_LEN
-      # VOXTRAL:     valueFrom:
-      # VOXTRAL:       configMapKeyRef:
-      # VOXTRAL:         name: stella-ai-config
-      # VOXTRAL:         key: VOXTRAL_MAX_MODEL_LEN
-      # VOXTRAL:         optional: true
-      # VOXTRAL:   - name: HF_HOME
-      # VOXTRAL:     value: "/models/.hf-cache"
-      # VOXTRAL:   volumeMounts:
-      # VOXTRAL:   - name: model-cache
-      # VOXTRAL:     mountPath: /models/voxtral
-      # VOXTRAL:     subPath: voxtral
-      # VOXTRAL:     readOnly: true
-      # VOXTRAL:   - name: dshm
-      # VOXTRAL:     mountPath: /dev/shm
-      # VOXTRAL:   resources:
-      # VOXTRAL:     requests:
-      # VOXTRAL:       memory: "16Gi"
-      # VOXTRAL:       cpu: "2000m"
-      # VOXTRAL:     limits:
-      # VOXTRAL:       memory: "24Gi"
-      # VOXTRAL:       cpu: "4000m"
-      # VOXTRAL: # NOTE: no nvidia.com/gpu resource request — STELLA's k3s setup
-      # VOXTRAL: # gives GPU access via runtimeClassName: nvidia (enabled by deploy.sh
-      # VOXTRAL: # when ENABLE_GPU=true). Requesting nvidia.com/gpu: 1 here would
-      # VOXTRAL: # exclusively bind the GPU and starve the STT pod.
-      # VOXTRAL:   readinessProbe:
-      # VOXTRAL:     httpGet:
-      # VOXTRAL:       path: /health
-      # VOXTRAL:       port: 8000
-      # VOXTRAL:     initialDelaySeconds: 60
-      # VOXTRAL:     periodSeconds: 10
-      # VOXTRAL:     timeoutSeconds: 5
-      # VOXTRAL:     failureThreshold: 60
-      # VOXTRAL:   livenessProbe:
-      # VOXTRAL:     httpGet:
-      # VOXTRAL:       path: /health
-      # VOXTRAL:       port: 8000
-      # VOXTRAL:     initialDelaySeconds: 600
-      # VOXTRAL:     periodSeconds: 30
-      # VOXTRAL:     timeoutSeconds: 10
       # ======================================================================
       # Volumes: PersistentVolume for model storage
       # ======================================================================
@@ -335,9 +309,3 @@ spec:
       - name: model-cache
         persistentVolumeClaim:
           claimName: tts-models-pvc
-      # VOXTRAL: # vllm needs >>64MB of shared memory for IPC; back /dev/shm
-      # VOXTRAL: # with a sizeable tmpfs to prevent CUDA OOM during inference.
-      # VOXTRAL: - name: dshm
-      # VOXTRAL:   emptyDir:
-      # VOXTRAL:     medium: Memory
-      # VOXTRAL:     sizeLimit: 4Gi

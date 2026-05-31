@@ -1,4 +1,0 @@
-# Voxtral is now served by a separate vllm-omni sidecar; the TTS service
-# itself only needs httpx + soundfile to call it (both in requirements.txt).
-# This file is intentionally empty — kept so older build pipelines that
-# still COPY it don't fail. Safe to delete once nothing references it.

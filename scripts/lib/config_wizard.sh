@@ -363,8 +363,8 @@ configure_section() {
         local var_name="${var_array[$var_idx]}"
 
         # Hide provider-specific knobs when their provider isn't selected
-        # (e.g. Voxtral license acknowledgement only matters when the user
-        # actually picked TTS_PROVIDER=voxtral earlier in the section).
+        # (e.g. Qwen3 model variant only matters when the user actually
+        # picked TTS_PROVIDER=qwen3 earlier in the section).
         if should_skip_wizard_var "$var_name" "$(get_config_value TTS_PROVIDER)"; then
             var_idx=$((var_idx + 1))
             continue

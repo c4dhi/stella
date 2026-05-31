@@ -5,8 +5,9 @@
 # - Kokoro model: ~300MB (kokoro-v1.0.onnx)
 # - Kokoro voices: ~200MB (voices-v1.0.bin)
 # - ChatterBox multilingual: ~2GB (ve.pt, t3_mtl23ls_v2.safetensors, s3gen.pt, etc.)
-# - Voxtral 4B TTS (opt-in, CC-BY-NC-4.0): ~8GB. Operator-supplied — STELLA
-#   does NOT download these. Bump storage to >=20Gi when enabling Voxtral.
+# - Qwen3-TTS (opt-in, Apache-2.0): ~2GB for the 0.6B-Base variant, ~5GB for
+#   the 1.7B variants. The init container downloads them on first deploy.
+#   Bump storage to >=10Gi if you plan to switch between Qwen3 variants.
 # =============================================================================
 
 apiVersion: v1

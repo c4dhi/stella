@@ -919,12 +919,6 @@ discover_agents() {
 # Used by cleanup_for_rebuild and sync_images_to_k3s for consistent handling.
 get_all_image_names() {
     local core_images=("session-management-server" "stt-service" "tts-service" "frontend-ui" "message-recorder-python")
-    # tts-vllm-omni is a sidecar image consumed only when TTS_PROVIDER=voxtral.
-    # Building it is cheap (vllm base + a couple pip installs), but it pulls
-    # multi-GB CUDA wheels — only build it when actually needed.
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        core_images+=("tts-vllm-omni")
-    fi
     echo "${core_images[@]} ${DISCOVERED_AGENTS[*]}"
 }
 
@@ -980,17 +974,14 @@ build_images() {
     # Core services
     start_parallel_build "session-management-server" "session-management-server:${IMAGE_TAG}" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:${IMAGE_TAG}" "./stt-service" "$gpu_args"
-    # Piper TTS is GPL-3.0 and opt-in. Default off to keep builds license-clean;
-    # set ENABLE_PIPER=true to include Piper (resulting image becomes GPL-3.0).
-    # Voxtral no longer needs an opt-in build flag — it runs out-of-process in
-    # the tts-vllm-omni sidecar, so the tts-service image stays lean.
-    local tts_args="$gpu_args --build-arg ENABLE_PIPER=${ENABLE_PIPER:-false}"
+    # The tts-service image is single-provider. TTS_PROVIDER picks which
+    # provider's deps the build installs; every other provider's import
+    # guard then reports is_available=False at runtime. Keeps the image
+    # small and avoids per-provider torch/onnx version conflicts.
+    local tts_args="$gpu_args --build-arg TTS_PROVIDER=${TTS_PROVIDER:-piper}"
     start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$tts_args"
     start_parallel_build "frontend-ui" "frontend-ui:${IMAGE_TAG}" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:${IMAGE_TAG}" "./message-recorder-python"
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        start_parallel_build "tts-vllm-omni" "tts-vllm-omni:${IMAGE_TAG}" "./tts-vllm-omni" ""
-    fi
 
     # Auto-discovered agents (any directory under agents/ with a Dockerfile)
     for agent_name in "${DISCOVERED_AGENTS[@]}"; do
