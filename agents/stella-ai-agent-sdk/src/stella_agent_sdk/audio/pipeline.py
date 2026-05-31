@@ -47,8 +47,17 @@ from typing import AsyncIterator, Awaitable, Callable, List, Optional
 from stella_agent_sdk.livekit.room import RoomManager
 from stella_agent_sdk.services.stt_client import STTClient, TranscriptEvent
 from stella_agent_sdk.services.tts_client import TTSClient
+from stella_agent_sdk.messages.types import BargeInDecision
 
 logger = logging.getLogger(__name__)
+
+# TTS output format (matches RoomManager's AudioSource and the TTS service).
+_TTS_SAMPLE_RATE = 24000
+_BYTES_PER_SAMPLE = 2  # 16-bit mono PCM
+# Frame size for paced playback to the LiveKit track (20ms at 24kHz). Pushing
+# in fixed frames lets us track a sample-accurate playhead for barge-in.
+_PLAYOUT_FRAME_SAMPLES = 480
+_PLAYOUT_FRAME_BYTES = _PLAYOUT_FRAME_SAMPLES * _BYTES_PER_SAMPLE
 
 
 class AudioPipeline:
@@ -146,6 +155,55 @@ class AudioPipeline:
         self._speech_queue: asyncio.Queue = asyncio.Queue()
         self._speech_worker_task: Optional[asyncio.Task] = None
 
+        # ── Barge-in: reversible suspend / resume of playback ──────────────
+        # When enabled, detecting user speech mid-utterance SUSPENDS playback
+        # (reversible) instead of hard-stopping. The current utterance's audio
+        # is held in memory and addressable by sample offset, so it can resume
+        # from the exact point the user heard, or be discarded on commit.
+        #
+        # Whether barge-in is active is driven by the AGENT'S declared
+        # capability (supports_barge_in), wired in via enable_barge_in() by the
+        # run loop. The BARGE_IN_ENABLED env var is an optional operator
+        # OVERRIDE: when set explicitly it wins (force on/off); when unset, the
+        # agent's declaration decides.
+        _bargein_env = os.getenv("BARGE_IN_ENABLED")
+        if _bargein_env is None:
+            self._barge_in_enabled = False  # until the agent declaration enables it
+            self._barge_in_env_locked = False
+        else:
+            self._barge_in_enabled = _bargein_env.lower() in ("true", "1", "yes")
+            self._barge_in_env_locked = True
+        # Gate for the playback loop: set => may push frames, clear => paused.
+        self._play_allowed = asyncio.Event()
+        self._play_allowed.set()
+        # Held audio for the currently-playing utterance (concatenated PCM) and
+        # the playhead (byte offset of the next sample to push).
+        self._cur_audio: bytes = b""
+        self._cur_cursor: int = 0
+        # Barge-in resolution: True between detecting the interruption and the
+        # decision landing. The decider (set by run wiring) is the agent's
+        # on_barge_in hook; it returns COMMIT or RESUME for a given transcript.
+        self._barge_in_active = False
+        self._barge_in_resolving = False
+        # A committed barge-in turn, delivered to audio_in() out-of-band so it
+        # survives the transcript-queue drain that open_transcript_gate() runs
+        # when the interrupted speech worker exits.
+        self._pending_barge_in: Optional[TranscriptEvent] = None
+        # True only while audio frames are actually being pushed to the track —
+        # i.e. the agent is *audibly* talking. A barge-in may only START when
+        # this is True; `_is_speaking` is too coarse (it's set before the first
+        # frame plays and during idle gaps, when the agent isn't really talking).
+        self._audio_active = False
+        # Trigger threshold: while the agent is speaking we keep listening the
+        # whole time, but only treat it as an interruption once STT recognizes
+        # at least this many characters of actual speech — so coughs, echo
+        # blips and brief sounds don't pause the agent for everything. Raise it
+        # to require more confident speech before interrupting.
+        self._barge_in_min_chars = int(os.getenv("BARGE_IN_MIN_CHARS", "3"))
+        self._barge_in_decider: Optional[
+            Callable[[str], Awaitable["BargeInDecision"]]
+        ] = None
+
         # Per-turn analytics state (raw event model)
         self._turn_stt_start_ts: float = 0
         self._turn_stt_end_ts: float = 0
@@ -161,6 +219,17 @@ class AudioPipeline:
     def is_speaking(self) -> bool:
         """Whether the agent is currently speaking (TTS playing)."""
         return self._is_speaking
+
+    @property
+    def barge_in_enabled(self) -> bool:
+        """Whether barge-in (reversible suspend on user speech) is enabled
+        for this deployment via the BARGE_IN_ENABLED env var."""
+        return self._barge_in_enabled
+
+    @property
+    def is_suspended(self) -> bool:
+        """Whether playback is currently suspended awaiting a barge-in decision."""
+        return self._is_speaking and not self._play_allowed.is_set()
 
     @property
     def is_listening(self) -> bool:
@@ -372,8 +441,15 @@ class AudioPipeline:
                 if not self._is_listening:
                     logger.info("Pipeline stopped listening, ending audio generator")
                     break
-                # Skip sending audio to STT while agent is speaking
-                if self._transcript_gate_closed and self._tts_enabled:
+                # Skip sending audio to STT while agent is speaking — EXCEPT in
+                # barge-in mode, where we must keep feeding STT so its VAD can
+                # detect the user interrupting. AEC cancels the agent's own
+                # audio from the mic so this does not self-trigger.
+                if (
+                    self._transcript_gate_closed
+                    and self._tts_enabled
+                    and not self._barge_in_enabled
+                ):
                     continue
                 chunk_count += 1
                 if chunk_count == 1:
@@ -395,47 +471,58 @@ class AudioPipeline:
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
-            # Discard transcripts while agent is speaking
+            # While the agent is speaking, the turn gate is closed.
             if self._transcript_gate_closed and self._tts_enabled:
                 if event.speech_started:
                     self._current_utterance_speaker = self._room.current_audio_speaker
+
+                # Turn-based mode (no barge-in): ignore user audio while speaking.
+                if not self._barge_in_enabled:
+                    continue
+
+                text = (event.text or "").strip()
+
+                # A decision is already in flight — keep the on-screen
+                # transcript current, but don't re-trigger.
+                if self._barge_in_resolving:
+                    await self._publish_user_transcript(event)
+                    continue
+
+                # A barge-in is already in progress (suspended, collecting the
+                # utterance) — keep collecting and resolve on the final.
+                if self._barge_in_active:
+                    await self._publish_user_transcript(event)
+                    if event.is_final and text:
+                        self._barge_in_resolving = True
+                        asyncio.create_task(self._resolve_barge_in(text))
+                    continue
+
+                # No barge-in yet. Only START one if the agent is ACTUALLY
+                # talking (audio frames flowing) — never on user input while the
+                # agent is silent — and the user cleared the speech threshold so
+                # brief noises don't interrupt for everything.
+                if not self._audio_active:
+                    continue
+                if len(text) < self._barge_in_min_chars:
+                    continue
+                logger.info(
+                    f"[BARGE-IN] Interruption detected while talking ('{text[:40]}') — suspending"
+                )
+                self._barge_in_active = True
+                self.suspend_speech()
+                await self._emit_barge_in_debug(
+                    f"⏸️ Barge-in detected — paused, listening… (\"{text[:60]}\")",
+                    decision="detecting",
+                    transcript=text,
+                )
+                await self._publish_user_transcript(event)
+                if event.is_final and text:
+                    self._barge_in_resolving = True
+                    asyncio.create_task(self._resolve_barge_in(text))
                 continue
 
-            # 1. Publish ALL transcripts to LiveKit for frontend display
-            # Include speaker attribution so frontend knows this is user speech
-            # Use Envelope format: { type, data: { ... } }
-            #
-            # Speaker attribution logic:
-            # - Use current_audio_speaker as the ground truth (updated with each audio frame)
-            # - If utterance_speaker differs from current_audio_speaker, a speaker change occurred
-            #   mid-stream (without a silence gap triggering speech_started), so update it
-            # - This handles the case where participant starts speaking right after organizer
-            #
-            # NOTE: event.participant_id from STT is NOT used because it's always the
-            # same value passed when the stream was initialized, not the actual speaker.
-            current_speaker = self._room.current_audio_speaker
-            if current_speaker and current_speaker != self._current_utterance_speaker:
-                # Speaker changed without a speech_started event (no silence gap)
-                logger.debug(f"Speaker change detected: {self._current_utterance_speaker} -> {current_speaker}")
-                self._current_utterance_speaker = current_speaker
-            speaker_id = self._current_utterance_speaker or current_speaker or self._participant_id
-            # Get the actual display name from RoomManager (e.g., "Felix Moser" instead of "human")
-            speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
-            logger.debug(f"Transcript attribution: speaker_id={speaker_id}, speaker_name={speaker_name}, utterance_speaker={self._current_utterance_speaker}, current_audio_speaker={self._room.current_audio_speaker}")
-            await self._room.publish_data({
-                "type": "transcript",
-                "data": {
-                    "text": event.text,
-                    "is_final": event.is_final,
-                    "transcript_id": event.transcript_id,
-                    # Speaker attribution (who spoke)
-                    "speaker_id": speaker_id,
-                    "speaker_name": speaker_name,
-                    "source": "user_speech",
-                    # Backwards compat
-                    "participant_id": speaker_id,
-                },
-            })
+            # 1. Publish ALL transcripts to LiveKit for frontend display.
+            await self._publish_user_transcript(event)
 
             # 2. Handle speech_started for barge-in
             if event.speech_started:
@@ -471,6 +558,35 @@ class AudioPipeline:
                 else:
                     await self._transcript_queue.put(event)
 
+    async def _publish_user_transcript(self, event: TranscriptEvent) -> None:
+        """Publish a user transcript (partial or final) to LiveKit for frontend
+        display, with speaker attribution.
+
+        Uses current_audio_speaker as ground truth; if it differs from the
+        locked utterance speaker, a mid-stream speaker change occurred (no
+        silence gap), so update it. event.participant_id from STT is ignored —
+        it's the value passed at stream init, not the actual speaker.
+        """
+        current_speaker = self._room.current_audio_speaker
+        if current_speaker and current_speaker != self._current_utterance_speaker:
+            self._current_utterance_speaker = current_speaker
+        speaker_id = self._current_utterance_speaker or current_speaker or self._participant_id
+        speaker_name = self._room.get_participant_name(speaker_id) or speaker_id
+        await self._room.publish_data({
+            "type": "transcript",
+            "data": {
+                "text": event.text,
+                "is_final": event.is_final,
+                "transcript_id": event.transcript_id,
+                # Speaker attribution (who spoke)
+                "speaker_id": speaker_id,
+                "speaker_name": speaker_name,
+                "source": "user_speech",
+                # Backwards compat
+                "participant_id": speaker_id,
+            },
+        })
+
     async def _handle_speech_started(self) -> None:
         """Handle VAD speech_started signal (potential barge-in)."""
         # Capture stt_start timestamp for analytics
@@ -479,6 +595,10 @@ class AudioPipeline:
         # Lock in the speaker identity at the START of each utterance
         self._current_utterance_speaker = self._room.current_audio_speaker
         logger.debug(f"Speech started detected - locked speaker: {self._current_utterance_speaker}")
+
+        # Barge-in detection happens in _run_stt_stream_inner (threshold-based
+        # on recognized speech), not here — speech_started alone is too noisy to
+        # trigger an interruption.
 
         # No barge-in while agent is speaking (gate closed)
         if self._interrupt_mode == "none" and self._transcript_gate_closed:
@@ -690,6 +810,14 @@ class AudioPipeline:
             )
 
         while self._is_listening:
+            # A committed barge-in is delivered out-of-band (not via the
+            # transcript queue) so it survives the gate drain that runs when the
+            # interrupted speech worker exits. Yield it first.
+            if self._pending_barge_in is not None:
+                event = self._pending_barge_in
+                self._pending_barge_in = None
+                yield event
+                continue
             try:
                 # Get transcript event with timeout
                 event = await asyncio.wait_for(
@@ -836,12 +964,14 @@ class AudioPipeline:
         logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
         self._stop_speaking_event.clear()
+        self._play_allowed.set()
         self.close_transcript_gate()
 
         try:
             await self._speak_sentence(text, voice, speed, language)
         finally:
             self._is_speaking = False
+            self._audio_active = False
             self.open_transcript_gate()
 
     @property
@@ -900,6 +1030,7 @@ class AudioPipeline:
                             elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
                             asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
 
+                    self._audio_active = True
                     await self._room.publish_audio(chunk.audio_data)
 
                 # Success - exit retry loop
@@ -925,29 +1056,217 @@ class AudioPipeline:
                     logger.error(f"TTS error speaking sentence: {e}")
                     return
 
-    async def stop_speaking(self) -> None:
-        """
-        Interrupt current TTS playback.
-
-        Call this when user starts speaking (barge-in) to immediately
-        stop agent speech. Also drains any queued sentences.
-        """
-        if not self._is_speaking:
-            return
-
-        logger.info("Stopping TTS playback")
-
-        # Drain queued sentences so they don't play after interruption
+    def _drain_speech_queue(self) -> None:
+        """Drop all queued sentences so they don't play after interruption."""
         while not self._speech_queue.empty():
             try:
                 self._speech_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
 
+    async def stop_speaking(self) -> None:
+        """
+        Hard-stop current TTS playback (destructive).
+
+        Call this when the user starts speaking (barge-in, non-reversible) to
+        immediately stop agent speech. Drains queued sentences, discards the
+        held utterance, and flushes the playout buffer so audio does not keep
+        playing from the buffer after the producer stops.
+
+        For reversible barge-in (suspend → evaluate → resume/commit), use
+        suspend_speech()/resume_speech()/commit_interrupt() instead.
+        """
+        if not self._is_speaking:
+            return
+
+        logger.info("Stopping TTS playback")
+
+        self._drain_speech_queue()
+        self._cur_audio = b""
+        self._cur_cursor = 0
+        self._audio_active = False
         self._stop_speaking_event.set()
+        # Unblock the playback loop if it was suspended, so it observes the stop.
+        self._play_allowed.set()
+        # Drop already-buffered-but-unplayed audio from the output source.
+        self._room.clear_playout()
 
         # Wait briefly for TTS to notice interruption
         await asyncio.sleep(0.05)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Barge-in: reversible suspend / resume / commit
+    # ─────────────────────────────────────────────────────────────────────
+
+    def suspend_speech(self) -> None:
+        """Suspend playback reversibly (barge-in reflex).
+
+        Stops feeding the track and flushes the playout buffer so the user
+        stops hearing the agent promptly, but KEEPS the held utterance, the
+        playhead, and the queued sentences so playback can resume from exactly
+        where it stopped. The transcript gate stays closed — the STT loop keeps
+        handling the interruption directly (see _run_stt_stream_inner) while we
+        decide whether to commit or resume.
+
+        No-op if not currently speaking or already suspended.
+        """
+        if not self._is_speaking or not self._play_allowed.is_set():
+            return
+
+        # Rewind the playhead to what the user actually heard: the unplayed tail
+        # sitting in the output buffer (which we are about to clear) was pushed
+        # but never reached the speaker, so resume should start before it.
+        queued_ms = self._room.queued_playout_ms
+        queued_bytes = (
+            int(queued_ms * _TTS_SAMPLE_RATE / 1000) * _BYTES_PER_SAMPLE
+        )
+        self._cur_cursor = max(0, self._cur_cursor - queued_bytes)
+
+        self._play_allowed.clear()
+        self._audio_active = False
+        self._room.clear_playout()
+        logger.info(
+            f"[BARGE-IN] Suspended playback at byte {self._cur_cursor}/"
+            f"{len(self._cur_audio)} (rewound ~{queued_ms:.0f}ms of unplayed audio)"
+        )
+
+    def resume_speech(self) -> None:
+        """Resume a suspended utterance from the exact point it was suspended
+        (barge-in dismissed). Re-closes the transcript gate since the agent is
+        speaking again. No-op if not suspended."""
+        if self._play_allowed.is_set():
+            return
+        logger.info("[BARGE-IN] Resuming playback from playhead")
+        self.close_transcript_gate()
+        self._play_allowed.set()
+
+    def commit_interrupt(self) -> None:
+        """Commit a barge-in (interruption is legitimate): discard the rest of
+        the current utterance and all queued sentences. The transcript gate is
+        left OPEN (the user's turn is being processed). After this the speech
+        worker observes the stop and exits."""
+        logger.info("[BARGE-IN] Committing interruption — discarding remaining speech")
+        self._drain_speech_queue()
+        self._cur_audio = b""
+        self._cur_cursor = 0
+        self._audio_active = False
+        self._stop_speaking_event.set()
+        # Unblock the (suspended) playback loop so it observes the stop and exits.
+        self._play_allowed.set()
+        self._room.clear_playout()
+
+    async def _await_resume_or_stop(self) -> bool:
+        """Block while playback is suspended. Returns True if resumed, False if
+        the utterance was aborted (commit / hard stop) while suspended."""
+        play_waiter = asyncio.create_task(self._play_allowed.wait())
+        stop_waiter = asyncio.create_task(self._stop_speaking_event.wait())
+        try:
+            await asyncio.wait(
+                {play_waiter, stop_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            play_waiter.cancel()
+            stop_waiter.cancel()
+        return not self._stop_speaking_event.is_set()
+
+    def enable_barge_in(self) -> None:
+        """Enable barge-in because the agent declares it supports it.
+
+        Honors an explicit BARGE_IN_ENABLED env override: if the operator set
+        it (to either value), that wins and this is a no-op. Otherwise the
+        agent's declaration turns barge-in on.
+        """
+        if self._barge_in_env_locked:
+            logger.info(
+                f"[BARGE-IN] Agent declares support; env override in effect "
+                f"(enabled={self._barge_in_enabled})"
+            )
+            return
+        self._barge_in_enabled = True
+        logger.info("[BARGE-IN] Enabled from agent declaration")
+
+    def set_barge_in_decider(
+        self, decider: Callable[[str], Awaitable["BargeInDecision"]]
+    ) -> None:
+        """Register the async callback that decides COMMIT vs RESUME for a
+        barge-in transcript (wired to the agent's on_barge_in hook)."""
+        self._barge_in_decider = decider
+
+    async def _emit_barge_in_debug(self, content: str, **metadata) -> None:
+        """Publish a barge-in debug message to the chat (frontend debug feed)
+        so the commit/resume verdict and flow are visible while testing."""
+        try:
+            await self._room.publish_data({
+                "type": "debug",
+                "data": {
+                    "content": content,
+                    "component": "barge_in",
+                    "level": "info",
+                    "metadata": metadata,
+                },
+            })
+        except Exception as e:
+            logger.error(f"[BARGE-IN] Failed to emit debug message: {e}")
+
+    async def _resolve_barge_in(self, transcript: str) -> None:
+        """Resolve a suspended barge-in given the user's transcript.
+
+        Calls the registered decider. On RESUME, playback continues from the
+        playhead and the transcript is discarded. On COMMIT, the current
+        utterance is discarded and the transcript is injected as a new turn
+        (flagged is_barge_in) for the agent loop to process.
+
+        Clears the barge-in flags in a finally so detection re-arms cleanly for
+        the next interruption regardless of outcome or error.
+        """
+        decider = self._barge_in_decider
+        try:
+            try:
+                if decider is not None:
+                    decision = await decider(transcript)
+                else:
+                    decision = BargeInDecision.COMMIT
+            except Exception as e:
+                logger.error(f"[BARGE-IN] Decider failed: {e} — committing")
+                decision = BargeInDecision.COMMIT
+
+            if decision == BargeInDecision.RESUME:
+                logger.info(f"[BARGE-IN] RESUME — '{transcript[:40]}' was not actionable")
+                await self._emit_barge_in_debug(
+                    f"🔁 Barge-in RESUME — judged not actionable, resuming previous "
+                    f"speech. Heard: \"{transcript[:100]}\"",
+                    decision="resume",
+                    transcript=transcript,
+                )
+                self.resume_speech()
+                return
+
+            logger.info(f"[BARGE-IN] COMMIT — interrupting for '{transcript[:40]}'")
+            await self._emit_barge_in_debug(
+                f"✋ Barge-in COMMIT — interrupting and processing as a new turn: "
+                f"\"{transcript[:100]}\"",
+                decision="commit",
+                transcript=transcript,
+            )
+            self.commit_interrupt()
+            # Deliver the interruption as a new turn out-of-band. NOT via
+            # _transcript_queue: the interrupted worker's exit runs
+            # open_transcript_gate(), which drains that queue and would silently
+            # drop this turn. audio_in() picks up _pending_barge_in first.
+            self._pending_barge_in = TranscriptEvent(
+                text=transcript,
+                is_final=True,
+                transcript_id=f"bargein_{uuid.uuid4().hex[:8]}",
+                participant_id=self._current_utterance_speaker or self._participant_id,
+                confidence=1.0,
+                timestamp_ms=int(time.time() * 1000),
+                speech_started=False,
+                is_barge_in=True,
+            )
+        finally:
+            self._barge_in_active = False
+            self._barge_in_resolving = False
 
     # ─────────────────────────────────────────────────────────────────────
     # Sentence-level streaming TTS
@@ -1030,26 +1349,58 @@ class AudioPipeline:
             logger.error(f"[TTS] Prefetch failed: {e}")
         return chunks
 
+    def _emit_first_byte(self, source: str) -> None:
+        """Emit the TTS first-byte analytics event once per source per turn."""
+        if source == "bridge" and not self._turn_bridge_tts_first_byte_emitted:
+            self._turn_bridge_tts_first_byte_emitted = True
+            if self.turn_anchor_ts > 0:
+                elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
+                asyncio.create_task(self._emit_analytics_event("bridge_tts_first_byte", elapsed))
+        elif source == "response" and not self._turn_response_tts_first_byte_emitted:
+            self._turn_response_tts_first_byte_emitted = True
+            if self.turn_anchor_ts > 0:
+                elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
+                asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
+
     async def _play_prefetched(self, chunks, source: str = "response") -> None:
-        """Play back pre-fetched audio chunks to LiveKit."""
-        for chunk in chunks:
+        """Play a pre-fetched utterance to LiveKit, in fixed frames from a
+        sample-accurate playhead so playback can be suspended and resumed.
+
+        The utterance's chunks are concatenated into one PCM buffer held in
+        memory; ``self._cur_cursor`` tracks the next byte to push. When barge-in
+        suspends playback the loop pauses here (without returning) until resumed
+        or aborted, so the speech worker does not advance to the next sentence.
+        """
+        # Concatenate this utterance into one position-addressable buffer.
+        self._cur_audio = b"".join(c.audio_data for c in chunks)
+        self._cur_cursor = 0
+        first = True
+
+        while self._cur_cursor < len(self._cur_audio):
+            # Reversible suspend (barge-in): pause until resumed or aborted.
+            if not self._play_allowed.is_set():
+                resumed = await self._await_resume_or_stop()
+                if not resumed:
+                    break  # committed / hard-stopped while suspended
+
             if self._stop_speaking_event.is_set():
                 logger.info("TTS interrupted mid-sentence")
-                return
+                break
 
-            # Emit first-byte analytics events (once per source per turn)
-            if source == "bridge" and not self._turn_bridge_tts_first_byte_emitted:
-                self._turn_bridge_tts_first_byte_emitted = True
-                if self.turn_anchor_ts > 0:
-                    elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                    asyncio.create_task(self._emit_analytics_event("bridge_tts_first_byte", elapsed))
-            elif source == "response" and not self._turn_response_tts_first_byte_emitted:
-                self._turn_response_tts_first_byte_emitted = True
-                if self.turn_anchor_ts > 0:
-                    elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                    asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
+            frame = self._cur_audio[self._cur_cursor:self._cur_cursor + _PLAYOUT_FRAME_BYTES]
+            self._cur_cursor += len(frame)
 
-            await self._room.publish_audio(chunk.audio_data)
+            if first:
+                first = False
+                self._emit_first_byte(source)
+
+            # The agent is now audibly talking — a barge-in may start.
+            self._audio_active = True
+            await self._room.publish_audio(frame)
+
+        # Utterance finished (or aborted) — clear held audio.
+        self._cur_audio = b""
+        self._cur_cursor = 0
 
     async def _speech_worker(self) -> None:
         """Background worker that speaks queued sentences with prefetch.
@@ -1060,6 +1411,7 @@ class AudioPipeline:
         logger.info("[TTS] Speech worker started")
         self._is_speaking = True
         self._stop_speaking_event.clear()
+        self._play_allowed.set()  # start un-suspended
         self.close_transcript_gate()
 
         try:
@@ -1090,13 +1442,28 @@ class AudioPipeline:
                     prefetch_task = None
                     prefetch_source = None
                 else:
-                    item = await self._speech_queue.get()
+                    # Race the queue against the stop signal. A commit/stop
+                    # drains the queue (including the flush sentinel), so a bare
+                    # blocking get() here would hang forever when the
+                    # interruption lands on the last sentence — deadlocking the
+                    # worker and stalling the turn that should follow.
+                    get_task = asyncio.create_task(self._speech_queue.get())
+                    stop_waiter = asyncio.create_task(self._stop_speaking_event.wait())
+                    try:
+                        await asyncio.wait(
+                            {get_task, stop_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        stop_waiter.cancel()
+                    if self._stop_speaking_event.is_set():
+                        get_task.cancel()
+                        logger.info("[TTS] Speech worker: interrupted, skipping remaining")
+                        break
+                    item = await get_task
                     if item is None:
                         break
                     sentence, source = item
-                    if self._stop_speaking_event.is_set():
-                        logger.info("[TTS] Speech worker: interrupted, skipping remaining")
-                        break
                     # No prefetch available — synthesize synchronously for this first sentence
                     chunks = await self._prefetch_sentence(
                         sentence, language=self._tts_language
@@ -1150,6 +1517,7 @@ class AudioPipeline:
                 asyncio.create_task(self._emit_analytics_event("response_tts_done", self._last_response_tts_done_elapsed))
                 self._last_response_tts_done_elapsed = 0
             self._is_speaking = False
+            self._audio_active = False
             self.open_transcript_gate()
             logger.info("[TTS] Speech worker stopped")
 

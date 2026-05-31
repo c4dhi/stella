@@ -10,7 +10,13 @@ from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
 
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import AgentState, ChatMessage, MetadataSubtype, OutputType
+from stella_agent_sdk.messages.types import (
+    AgentState,
+    BargeInDecision,
+    ChatMessage,
+    MetadataSubtype,
+    OutputType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,23 @@ class BaseAgent(ABC):
         3. on_interrupt() - Called if user interrupts (barge-in)
         4. on_session_end() - Called when session ends, cleanup
     """
+
+    #: Whether this agent supports user barge-in (interrupting mid-speech).
+    #: When True *and* barge-in is enabled at the deployment level (env), the
+    #: pipeline arms the reflex: detecting user speech while the agent is
+    #: talking suspends playback, transcribes the user, and routes the final
+    #: transcript to ``on_barge_in()`` to decide whether to commit or resume.
+    #: When False the agent never gets interrupted (current default behaviour).
+    supports_barge_in: bool = False
+
+    #: Backchannel / filler tokens treated as "not a real interruption" by the
+    #: default ``on_barge_in()`` heuristic. Subclasses may override this set or
+    #: override ``on_barge_in()`` entirely for semantic evaluation.
+    _BARGE_IN_BACKCHANNELS = frozenset({
+        "mhm", "mm", "mmhm", "uh huh", "uh-huh", "uhuh", "yeah", "yep", "yup",
+        "ok", "okay", "right", "sure", "got it", "i see", "go on", "continue",
+        "hmm", "ah", "oh", "huh", "aha", "ja", "genau", "okay", "verstehe",
+    })
 
     def __init__(self) -> None:
         """Initialize the agent. Override to add your own initialization."""
@@ -370,6 +393,60 @@ class BaseAgent(ABC):
         """
         pass
 
+    async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+        """Evaluate a user barge-in and decide whether to act on it.
+
+        Called only when ``supports_barge_in`` is True and barge-in is enabled
+        at the deployment level. By the time this fires, the system has already
+        suspended playback (reversibly) and transcribed the user's full
+        utterance — nothing has been discarded yet. Your return value decides:
+
+        - ``BargeInDecision.COMMIT``: the interruption is worth addressing. The
+          system discards the remainder of the current message, truncates it to
+          what was actually spoken, and processes ``transcript`` as a new turn.
+        - ``BargeInDecision.RESUME``: the interruption was not meaningful
+          (backchannel, noise, filler). Playback resumes from exactly where it
+          was suspended and ``transcript`` is discarded.
+
+        The default implementation is a fast, synchronous heuristic: short
+        utterances consisting only of backchannel/filler tokens resume;
+        anything else commits. Override for semantic evaluation (e.g. an LLM
+        classifier) — but keep it fast, since the user hears silence while this
+        runs on the resume path.
+
+        Args:
+            session_id: The session being interrupted.
+            transcript: The user's transcribed barge-in utterance.
+
+        Returns:
+            A ``BargeInDecision`` (COMMIT or RESUME).
+
+        Example:
+            ```python
+            async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+                if await self.is_real_instruction(transcript):
+                    return BargeInDecision.COMMIT
+                return BargeInDecision.RESUME
+            ```
+        """
+        normalized = transcript.strip().lower().strip(".,!?…")
+        if not normalized:
+            # Pure noise / no words recognized — not a real interruption.
+            return BargeInDecision.RESUME
+        # Whole utterance is a known (possibly multi-word) backchannel phrase,
+        # e.g. "go on", "uh huh", "got it".
+        if normalized in self._BARGE_IN_BACKCHANNELS:
+            return BargeInDecision.RESUME
+        # ...or a short utterance made up entirely of single-token backchannels
+        # ("mhm", "okay yeah"). Anything substantive commits — when in doubt we
+        # commit, since ignoring a real interruption is worse than over-stopping.
+        words = normalized.split()
+        if len(words) <= 3 and all(
+            w in self._BARGE_IN_BACKCHANNELS for w in words
+        ):
+            return BargeInDecision.RESUME
+        return BargeInDecision.COMMIT
+
     async def on_session_start(self, session_id: str, config: Dict[str, Any]) -> None:
         """
         Called when a new session starts.
@@ -551,6 +628,7 @@ class BaseAgent(ABC):
                     self._session_id or "",
                     event.text,
                     turn_id=getattr(event, "transcript_id", None),
+                    is_barge_in=getattr(event, "is_barge_in", False),
                 )
 
                 # Process and stream response

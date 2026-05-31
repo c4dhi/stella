@@ -107,6 +107,44 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       focusable: false,
     })
 
+    // Barge-in evaluator's own endpoints — it lives on a separate runtime path
+    // (SDK interrupt detection), not in the turn pipeline. Give it a dedicated
+    // input endpoint (the SDK-detected interruption) and output endpoint (the
+    // commit/resume decision), styled like the Input/Output Message annotations
+    // and aligned on the barge-in node's row above the pipeline.
+    const bargeInNode = schema.nodes.find((n) => n.id === 'barge_in')
+    if (bargeInNode) {
+      const bargeInY = Y_OFFSET + bargeInNode.position.row * ROW_SPACING
+      pipelineNodes.push({
+        id: '__bargein_input__',
+        type: 'pipeline',
+        position: { x: INPUT_ANNOTATION_X, y: bargeInY },
+        data: {
+          label: 'Interruption',
+          isAnnotation: true,
+          annotationType: 'input',
+          isDark,
+        },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+      })
+      pipelineNodes.push({
+        id: '__bargein_output__',
+        type: 'pipeline',
+        position: { x: X_OFFSET + maxCol * COL_SPACING + 210 + OUTPUT_ANNOTATION_X_PAD, y: bargeInY },
+        data: {
+          label: 'Commit / Resume',
+          isAnnotation: true,
+          annotationType: 'output',
+          isDark,
+        },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+      })
+    }
+
     return pipelineNodes
   }, [schema.nodes, configuration, selectedNodeId, isDark, maxCol, annotationY])
 
@@ -274,6 +312,53 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         },
         labelBgPadding: [4, 2] as [number, number],
         labelBgBorderRadius: 3,
+      })
+    }
+
+    // Barge-in evaluator: sits above the pipeline and spans the whole turn.
+    // Visualize its input (the user's interruption) and output (the
+    // commit/resume decision that controls playback), mirroring the bridge.
+    const bargeInNode = schema.nodes.find((n) => n.id === 'barge_in')
+    if (bargeInNode) {
+      // Dedicated input endpoint (SDK interruption) → evaluator.
+      pipelineEdges.push({
+        id: 'edge-bargein-input',
+        source: '__bargein_input__',
+        target: 'barge_in',
+        targetHandle: 'left',
+        type: 'default',
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: annotationEdgeColor,
+        },
+        style: {
+          stroke: annotationEdgeColor,
+          strokeWidth: 1.5,
+          strokeDasharray: '6 4',
+        },
+      })
+      // Evaluator → dedicated output endpoint (commit/resume decision).
+      pipelineEdges.push({
+        id: 'edge-bargein-output',
+        source: 'barge_in',
+        sourceHandle: 'right',
+        target: '__bargein_output__',
+        type: 'default',
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: annotationEdgeColor,
+        },
+        style: {
+          stroke: annotationEdgeColor,
+          strokeWidth: 1.5,
+          strokeDasharray: '6 4',
+        },
       })
     }
 
