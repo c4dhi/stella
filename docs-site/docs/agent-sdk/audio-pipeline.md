@@ -207,7 +207,7 @@ To enable Qwen3-TTS:
 4. Tuning knobs (all optional):
 
    ```bash
-   QWEN3_LANGUAGE=English        # input language label
+   QWEN3_LANGUAGE=Auto           # Auto = model autodetects; pin to override
    QWEN3_CHUNK_SIZE=2            # codec frames per yield (lower = lower TTFB)
    QWEN3_DTYPE=bfloat16          # bfloat16 / float16 / float32
    ```

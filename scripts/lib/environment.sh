@@ -419,7 +419,9 @@ set_defaults() {
     # files are there yet. The provider reads the transcript from the
     # sibling .txt file next to the audio — no env-var transcript sharing.
     export QWEN3_REF_AUDIO="${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}"
-    export QWEN3_LANGUAGE="${QWEN3_LANGUAGE:-German}"
+    # Auto = let the model autodetect from the input text. Pin only if
+    # autodetect misfires on your domain (rare).
+    export QWEN3_LANGUAGE="${QWEN3_LANGUAGE:-Auto}"
     # Codec frames per streamed yield. 2 ≈ 167ms audio per yield = low TTFB.
     export QWEN3_CHUNK_SIZE="${QWEN3_CHUNK_SIZE:-2}"
     # bfloat16 is the recommended dtype on Ampere+; drop to float16 on

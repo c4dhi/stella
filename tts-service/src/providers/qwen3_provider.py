@@ -47,7 +47,10 @@ except ImportError:
 
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
-DEFAULT_LANGUAGE = "English"
+# Empty / "Auto" → pass language=None to the model, which triggers its
+# built-in language autodetection from the input text. Pin a specific
+# language only if autodetect misfires on your domain (rare).
+DEFAULT_LANGUAGE = ""
 DEFAULT_SAMPLE_RATE = 24000
 # Codec runs at 12 Hz token rate; chunk_size=2 ≈ 167 ms audio per yield.
 # Smaller = lower TTFB, more decoder calls per second. The CUDA-graph
@@ -73,7 +76,9 @@ class Qwen3Provider(TTSProvider):
     - ``QWEN3_DEVICE``: ``cuda`` (default) or ``cpu``. CPU is supported
       only as a fallback for debugging — it is not real-time.
     - ``QWEN3_DTYPE``: ``bfloat16`` (default), ``float16``, or ``float32``.
-    - ``QWEN3_LANGUAGE``: input language label. Default ``English``.
+    - ``QWEN3_LANGUAGE``: input language label. Empty or ``Auto`` (default)
+      lets the model autodetect from the text — works well for mixed-
+      language deployments. Pin to a specific language only if needed.
     - ``QWEN3_REF_AUDIO``: path to a reference clip (~5–10 s, WAV or MP3).
       Required for every variant. The init container drops the bundled
       clip at /models/qwen3/ref_audio.mp3 if no operator file is present.
@@ -209,6 +214,18 @@ class Qwen3Provider(TTSProvider):
             arr = arr.reshape(-1)
         return (np.clip(arr, -1.0, 1.0) * 32767.0).astype(np.int16)
 
+    def _resolve_language(self, override: Optional[str]) -> Optional[str]:
+        """Pick the effective language label, or None for autodetect.
+
+        Empty string and the literal "Auto" both map to None so we can
+        carry the wizard's "Auto" option straight through.
+        """
+        candidate = (override if override is not None else self._language) or ""
+        candidate = candidate.strip()
+        if not candidate or candidate.lower() == "auto":
+            return None
+        return candidate
+
     async def synthesize(
         self,
         text: str,
@@ -222,7 +239,7 @@ class Qwen3Provider(TTSProvider):
         if not text or not text.strip():
             return None
 
-        lang = language or self._language
+        lang = self._resolve_language(language)
 
         def _run():
             audio_list, sr = self._model.generate_voice_clone(
@@ -276,7 +293,7 @@ class Qwen3Provider(TTSProvider):
         if not text or not text.strip():
             return
 
-        lang = language or self._language
+        lang = self._resolve_language(language)
         codec_chunk = self._chunk_size
 
         loop = asyncio.get_event_loop()
