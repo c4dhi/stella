@@ -64,14 +64,17 @@ spec:
 
           echo "Running database seed..."
           echo "  AGENT_WORKSPACE_ROOT: $AGENT_WORKSPACE_ROOT"
-          npx prisma db seed
+          # Seed is idempotent (upserts), so any non-zero exit is a real
+          # failure. We fail the init container hard rather than continuing
+          # silently — an empty AgentType table makes /agent-types 500 and
+          # there is no graceful runtime fallback.
+          node dist/prisma/seed.js
           SEED_RESULT=$?
           if [ $SEED_RESULT -ne 0 ]; then
-            echo "⚠ Seeding failed (may already be seeded) - continuing..."
-          else
-            echo "✓ Database seeded successfully"
+            echo "✗ Seeding failed with exit code: $SEED_RESULT"
+            exit 1
           fi
-          exit 0
+          echo "✓ Database seeded successfully"
         env:
         - name: DATABASE_URL
           valueFrom:
