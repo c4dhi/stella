@@ -180,21 +180,32 @@ load_environment() {
 # =============================================================================
 
 configure_urls() {
+    # Single source of truth for the three public endpoints. Each has a default
+    # that follows STELLA's DNS convention, but ANY of them can be overridden by
+    # exporting it in .env.<env> if your DNS layout differs — derivation never
+    # fights an explicit value.
+    #
+    # Production DNS convention (matches the Caddy SNI routes on the host):
+    #   apex domain      -> frontend   e.g. https://stella.example.org
+    #   backend.<domain> -> API        e.g. https://backend.stella.example.org
+    # NOTE: the frontend lives at the APEX, not a frontend.<domain> subdomain.
     if [[ "$NODE_ENV" == "production" ]]; then
-        # Production URLs (custom domains with SSL)
-        export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_DB_PORT="5432"
-        export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN:-localhost}"
+        export PUBLIC_FRONTEND_URL="${PUBLIC_FRONTEND_URL:-https://${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_API_URL="${PUBLIC_API_URL:-https://backend.${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_DB_HOST="${PUBLIC_DB_HOST:-db.${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_DB_PORT="${PUBLIC_DB_PORT:-5432}"
     else
-        # Local URLs
-        export PUBLIC_FRONTEND_URL="http://localhost:${FRONTEND_PORT}"
-        export PUBLIC_API_URL="http://localhost:${BACKEND_PORT}"
-        export PUBLIC_DB_HOST="localhost"
-        export PUBLIC_DB_PORT="${POSTGRES_PORT}"
-        export CORS_ORIGIN="http://localhost:${FRONTEND_PORT}"
+        export PUBLIC_FRONTEND_URL="${PUBLIC_FRONTEND_URL:-http://localhost:${FRONTEND_PORT}}"
+        export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:${BACKEND_PORT}}"
+        export PUBLIC_DB_HOST="${PUBLIC_DB_HOST:-localhost}"
+        export PUBLIC_DB_PORT="${PUBLIC_DB_PORT:-${POSTGRES_PORT}}"
     fi
+
+    # CORS_ORIGIN is NOT an independent setting: the browser's origin IS the
+    # frontend URL, so it is always derived from PUBLIC_FRONTEND_URL. Keeping it
+    # as a separate hardcoded value is exactly what drifted and broke CORS
+    # before. (main.ts also accepts a comma-separated list here if ever needed.)
+    export CORS_ORIGIN="$PUBLIC_FRONTEND_URL"
 
     # Map PUBLIC_LIVEKIT_URL to VITE_LIVEKIT_URL for frontend
     export VITE_LIVEKIT_URL="${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}"

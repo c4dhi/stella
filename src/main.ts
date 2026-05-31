@@ -71,14 +71,28 @@ async function bootstrap() {
   const nodeEnv = process.env.NODE_ENV || 'development';
   logger.log(`🔧 API prefix disabled - all routes at root level`);
 
-  // Configure CORS
+  // Configure CORS.
+  // CORS_ORIGIN is normally derived from PUBLIC_FRONTEND_URL by the deploy
+  // scripts (single source of truth), but we still parse it defensively here:
+  // a comma-separated list is allowed so multiple frontend origins can be
+  // permitted without code changes. Passing an array makes the cors middleware
+  // reflect the matching request origin (a fixed string would always echo that
+  // one value regardless of who asked — the footgun behind the old bug).
   const isDevelopment = nodeEnv === 'development';
-  const corsOrigin = process.env.CORS_ORIGIN || (isDevelopment ? '*' : process.env.PUBLIC_FRONTEND_URL);
+  const allowedOrigins = (process.env.CORS_ORIGIN || process.env.PUBLIC_FRONTEND_URL || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const corsOrigin = isDevelopment
+    ? true
+    : allowedOrigins.length > 1
+      ? allowedOrigins
+      : (allowedOrigins[0] ?? false);
   app.enableCors({
     origin: corsOrigin,
     credentials: true,
   });
-  logger.log(`🌐 CORS enabled for: ${corsOrigin}`);
+  logger.log(`🌐 CORS enabled for: ${isDevelopment ? '* (development)' : allowedOrigins.join(', ') || '(none)'}`);
 
   const port = process.env.PORT || 3000;
 
