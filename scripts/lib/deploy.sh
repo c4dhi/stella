@@ -921,38 +921,71 @@ bootstrap_initial_admin() {
     local bootstrap_file="$PROJECT_DIR/.stella-initial-admin.${NODE_ENV}.json"
     local bootstrap_log="/tmp/stella-admin-bootstrap-$$.log"
     local bootstrap_db_url=""
+    local synthesized_file=""
+    local only_if_missing_flag=""
+    local source_label="bootstrap file"
 
+    # Two trigger paths:
+    #   1) Operator-driven: a one-time bootstrap file exists (created by the
+    #      wizard). Always create-or-update — operator intent is explicit.
+    #   2) Recovery: file is gone (already consumed, or DB/PVC was wiped) but
+    #      INITIAL_ADMIN_EMAIL/PASSWORD are present in the loaded env. Synthesize
+    #      a temp bootstrap file and run in --only-if-missing mode so we never
+    #      overwrite a password the operator may have changed via the UI.
     if [[ ! -f "$bootstrap_file" ]]; then
-        return 0
+        if [[ -z "${INITIAL_ADMIN_EMAIL:-}" || -z "${INITIAL_ADMIN_PASSWORD:-}" ]]; then
+            return 0
+        fi
+        synthesized_file="$(mktemp -t stella-initial-admin.XXXXXX.json)"
+        chmod 600 "$synthesized_file" 2>/dev/null || true
+        local email_b64 password_b64
+        email_b64=$(printf '%s' "$INITIAL_ADMIN_EMAIL" | base64 | tr -d '\n')
+        password_b64=$(printf '%s' "$INITIAL_ADMIN_PASSWORD" | base64 | tr -d '\n')
+        printf '{"email_b64":"%s","password_b64":"%s"}\n' "$email_b64" "$password_b64" > "$synthesized_file"
+        bootstrap_file="$synthesized_file"
+        only_if_missing_flag="--only-if-missing"
+        source_label="env recovery"
     fi
 
-    echo -ne "   ${ARROW} Initial admin bootstrap... "
+    echo -ne "   ${ARROW} Initial admin bootstrap (${source_label})... "
 
     if ! setup_port_forward; then
         printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
         error "Failed to open PostgreSQL port-forward for admin bootstrap"
-        echo "  Bootstrap file kept for retry: $bootstrap_file"
+        if [[ -n "$synthesized_file" ]]; then
+            rm -f "$synthesized_file"
+        else
+            echo "  Bootstrap file kept for retry: $bootstrap_file"
+        fi
         return 1
     fi
 
     bootstrap_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${PG_LOCAL_PORT}/${POSTGRES_DB}?schema=public"
 
-    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" >"$bootstrap_log" 2>&1); then
+    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" $only_if_missing_flag >"$bootstrap_log" 2>&1); then
         cleanup_port_forward
-        rm -f "$bootstrap_file"
+        if [[ -n "$synthesized_file" ]]; then
+            rm -f "$synthesized_file"
+        else
+            rm -f "$bootstrap_file"
+        fi
         rm -f "$bootstrap_log" 2>/dev/null || true
-        printf "\r   ${ARROW} Initial admin bootstrap... ${GREEN}${CHECK}${NC}    \n"
+        printf "\r   ${ARROW} Initial admin bootstrap (${source_label})... ${GREEN}${CHECK}${NC}    \n"
         return 0
     fi
 
     cleanup_port_forward
-    printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+    printf "\r   ${ARROW} Initial admin bootstrap (${source_label})... ${RED}${CROSS}${NC}    \n"
     error "Failed to create/update initial admin user"
     if [[ -f "$bootstrap_log" ]]; then
         echo "  Bootstrap error:"
         tail -n 5 "$bootstrap_log"
     fi
-    echo "  Bootstrap file kept for retry: $bootstrap_file"
+    if [[ -n "$synthesized_file" ]]; then
+        rm -f "$synthesized_file"
+    else
+        echo "  Bootstrap file kept for retry: $bootstrap_file"
+    fi
     return 1
 }
 
