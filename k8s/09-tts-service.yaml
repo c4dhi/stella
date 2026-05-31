@@ -138,12 +138,15 @@ spec:
               echo "[TTS Init] Qwen3-TTS weight download complete"
             fi
 
-            # Stage the bundled reference clip on the PVC if no operator
-            # override is present. The provider reads QWEN3_REF_AUDIO from
-            # the ConfigMap (default: /models/qwen3/ref_audio.mp3).
+            # Stage the bundled reference clip + transcript on the PVC if
+            # no operator override is present. The clip is read from
+            # QWEN3_REF_AUDIO and the provider auto-reads the transcript
+            # from the sibling .txt file next to it. Swapping voices is
+            # then "drop two files on the PVC, no env edits".
             if [ ! -f /models/qwen3/ref_audio.mp3 ] && [ -f /app/assets/ref_audio.mp3 ]; then
-              echo "[TTS Init] Copying bundled Qwen3 reference clip to /models/qwen3/ref_audio.mp3"
+              echo "[TTS Init] Copying bundled Qwen3 reference clip + transcript to /models/qwen3/"
               cp /app/assets/ref_audio.mp3 /models/qwen3/ref_audio.mp3
+              [ -f /app/assets/ref_audio.txt ] && cp /app/assets/ref_audio.txt /models/qwen3/ref_audio.txt
             fi
           fi
 
@@ -241,12 +244,9 @@ spec:
         # QWEN3:       name: stella-ai-config
         # QWEN3:       key: QWEN3_REF_AUDIO
         # QWEN3:       optional: true
-        # QWEN3: - name: QWEN3_REF_TEXT
-        # QWEN3:   valueFrom:
-        # QWEN3:     configMapKeyRef:
-        # QWEN3:       name: stella-ai-config
-        # QWEN3:       key: QWEN3_REF_TEXT
-        # QWEN3:       optional: true
+        # Transcript is read from a sibling .txt file next to QWEN3_REF_AUDIO
+        # (e.g. /models/qwen3/ref_audio.txt). Drop both files on the PVC
+        # together to swap voices — no env vars to share.
         # QWEN3: - name: QWEN3_LANGUAGE
         # QWEN3:   valueFrom:
         # QWEN3:     configMapKeyRef:

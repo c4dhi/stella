@@ -182,23 +182,22 @@ is the recommended GPU option for commercial deployments.
   - `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~5 GB VRAM, higher quality)
   - `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (voice cloning from a reference clip)
   - `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` (instruction-based voice design)
-- **Voice-clone API requires a reference WAV** for every variant (including
-  Base). Place a 5–10 s clip on the model PVC and configure
-  `QWEN3_REF_AUDIO` + `QWEN3_REF_TEXT`.
+- **Voice-clone API requires a reference clip + transcript** for every
+  variant (including Base). The transcript lives in a sibling `.txt` file
+  next to the audio (`ref_audio.mp3` → `ref_audio.txt`), so swapping
+  voices is just "drop two files on the PVC, no env edits".
 
 To enable Qwen3-TTS:
 
 1. Pick `TTS_PROVIDER=qwen3` in the wizard and choose a `QWEN3_MODEL_ID`
-   variant. Provide `QWEN3_REF_TEXT` (the transcript of your reference
-   WAV). `HF_TOKEN` is optional for these Apache-2.0 weights.
+   variant. `HF_TOKEN` is optional for these Apache-2.0 weights.
 
-2. Pre-stage a reference WAV at `QWEN3_REF_AUDIO`
-   (default `/models/qwen3/ref_audio.mp3`) on the model PVC. STELLA
-   bundles a German reference clip at `tts-service/assets/ref_audio.mp3`
-   which the init container copies onto the PVC if you don't supply one.
-   The model
-   uses this to condition every utterance — supply a clean, short, single-
-   speaker sample for best results.
+2. STELLA bundles a German reference clip + transcript at
+   `tts-service/assets/ref_audio.mp3` + `ref_audio.txt`. The init
+   container copies both onto the PVC at `/models/qwen3/` on first
+   deploy. To use a different voice, drop your own `ref_audio.mp3` +
+   `ref_audio.txt` (same basename, matching transcript) at that path
+   and restart the pod — no env edits, no rebuild.
 
 3. Deploy with `./scripts/start-k8s.sh`. The build step compiles a
    Qwen3-only `tts-service` image; the init container downloads the

@@ -126,7 +126,6 @@ generate_configmap() {
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
         -e "s|\${QWEN3_MODEL_ID}|${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}|g" \
         -e "s|\${QWEN3_REF_AUDIO}|${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}|g" \
-        -e "s|\${QWEN3_REF_TEXT}|${QWEN3_REF_TEXT:-}|g" \
         -e "s|\${QWEN3_LANGUAGE}|${QWEN3_LANGUAGE:-German}|g" \
         -e "s|\${QWEN3_CHUNK_SIZE}|${QWEN3_CHUNK_SIZE:-2}|g" \
         -e "s|\${QWEN3_DTYPE}|${QWEN3_DTYPE:-bfloat16}|g" \

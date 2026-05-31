@@ -412,13 +412,13 @@ set_defaults() {
     #   - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (voice cloning)
     #   - Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign (instruction-based voice design)
     export QWEN3_MODEL_ID="${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}"
-    # Reference clip + transcript for the voice-clone API (required even by
-    # Base variants). The bundled clip lives at tts-service/assets/ref_audio.mp3
-    # in the repo, gets baked into the tts-service image, and the init
-    # container copies it to /models/qwen3/ref_audio.mp3 on the PVC if no
-    # operator-supplied clip is present.
+    # Reference clip for the voice-clone API (required even by Base
+    # variants). The bundled clip lives at tts-service/assets/ref_audio.mp3
+    # + ref_audio.txt in the repo, gets baked into the tts-service image,
+    # and the init container copies both onto the PVC if no operator
+    # files are there yet. The provider reads the transcript from the
+    # sibling .txt file next to the audio — no env-var transcript sharing.
     export QWEN3_REF_AUDIO="${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}"
-    export QWEN3_REF_TEXT="${QWEN3_REF_TEXT:-Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.}"
     export QWEN3_LANGUAGE="${QWEN3_LANGUAGE:-German}"
     # Codec frames per streamed yield. 2 ≈ 167ms audio per yield = low TTFB.
     export QWEN3_CHUNK_SIZE="${QWEN3_CHUNK_SIZE:-2}"
@@ -430,11 +430,6 @@ set_defaults() {
         if [[ "$ENABLE_GPU" != "true" ]]; then
             export ENABLE_GPU="true"
             verbose "TTS_PROVIDER=qwen3: auto-enabled ENABLE_GPU (faster-qwen3-tts needs CUDA)"
-        fi
-        if [[ -z "$QWEN3_REF_TEXT" ]]; then
-            warning "TTS_PROVIDER=qwen3 but QWEN3_REF_TEXT was explicitly emptied."
-            warning "Either restore the bundled transcript or supply your own pair"
-            warning "(QWEN3_REF_AUDIO on the PVC + QWEN3_REF_TEXT verbatim transcript)."
         fi
     fi
 

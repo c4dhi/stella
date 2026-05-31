@@ -129,8 +129,7 @@ get_var_metadata() {
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
         QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. 0.6B-Base = fastest (~2GB VRAM, 156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). CustomVoice = voice cloning. VoiceDesign = instruction-based voice design.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice,Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign|" ;;
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading Qwen3-TTS weights. Get one at https://huggingface.co/settings/tokens. Usually optional for Apache-2.0 models, but supplied here in case HF rate-limits anonymous downloads on the init container.||" ;;
-        QWEN3_REF_AUDIO)       echo "tts|text|optional|/models/qwen3/ref_audio.mp3|/models/qwen3/ref_audio.mp3|Path inside the tts-service pod to a 5-10s reference clip (WAV or MP3). The model's voice-clone API requires one (even Base variants). STELLA bundles a German reference clip; replace it on the PVC to swap voices.||" ;;
-        QWEN3_REF_TEXT)        echo "tts|text|optional|Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.|Hallo, schön dass du da bist. Ich möchte dir heute ein paar Fragen stellen, ganz entspannt und ohne Druck. Es geht darum, wie es dir geht und was dich gerade beschäftigt. Manchmal sind es die kleinen Dinge im Alltag, die einen großen Unterschied machen. Erzähl mir einfach, was dir in den Sinn kommt.|Verbatim transcript of QWEN3_REF_AUDIO. Required by the voice-clone API. Default matches the bundled German reference clip — replace both together if you swap the WAV.||" ;;
+        QWEN3_REF_AUDIO)       echo "tts|text|optional|/models/qwen3/ref_audio.mp3|/models/qwen3/ref_audio.mp3|Path inside the tts-service pod to a 5-10s reference clip (WAV or MP3). STELLA bundles a German clip + sibling ref_audio.txt transcript; swap both files together on the PVC to change voice.||" ;;
         QWEN3_LANGUAGE)        echo "tts|select|optional|German|German|Default input language for Qwen3-TTS (overridable per-request). Matches the bundled reference clip; pick a different one to match your own clip.|English,German,French,Spanish,Italian,Portuguese,Polish,Dutch,Chinese,Japanese,Korean|" ;;
         QWEN3_CHUNK_SIZE)      echo "tts|text|optional|2|2|Codec frames per streamed yield (12Hz codec rate). 2 ≈ 167ms audio per yield, low TTFB. Drop to 1 for absolute minimum TTFB at the cost of more decoder calls.||" ;;
         QWEN3_DTYPE)           echo "tts|select|optional|bfloat16|bfloat16|Model weight dtype. bfloat16 on Ampere+ (A10/A100/L4/4090/H100). float16 on older cards without bf16 (V100/T4). float32 only for debugging.|bfloat16,float16,float32|" ;;
@@ -193,7 +192,6 @@ ALL_VARIABLES=(
     "QWEN3_MODEL_ID"
     "HF_TOKEN"
     "QWEN3_REF_AUDIO"
-    "QWEN3_REF_TEXT"
     "QWEN3_LANGUAGE"
     "QWEN3_CHUNK_SIZE"
     "QWEN3_DTYPE"

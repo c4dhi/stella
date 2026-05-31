@@ -74,11 +74,14 @@ class Qwen3Provider(TTSProvider):
       only as a fallback for debugging — it is not real-time.
     - ``QWEN3_DTYPE``: ``bfloat16`` (default), ``float16``, or ``float32``.
     - ``QWEN3_LANGUAGE``: input language label. Default ``English``.
-    - ``QWEN3_REF_AUDIO``: path to a reference WAV (~5–10 s). Required for
-      voice cloning / VoiceDesign variants; Base variants also accept one.
-      The init container drops the bundled clip at /models/qwen3/ref_audio.mp3
-      if no operator file is present.
-    - ``QWEN3_REF_TEXT``: transcript of the reference WAV.
+    - ``QWEN3_REF_AUDIO``: path to a reference clip (~5–10 s, WAV or MP3).
+      Required for every variant. The init container drops the bundled
+      clip at /models/qwen3/ref_audio.mp3 if no operator file is present.
+    - ``QWEN3_REF_TEXT``: optional transcript override. Normally the
+      provider reads the transcript from a sibling .txt file next to
+      ``QWEN3_REF_AUDIO`` (e.g. /models/qwen3/ref_audio.txt), so swapping
+      voices is just "drop two files on the PVC, no env edits". Set this
+      env var only if you can't write to the same directory as the audio.
     - ``QWEN3_CHUNK_SIZE``: codec frames per streamed yield. Default 2.
     - ``QWEN3_SAMPLE_RATE``: output sample rate (Hz). Default 24000.
     """
@@ -128,12 +131,28 @@ class Qwen3Provider(TTSProvider):
 
         if not os.path.isfile(self._ref_audio):
             print(f"[Qwen3] Reference audio not found at {self._ref_audio}.")
-            print("[Qwen3] Place a ~5-10s WAV at QWEN3_REF_AUDIO and a matching")
-            print("[Qwen3] transcript at QWEN3_REF_TEXT, or pre-stage one on the PVC.")
+            print("[Qwen3] Stage a ~5-10s WAV/MP3 there plus a sibling .txt with its")
+            print("[Qwen3] verbatim transcript (e.g. ref_audio.mp3 + ref_audio.txt).")
             return False
+
+        # Resolve the transcript. Env override wins; otherwise read the
+        # sibling .txt file next to the audio. Sharing transcripts via env
+        # vars is painful (newlines, quotes, configmap edits), so the
+        # file-next-to-audio convention is the default path.
         if not self._ref_text:
-            print("[Qwen3] QWEN3_REF_TEXT is empty — required by the voice-clone API.")
-            return False
+            sibling_txt = os.path.splitext(self._ref_audio)[0] + ".txt"
+            if os.path.isfile(sibling_txt):
+                try:
+                    with open(sibling_txt, "r", encoding="utf-8") as f:
+                        self._ref_text = f.read().strip()
+                    print(f"[Qwen3] Loaded reference transcript from {sibling_txt} ({len(self._ref_text)} chars)")
+                except Exception as e:
+                    print(f"[Qwen3] Failed to read transcript at {sibling_txt}: {e}")
+                    return False
+            else:
+                print(f"[Qwen3] No transcript found. Expected a sibling file at {sibling_txt}")
+                print("[Qwen3] (or set QWEN3_REF_TEXT env to override).")
+                return False
 
         source = self._resolve_model_source()
         dtype = self._resolve_dtype()

@@ -83,11 +83,11 @@ data:
   # faster-qwen3-tts (MIT). The init container pre-stages the chosen
   # variant onto the PVC; the operator must also place a reference WAV
   # at QWEN3_REF_AUDIO (default /models/qwen3/ref_audio.mp3 — STELLA
-  # bundles a German one) and its transcript at QWEN3_REF_TEXT — the
-  # model's voice-clone API requires both even for Base variants.
+  # bundles a German one). The transcript lives in a sibling .txt file
+  # next to the audio (ref_audio.mp3 → ref_audio.txt), so swapping
+  # voices is just dropping two files on the PVC, no env edits needed.
   QWEN3_MODEL_ID: "${QWEN3_MODEL_ID}"
   QWEN3_REF_AUDIO: "${QWEN3_REF_AUDIO}"
-  QWEN3_REF_TEXT: "${QWEN3_REF_TEXT}"
   QWEN3_LANGUAGE: "${QWEN3_LANGUAGE}"
   QWEN3_CHUNK_SIZE: "${QWEN3_CHUNK_SIZE}"
   QWEN3_DTYPE: "${QWEN3_DTYPE}"
