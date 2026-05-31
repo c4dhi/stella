@@ -100,8 +100,10 @@ get_setup_vars() {
             fi
             ;;
         production)
-            # Production-specific requirements
-            echo "PRODUCTION_DOMAIN LIVEKIT_URL PUBLIC_LIVEKIT_URL"
+            # Production-specific requirements. STELLA_DATA_ROOT is optional
+            # (blank = system defaults) but prompted here so operators on a host
+            # with a dedicated data disk can point all heavy storage at it.
+            echo "PRODUCTION_DOMAIN LIVEKIT_URL PUBLIC_LIVEKIT_URL STELLA_DATA_ROOT"
             ;;
     esac
 }
@@ -110,6 +112,61 @@ get_setup_vars() {
 # Global for section menu result
 # =============================================================================
 SETUP_MENU_RESULT=""
+
+# =============================================================================
+# Chapter tab bar — shows the full wizard outline on every section card so
+# the operator can see where they are and what is still to come.
+# =============================================================================
+WIZARD_CHAPTERS=()
+WIZARD_OPTIONAL_OFFSET=0
+WIZARD_ADMIN_OFFSET=0
+
+# Replace the single "Optional Settings" placeholder tab with the three
+# real sub-tabs (STT / TTS / GPU). Called when the operator chooses to
+# configure the optional phase so the outline matches what's coming.
+# Idempotent — safe to call again after a Back navigation.
+wizard_expand_optional_chapters() {
+    # Already expanded?
+    if [[ "${WIZARD_CHAPTERS[$WIZARD_OPTIONAL_OFFSET]}" != "Optional Settings" ]]; then
+        return 0
+    fi
+    local -a expanded=()
+    local i
+    for ((i=0; i<${#WIZARD_CHAPTERS[@]}; i++)); do
+        if (( i == WIZARD_OPTIONAL_OFFSET )); then
+            expanded+=("$(get_category_name stt)")
+            expanded+=("$(get_category_name tts)")
+            expanded+=("$(get_category_name gpu)")
+        else
+            expanded+=("${WIZARD_CHAPTERS[$i]}")
+        fi
+    done
+    WIZARD_CHAPTERS=("${expanded[@]}")
+    # Admin tab moved right by 2 (3 inserted, 1 removed).
+    WIZARD_ADMIN_OFFSET=$((WIZARD_ADMIN_OFFSET + 2))
+}
+
+wizard_chapter_tabs() {
+    local current_global_idx="$1"   # 1-based
+    local total=${#WIZARD_CHAPTERS[@]}
+    [[ $total -eq 0 ]] && return 0
+
+    echo ""
+    printf "  "
+    local i
+    for ((i=0; i<total; i++)); do
+        local label="${WIZARD_CHAPTERS[$i]}"
+        local human=$((i + 1))
+        if (( human < current_global_idx )); then
+            printf "✓ %s   " "$label"
+        elif (( human == current_global_idx )); then
+            printf "${GREEN}${BOLD}◐ %s${NC}   " "$label"
+        else
+            printf "${DIM}○ %s${NC}   " "$label"
+        fi
+    done
+    echo ""
+}
 
 # =============================================================================
 # Main Setup Flow
@@ -146,6 +203,23 @@ run_setup_wizard() {
         categories=("${SETUP_CATEGORIES_LOCAL[@]}")
     fi
 
+    # Build the global chapter list used by the tab bar so every section
+    # card can show where the operator is in the overall flow. The
+    # optional STT/TTS/GPU sub-sections are collapsed into a single
+    # "Optional Settings" tab; sub-cards still get their own headers but
+    # the outline stays compact. If the operator declines the optional
+    # phase the tab is left in place (marked done by progression) rather
+    # than expanded.
+    WIZARD_CHAPTERS=()
+    local _cat
+    for _cat in "${categories[@]}"; do
+        WIZARD_CHAPTERS+=("$(get_category_name "$_cat")")
+    done
+    WIZARD_OPTIONAL_OFFSET=${#WIZARD_CHAPTERS[@]}
+    WIZARD_CHAPTERS+=("Optional Settings")
+    WIZARD_ADMIN_OFFSET=${#WIZARD_CHAPTERS[@]}
+    WIZARD_CHAPTERS+=("Admin")
+
     local current_section=0
     local -a section_history=()
 
@@ -160,48 +234,89 @@ run_setup_wizard() {
             configure)
                 if setup_configure_section "$category" "$env"; then
                     section_history+=("$current_section")
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 ;;
             skip)
                 setup_apply_defaults "$category" "$env"
                 section_history+=("$current_section")
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac
     done
 
-    # Optional configuration prompt
-    printf '\033[2J\033[H'
-    echo ""
-    echo -e "  ${GREEN}✓${NC} ${BOLD}Required configuration complete!${NC}"
-    echo ""
+    # Post-required phase: optional gate + admin bootstrap, with Back
+    # navigation between them.
+    local post_state="optional"
+    while [[ "$post_state" != "done" ]]; do
+        case "$post_state" in
+            optional)
+                if optional_settings_intro_section; then
+                    wizard_expand_optional_chapters
+                    configure_optional_settings "$env"
+                fi
+                post_state="admin"
+                ;;
+            admin)
+                local admin_rc=0
+                admin_bootstrap_section "$project_dir" "$env" || admin_rc=$?
+                case "$admin_rc" in
+                    2)  post_state="optional" ;;  # Back
+                    *)  post_state="done" ;;
+                esac
+                ;;
+        esac
+    done
 
-    if wizard_confirm "Configure optional settings? (STT, TTS, GPU)" "n"; then
-        configure_optional_settings "$env"
-    fi
-
-    # Required initial admin bootstrap credentials
-    collect_initial_admin_credentials "$project_dir" "$env"
+    # Fill in any required secret the operator didn't provide so the review
+    # shows the credentials that will actually be written (the matching call in
+    # save_configuration then becomes a no-op). Non-required defaults are still
+    # applied at save time, matching the prior review behaviour.
+    generate_missing_required_secrets "$env"
 
     # Review screen
     wizard_clear_screen
 
     local -a config_lines=()
     for var_name in $(get_wizard_config_keys); do
+        # UI-only synthetic; the underlying booleans appear in their place.
         local value
         value=$(get_wizard_config "$var_name")
         config_lines+=("${var_name}=${value}")
     done
-    config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}") # add admin email to the config
-    config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}") # add admin password to the config
+    if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]]; then
+        config_lines+=("INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL_VALUE}")
+    fi
+    if [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then
+        config_lines+=("INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}")
+    fi
 
     wizard_review_screen "${config_lines[@]}"
+
+    # Tell the operator which required secrets were created in the background
+    # (e.g. because they skipped the credentials section or left fields blank).
+    if [[ ${#WIZARD_GENERATED_SECRETS[@]} -gt 0 ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${BOLD}Auto-generated${NC} ${DIM}(no value provided, none saved):${NC}"
+        echo -e "  ${DIM}${WIZARD_GENERATED_SECRETS[*]}${NC}"
+        echo ""
+    fi
+
+    # Warn about required values we cannot create (external/operator-specific).
+    # These can't be generated, so STELLA won't run until they're supplied.
+    local unfilled
+    unfilled=$(get_unfilled_required_vars "$env")
+    if [[ -n "$unfilled" ]]; then
+        echo -e "  ${RED}⚠${NC}  ${BOLD}Still missing — required, cannot be auto-generated:${NC}"
+        echo -e "  ${YELLOW}${unfilled}${NC}"
+        echo -e "  ${DIM}STELLA will not run until these are set. Choose 'No' below to cancel${NC}"
+        echo -e "  ${DIM}and re-run setup, or add them to ${env_file} before starting.${NC}"
+        echo ""
+    fi
 
     # Confirm and save
     if wizard_confirm "Save this configuration?" "y"; then
@@ -241,6 +356,133 @@ escape_env_value() {
     value="${value//\\/\\\\}"
     value="${value//\"/\\\"}"
     echo "$value"
+}
+
+optional_settings_intro_section() {
+    printf '\033[2J\033[H'
+    wizard_chapter_tabs "$((WIZARD_OPTIONAL_OFFSET + 1))"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "  ${GREEN}✓${NC} ${BOLD}Required configuration complete.${NC}"
+    echo ""
+    echo -e "  ⚙️   ${BOLD}OPTIONAL SETTINGS${NC}"
+    echo -e "  ${DIM}Speech-to-Text, Text-to-Speech, and GPU acceleration.${NC}"
+    echo -e "  ${DIM}Skip to accept sensible defaults for all three.${NC}"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local options=("Configure" "Skip section")
+    local selected=0
+    local num_options=${#options[@]}
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm${NC}"
+    echo ""
+    for ((i=0; i<num_options; i++)); do echo ""; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A'; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r"
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}${options[$i]}${NC}"
+            else
+                printf "    ${DIM}${options[$i]}${NC}"
+            fi
+            printf '\033[K'
+            echo ""
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                wizard_restore_terminal
+                wizard_show_cursor
+                [[ "${options[$selected]}" == "Configure" ]] && return 0
+                return 1
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
+}
+
+admin_bootstrap_section() {
+    local project_dir="$1"
+    local env="$2"
+
+    printf '\033[2J\033[H'
+    wizard_chapter_tabs "$((WIZARD_ADMIN_OFFSET + 1))"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "  👤  ${BOLD}INITIAL ADMIN ACCOUNT${NC}"
+    echo -e "  ${DIM}Bootstrap a system-admin login for first sign-in. Skip if you${NC}"
+    echo -e "  ${DIM}plan to create the admin manually (e.g. via SQL).${NC}"
+    echo ""
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local options=("Configure" "Skip section" "Back")
+    local selected=0
+    local num_options=${#options[@]}
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm  [b] Back${NC}"
+    echo ""
+    for ((i=0; i<num_options; i++)); do echo ""; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A'; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r"
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}${options[$i]}${NC}"
+            else
+                printf "    ${DIM}${options[$i]}${NC}"
+            fi
+            printf '\033[K'
+            echo ""
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                wizard_restore_terminal
+                wizard_show_cursor
+                case "${options[$selected]}" in
+                    Configure)
+                        collect_initial_admin_credentials "$project_dir" "$env"
+                        return 0
+                        ;;
+                    "Skip section")
+                        INITIAL_ADMIN_EMAIL_VALUE=""
+                        INITIAL_ADMIN_PASSWORD_VALUE=""
+                        rm -f "$(get_admin_bootstrap_file "$project_dir" "$env")" 2>/dev/null || true
+                        return 0
+                        ;;
+                    Back)
+                        return 2
+                        ;;
+                esac
+                ;;
+            ESC|b|B)
+                wizard_restore_terminal
+                wizard_show_cursor
+                return 2
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
 }
 
 collect_initial_admin_credentials() {
@@ -333,6 +575,7 @@ setup_section_menu() {
     name=$(get_category_name "$category")
     desc=$(get_category_description "$category")
 
+    wizard_chapter_tabs "$current_idx"
     echo ""
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -439,7 +682,7 @@ setup_configure_section() {
 
         # Hide provider-specific knobs when their provider isn't selected.
         if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -454,11 +697,26 @@ setup_configure_section() {
         local current
         current=$(get_wizard_config "$var_name")
         local value
-        value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        if [[ "$var_name" == "LIVEKIT_URL" ]]; then
+            # The guided step owns the whole screen (clears + redraws the
+            # section frame itself), so pass it the section header and the
+            # global chapter index so the progress tabs stay visible.
+            local _chap_idx=""
+            local _ci
+            for ((_ci=0; _ci<${#WIZARD_CHAPTERS[@]}; _ci++)); do
+                if [[ "${WIZARD_CHAPTERS[$_ci]}" == "$name" ]]; then
+                    _chap_idx=$((_ci + 1))
+                    break
+                fi
+            done
+            value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "$_chap_idx")
+        else
+            value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        fi
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
@@ -473,7 +731,7 @@ setup_configure_section() {
                 continue
             fi
             set_wizard_config "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
@@ -486,6 +744,13 @@ setup_configure_section() {
 setup_apply_defaults() {
     local category="$1"
     local env="$2"
+
+    # When an existing config was loaded, "Skip section" means leave the
+    # .env file untouched for this category — never inject defaults that
+    # would silently add new variables the operator hadn't set.
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
 
     local vars
     vars=$(get_setup_vars "$category" "$env")
@@ -526,6 +791,7 @@ optional_section_menu() {
     name=$(get_category_name "$category")
     desc=$(get_category_description "$category")
 
+    wizard_chapter_tabs "$((WIZARD_OPTIONAL_OFFSET + current_idx))"
     echo ""
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -628,7 +894,7 @@ configure_optional_section() {
 
         # Hide provider-specific knobs when their provider isn't selected.
         if should_skip_wizard_var "$var_name" "$(get_wizard_config TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -647,14 +913,14 @@ configure_optional_section() {
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
             fi
         else
             set_wizard_config "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
@@ -663,6 +929,11 @@ configure_optional_section() {
 apply_optional_defaults() {
     local category="$1"
     local env="$2"
+
+    # Existing config + skipped optional section ⇒ leave .env untouched.
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
 
     local vars
     vars=$(get_category_vars "$category")
@@ -698,16 +969,16 @@ configure_optional_settings() {
         case "$OPTIONAL_MENU_RESULT" in
             configure)
                 if configure_optional_section "$category" "$env"; then
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 ;;
             skip)
                 apply_optional_defaults "$category" "$env"
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac
@@ -718,12 +989,23 @@ configure_optional_settings() {
 # Configuration Loading
 # =============================================================================
 
+WIZARD_HAS_EXISTING_CONFIG="false"
+
+# Variables present in the existing .env file that the wizard doesn't
+# know about (custom keys the operator added manually). Preserved
+# verbatim and re-emitted at the end of the regenerated file so they
+# survive a save.
+WIZARD_PASSTHROUGH_LINES=()
+
 load_existing_config() {
     local env_file="$1"
 
     if [[ ! -f "$env_file" ]]; then
         return 1
     fi
+
+    WIZARD_HAS_EXISTING_CONFIG="true"
+    WIZARD_PASSTHROUGH_LINES=()
 
     # Read existing environment file
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -742,11 +1024,16 @@ load_existing_config() {
             var_value="${var_value#\'}"
             var_value="${var_value%\'}"
 
-            # Only load if we have metadata for this variable
+            # NODE_ENV is re-emitted by the writer; drop it here.
+            [[ "$var_name" == "NODE_ENV" ]] && continue
+
             local meta
             meta=$(get_var_metadata "$var_name")
             if [[ -n "$meta" ]]; then
                 set_wizard_config "$var_name" "$var_value"
+            else
+                # Unknown var — keep verbatim so save doesn't drop it.
+                WIZARD_PASSTHROUGH_LINES+=("$line")
             fi
         fi
     done < "$env_file"
@@ -758,6 +1045,12 @@ load_existing_config() {
 
 apply_all_defaults() {
     local env="$1"
+
+    # Existing config: don't inject defaults for unset vars. The operator
+    # already has a .env; respect what is there (and what is not).
+    if [[ "$WIZARD_HAS_EXISTING_CONFIG" == "true" ]]; then
+        return 0
+    fi
 
     # Apply defaults for ALL variables that weren't explicitly set
     for var_name in "${ALL_VARIABLES[@]}"; do
@@ -783,6 +1076,99 @@ apply_all_defaults() {
 }
 
 # =============================================================================
+# Ensure Required Secrets Exist
+# =============================================================================
+
+# Safety net run just before saving: every variable that is required for this
+# environment must end up with a value. If the operator never typed an override
+# and nothing was loaded from an existing .env, fill it in — preferring a known
+# default (e.g. local LiveKit's devkey/devsecret) and otherwise generating a
+# secure value from the variable's generator. Values that are already set
+# (typed, loaded, or defaulted) are never overwritten, so this only ever
+# *adds* missing required credentials — it never clobbers real configuration.
+#
+# This guarantees keys like JWT_SECRET, ENV_VAR_ENCRYPTION_KEY and
+# POSTGRES_PASSWORD are present even when the credentials section was skipped.
+#
+# Names of secrets actually generated by the last call are recorded in
+# WIZARD_GENERATED_SECRETS so the review screen can tell the operator exactly
+# which credentials were created for them in the background.
+WIZARD_GENERATED_SECRETS=()
+
+generate_missing_required_secrets() {
+    local env="$1"
+    local var_name
+    WIZARD_GENERATED_SECRETS=()
+    for var_name in "${ALL_VARIABLES[@]}"; do
+        if ! is_var_required "$var_name" "$env"; then
+            continue
+        fi
+        if has_wizard_config "$var_name"; then
+            continue
+        fi
+
+        local generator
+        generator=$(get_var_meta "$var_name" "generator" 2>/dev/null || true)
+
+        if [[ -n "$generator" ]]; then
+            # Generatable secret. Keep the environment's OWN default if it has
+            # one (e.g. local LiveKit's devkey) but deliberately skip the
+            # cross-environment fallback, so production never inherits the
+            # local dev credentials — it generates a fresh value instead.
+            local own_default
+            if [[ "$env" == "production" ]]; then
+                own_default=$(get_var_meta "$var_name" "default_prod" 2>/dev/null || true)
+            else
+                own_default=$(get_var_meta "$var_name" "default_local" 2>/dev/null || true)
+            fi
+            if [[ -n "$own_default" ]]; then
+                set_wizard_config "$var_name" "$own_default"
+                continue
+            fi
+            local generated
+            generated=$(eval "$generator" 2>/dev/null || true)
+            if [[ -z "$generated" ]]; then
+                generated=$(openssl rand -base64 36 2>/dev/null | tr -d '\n' || true)
+            fi
+            if [[ -n "$generated" ]]; then
+                set_wizard_config "$var_name" "$generated"
+                WIZARD_GENERATED_SECRETS+=("$var_name")
+            fi
+        else
+            # Plain required setting (no generator): apply its default. The
+            # cross-environment fallback is fine here (e.g. LIVEKIT_URL).
+            local default
+            default=$(get_var_default "$var_name" "$env" 2>/dev/null || true)
+            if [[ -n "$default" ]]; then
+                set_wizard_config "$var_name" "$default"
+            fi
+        fi
+    done
+}
+
+# Required-for-this-environment variables that STILL have no value after
+# defaults and generation have been applied. These are credentials we cannot
+# fabricate — e.g. OPENAI_API_KEY (an external secret) or PRODUCTION_DOMAIN
+# (operator-specific). Echoes the names space-separated; empty if all set.
+get_unfilled_required_vars() {
+    local env="$1"
+    local var_name
+    local -a missing=()
+    for var_name in "${ALL_VARIABLES[@]}"; do
+        if ! is_var_required "$var_name" "$env"; then
+            continue
+        fi
+        if has_wizard_config "$var_name"; then
+            continue
+        fi
+        missing+=("$var_name")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "${missing[*]}"
+    fi
+}
+
+# =============================================================================
 # Configuration Saving
 # =============================================================================
 
@@ -792,7 +1178,13 @@ save_configuration() {
     local env_file
     env_file=$(get_environment_file "$project_dir" "$env")
 
-    # Apply defaults for all non-prompted variables
+    # Guarantee every required secret is present FIRST, so generatable secrets
+    # (e.g. production LiveKit credentials) get their proper per-environment
+    # treatment before apply_all_defaults — which uses the cross-environment
+    # fallback — could otherwise fill them with the local dev defaults.
+    generate_missing_required_secrets "$env"
+
+    # Apply defaults for all remaining non-prompted variables.
     apply_all_defaults "$env"
 
     # Backup existing environment file if it exists
@@ -836,6 +1228,8 @@ save_configuration() {
             echo "# ============================================================================"
 
             for var_name in $category_vars; do
+                # UI-only synthetic var — never written to .env
+
                 local value
                 value=$(get_wizard_config "$var_name")
 
@@ -866,6 +1260,20 @@ save_configuration() {
         echo "# ============================================================================"
         echo "NODE_ENV=$env"
         echo ""
+
+        # Re-emit any custom variables the operator had in the prior .env
+        # that the wizard schema doesn't know about — drop them, and you
+        # silently lose the operator's manual config.
+        if [[ ${#WIZARD_PASSTHROUGH_LINES[@]} -gt 0 ]]; then
+            echo "# ============================================================================"
+            echo "# Custom Variables (preserved from existing $env_file)"
+            echo "# ============================================================================"
+            local _line
+            for _line in "${WIZARD_PASSTHROUGH_LINES[@]}"; do
+                echo "$_line"
+            done
+            echo ""
+        fi
 
         # Add admin credentials used during setup
         if [[ -n "$INITIAL_ADMIN_EMAIL_VALUE" ]] || [[ -n "$INITIAL_ADMIN_PASSWORD_VALUE" ]]; then

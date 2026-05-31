@@ -124,9 +124,11 @@ generate_configmap() {
         -e "s|\${LIVEKIT_TURN_DOMAIN}|${LIVEKIT_TURN_DOMAIN:-localhost}|g" \
         -e "s|\${ELEVENLABS_VOICE_ID}|${ELEVENLABS_VOICE_ID:-}|g" \
         -e "s|\${ELEVENLABS_MODEL_ID}|${ELEVENLABS_MODEL_ID:-}|g" \
-        -e "s|\${VOXTRAL_MODEL_ID}|${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}|g" \
-        -e "s|\${VOXTRAL_DTYPE}|${VOXTRAL_DTYPE:-}|g" \
-        -e "s|\${VOXTRAL_ACCEPT_NC_LICENSE}|${VOXTRAL_ACCEPT_NC_LICENSE:-false}|g" \
+        -e "s|\${QWEN3_MODEL_ID}|${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}|g" \
+        -e "s|\${QWEN3_REF_AUDIO}|${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}|g" \
+        -e "s|\${QWEN3_LANGUAGE}|${QWEN3_LANGUAGE:-Auto}|g" \
+        -e "s|\${QWEN3_CHUNK_SIZE}|${QWEN3_CHUNK_SIZE:-2}|g" \
+        -e "s|\${QWEN3_DTYPE}|${QWEN3_DTYPE:-bfloat16}|g" \
         -e "s|\${CUSTOM_DNS_SERVERS}|${CUSTOM_DNS_SERVERS:-}|g" \
         -e "s|\${KUBERNETES_DNS_IP}|${KUBERNETES_DNS_IP:-}|g" \
         -e "s|namespace: ai-agents|namespace: ${KUBERNETES_NAMESPACE}|g" \
@@ -291,27 +293,27 @@ generate_gpu_manifests() {
         verbose "GPU manifests: runtimeClassName=nvidia + NVIDIA_VISIBLE_DEVICES=all (shared GPU mode)"
     fi
 
-    # Enable Voxtral TTS provider manifest lines when TTS_PROVIDER=voxtral.
-    # Strips the `# VOXTRAL: ` marker prefix (uncommenting the block) and
-    # deletes `# VOXTRAL_DISABLE: ` lines (which hold the lower-resource
+    # Enable Qwen3-TTS provider manifest lines when TTS_PROVIDER=qwen3.
+    # Strips the `# QWEN3: ` marker prefix (uncommenting the block) and
+    # deletes `# QWEN3_DISABLE: ` lines (which hold the lower-resource
     # defaults used by every other provider). Mirrors the `# GPU: ` pattern.
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        verbose "Enabling Voxtral TTS manifest lines (mount, env, resources, probes)"
+    if [[ "${TTS_PROVIDER:-}" == "qwen3" ]]; then
+        verbose "Enabling Qwen3-TTS manifest lines (mount, env, resources, probes)"
         if [[ "$OS_TYPE" == "macos" ]]; then
-            sed -i '' 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '' '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's|# QWEN3: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' '/# QWEN3_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
         else
-            sed -i 's|# VOXTRAL: ||g' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '/# VOXTRAL_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's|# QWEN3: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '/# QWEN3_DISABLE: /d' "${TEMP_DIR}/09-tts-service.yaml"
         fi
     else
-        # Non-Voxtral providers: drop the VOXTRAL: lines, keep the DISABLE defaults.
+        # Non-Qwen3 providers: drop the QWEN3: lines, keep the DISABLE defaults.
         if [[ "$OS_TYPE" == "macos" ]]; then
-            sed -i '' '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i '' 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' '/# QWEN3: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '' 's|# QWEN3_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
         else
-            sed -i '/# VOXTRAL: /d' "${TEMP_DIR}/09-tts-service.yaml"
-            sed -i 's|# VOXTRAL_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i '/# QWEN3: /d' "${TEMP_DIR}/09-tts-service.yaml"
+            sed -i 's|# QWEN3_DISABLE: ||g' "${TEMP_DIR}/09-tts-service.yaml"
         fi
     fi
 
@@ -392,6 +394,7 @@ create_secrets() {
         --from-literal=livekit-api-secret="$LIVEKIT_API_SECRET" \
         --from-literal=livekit-webhook-secret="${LIVEKIT_WEBHOOK_SECRET:-webhook-secret}" \
         --from-literal=elevenlabs-api-key="${ELEVENLABS_API_KEY:-}" \
+        --from-literal=huggingface-token="${HF_TOKEN:-}" \
         --from-literal=env-var-encryption-key="${ENV_VAR_ENCRYPTION_KEY:-}" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
@@ -918,38 +921,71 @@ bootstrap_initial_admin() {
     local bootstrap_file="$PROJECT_DIR/.stella-initial-admin.${NODE_ENV}.json"
     local bootstrap_log="/tmp/stella-admin-bootstrap-$$.log"
     local bootstrap_db_url=""
+    local synthesized_file=""
+    local only_if_missing_flag=""
+    local source_label="bootstrap file"
 
+    # Two trigger paths:
+    #   1) Operator-driven: a one-time bootstrap file exists (created by the
+    #      wizard). Always create-or-update — operator intent is explicit.
+    #   2) Recovery: file is gone (already consumed, or DB/PVC was wiped) but
+    #      INITIAL_ADMIN_EMAIL/PASSWORD are present in the loaded env. Synthesize
+    #      a temp bootstrap file and run in --only-if-missing mode so we never
+    #      overwrite a password the operator may have changed via the UI.
     if [[ ! -f "$bootstrap_file" ]]; then
-        return 0
+        if [[ -z "${INITIAL_ADMIN_EMAIL:-}" || -z "${INITIAL_ADMIN_PASSWORD:-}" ]]; then
+            return 0
+        fi
+        synthesized_file="$(mktemp -t stella-initial-admin.XXXXXX.json)"
+        chmod 600 "$synthesized_file" 2>/dev/null || true
+        local email_b64 password_b64
+        email_b64=$(printf '%s' "$INITIAL_ADMIN_EMAIL" | base64 | tr -d '\n')
+        password_b64=$(printf '%s' "$INITIAL_ADMIN_PASSWORD" | base64 | tr -d '\n')
+        printf '{"email_b64":"%s","password_b64":"%s"}\n' "$email_b64" "$password_b64" > "$synthesized_file"
+        bootstrap_file="$synthesized_file"
+        only_if_missing_flag="--only-if-missing"
+        source_label="env recovery"
     fi
 
-    echo -ne "   ${ARROW} Initial admin bootstrap... "
+    echo -ne "   ${ARROW} Initial admin bootstrap (${source_label})... "
 
     if ! setup_port_forward; then
         printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
         error "Failed to open PostgreSQL port-forward for admin bootstrap"
-        echo "  Bootstrap file kept for retry: $bootstrap_file"
+        if [[ -n "$synthesized_file" ]]; then
+            rm -f "$synthesized_file"
+        else
+            echo "  Bootstrap file kept for retry: $bootstrap_file"
+        fi
         return 1
     fi
 
     bootstrap_db_url="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${PG_LOCAL_PORT}/${POSTGRES_DB}?schema=public"
 
-    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" >"$bootstrap_log" 2>&1); then
+    if (cd "$PROJECT_DIR" && DATABASE_URL="$bootstrap_db_url" npx ts-node scripts/bootstrap-initial-admin.ts "$bootstrap_file" $only_if_missing_flag >"$bootstrap_log" 2>&1); then
         cleanup_port_forward
-        rm -f "$bootstrap_file"
+        if [[ -n "$synthesized_file" ]]; then
+            rm -f "$synthesized_file"
+        else
+            rm -f "$bootstrap_file"
+        fi
         rm -f "$bootstrap_log" 2>/dev/null || true
-        printf "\r   ${ARROW} Initial admin bootstrap... ${GREEN}${CHECK}${NC}    \n"
+        printf "\r   ${ARROW} Initial admin bootstrap (${source_label})... ${GREEN}${CHECK}${NC}    \n"
         return 0
     fi
 
     cleanup_port_forward
-    printf "\r   ${ARROW} Initial admin bootstrap... ${RED}${CROSS}${NC}    \n"
+    printf "\r   ${ARROW} Initial admin bootstrap (${source_label})... ${RED}${CROSS}${NC}    \n"
     error "Failed to create/update initial admin user"
     if [[ -f "$bootstrap_log" ]]; then
         echo "  Bootstrap error:"
         tail -n 5 "$bootstrap_log"
     fi
-    echo "  Bootstrap file kept for retry: $bootstrap_file"
+    if [[ -n "$synthesized_file" ]]; then
+        rm -f "$synthesized_file"
+    else
+        echo "  Bootstrap file kept for retry: $bootstrap_file"
+    fi
     return 1
 }
 
@@ -1468,40 +1504,62 @@ check_service_runtime_status() {
         fi
 
     elif [[ "$service" == "tts-service" ]]; then
-        # Check primary provider (use "Primary provider" log line to avoid matching fallback)
-        if echo "$logs" | grep -iq "Primary provider.*chatterbox"; then
-            status="CPU"
-            provider="chatterbox"
-            details="ChatterBox Multilingual TTS (local)"
-            # Check if using CUDA
-            if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+        # Parse the "Primary provider: <name>" log line first — it's the
+        # authoritative signal from the TTS engine itself. Take the LAST
+        # occurrence in case the pod restarted and re-logged.
+        local primary
+        primary=$(echo "$logs" | grep -i "Primary provider:" | tail -1 \
+            | sed -E 's/.*[Pp]rimary [Pp]rovider:[[:space:]]*([A-Za-z0-9]+).*/\1/' \
+            | tr '[:upper:]' '[:lower:]')
+
+        case "$primary" in
+            qwen3)
                 status="CUDA"
-                details="ChatterBox Multilingual TTS (CUDA)"
-            fi
-        elif echo "$logs" | grep -iq "Primary provider.*piper"; then
-            status="CPU"
-            provider="piper"
-            details="Piper TTS (local CPU)"
-        # Check for Kokoro CUDA success
-        elif echo "$logs" | grep -iq "CUDAExecutionProvider"; then
-            if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                provider="qwen3"
+                details="Qwen3-TTS via faster-qwen3-tts (CUDA)"
+                ;;
+            chatterbox)
+                provider="chatterbox"
+                if echo "$logs" | grep -iq "device=cuda\|Using device: cuda"; then
+                    status="CUDA"
+                    details="ChatterBox Multilingual TTS (CUDA)"
+                else
+                    status="CPU"
+                    details="ChatterBox Multilingual TTS (local)"
+                fi
+                ;;
+            kokoro)
+                provider="kokoro"
+                if echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                    status="CPU"
+                    details="Kokoro CUDA failed, running on CPU"
+                else
+                    status="CUDA"
+                    details="Kokoro ONNX (CUDA)"
+                fi
+                ;;
+            piper)
                 status="CPU"
                 provider="piper"
-                details="Kokoro CUDA failed, fell back to Piper"
-            else
-                status="CUDA"
-                provider="kokoro"
-                details="Kokoro ONNX (CUDA)"
-            fi
-        elif echo "$logs" | grep -iq "Primary provider.*kokoro"; then
-            status="CUDA"
-            provider="kokoro"
-            details="Kokoro ONNX"
-        elif echo "$logs" | grep -iq "Primary.provider.*piper\|Provider.*piper"; then
-            status="CPU"
-            provider="piper"
-            details="Piper TTS (Local CPU)"
-        fi
+                details="Piper TTS (local CPU)"
+                ;;
+            elevenlabs)
+                status="Cloud"
+                provider="elevenlabs"
+                details="ElevenLabs (cloud API)"
+                ;;
+            *)
+                # No "Primary provider:" line yet — fall back to inferring
+                # from device/runtime traces so we still report something
+                # useful while the pod is mid-startup.
+                if echo "$logs" | grep -iq "CUDAExecutionProvider" \
+                   && ! echo "$logs" | grep -iq "CUDA failed\|CUDA driver version is insufficient"; then
+                    status="CUDA"
+                    provider="kokoro"
+                    details="Kokoro ONNX (CUDA)"
+                fi
+                ;;
+        esac
     fi
 
     echo "$status|$provider|$details"
@@ -1552,6 +1610,38 @@ show_gpu_status() {
             echo ""
             warning "GPU enabled but some services fell back to CPU"
             echo -e "   ${DIM}Check: kubectl logs -n $KUBERNETES_NAMESPACE -l app=stt-service --tail=50${NC}"
+        fi
+    fi
+
+    # Surface a TTS provider mismatch loudly — operators set TTS_PROVIDER
+    # in the env file expecting that exact provider, so silently falling
+    # back to a different one (e.g. qwen3 weights missing → kokoro)
+    # has bitten us before. Dump the failure log so the cause is obvious.
+    local configured_tts="${TTS_PROVIDER:-piper}"
+    configured_tts="$(echo "$configured_tts" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$configured_tts" != "auto" && -n "$tts_provider" && "$tts_provider" != "unknown" \
+          && "$tts_provider" != "$configured_tts" ]]; then
+        echo ""
+        warning "TTS provider mismatch: configured=${configured_tts}, running=${tts_provider}"
+        echo -e "   ${DIM}The requested provider failed to initialize and the engine fell back.${NC}"
+        echo ""
+        local tts_pod
+        tts_pod=$(kubectl get pods -n "$KUBERNETES_NAMESPACE" -l app=tts-service \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [[ -n "$tts_pod" ]]; then
+            local err_lines
+            err_lines=$(kubectl logs "$tts_pod" -n "$KUBERNETES_NAMESPACE" --tail=200 2>/dev/null \
+                | grep -iE "Initialization failed|initialization failed|not available|error|traceback|license" \
+                | grep -viE "NGC-DL-CONTAINER-LICENSE|nvidia-deep-learning-container-license" \
+                | tail -15)
+            if [[ -n "$err_lines" ]]; then
+                echo -e "   ${DIM}Relevant log lines from ${tts_pod}:${NC}"
+                while IFS= read -r line; do
+                    echo -e "   ${YELLOW}│${NC} ${line}"
+                done <<< "$err_lines"
+                echo ""
+            fi
+            echo -e "   ${DIM}Full logs: kubectl logs -n $KUBERNETES_NAMESPACE $tts_pod${NC}"
         fi
     fi
 }

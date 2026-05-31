@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tts_pb2
 import tts_pb2_grpc
 
-from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, VoxtralProvider, TTSProvider
+from providers import KokoroProvider, PiperProvider, ChatterBoxProvider, Qwen3Provider, TTSProvider
 
 
 class TTSEngine:
@@ -35,30 +35,33 @@ class TTSEngine:
             tts_provider = os.getenv('TTS_PROVIDER', 'piper').lower()
             print(f"[TTS Engine] TTS_PROVIDER={tts_provider}")
 
-            # Create providers
+            # Create providers. Each provider's deps are installed only when
+            # the image was built with --build-arg TTS_PROVIDER=<that one>,
+            # so providers other than the chosen one will report
+            # is_available=False and be skipped silently.
             kokoro_provider = KokoroProvider()
             piper_provider = PiperProvider()
             chatterbox_provider = ChatterBoxProvider()
-            voxtral_provider = VoxtralProvider()
+            qwen3_provider = Qwen3Provider()
 
-            # Determine priority based on TTS_PROVIDER. Voxtral is never in
-            # the default fallback chain — it is CC-BY-NC-licensed weights
-            # supplied by the operator, so it must be opted into explicitly
-            # via TTS_PROVIDER=voxtral.
+            # The ordering below is the *intended* preference; the actual
+            # winner is whichever provider's deps the image was built with.
             if tts_provider == 'piper':
-                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
+                primary_providers = [piper_provider]
             elif tts_provider == 'chatterbox':
-                primary_providers = [chatterbox_provider, piper_provider, kokoro_provider]
+                primary_providers = [chatterbox_provider]
             elif tts_provider == 'kokoro':
-                primary_providers = [kokoro_provider, piper_provider, chatterbox_provider]
-            elif tts_provider == 'voxtral':
-                primary_providers = [voxtral_provider, piper_provider, kokoro_provider, chatterbox_provider]
+                primary_providers = [kokoro_provider]
+            elif tts_provider == 'qwen3':
+                primary_providers = [qwen3_provider]
             elif tts_provider == 'auto':
-                # Auto: prefer Piper for speed, then ChatterBox (multilingual), then Kokoro
-                primary_providers = [piper_provider, chatterbox_provider, kokoro_provider]
+                # Auto only includes the providers the Dockerfile installs
+                # in `auto` mode (piper + kokoro). Other providers are not
+                # present in an auto-built image.
+                primary_providers = [piper_provider, kokoro_provider]
             else:
-                # Default to Piper
-                primary_providers = [piper_provider, kokoro_provider, chatterbox_provider]
+                # Default to Piper.
+                primary_providers = [piper_provider]
 
             # Try to initialize providers in priority order
             for provider in primary_providers:
@@ -237,6 +240,58 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
         except Exception as e:
             print(f"[TTS Service] SynthesizeStream error: {e}")
             context.abort(grpc.StatusCode.INTERNAL, str(e))
+
+    async def Warmup(self, request, context):
+        """Warm up the active TTS provider.
+
+        The provider's own initialize() already runs a warm-up at startup,
+        but providers can go cold between requests (e.g. a kokoro pod that's
+        been idle long enough for the GPU context to be reset by the
+        scheduler, or a Qwen3 model whose CUDA-graph cache was evicted).
+        This RPC lets the agent re-prime the model at session start without
+        racing the user's first utterance.
+        """
+        import time
+        t0 = time.time()
+        try:
+            if not self.engine.initialized or self.engine.provider is None:
+                return tts_pb2.WarmupResponse(
+                    success=False,
+                    warmup_time_ms=0,
+                    provider=self.engine.provider_name,
+                    message="TTS engine not initialized",
+                )
+
+            # Run a tiny throwaway synth to prime kernels. Use synthesize
+            # (not synthesize_stream) because we don't actually need the
+            # streamed frames here — just the side-effects of running once.
+            result = await self.engine.provider.synthesize("Hi.")
+            elapsed_ms = int((time.time() - t0) * 1000)
+
+            if result is None:
+                return tts_pb2.WarmupResponse(
+                    success=False,
+                    warmup_time_ms=elapsed_ms,
+                    provider=self.engine.provider_name,
+                    message="Warm-up synthesis returned no audio",
+                )
+
+            print(f"[TTS Service] Warmup completed in {elapsed_ms}ms (session={request.session_id})")
+            return tts_pb2.WarmupResponse(
+                success=True,
+                warmup_time_ms=elapsed_ms,
+                provider=self.engine.provider_name,
+                message="ok",
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - t0) * 1000)
+            print(f"[TTS Service] Warmup error: {e}")
+            return tts_pb2.WarmupResponse(
+                success=False,
+                warmup_time_ms=elapsed_ms,
+                provider=self.engine.provider_name,
+                message=f"warm-up failed: {e}",
+            )
 
     async def HealthCheck(self, request, context):
         """Health check endpoint."""

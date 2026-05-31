@@ -152,22 +152,27 @@ run_config_wizard() {
             configure)
                 if configure_section "$category" "$env"; then
                     section_history+=("$current_section")
-                    ((current_section++))
+                    current_section=$((current_section + 1))
                 fi
                 # If configure_section returns 1, user backed out - stay on this section
                 ;;
             skip)
                 apply_section_defaults "$category" "$env"
                 section_history+=("$current_section")
-                ((current_section++))
+                current_section=$((current_section + 1))
                 ;;
             back)
                 if [[ $current_section -gt 0 ]]; then
-                    ((current_section--))
+                    current_section=$((current_section - 1))
                 fi
                 ;;
         esac
     done
+
+    # Fill in any required secret not covered by the walkthrough (e.g. the
+    # local flow has no Security section) so the review reflects what will be
+    # saved; the matching call in save_full_configuration is then a no-op.
+    generate_missing_required_secrets "$env"
 
     # Review screen
     wizard_clear_screen
@@ -175,12 +180,31 @@ run_config_wizard() {
 
     local -a config_lines=()
     for var_name in $(get_config_value_keys); do
+        # UI-only synthetic; the underlying booleans appear in their place.
         local value
         value=$(get_config_value "$var_name")
         config_lines+=("${var_name}=${value}")
     done
 
     wizard_review_screen "${config_lines[@]}"
+
+    # Tell the operator which required secrets were created in the background.
+    if [[ ${#WIZARD_GENERATED_SECRETS[@]} -gt 0 ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${BOLD}Auto-generated${NC} ${DIM}(no value provided, none saved):${NC}"
+        echo -e "  ${DIM}${WIZARD_GENERATED_SECRETS[*]}${NC}"
+        echo ""
+    fi
+
+    # Warn about required values we cannot create (external/operator-specific).
+    local unfilled
+    unfilled=$(get_unfilled_required_vars "$env")
+    if [[ -n "$unfilled" ]]; then
+        echo -e "  ${RED}⚠${NC}  ${BOLD}Still missing — required, cannot be auto-generated:${NC}"
+        echo -e "  ${YELLOW}${unfilled}${NC}"
+        echo -e "  ${DIM}STELLA will not run until these are set. Choose 'No' below to cancel${NC}"
+        echo -e "  ${DIM}and re-run setup, or add them to ${env_file} before starting.${NC}"
+        echo ""
+    fi
 
     # Confirm and save
     if wizard_confirm "Save this configuration?" "y"; then
@@ -339,10 +363,10 @@ configure_section() {
         local var_name="${var_array[$var_idx]}"
 
         # Hide provider-specific knobs when their provider isn't selected
-        # (e.g. Voxtral license acknowledgement only matters when the user
-        # actually picked TTS_PROVIDER=voxtral earlier in the section).
+        # (e.g. Qwen3 model variant only matters when the user actually
+        # picked TTS_PROVIDER=qwen3 earlier in the section).
         if should_skip_wizard_var "$var_name" "$(get_config_value TTS_PROVIDER)"; then
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
             continue
         fi
 
@@ -357,11 +381,18 @@ configure_section() {
         local current
         current=$(get_config_value "$var_name")
         local value
-        value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        if [[ "$var_name" == "LIVEKIT_URL" ]]; then
+            # Guided step owns the whole screen; pass the section header so it
+            # can redraw a clean frame between its two phases. The config
+            # wizard has no chapter tabs, so the chapter index is left empty.
+            value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "")
+        else
+            value=$(wizard_var_input_compact "$var_name" "$current" "$env" "$((var_idx + 1))" "$num_vars")
+        fi
 
         if [[ "$value" == "__BACK__" ]]; then
             if [[ $var_idx -gt 0 ]]; then
-                ((var_idx--))
+                var_idx=$((var_idx - 1))
             else
                 # At first var, return to section menu
                 return 1
@@ -376,7 +407,7 @@ configure_section() {
                 continue
             fi
             set_config_value "$var_name" "$value"
-            ((var_idx++))
+            var_idx=$((var_idx + 1))
         fi
     done
     return 0
@@ -449,6 +480,96 @@ load_config_file() {
 }
 
 # =============================================================================
+# Ensure Required Secrets Exist
+# =============================================================================
+
+# Safety net run just before saving: every variable that is required for this
+# environment must end up with a value. Prefer a known default, otherwise
+# generate one from the variable's generator. Already-set values (typed,
+# loaded, or defaulted) are never overwritten.
+#
+# This is essential for the local full-config flow, where the "Security"
+# category is not part of the walkthrough — without this, JWT_SECRET and
+# ENV_VAR_ENCRYPTION_KEY would never be set on a fresh local configuration.
+#
+# Names of secrets actually generated are recorded in WIZARD_GENERATED_SECRETS
+# so the review screen can show what was created in the background.
+WIZARD_GENERATED_SECRETS=()
+
+generate_missing_required_secrets() {
+    local env="$1"
+    local var_name
+    WIZARD_GENERATED_SECRETS=()
+    for var_name in "${ALL_VARIABLES[@]}"; do
+        if ! is_var_required "$var_name" "$env"; then
+            continue
+        fi
+        if has_config_value "$var_name"; then
+            continue
+        fi
+
+        local generator
+        generator=$(get_var_meta "$var_name" "generator" 2>/dev/null || true)
+
+        if [[ -n "$generator" ]]; then
+            # Generatable secret. Keep the environment's OWN default if it has
+            # one (e.g. local LiveKit's devkey) but deliberately skip the
+            # cross-environment fallback, so production never inherits the
+            # local dev credentials — it generates a fresh value instead.
+            local own_default
+            if [[ "$env" == "production" ]]; then
+                own_default=$(get_var_meta "$var_name" "default_prod" 2>/dev/null || true)
+            else
+                own_default=$(get_var_meta "$var_name" "default_local" 2>/dev/null || true)
+            fi
+            if [[ -n "$own_default" ]]; then
+                set_config_value "$var_name" "$own_default"
+                continue
+            fi
+            local generated
+            generated=$(eval "$generator" 2>/dev/null || true)
+            if [[ -z "$generated" ]]; then
+                generated=$(openssl rand -base64 36 2>/dev/null | tr -d '\n' || true)
+            fi
+            if [[ -n "$generated" ]]; then
+                set_config_value "$var_name" "$generated"
+                WIZARD_GENERATED_SECRETS+=("$var_name")
+            fi
+        else
+            # Plain required setting (no generator): apply its default. The
+            # cross-environment fallback is fine here (e.g. LIVEKIT_URL).
+            local default
+            default=$(get_var_default "$var_name" "$env" 2>/dev/null || true)
+            if [[ -n "$default" ]]; then
+                set_config_value "$var_name" "$default"
+            fi
+        fi
+    done
+}
+
+# Required-for-this-environment variables that STILL have no value after
+# defaults and generation. These are credentials we cannot fabricate — e.g.
+# OPENAI_API_KEY (external) or PRODUCTION_DOMAIN (operator-specific). Echoes
+# the names space-separated; empty if all set.
+get_unfilled_required_vars() {
+    local env="$1"
+    local var_name
+    local -a missing=()
+    for var_name in "${ALL_VARIABLES[@]}"; do
+        if ! is_var_required "$var_name" "$env"; then
+            continue
+        fi
+        if has_config_value "$var_name"; then
+            continue
+        fi
+        missing+=("$var_name")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "${missing[*]}"
+    fi
+}
+
+# =============================================================================
 # Configuration Saving
 # =============================================================================
 
@@ -457,6 +578,9 @@ save_full_configuration() {
     local env="$2"
     local env_file
     env_file=$(get_environment_file "$project_dir" "$env")
+
+    # Guarantee every required secret is present (generate any still missing).
+    generate_missing_required_secrets "$env"
 
     # Backup existing environment file if it exists
     if [[ -f "$env_file" ]]; then
@@ -499,6 +623,8 @@ save_full_configuration() {
             echo "# ============================================================================"
 
             for var_name in $category_vars; do
+                # UI-only synthetic var — never written to .env
+
                 local value
                 value=$(get_config_value "$var_name")
 

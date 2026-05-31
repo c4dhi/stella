@@ -8,6 +8,11 @@ service TextToSpeech {
   // Synthesize text to streaming audio chunks
   rpc SynthesizeStream(SynthesizeRequest) returns (stream AudioChunk);
 
+  // Warm up the TTS model — runs a tiny throwaway synth so the next real
+  // request hits warm CUDA kernels / cudnn benchmark caches / loaded
+  // weights. Safe to call repeatedly (cheap no-op once warm).
+  rpc Warmup(WarmupRequest) returns (WarmupResponse);
+
   // Health check
   rpc HealthCheck(Empty) returns (HealthResponse);
 }
@@ -36,6 +41,17 @@ message AudioChunk {
 
 message HealthResponse {
   bool healthy = 1;
-  string provider = 2;          // Active TTS provider (piper, kokoro, chatterbox)
+  string provider = 2;          // Active TTS provider (piper, kokoro, chatterbox, voxtral)
   string version = 3;
+}
+
+message WarmupRequest {
+  string session_id = 1;        // Caller's session id (for analytics)
+}
+
+message WarmupResponse {
+  bool success = 1;
+  int32 warmup_time_ms = 2;     // Time taken for warm-up synthesis
+  string provider = 3;          // The provider that was warmed
+  string message = 4;           // Human-readable status / error detail
 }

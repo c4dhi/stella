@@ -73,18 +73,24 @@ data:
   WHISPER_INITIAL_PROMPT: "${WHISPER_INITIAL_PROMPT}"            # Domain context prompt for improved accuracy
 
   # Text-to-Speech (TTS) Provider
-  # Options: piper (fast local CPU), kokoro (local GPU), chatterbox (multilingual), voxtral (4B local, non-commercial weights), elevenlabs (best quality), auto
+  # Options: piper (fast local CPU), kokoro (local GPU), chatterbox (multilingual), qwen3 (real-time GPU via faster-qwen3-tts), elevenlabs (best quality), auto
   TTS_PROVIDER: "${TTS_PROVIDER}"
   ELEVENLABS_VOICE_ID: "${ELEVENLABS_VOICE_ID}"
   ELEVENLABS_MODEL_ID: "${ELEVENLABS_MODEL_ID}"
 
-  # Voxtral (only used when TTS_PROVIDER=voxtral)
-  # The model weights are CC-BY-NC-4.0. The init container will only download
-  # them if VOXTRAL_ACCEPT_NC_LICENSE=true — that flag is the operator's
-  # explicit acceptance of the non-commercial license terms.
-  VOXTRAL_MODEL_ID: "${VOXTRAL_MODEL_ID}"
-  VOXTRAL_DTYPE: "${VOXTRAL_DTYPE}"
-  VOXTRAL_ACCEPT_NC_LICENSE: "${VOXTRAL_ACCEPT_NC_LICENSE}"
+  # Qwen3-TTS (only used when TTS_PROVIDER=qwen3)
+  # Apache-2.0 weights run IN-PROCESS in the tts-service container via
+  # faster-qwen3-tts (MIT). The init container pre-stages the chosen
+  # variant onto the PVC; the operator must also place a reference WAV
+  # at QWEN3_REF_AUDIO (default /models/qwen3/ref_audio.mp3 — STELLA
+  # bundles a German one). The transcript lives in a sibling .txt file
+  # next to the audio (ref_audio.mp3 → ref_audio.txt), so swapping
+  # voices is just dropping two files on the PVC, no env edits needed.
+  QWEN3_MODEL_ID: "${QWEN3_MODEL_ID}"
+  QWEN3_REF_AUDIO: "${QWEN3_REF_AUDIO}"
+  QWEN3_LANGUAGE: "${QWEN3_LANGUAGE}"
+  QWEN3_CHUNK_SIZE: "${QWEN3_CHUNK_SIZE}"
+  QWEN3_DTYPE: "${QWEN3_DTYPE}"
 
   # ONNX Runtime Provider Configuration
   # Set by start-k8s.sh based on ENABLE_GPU setting

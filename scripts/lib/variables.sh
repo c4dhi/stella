@@ -85,17 +85,17 @@ get_var_metadata() {
         # --- DATABASE ---
         POSTGRES_DB)           echo "database|text|both|session_management|session_management|PostgreSQL database name||" ;;
         POSTGRES_USER)         echo "database|text|both|postgres|postgres|PostgreSQL username||" ;;
-        POSTGRES_PASSWORD)     echo "database|password|both|||Secure database password||" ;;
+        POSTGRES_PASSWORD)     echo "database|password|both|||Secure database password||openssl rand -hex 24" ;;
 
         # --- SECURITY ---
         JWT_SECRET)            echo "security|generated|both|||JWT signing secret (64+ chars)||openssl rand -base64 48" ;;
         ENV_VAR_ENCRYPTION_KEY) echo "security|generated|both|||Encryption key for stored env vars (64 hex chars)||openssl rand -hex 32" ;;
 
         # --- LIVEKIT ---
-        LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||" ;;
-        LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||" ;;
-        LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL (for K8s pods)||" ;;
-        PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL (for browsers)||" ;;
+        LIVEKIT_API_KEY)       echo "livekit|text|both|devkey||LiveKit API key||openssl rand -hex 8" ;;
+        LIVEKIT_API_SECRET)    echo "livekit|password|both|devsecret_devsecret_devsecret_32!!||LiveKit API secret||openssl rand -hex 24" ;;
+        LIVEKIT_URL)           echo "livekit|text|both|ws://host.docker.internal:7880||Internal LiveKit URL the STELLA pods connect to (NOT localhost)||" ;;
+        PUBLIC_LIVEKIT_URL)    echo "livekit|text|both|ws://localhost:7880||Public LiveKit URL browsers connect to (wss://your-domain in prod)||" ;;
         LIVEKIT_TURN_ENABLED)  echo "livekit|boolean|optional|false|true|Enable TURN server for NAT traversal||" ;;
         LIVEKIT_TURN_DOMAIN)   echo "livekit|text|optional|||TURN server domain (e.g. turn.example.com)||" ;;
 
@@ -122,15 +122,17 @@ get_var_metadata() {
         PARTIAL_INTERVAL_MS)   echo "stt|text|optional|1000|500|Partial transcript interval (ms)||" ;;
 
         # --- TTS ---
-        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,chatterbox,voxtral,elevenlabs,auto|" ;;
+        TTS_PROVIDER)          echo "tts|select|optional|piper|kokoro|Text-to-speech engine|piper,kokoro,chatterbox,qwen3,elevenlabs,auto|" ;;
         ELEVENLABS_VOICE_ID)   echo "tts|text|optional|Xb7hH8MSUJpSbSDYk0k2|Xb7hH8MSUJpSbSDYk0k2|ElevenLabs voice ID||" ;;
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
-        ENABLE_VOXTRAL)        echo "tts|boolean|optional|false|false|Install Voxtral inference deps in tts-service image (Apache-2.0). Auto-enabled when TTS_PROVIDER=voxtral.||" ;;
-        VOXTRAL_MODEL_ID)      echo "tts|text|optional|mistralai/Voxtral-4B-TTS-2603|mistralai/Voxtral-4B-TTS-2603|HuggingFace model ID for Voxtral weights||" ;;
-        VOXTRAL_DTYPE)         echo "tts|select|optional||bfloat16|Voxtral inference dtype (blank = auto per device: bf16 on Ampere+ GPUs, fp16 on MPS/T4, fp32 on CPU)|,bfloat16,float16,float32|" ;;
-        VOXTRAL_ACCEPT_NC_LICENSE) echo "tts|boolean|optional|false|false|I acknowledge the Voxtral weights are licensed CC-BY-NC-4.0 (NON-COMMERCIAL only). Setting this to true grants STELLA's init container permission to download them on my behalf.||" ;;
+        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. 0.6B-Base = fastest (~2GB VRAM, 156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). CustomVoice = voice cloning. VoiceDesign = instruction-based voice design.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice,Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign|" ;;
+        HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading Qwen3-TTS weights. Get one at https://huggingface.co/settings/tokens. Usually optional for Apache-2.0 models, but supplied here in case HF rate-limits anonymous downloads on the init container.||" ;;
+        QWEN3_REF_AUDIO)       echo "tts|text|optional|/models/qwen3/ref_audio.mp3|/models/qwen3/ref_audio.mp3|Path inside the tts-service pod to a 5-10s reference clip (WAV or MP3). STELLA bundles a German clip + sibling ref_audio.txt transcript; swap both files together on the PVC to change voice.||" ;;
+        QWEN3_LANGUAGE)        echo "tts|select|optional|Auto|Auto|Default input language. Auto = model autodetects from the text (works well for mixed-language deployments). Pin to a specific language only if autodetect misfires.|Auto,English,German,French,Spanish,Italian,Portuguese,Polish,Dutch,Chinese,Japanese,Korean|" ;;
+        QWEN3_CHUNK_SIZE)      echo "tts|text|optional|2|2|Codec frames per streamed yield (12Hz codec rate). 2 ≈ 167ms audio per yield, low TTFB. Drop to 1 for absolute minimum TTFB at the cost of more decoder calls.||" ;;
+        QWEN3_DTYPE)           echo "tts|select|optional|bfloat16|bfloat16|Model weight dtype. bfloat16 on Ampere+ (A10/A100/L4/4090/H100). float16 on older cards without bf16 (V100/T4). float32 only for debugging.|bfloat16,float16,float32|" ;;
 
         # --- GPU ---
         ENABLE_GPU)            echo "gpu|boolean|optional|false|true|Enable CUDA GPU acceleration||" ;;
@@ -144,7 +146,8 @@ get_var_metadata() {
 
         # --- PRODUCTION ---
         PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com)||" ;;
-        STELLA_AI_TEMP_DIR)    echo "production|text|optional||/mnt/stella-ai-temp|Temp directory for large builds/logs||" ;;
+        STELLA_DATA_ROOT)      echo "production|text|optional|||Base dir for all heavy storage (Docker, K3s images, model/DB volumes); blank = system defaults||" ;;
+        STELLA_AI_TEMP_DIR)    echo "production|text|optional|||Temp dir for builds/logs; blank = STELLA_DATA_ROOT/tmp or /tmp||" ;;
 
         *) echo "" ;;
     esac
@@ -186,10 +189,12 @@ ALL_VARIABLES=(
     "ELEVENLABS_MODEL_ID"
     "ELEVENLABS_STABILITY"
     "ELEVENLABS_SIMILARITY_BOOST"
-    "ENABLE_VOXTRAL"
-    "VOXTRAL_MODEL_ID"
-    "VOXTRAL_DTYPE"
-    "VOXTRAL_ACCEPT_NC_LICENSE"
+    "QWEN3_MODEL_ID"
+    "HF_TOKEN"
+    "QWEN3_REF_AUDIO"
+    "QWEN3_LANGUAGE"
+    "QWEN3_CHUNK_SIZE"
+    "QWEN3_DTYPE"
     "ENABLE_GPU"
     "ONNX_PROVIDER"
     "KUBERNETES_NAMESPACE"
@@ -197,6 +202,7 @@ ALL_VARIABLES=(
     "AUTO_DETECT_K8S_DNS"
     "KUBERNETES_DNS_NAMESERVER"
     "PRODUCTION_DOMAIN"
+    "STELLA_DATA_ROOT"
     "STELLA_AI_TEMP_DIR"
 )
 
@@ -234,6 +240,45 @@ get_var_meta() {
     esac
 }
 
+# Extended, multi-line help for variables that need more than the one-line
+# description (which doubles as the .env comment). Printed by the wizard above
+# the input prompt. Echoes nothing for variables without extended help.
+# Usage: get_var_help "VAR_NAME"  (each line is emitted separately)
+get_var_help() {
+    case "$1" in
+        LIVEKIT_URL)
+            echo "The address STELLA's Kubernetes pods use to reach LiveKit."
+            echo "Pods cannot use 'localhost' — inside a pod that points at the pod"
+            echo "itself, not at the host running LiveKit."
+            echo "• Same machine (LiveKit + STELLA on one server): use this host's"
+            echo "  LAN IP, e.g. ws://10.0.0.5:7880  — never localhost / 127.0.0.1."
+            echo "• Separate machine: use that server's IP or hostname."
+            ;;
+        PUBLIC_LIVEKIT_URL)
+            echo "The address end-user browsers use to reach LiveKit — usually a"
+            echo "public TLS domain in front of your reverse proxy, e.g."
+            echo "wss://livekit.example.com. Browsers need 'wss://' (secure) in"
+            echo "production; plain 'ws://' only works for local development."
+            ;;
+        LIVEKIT_TURN_DOMAIN)
+            echo "Public domain of the TURN server used for NAT traversal when a"
+            echo "direct browser↔LiveKit connection fails, e.g. turn.example.com."
+            echo "Required when TURN is enabled."
+            ;;
+        STELLA_DATA_ROOT)
+            echo "Where all the heavy storage lives: Docker build cache + images,"
+            echo "the K3s/containerd image store, and the model/database volumes."
+            echo "• Leave BLANK to use system defaults (/var/lib/docker,"
+            echo "  /var/lib/rancher/k3s, /tmp) — always works, no setup needed."
+            echo "• Set to a mounted disk (e.g. /mnt/stella) to run everything"
+            echo "  from there when the internal disk is too small. STELLA then"
+            echo "  points Docker's data-root and K3s's --data-dir at it."
+            echo "Note: relocating only takes effect on a FRESH Docker/K3s install;"
+            echo "an already-installed K3s keeps its current location."
+            ;;
+    esac
+}
+
 # Get all variables in a category
 # Usage: get_category_vars "database"
 get_category_vars() {
@@ -252,7 +297,7 @@ get_category_vars() {
 # currently-selected values. Provider-specific knobs are noise unless the
 # user picked that provider — most importantly, the CC-BY-NC license
 # acknowledgement should only appear when the user has actually chosen
-# Voxtral. The caller passes the current TTS_PROVIDER value so this helper
+# Qwen3. The caller passes the current TTS_PROVIDER value so this helper
 # works for both wizard implementations.
 # Usage: should_skip_wizard_var "VAR_NAME" "current_tts_provider"
 should_skip_wizard_var() {
@@ -260,8 +305,14 @@ should_skip_wizard_var() {
     local tts_provider="${2:-}"
 
     case "$var_name" in
-        ENABLE_VOXTRAL|VOXTRAL_*)
-            [[ "$tts_provider" != "voxtral" ]] && return 0
+        QWEN3_*)
+            [[ "$tts_provider" != "qwen3" ]] && return 0
+            ;;
+        HF_TOKEN)
+            [[ "$tts_provider" != "qwen3" ]] && return 0
+            ;;
+        ELEVENLABS_API_KEY|ELEVENLABS_VOICE_ID|ELEVENLABS_MODEL_ID|ELEVENLABS_STABILITY|ELEVENLABS_SIMILARITY_BOOST)
+            [[ "$tts_provider" != "elevenlabs" ]] && return 0
             ;;
     esac
     return 1
@@ -353,7 +404,7 @@ get_option_description() {
         TTS_PROVIDER:piper)      echo "Fast local TTS via Piper (CPU-friendly)" ;;
         TTS_PROVIDER:kokoro)     echo "Fast local TTS (50-100ms, GPU-accelerated)" ;;
         TTS_PROVIDER:chatterbox) echo "Local multilingual TTS (EN/DE, GPU recommended)" ;;
-        TTS_PROVIDER:voxtral)    echo "Local Voxtral 4B TTS (GPU required; CC-BY-NC-4.0 weights, operator-supplied)" ;;
+        TTS_PROVIDER:qwen3)      echo "Real-time Qwen3-TTS via faster-qwen3-tts (GPU required; Apache-2.0 weights, 156ms TTFA on 4090)" ;;
         TTS_PROVIDER:elevenlabs) echo "Premium cloud TTS (best quality, costs apply)" ;;
         TTS_PROVIDER:auto)       echo "Automatic fallback chain" ;;
 

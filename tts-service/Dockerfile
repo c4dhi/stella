@@ -1,17 +1,25 @@
-# TTS Service Dockerfile
-# Supports Kokoro, ChatterBox, and (optionally) Piper / Voxtral providers.
+# TTS Service Dockerfile — single-provider image.
+#
+# The TTS_PROVIDER build arg selects exactly one provider's deps to
+# install. Every other provider's `try: import …; except ImportError:`
+# guard then sets `is_available=False`, so the running image only ever
+# instantiates the one provider it was built for. This keeps the image
+# small (each provider's deps are multi-GB on their own) and removes
+# the "which torch wins" conflict between providers.
+#
 # Build args:
-#   ENABLE_GPU=true      -> CUDA support
-#   ENABLE_PIPER=true    -> include the Piper provider (GPL-3.0, opt-in)
-#   ENABLE_VOXTRAL=true  -> install Voxtral inference deps (Apache-2.0).
-#                           NO model weights are downloaded; the operator
-#                           must supply them at runtime via
-#                           VOXTRAL_MODEL_PATH and accept the CC-BY-NC-4.0
-#                           model license themselves.
+#   ENABLE_GPU=true       -> CUDA base image + CUDA-enabled wheels
+#   TTS_PROVIDER=<name>   -> piper | kokoro | chatterbox | qwen3 | elevenlabs
+#                            (also accepts `auto`, which installs the
+#                             CPU-friendly fallback chain: piper + kokoro)
+#
+# Examples:
+#   docker build --build-arg TTS_PROVIDER=qwen3   --build-arg ENABLE_GPU=true ...
+#   docker build --build-arg TTS_PROVIDER=kokoro  --build-arg ENABLE_GPU=true ...
+#   docker build --build-arg TTS_PROVIDER=piper   ...   # GPL-3.0 image
 
 ARG ENABLE_GPU=false
-ARG ENABLE_PIPER=false
-ARG ENABLE_VOXTRAL=false
+ARG TTS_PROVIDER=piper
 
 # ============================================================================
 # CPU-only base image
@@ -28,17 +36,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================================
-# GPU base image (NVIDIA CUDA 12.6 - compatible with driver 13.0+)
+# GPU base image (NVIDIA CUDA 12.4 — compatible with torch 2.5.1+cu124)
 # ============================================================================
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04 AS base-gpu
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base-gpu
 
 WORKDIR /app
 
-# Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# Install Python 3.11 and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     tzdata \
@@ -57,13 +63,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -m pip install --upgrade pip \
     && rm -rf /var/lib/apt/lists/*
 
-# CUDA environment (set by NVIDIA base image, but ensure they're available)
 ENV CUDA_HOME=/usr/local/cuda
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 ENV PATH=/usr/local/cuda/bin:${PATH}
 
 # ============================================================================
-# Final image - select base based on ENABLE_GPU
+# Final image — pick base by ENABLE_GPU
 # ============================================================================
 ARG ENABLE_GPU
 FROM base-cpu AS final-false
@@ -72,79 +77,81 @@ FROM final-${ENABLE_GPU} AS final
 
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+ARG ENABLE_GPU
+ARG TTS_PROVIDER
+
+# ----------------------------------------------------------------------------
+# Step 1 — base deps (always)
+# ----------------------------------------------------------------------------
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Piper TTS (GPL-3.0) is opt-in. Default builds remain license-clean; enable
-# with --build-arg ENABLE_PIPER=true.
-ARG ENABLE_PIPER
-COPY requirements-piper.txt .
-RUN if [ "$ENABLE_PIPER" = "true" ]; then \
-        echo "[TTS] Installing Piper TTS (GPL-3.0 opt-in)..." && \
+# ----------------------------------------------------------------------------
+# Step 2 — provider-specific installs (selected by TTS_PROVIDER)
+# ----------------------------------------------------------------------------
+COPY requirements-piper.txt requirements-kokoro.txt requirements-chatterbox.txt requirements-qwen3.txt ./
+
+# Piper (GPL-3.0). Selected for TTS_PROVIDER=piper, or as the safe
+# CPU-only fallback in `auto`.
+RUN if [ "$TTS_PROVIDER" = "piper" ] || [ "$TTS_PROVIDER" = "auto" ]; then \
+        echo "[TTS] Installing Piper (GPL-3.0)..." && \
         pip install --no-cache-dir -r requirements-piper.txt; \
-    else \
-        echo "[TTS] Skipping Piper TTS (set ENABLE_PIPER=true to include)"; \
     fi
 
-# Install ChatterBox TTS dependencies explicitly, then ChatterBox itself with --no-deps
-# This avoids the numpy conflict (chatterbox pins numpy<1.26, kokoro needs numpy>=2.0)
-# ChatterBox works fine with newer numpy, the pin is overly conservative
-RUN pip install --no-cache-dir \
-    conformer \
-    diffusers \
-    librosa \
-    omegaconf \
-    pykakasi \
-    pyloudnorm \
-    resemble-perth \
-    s3tokenizer \
-    safetensors \
-    spacy-pkuseg \
-    transformers
-RUN pip install --no-cache-dir --no-deps chatterbox-tts>=0.1.6
-
-# Voxtral TTS is opt-in. Only the inference dependencies (Apache-2.0) are
-# installed here; STELLA never downloads or bundles the model weights, which
-# are CC-BY-NC-4.0. Operators that opt in must supply weights at runtime via
-# VOXTRAL_MODEL_PATH and accept the model's non-commercial license terms.
-ARG ENABLE_VOXTRAL
-COPY requirements-voxtral.txt .
-RUN if [ "$ENABLE_VOXTRAL" = "true" ]; then \
-        echo "[TTS] Installing Voxtral inference deps (model weights NOT bundled — CC-BY-NC-4.0 weights are the operator's responsibility)..." && \
-        pip install --no-cache-dir -r requirements-voxtral.txt; \
-    else \
-        echo "[TTS] Skipping Voxtral (set ENABLE_VOXTRAL=true to install inference deps)"; \
+# Kokoro (ONNX-based, no torch). Selected for TTS_PROVIDER=kokoro, or in auto.
+RUN if [ "$TTS_PROVIDER" = "kokoro" ] || [ "$TTS_PROVIDER" = "auto" ]; then \
+        echo "[TTS] Installing Kokoro ONNX..." && \
+        pip install --no-cache-dir -r requirements-kokoro.txt; \
     fi
 
-# Install ONNX Runtime (GPU or CPU based on build arg)
-ARG ENABLE_GPU
-RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[TTS] Installing onnxruntime-gpu..." && \
-        pip install --no-cache-dir onnxruntime-gpu>=1.16.0; \
-    else \
-        echo "[TTS] Installing onnxruntime (CPU)..." && \
-        pip install --no-cache-dir onnxruntime>=1.16.0; \
+# ChatterBox needs torch (CUDA or CPU build) + an explicit dep list, then
+# the package itself with --no-deps to skip its restrictive numpy pin.
+RUN if [ "$TTS_PROVIDER" = "chatterbox" ]; then \
+        echo "[TTS] Installing ChatterBox deps..." && \
+        pip install --no-cache-dir -r requirements-chatterbox.txt && \
+        if [ "$ENABLE_GPU" = "true" ]; then \
+            pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
+        else \
+            pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+        fi && \
+        pip install --no-cache-dir --no-deps "chatterbox-tts>=0.1.6"; \
     fi
 
-# Install PyTorch (GPU or CPU based on build arg, needed for ChatterBox)
-RUN if [ "$ENABLE_GPU" = "true" ]; then \
-        echo "[TTS] Installing PyTorch with CUDA..." && \
-        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu121; \
-    else \
-        echo "[TTS] Installing PyTorch (CPU)..." && \
-        pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+# Qwen3-TTS needs CUDA + torch 2.5.1+cu124 (CUDA-graph capture is
+# unreliable below that). CPU-only Qwen3 builds are rejected here —
+# they would never be real-time and silently disappoint.
+RUN if [ "$TTS_PROVIDER" = "qwen3" ]; then \
+        if [ "$ENABLE_GPU" != "true" ]; then \
+            echo "[TTS] ERROR: TTS_PROVIDER=qwen3 requires ENABLE_GPU=true."; exit 1; \
+        fi && \
+        echo "[TTS] Installing torch 2.5.1+cu124 for Qwen3..." && \
+        pip install --no-cache-dir \
+            torch==2.5.1+cu124 torchaudio==2.5.1+cu124 \
+            --index-url https://download.pytorch.org/whl/cu124 && \
+        echo "[TTS] Installing faster-qwen3-tts..." && \
+        pip install --no-cache-dir -r requirements-qwen3.txt; \
     fi
 
-# Model download scripts (models are downloaded at runtime via init container)
-# Models are stored on PersistentVolume, not in the image.
-# This keeps the image slim. The init container runs these scripts
-# to populate the PV on first startup.
+# ----------------------------------------------------------------------------
+# Step 3 — ONNX Runtime (only useful for Kokoro; skip otherwise)
+# ----------------------------------------------------------------------------
+RUN if [ "$TTS_PROVIDER" = "kokoro" ] || [ "$TTS_PROVIDER" = "auto" ]; then \
+        if [ "$ENABLE_GPU" = "true" ]; then \
+            echo "[TTS] Installing onnxruntime-gpu..." && \
+            pip install --no-cache-dir "onnxruntime-gpu>=1.16.0"; \
+        else \
+            echo "[TTS] Installing onnxruntime (CPU)..." && \
+            pip install --no-cache-dir "onnxruntime>=1.16.0"; \
+        fi; \
+    fi
+
+# ----------------------------------------------------------------------------
+# Step 4 — model download scripts + gRPC code + source
+# ----------------------------------------------------------------------------
 COPY download_kokoro_models.py .
 COPY download_piper_models.py .
 COPY download_chatterbox_models.py .
 
-# Generate gRPC code from proto
 COPY proto/ ./proto/
 RUN python -m grpc_tools.protoc \
     -I./proto \
@@ -152,11 +159,15 @@ RUN python -m grpc_tools.protoc \
     --grpc_python_out=. \
     ./proto/tts.proto
 
-# Copy source code
 COPY src/ ./src/
 
-# Environment defaults
-ENV TTS_PROVIDER=piper
+# Bundled Qwen3 reference clip (Apache-2.0-compatible, recorded by STELLA).
+# The init container copies it to /models/qwen3/ref_audio.mp3 on the PVC if
+# the operator hasn't already staged their own clip there.
+COPY assets/ ./assets/
+
+# Default env
+ENV TTS_PROVIDER=${TTS_PROVIDER}
 ENV ONNX_PROVIDER=CPUExecutionProvider
 ENV GRPC_PORT=50052
 ENV KOKORO_CACHE_DIR=/root/.cache/kokoro
@@ -164,7 +175,6 @@ ENV PIPER_CACHE_DIR=/root/.cache/piper
 ENV CHATTERBOX_CACHE_DIR=/root/.cache/chatterbox
 ENV PYTHONUNBUFFERED=1
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import grpc; channel = grpc.insecure_channel('localhost:50052'); grpc.channel_ready_future(channel).result(timeout=5)" || exit 1
 

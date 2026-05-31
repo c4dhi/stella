@@ -1,23 +1,17 @@
-# gRPC
+# Base dependencies — installed for every build regardless of TTS_PROVIDER.
+# Per-provider model libs live in requirements-<provider>.txt and are
+# installed conditionally by the Dockerfile based on the TTS_PROVIDER build
+# arg, so each built image contains only one provider's deps.
+
+# gRPC server
 grpcio>=1.60.0
 grpcio-tools>=1.60.0
 
-# TTS Engines
-kokoro-onnx>=0.4.0
-huggingface_hub>=0.20.0
-
-# Note: piper-tts is an OPTIONAL provider, installed via requirements-piper.txt.
-# It is GPL-3.0 licensed (via its espeak-ng dependency), so it is excluded from
-# the default build to keep the image free of copyleft obligations. To enable it,
-# build the image with --build-arg ENABLE_PIPER=true (the deploy script does this
-# by default).
-
-# Audio Processing
+# Shared audio handling (numpy is also pulled in by every provider, pinned
+# here so the floor is consistent across single-provider builds).
 numpy>=1.24.0
 soundfile>=0.12.0
 scipy>=1.11.0
 
-# Note: chatterbox-tts is installed separately in Dockerfile with --no-deps
-# because it pins numpy<1.26 which conflicts with kokoro-onnx's numpy>=2.0
-
-# Note: onnxruntime or onnxruntime-gpu is installed conditionally in Dockerfile
+# Used by some init paths to fetch weights into the PVC.
+huggingface_hub>=0.20.0

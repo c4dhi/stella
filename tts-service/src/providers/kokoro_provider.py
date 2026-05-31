@@ -1,9 +1,21 @@
-"""Kokoro TTS Provider - Local ONNX-based TTS with GPU acceleration."""
+"""Kokoro TTS Provider - Local ONNX-based TTS with GPU acceleration.
+
+Optimized for TTFB:
+- Warm-up call at end of initialize() so the first real request doesn't pay
+  for ONNX session JIT.
+- Smaller first chunk (KOKORO_FIRST_CHUNK_CHARS, default 120) so audio ships
+  sooner; subsequent chunks use the larger cap.
+- Real synthesize_stream() override: yields chunk[N] audio frames while
+  chunk[N+1] is being synthesized. The earlier asyncio.gather "parallel"
+  pattern was misleading — kokoro_onnx serializes through a single ONNX
+  session, so the fan-out only added overhead.
+"""
 
 import asyncio
 import os
 import re
-from typing import Optional, Tuple, List
+import time
+from typing import Optional, Tuple, List, AsyncGenerator
 import numpy as np
 
 from .base import TTSProvider
@@ -39,9 +51,10 @@ class KokoroProvider(TTSProvider):
 
     # Kokoro has a 510 token limit (512 context - 2 pad tokens)
     # Text-to-phoneme conversion typically expands by ~1.5x
-    # So 300 chars ≈ 450 tokens, safely under 510
-    # If text exceeds this, split into sentences first
-    MAX_CHARS_PER_CHUNK = 300
+    # So 300 chars ≈ 450 tokens, safely under 510.
+    DEFAULT_MAX_CHARS_PER_CHUNK = 300
+    # First chunk intentionally short so we can ship audio sooner.
+    DEFAULT_FIRST_CHUNK_CHARS = 120
 
     def __init__(self):
         self._initialized = False
@@ -49,6 +62,11 @@ class KokoroProvider(TTSProvider):
         self._model_path = None
         self._voices_path = None
         self._default_voice = os.getenv('KOKORO_VOICE', self.DEFAULT_VOICES[0])
+        self._working_voice: Optional[str] = None  # cached after first successful synth
+        self._max_chars = int(os.getenv('KOKORO_MAX_CHARS_PER_CHUNK',
+                                        str(self.DEFAULT_MAX_CHARS_PER_CHUNK)))
+        self._first_chunk_chars = int(os.getenv('KOKORO_FIRST_CHUNK_CHARS',
+                                                str(self.DEFAULT_FIRST_CHUNK_CHARS)))
 
     @property
     def name(self) -> str:
@@ -119,7 +137,13 @@ class KokoroProvider(TTSProvider):
             )
 
             self._initialized = True
-            print(f"[Kokoro] Initialized successfully with voice: {self._default_voice}")
+            print(f"[Kokoro] Initialized (voice={self._default_voice}, "
+                  f"first_chunk={self._first_chunk_chars}c, max_chunk={self._max_chars}c)")
+
+            # ONNX session warm-up — pays the kernel JIT / cudnn benchmark
+            # cost once at startup so the first real request is fast.
+            await self._warm_up()
+
             return True
 
         except Exception as e:
@@ -127,6 +151,15 @@ class KokoroProvider(TTSProvider):
             import traceback
             traceback.print_exc()
             return False
+
+    async def _warm_up(self) -> None:
+        """Run a tiny synth so the first real request hits warm kernels."""
+        try:
+            t0 = time.time()
+            await self._resolve_working_voice("Hi.", None)
+            print(f"[Kokoro] Warm-up complete in {(time.time() - t0) * 1000:.0f}ms")
+        except Exception as e:
+            print(f"[Kokoro] Warm-up failed (non-fatal): {e}")
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
         """Split text into chunks that fit within Kokoro's 510 token limit.
@@ -142,54 +175,42 @@ class KokoroProvider(TTSProvider):
         if not text:
             return []
 
-        print(f"[Kokoro] Input text: {len(text)} chars, {len(text.split())} words")
-
-        # If text is short enough, return as single chunk
-        if len(text) <= self.MAX_CHARS_PER_CHUNK:
-            print(f"[Kokoro] Text under {self.MAX_CHARS_PER_CHUNK} chars, no chunking needed")
+        # Short enough for a single chunk → return as-is. We compare against
+        # the *first-chunk* cap, not the larger max, so a slightly-over-120
+        # input still gets split into a tiny opener + the remainder for fast TTFB.
+        if len(text) <= self._first_chunk_chars:
             return [text]
 
-        print(f"[Kokoro] Text exceeds {self.MAX_CHARS_PER_CHUNK} chars, splitting into sentences...")
-
-        # Split into sentences
         sentences = self._split_into_sentences(text)
-        print(f"[Kokoro] Found {len(sentences)} sentences")
 
-        # Process each sentence and build chunks
-        chunks = []
-        current_chunk = ""
+        chunks: List[str] = []
+        current = ""
+        cap_for_index = lambda i: self._first_chunk_chars if i == 0 else self._max_chars
 
         for sentence in sentences:
-            # Check if adding this sentence keeps chunk under limit
-            potential_chunk = f"{current_chunk} {sentence}".strip() if current_chunk else sentence
-
-            if len(potential_chunk) <= self.MAX_CHARS_PER_CHUNK:
-                # Safe to add sentence to current chunk
-                current_chunk = potential_chunk
+            cap = cap_for_index(len(chunks))
+            potential = f"{current} {sentence}".strip() if current else sentence
+            if len(potential) <= cap:
+                current = potential
             else:
-                # Save current chunk if not empty
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = ""
-
-                # Check if this sentence alone fits
-                if len(sentence) <= self.MAX_CHARS_PER_CHUNK:
-                    current_chunk = sentence
+                if current:
+                    chunks.append(current)
+                cap = cap_for_index(len(chunks))
+                if len(sentence) <= cap:
+                    current = sentence
                 else:
-                    # Sentence too long - split at punctuation
-                    print(f"[Kokoro] Sentence too long ({len(sentence)} chars), splitting at punctuation...")
-                    sub_chunks = self._split_long_sentence(sentence)
-                    # Add all but last to chunks, keep last as current
+                    sub_chunks = self._split_long_sentence(sentence, cap)
                     for sub in sub_chunks[:-1]:
                         chunks.append(sub)
-                    if sub_chunks:
-                        current_chunk = sub_chunks[-1]
+                        cap = cap_for_index(len(chunks))
+                    current = sub_chunks[-1] if sub_chunks else ""
 
-        # Add remaining chunk
-        if current_chunk:
-            chunks.append(current_chunk)
+        if current:
+            chunks.append(current)
 
-        print(f"[Kokoro] Split text into {len(chunks)} chunks: {[len(c) for c in chunks]} chars each")
+        if len(chunks) > 1:
+            print(f"[Kokoro] Split into {len(chunks)} chunks "
+                  f"(first={len(chunks[0])}c, rest={[len(c) for c in chunks[1:]]})")
         return chunks
 
     def _split_into_sentences(self, text: str) -> List[str]:
@@ -201,35 +222,26 @@ class KokoroProvider(TTSProvider):
         sentences = [s.strip() for s in sentences if s.strip()]
         return sentences
 
-    def _split_long_sentence(self, sentence: str) -> List[str]:
-        """Split a long sentence into smaller chunks.
-
-        Strategy:
-        1. Try splitting at punctuation (comma, semicolon, colon)
-        2. If still too long, split by words
-        """
-        # Try splitting at punctuation marks
+    def _split_long_sentence(self, sentence: str, cap: int) -> List[str]:
+        """Split a long sentence at punctuation, then by words if needed."""
         punct_pattern = r'(?<=[,;:])\s+'
         parts = re.split(punct_pattern, sentence)
         parts = [p.strip() for p in parts if p.strip()]
 
         if len(parts) > 1:
-            # Recombine parts into chunks under the limit
             chunks = []
             current = ""
             for part in parts:
                 potential = f"{current}, {part}".strip(', ') if current else part
-                if len(potential) <= self.MAX_CHARS_PER_CHUNK:
+                if len(potential) <= cap:
                     current = potential
                 else:
                     if current:
                         chunks.append(current)
-                    # Check if this part alone is too long
-                    if len(part) <= self.MAX_CHARS_PER_CHUNK:
+                    if len(part) <= cap:
                         current = part
                     else:
-                        # Part still too long, split by words
-                        word_chunks = self._split_by_words(part)
+                        word_chunks = self._split_by_words(part, cap)
                         for wc in word_chunks[:-1]:
                             chunks.append(wc)
                         current = word_chunks[-1] if word_chunks else ""
@@ -237,18 +249,17 @@ class KokoroProvider(TTSProvider):
                 chunks.append(current)
             return chunks
 
-        # No punctuation found, split by words
-        return self._split_by_words(sentence)
+        return self._split_by_words(sentence, cap)
 
-    def _split_by_words(self, text: str) -> List[str]:
-        """Split text by words to fit under MAX_CHARS_PER_CHUNK."""
+    def _split_by_words(self, text: str, cap: int) -> List[str]:
+        """Split text by words to fit under `cap` characters."""
         words = text.split()
         chunks = []
         current = ""
 
         for word in words:
             potential = f"{current} {word}".strip() if current else word
-            if len(potential) <= self.MAX_CHARS_PER_CHUNK:
+            if len(potential) <= cap:
                 current = potential
             else:
                 if current:
@@ -278,6 +289,41 @@ class KokoroProvider(TTSProvider):
             print(f"[Kokoro] Chunk synthesis failed: {e}")
             return None, 0
 
+    async def _resolve_working_voice(
+        self,
+        chunk0: str,
+        requested_voice: Optional[str],
+    ) -> Tuple[Optional[str], Optional[np.ndarray]]:
+        """Find a voice that the model accepts, synthesizing chunk[0] in the process.
+
+        Returns (working_voice, first_chunk_audio). The audio is the byproduct
+        of the validation pass, so we don't repeat the synthesis later.
+        Once a voice has been validated, subsequent calls reuse it (self._working_voice).
+        """
+        voices_to_try: List[str] = []
+        if requested_voice:
+            voices_to_try.append(requested_voice)
+        # Prefer the previously-validated voice if any.
+        if self._working_voice and self._working_voice not in voices_to_try:
+            voices_to_try.append(self._working_voice)
+        if self._default_voice not in voices_to_try:
+            voices_to_try.append(self._default_voice)
+        voices_to_try.extend(v for v in self.DEFAULT_VOICES if v not in voices_to_try)
+
+        for voice_id in voices_to_try:
+            try:
+                audio, _ = await self._synthesize_single_chunk(chunk0, voice_id)
+                if audio is not None:
+                    if self._working_voice != voice_id:
+                        print(f"[Kokoro] Validated voice: {voice_id}")
+                    self._working_voice = voice_id
+                    return voice_id, audio
+            except Exception as e:
+                print(f"[Kokoro] Voice '{voice_id}' test failed: {e}")
+                continue
+
+        return None, None
+
     async def synthesize(
         self,
         text: str,
@@ -285,109 +331,123 @@ class KokoroProvider(TTSProvider):
         speed: float = 1.0,
         language: Optional[str] = None,
     ) -> Optional[Tuple[np.ndarray, int]]:
-        """Synthesize text using Kokoro TTS.
+        """Synthesize text using Kokoro (non-streaming).
 
-        Note: Kokoro is English-only. The language parameter is accepted but ignored.
+        Note: Kokoro is English-only. The `language` parameter is accepted
+        but ignored.
 
-        Handles long text (>300 chars) by:
-        1. Splitting into sentences
-        2. Combining sentences into chunks up to 300 chars
-        3. Synthesizing each chunk and concatenating audio
+        For TTFB-sensitive callers, use the streaming path (`synthesize_stream`)
+        — it yields chunk N audio while chunk N+1 is being synthesized.
         """
         if not self._initialized or not self._model:
             print("[Kokoro] Not initialized")
             return None
-
         if not text or not text.strip():
-            print("[Kokoro] Empty text provided")
             return None
 
-        # Split text into manageable chunks
         chunks = self._split_text_into_chunks(text)
         if not chunks:
-            print("[Kokoro] No chunks to synthesize")
             return None
 
-        # Build voice list to try
-        voices_to_try = []
-        if voice:
-            voices_to_try.append(voice)
-        voices_to_try.append(self._default_voice)
-        voices_to_try.extend([v for v in self.DEFAULT_VOICES if v not in voices_to_try])
-
-        # Find a working voice and get first chunk audio
-        working_voice = None
-        first_chunk_audio = None
-        for voice_id in voices_to_try:
-            try:
-                # Test with first chunk
-                test_result = await self._synthesize_single_chunk(chunks[0], voice_id)
-                if test_result[0] is not None:
-                    working_voice = voice_id
-                    first_chunk_audio = test_result[0]
-                    break
-            except Exception as e:
-                print(f"[Kokoro] Voice '{voice_id}' test failed: {e}")
-                continue
-
-        if not working_voice or first_chunk_audio is None:
+        t0 = time.time()
+        working_voice, first_audio = await self._resolve_working_voice(chunks[0], voice)
+        if working_voice is None or first_audio is None:
             print("[Kokoro] No working voice found")
             return None
 
-        # Synthesize all chunks
         sample_rate = 24000
 
-        # If we only have one chunk, return the result from the test
         if len(chunks) == 1:
-            print(f"[Kokoro] Synthesized {len(first_chunk_audio)} samples (single chunk) using voice: {working_voice}")
-            return (first_chunk_audio, sample_rate)
+            total_ms = (time.time() - t0) * 1000.0
+            print(f"[Kokoro] Synthesized {len(first_audio)} samples in {total_ms:.0f}ms (1 chunk, voice={working_voice})")
+            return (first_audio, sample_rate)
 
-        # Multiple chunks - synthesize remaining chunks in PARALLEL for lower latency
-        audio_segments = [first_chunk_audio]
+        # Sequential synth for the rest. The previous asyncio.gather fan-out
+        # was misleading — kokoro_onnx serializes through a single ONNX
+        # session, so concurrency adds overhead without helping throughput.
+        pause = np.zeros(int(0.1 * sample_rate), dtype=np.float32)
+        combined: List[np.ndarray] = [first_audio]
 
-        print(f"[Kokoro] Synthesizing {len(chunks) - 1} remaining chunks in parallel...")
+        for idx in range(1, len(chunks)):
+            combined.append(pause)
+            audio, _ = await self._synthesize_single_chunk(chunks[idx], working_voice)
+            if audio is None:
+                print(f"[Kokoro] Warning: chunk {idx + 1}/{len(chunks)} failed")
+                continue
+            combined.append(audio)
 
-        # Create tasks for all remaining chunks
-        tasks = [
-            self._synthesize_single_chunk(chunk, working_voice)
-            for chunk in chunks[1:]
-        ]
-
-        # Execute all tasks in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Collect successful results in order
-        for i, result in enumerate(results, start=2):
-            if isinstance(result, Exception):
-                print(f"[Kokoro] Warning: Chunk {i}/{len(chunks)} failed: {result}")
-            elif result[0] is not None:
-                audio_segments.append(result[0])
-            else:
-                print(f"[Kokoro] Warning: Chunk {i}/{len(chunks)} returned None")
-
-        if not audio_segments:
-            print("[Kokoro] All chunks failed")
-            return None
-
-        # Concatenate audio segments with small pause between them
-        # Add ~100ms pause (2400 samples at 24kHz) between chunks for natural speech
-        pause_samples = int(0.1 * sample_rate)  # 100ms pause
-        pause = np.zeros(pause_samples, dtype=np.float32)
-
-        combined_audio = []
-        for i, segment in enumerate(audio_segments):
-            combined_audio.append(segment)
-            # Add pause between segments (not after last one)
-            if i < len(audio_segments) - 1:
-                combined_audio.append(pause)
-
-        final_audio = np.concatenate(combined_audio)
-
-        # Normalize the combined audio
-        final_audio = self._normalize_audio(final_audio)
-
-        print(f"[Kokoro] Synthesized {len(final_audio)} samples ({len(chunks)} chunks) using voice: {working_voice}")
+        final_audio = self._normalize_audio(np.concatenate(combined))
+        total_ms = (time.time() - t0) * 1000.0
+        print(f"[Kokoro] Synthesized {len(final_audio)} samples in {total_ms:.0f}ms ({len(chunks)} chunks, voice={working_voice})")
         return (final_audio, sample_rate)
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        speed: float = 1.0,
+        chunk_size: int = 480,
+        language: Optional[str] = None,
+    ) -> AsyncGenerator[Tuple[np.ndarray, bool], None]:
+        """Streaming synthesis with chunk pipelining.
+
+        Yields chunk[0]'s audio (sliced into `chunk_size` samples) as soon
+        as it's ready; chunk[N+1] is kicked off before chunk[N]'s frames
+        are emitted, so the ONNX session overlaps with downstream playback.
+        """
+        if not self._initialized or not self._model:
+            print("[Kokoro] Not initialized")
+            return
+        if not text or not text.strip():
+            return
+
+        chunks = self._split_text_into_chunks(text)
+        if not chunks:
+            return
+
+        t0 = time.time()
+        working_voice, audio_0 = await self._resolve_working_voice(chunks[0], voice)
+        if working_voice is None or audio_0 is None:
+            print("[Kokoro] No working voice found (stream)")
+            return
+
+        sample_rate = 24000
+        ttfb_ms = (time.time() - t0) * 1000.0
+        print(f"[Kokoro] First chunk ready in {ttfb_ms:.0f}ms (stream, voice={working_voice})")
+
+        pending: Optional[asyncio.Task] = None
+        if len(chunks) > 1:
+            pending = asyncio.create_task(
+                self._synthesize_single_chunk(chunks[1], working_voice)
+            )
+
+        pause_int16 = np.zeros(int(0.05 * sample_rate), dtype=np.int16)  # 50ms
+
+        for idx in range(len(chunks)):
+            if idx == 0:
+                audio_chunk = audio_0
+            else:
+                result = await pending  # type: ignore[arg-type]
+                pending = None
+                if idx + 1 < len(chunks):
+                    pending = asyncio.create_task(
+                        self._synthesize_single_chunk(chunks[idx + 1], working_voice)
+                    )
+                if result is None or result[0] is None:
+                    print(f"[Kokoro] Warning: chunk {idx + 1}/{len(chunks)} failed (stream)")
+                    continue
+                audio_chunk = result[0]
+                yield (pause_int16, False)
+
+            int16 = (np.clip(audio_chunk, -1.0, 1.0) * 32767).astype(np.int16)
+            is_last_chunk = (idx == len(chunks) - 1)
+            total = len(int16)
+            for i in range(0, total, chunk_size):
+                is_final = is_last_chunk and (i + chunk_size >= total)
+                yield (int16[i:i + chunk_size], is_final)
+
+        total_ms = (time.time() - t0) * 1000.0
+        print(f"[Kokoro] Stream completed in {total_ms:.0f}ms ({len(chunks)} chunks)")
 
     async def _process_audio(self, result) -> Tuple[Optional[np.ndarray], int]:
         """Process Kokoro audio output to 24kHz mono float32."""

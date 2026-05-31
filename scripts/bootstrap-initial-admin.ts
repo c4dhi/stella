@@ -44,9 +44,13 @@ function parseBootstrapFile(path: string): { email: string; password: string } {
 
 // Create or update the initial admin user with verified/system-admin flags.
 async function main() {
-  const bootstrapFile = process.argv[2];
+  const args = process.argv.slice(2);
+  const onlyIfMissing = args.includes('--only-if-missing');
+  const bootstrapFile = args.find((arg) => !arg.startsWith('--'));
   if (!bootstrapFile) {
-    throw new Error('Usage: ts-node scripts/bootstrap-initial-admin.ts <bootstrap-file>');
+    throw new Error(
+      'Usage: ts-node scripts/bootstrap-initial-admin.ts <bootstrap-file> [--only-if-missing]',
+    );
   }
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -58,7 +62,6 @@ async function main() {
 
   try {
     await client.connect();
-    const passwordHash = await bcrypt.hash(password, 12);
 
     const existing = await client.query<{ id: string }>(
       'SELECT "id" FROM "User" WHERE "email" = $1 LIMIT 1',
@@ -66,6 +69,11 @@ async function main() {
     );
 
     if (existing.rowCount && existing.rows[0]?.id) {
+      if (onlyIfMissing) {
+        console.log(`Admin already exists, leaving untouched: ${email}`);
+        return;
+      }
+      const passwordHash = await bcrypt.hash(password, 12);
       await client.query(
         `UPDATE "User"
          SET "password" = $1,
@@ -79,6 +87,7 @@ async function main() {
       return;
     }
 
+    const passwordHash = await bcrypt.hash(password, 12);
     const id = randomUUID();
     await client.query(
       `INSERT INTO "User" ("id", "email", "password", "name", "verified", "isSystemAdmin", "createdAt", "updatedAt")

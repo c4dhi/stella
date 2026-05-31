@@ -44,6 +44,11 @@ class TextToSpeechStub(object):
                 request_serializer=tts__pb2.SynthesizeRequest.SerializeToString,
                 response_deserializer=tts__pb2.AudioChunk.FromString,
                 _registered_method=True)
+        self.Warmup = channel.unary_unary(
+                '/tts.TextToSpeech/Warmup',
+                request_serializer=tts__pb2.WarmupRequest.SerializeToString,
+                response_deserializer=tts__pb2.WarmupResponse.FromString,
+                _registered_method=True)
         self.HealthCheck = channel.unary_unary(
                 '/tts.TextToSpeech/HealthCheck',
                 request_serializer=tts__pb2.Empty.SerializeToString,
@@ -68,6 +73,15 @@ class TextToSpeechServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Warmup(self, request, context):
+        """Warm up the TTS model — runs a tiny throwaway synth so the next real
+        request hits warm CUDA kernels / cudnn benchmark caches / loaded
+        weights. Safe to call repeatedly (cheap no-op once warm).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def HealthCheck(self, request, context):
         """Health check
         """
@@ -87,6 +101,11 @@ def add_TextToSpeechServicer_to_server(servicer, server):
                     servicer.SynthesizeStream,
                     request_deserializer=tts__pb2.SynthesizeRequest.FromString,
                     response_serializer=tts__pb2.AudioChunk.SerializeToString,
+            ),
+            'Warmup': grpc.unary_unary_rpc_method_handler(
+                    servicer.Warmup,
+                    request_deserializer=tts__pb2.WarmupRequest.FromString,
+                    response_serializer=tts__pb2.WarmupResponse.SerializeToString,
             ),
             'HealthCheck': grpc.unary_unary_rpc_method_handler(
                     servicer.HealthCheck,
@@ -148,6 +167,33 @@ class TextToSpeech(object):
             '/tts.TextToSpeech/SynthesizeStream',
             tts__pb2.SynthesizeRequest.SerializeToString,
             tts__pb2.AudioChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Warmup(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tts.TextToSpeech/Warmup',
+            tts__pb2.WarmupRequest.SerializeToString,
+            tts__pb2.WarmupResponse.FromString,
             options,
             channel_credentials,
             insecure,

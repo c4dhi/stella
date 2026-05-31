@@ -826,8 +826,12 @@ wizard_review_screen() {
         local var_name="${line%%=*}"
         local var_value="${line#*=}"
 
-        # Mask only OpenAI API key in review output. The key is too long to be displayed in the review screen.
-        if [[ "$var_name" == "OPENAI_API_KEY" ]] && [[ -n "$var_value" ]]; then
+        # Mask secrets in the review so generated/entered credentials aren't
+        # printed in the clear. Covers password/generated typed vars plus the
+        # admin password and anything that looks like a secret by name.
+        local vtype
+        vtype=$(get_var_meta "$var_name" "type" 2>/dev/null || true)
+        if [[ -n "$var_value" ]] && { [[ "$vtype" == "password" ]] || [[ "$vtype" == "generated" ]] || [[ "$var_name" == *PASSWORD* ]] || [[ "$var_name" == *SECRET* ]] || [[ "$var_name" == *TOKEN* ]]; }; then
             var_value="••••••••"
         fi
 
@@ -848,6 +852,9 @@ wizard_success_screen() {
     local env_file="$1"
     local mode="$2"
 
+    local start_cmd="./scripts/start-k8s.sh -d"
+    [[ "$mode" == "production" ]] && start_cmd="./scripts/start-k8s.sh --production -d"
+
     echo ""
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -858,7 +865,7 @@ wizard_success_screen() {
     echo ""
     echo -e "  ${DIM}You can now start STELLA with:${NC}"
     echo ""
-    echo -e "    ${CYAN}./scripts/start-k8s.sh${NC}"
+    echo -e "    ${CYAN}${start_cmd}${NC}"
     echo ""
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
@@ -937,11 +944,30 @@ wizard_var_input_compact() {
     generator=$(get_var_meta "$var_name" "generator")
     required=$(get_var_meta "$var_name" "required")
 
+    # For generatable secrets, ignore the cross-environment default fallback so
+    # production never silently inherits the local dev credentials (e.g.
+    # devkey/devsecret). Use only the environment's own default — when it's
+    # empty, the input offers to auto-generate a fresh value instead.
+    if [[ -n "$generator" ]]; then
+        if [[ "$env" == "production" ]]; then
+            default=$(get_var_meta "$var_name" "default_prod")
+        else
+            default=$(get_var_meta "$var_name" "default_local")
+        fi
+    fi
+
     local effective="${current:-$default}"
 
     # Compact header
     echo -e "  ${BOLD}${var_name}${NC} ${DIM}(${var_idx}/${total_vars})${NC}" >&2
     [[ -n "$description" ]] && echo -e "  ${DIM}${description}${NC}" >&2
+
+    # Extended, multi-line guidance for variables that need it (e.g. why
+    # LIVEKIT_URL must be a routable IP, not localhost).
+    local help_line
+    while IFS= read -r help_line; do
+        [[ -n "$help_line" ]] && echo -e "  ${DIM}${help_line}${NC}" >&2
+    done < <(get_var_help "$var_name")
     echo "" >&2
 
     case "$type" in
@@ -957,32 +983,198 @@ wizard_var_input_compact() {
             wizard_generated_compact "$var_name" "$current" "$generator" "$auto_gen"
             ;;
         password)
-            wizard_password_compact "$var_name" "$current"
+            # When a generator is defined for a required secret, [Enter] on an
+            # empty field auto-creates a secure value (no override, nothing saved).
+            local auto_gen=""
+            if [[ -n "$generator" ]] && { [[ "$required" == "both" ]] || { [[ "$required" == "production" ]] && [[ "$env" == "production" ]]; }; }; then
+                auto_gen="auto"
+            fi
+            wizard_password_compact "$var_name" "$current" "$default" "$generator" "$auto_gen"
             ;;
         *)
-            wizard_text_compact "$var_name" "$effective"
+            local auto_gen=""
+            if [[ -n "$generator" ]] && { [[ "$required" == "both" ]] || { [[ "$required" == "production" ]] && [[ "$env" == "production" ]]; }; }; then
+                auto_gen="auto"
+            fi
+            wizard_text_compact "$var_name" "$effective" "$generator" "$auto_gen"
+            ;;
+    esac
+}
+
+# =============================================================================
+# Guided LIVEKIT_URL input
+# =============================================================================
+# Internal: redraw the full-screen frame (chapter tabs + section header) for
+# the guided LiveKit step. Everything goes to stderr so the caller's command
+# substitution only ever captures the final value on stdout. wizard_chapter_tabs
+# writes to stdout, so it is redirected to stderr here too. Tabs are rendered
+# only when a chapter index is supplied (the setup wizard) and the helper is
+# available; the config wizard passes an empty index and gets just the header.
+_wizard_livekit_frame() {
+    local icon="$1"
+    local name="$2"
+    local chapter_idx="$3"
+
+    printf '\033[2J\033[H' >&2
+    if [[ -n "$chapter_idx" ]] && command -v wizard_chapter_tabs >/dev/null 2>&1; then
+        wizard_chapter_tabs "$chapter_idx" >&2
+    fi
+    echo "" >&2
+    echo -e "  ${icon}  ${BOLD}${name}${NC}" >&2
+    echo "" >&2
+}
+
+# LIVEKIT_URL is the address STELLA's Kubernetes pods use to reach the LiveKit
+# server. Pods can't use localhost (that resolves to the pod itself), so on a
+# single-machine deployment the operator must supply the host's LAN IP — a
+# common pitfall. This guided step explains that and asks whether LiveKit runs
+# on the same machine, auto-detecting the host IP for the "same machine" case.
+#
+# The step owns the whole screen and redraws the section frame (tabs + header)
+# on each phase, so the menu and the follow-up URL prompt never stack on top of
+# each other and the progress tabs stay visible throughout.
+#
+# Usage: value=$(wizard_livekit_url_guided "$current" "$env" "$icon" "$name" "$chapter_idx")
+# Echoes the chosen URL on stdout (UI on stderr); "__BACK__" for back-nav.
+wizard_livekit_url_guided() {
+    local current="$1"
+    local env="${2:-}"
+    local header_icon="${3:-🌐}"
+    local header_name="${4:-LiveKit WebRTC}"
+    local chapter_idx="${5:-}"
+    local port="7880"
+
+    # Detect this host's LAN IP to suggest for the same-machine case.
+    local detected_ip=""
+    if command -v get_local_ip >/dev/null 2>&1; then
+        detected_ip=$(get_local_ip 2>/dev/null || true)
+    fi
+    [[ -z "$detected_ip" ]] && detected_ip="127.0.0.1"
+
+    # ---- Phase 1: where will LiveKit run? ----
+    _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
+    echo -e "  ${BOLD}LIVEKIT_URL${NC} ${DIM}(internal — pods → LiveKit)${NC}" >&2
+    echo -e "  ${DIM}STELLA runs inside Kubernetes. Its pods cannot reach LiveKit via${NC}" >&2
+    echo -e "  ${DIM}'localhost' — that points at the pod itself. They need a routable${NC}" >&2
+    echo -e "  ${DIM}address. Where will the LiveKit server run?${NC}" >&2
+    echo "" >&2
+
+    # Build a dynamic option menu — include "keep current" only when a value
+    # already exists (e.g. loaded from an existing .env).
+    local -a options=()
+    local -a values=()
+    if [[ -n "$current" ]]; then
+        options+=("Keep current: ${current}")
+        values+=("$current")
+    fi
+    options+=("Same machine as STELLA  (use this host's LAN IP: ${detected_ip})")
+    values+=("__SAME__")
+    options+=("Different machine / enter manually")
+    values+=("__MANUAL__")
+
+    local num_options=${#options[@]}
+    local selected=0
+
+    echo -e "  ${DIM}[↑↓] Select  [Enter] Confirm  [Esc] Back${NC}" >&2
+    echo "" >&2
+    for ((i=0; i<num_options; i++)); do echo "" >&2; done
+
+    wizard_init_terminal
+    wizard_hide_cursor
+
+    local choice=""
+    while true; do
+        for ((i=0; i<num_options; i++)); do printf '\033[1A' >&2; done
+        for ((i=0; i<num_options; i++)); do
+            printf "\r" >&2
+            if [[ $i -eq $selected ]]; then
+                printf "  ❯ ${GREEN}[●] ${options[$i]}${NC}" >&2
+            else
+                printf "    ${DIM}[ ] ${options[$i]}${NC}" >&2
+            fi
+            wizard_clear_line >&2
+            echo "" >&2
+        done
+
+        local key
+        key=$(wizard_read_key)
+        case "$key" in
+            ENTER)
+                choice="${values[$selected]}"
+                break
+                ;;
+            ESC)
+                wizard_restore_terminal
+                wizard_show_cursor
+                echo "" >&2
+                echo "__BACK__"
+                return 0
+                ;;
+            UP|k|K)   selected=$(( (selected - 1 + num_options) % num_options )) ;;
+            DOWN|j|J) selected=$(( (selected + 1) % num_options )) ;;
+        esac
+    done
+
+    wizard_restore_terminal
+    wizard_show_cursor
+
+    # ---- Phase 2: confirm / enter the URL on a freshly redrawn screen ----
+    case "$choice" in
+        __SAME__)
+            _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
+            echo -e "  ${DIM}Suggested: ws://${detected_ip}:${port} — press [Enter] to accept,${NC}" >&2
+            echo -e "  ${DIM}or edit if the detected IP is wrong.${NC}" >&2
+            echo "" >&2
+            wizard_text_input "LIVEKIT_URL" "Internal URL the pods connect to" "" "ws://${detected_ip}:${port}"
+            ;;
+        __MANUAL__)
+            _wizard_livekit_frame "$header_icon" "$header_name" "$chapter_idx"
+            echo -e "  ${DIM}Enter the LiveKit server's address, e.g. ws://livekit-host:${port}${NC}" >&2
+            echo -e "  ${DIM}(use its IP or a DNS name the pods can resolve — not localhost).${NC}" >&2
+            echo "" >&2
+            wizard_text_input "LIVEKIT_URL" "Internal URL the pods connect to" "$current" ""
+            ;;
+        *)
+            # Keep current value.
+            echo "$choice"
             ;;
     esac
 }
 
 # Compact text input
+# Optional generator/auto_gen: when the field has no value and no default and
+# a generator is available, [Enter] creates a secure value instead of leaving
+# the field empty (used for keys like LIVEKIT_API_KEY in production).
 wizard_text_compact() {
     local var_name="$1"
     local effective="$2"
+    local generator="${3:-}"
+    local auto_gen="${4:-}"
 
     local value="$effective"
+    local can_generate=false
+    if [[ -z "$effective" ]] && [[ -n "$generator" ]] && [[ "$auto_gen" == "auto" ]]; then
+        can_generate=true
+    fi
 
     if [[ -n "$effective" ]]; then
         echo -e "  ${DIM}Current:${NC} ${effective}" >&2
+        echo -e "  ${DIM}[Enter] Keep  [Type] Edit  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$can_generate" == "true" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [Type] Set manually  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[Type] Enter value  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] Keep  [Type] Edit  [Ctrl+C] Cancel${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
     wizard_show_cursor
 
     while true; do
-        if [[ "$value" == "$effective" ]] && [[ -n "$value" ]]; then
+        if [[ -z "$value" ]] && [[ "$can_generate" == "true" ]]; then
+            printf "\r  > ${DIM}(blank → auto-generate)${NC} " >&2
+        elif [[ "$value" == "$effective" ]] && [[ -n "$value" ]]; then
             printf "\r  > ${DIM}%s${NC} " "$value" >&2
         else
             printf "\r  > %s " "$value" >&2
@@ -996,7 +1188,11 @@ wizard_text_compact() {
             ENTER)
                 wizard_restore_terminal
                 echo "" >&2
-                echo "$value"
+                if [[ -z "$value" ]] && [[ "$can_generate" == "true" ]]; then
+                    eval "$generator" 2>/dev/null || openssl rand -hex 16
+                else
+                    echo "$value"
+                fi
                 return 0
                 ;;
             ESC)
@@ -1017,18 +1213,40 @@ wizard_text_compact() {
 }
 
 # Compact password input
+# Optional default/generator/auto_gen resolve what [Enter] does on an empty
+# field, in priority order:
+#   1. a previously saved value (current) is kept
+#   2. otherwise a known default is used (e.g. local LiveKit devsecret)
+#   3. otherwise, if a generator is available, a secure value is created
+#   4. otherwise the field stays empty (caller enforces required-not-empty)
+# A value the operator actually types always wins.
 wizard_password_compact() {
     local var_name="$1"
     local current="$2"
+    local default="${3:-}"
+    local generator="${4:-}"
+    local auto_gen="${5:-}"
 
     local value=""
     local has_current=false
     [[ -n "$current" ]] && has_current=true
+    local can_generate=false
+    if [[ -n "$generator" ]] && [[ "$auto_gen" == "auto" ]]; then
+        can_generate=true
+    fi
 
     if [[ "$has_current" == "true" ]]; then
         echo -e "  ${DIM}Current:${NC} ••••••••" >&2
+        echo -e "  ${DIM}[Enter] Keep  [Type] New  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ -n "$default" ]]; then
+        echo -e "  ${DIM}Default:${NC} ${default}" >&2
+        echo -e "  ${DIM}[Enter] Use default  [Type] New  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$can_generate" == "true" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [Type] Set manually  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[Type] Enter value  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] Keep  [Type] New  [Ctrl+C] Cancel${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
@@ -1037,8 +1255,16 @@ wizard_password_compact() {
     while true; do
         # Clear line first, then print (prevents wrapping issues with long input)
         printf "\r\033[K" >&2
-        if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
-            printf "  > ${DIM}(keep current)${NC}" >&2
+        if [[ -z "$value" ]]; then
+            if [[ "$has_current" == "true" ]]; then
+                printf "  > ${DIM}(keep current)${NC}" >&2
+            elif [[ -n "$default" ]]; then
+                printf "  > ${DIM}(use default)${NC}" >&2
+            elif [[ "$can_generate" == "true" ]]; then
+                printf "  > ${DIM}(blank → auto-generate)${NC}" >&2
+            else
+                printf "  > " >&2
+            fi
         else
             # Limit displayed dots to 20, show character count for longer values
             local len=${#value}
@@ -1058,7 +1284,17 @@ wizard_password_compact() {
             ENTER)
                 wizard_restore_terminal
                 echo "" >&2
-                [[ -z "$value" ]] && [[ "$has_current" == "true" ]] && echo "$current" || echo "$value"
+                if [[ -n "$value" ]]; then
+                    echo "$value"
+                elif [[ "$has_current" == "true" ]]; then
+                    echo "$current"
+                elif [[ -n "$default" ]]; then
+                    echo "$default"
+                elif [[ "$can_generate" == "true" ]]; then
+                    eval "$generator" 2>/dev/null || openssl rand -base64 24
+                else
+                    echo ""
+                fi
                 return 0
                 ;;
             ESC)
@@ -1091,8 +1327,13 @@ wizard_generated_compact() {
 
     if [[ "$has_current" == "true" ]]; then
         echo -e "  ${DIM}Current:${NC} ${current:0:20}..." >&2
+        echo -e "  ${DIM}[Enter] Keep  [G] Generate new  [Ctrl+C] Cancel${NC}" >&2
+    elif [[ "$auto_gen" == "auto" ]]; then
+        echo -e "  ${YELLOW}⚡${NC} ${DIM}Leave blank and press [Enter] to auto-generate a secure value.${NC}" >&2
+        echo -e "  ${DIM}[Enter] Leave blank → auto-generate  [G] Generate now  [Ctrl+C] Cancel${NC}" >&2
+    else
+        echo -e "  ${DIM}[G] Generate  [Enter] Accept  [Ctrl+C] Cancel${NC}" >&2
     fi
-    echo -e "  ${DIM}[Enter] ${has_current:+Keep}${auto_gen:+Auto-generate}  [G] Generate${NC}" >&2
     echo "" >&2
 
     wizard_init_terminal
@@ -1102,7 +1343,7 @@ wizard_generated_compact() {
         if [[ -z "$value" ]] && [[ "$has_current" == "true" ]]; then
             printf "\r  > ${DIM}(keep current)${NC} " >&2
         elif [[ -z "$value" ]] && [[ "$auto_gen" == "auto" ]]; then
-            printf "\r  > ${DIM}(will auto-generate)${NC} " >&2
+            printf "\r  > ${DIM}(blank → auto-generate)${NC} " >&2
         else
             printf "\r  > %.40s " "$value" >&2
         fi

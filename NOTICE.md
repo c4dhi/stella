@@ -43,29 +43,27 @@ inherit.
 
 ### Piper TTS (tts-service)
 - License: GPL-3.0 (via `espeak-ng`)
-- Default build: **not installed** (`ENABLE_PIPER=false`).
-- Opt-in build: `docker build --build-arg ENABLE_PIPER=true .` installs Piper;
-  the resulting image becomes a GPL-3.0 covered work and must be redistributed
-  under GPL-3.0 terms.
+- Default build: **not installed** when `TTS_PROVIDER` selects a different
+  provider (single-provider image model).
+- Opt-in build: `docker build --build-arg TTS_PROVIDER=piper .` installs
+  Piper; the resulting image becomes a GPL-3.0 covered work and must be
+  redistributed under GPL-3.0 terms.
 - See `tts-service/NOTICE.md` for details.
 
-## Optional non-commercial model (opt-in, operator-supplied weights)
+## Optional GPU model (opt-in sidecar, Apache-2.0)
 
-### Voxtral TTS (tts-service)
-- Provider code: STELLA's primary permissive license.
-- Inference dependencies (`transformers`, `mistral-common`): Apache-2.0,
-  installed only when `ENABLE_VOXTRAL=true`.
-- Model weights (`mistralai/Voxtral-4B-TTS-2603`): **CC-BY-NC-4.0**.
-- STELLA never bundles, downloads, or redistributes the Voxtral weights in
-  any build. The provider refuses to start unless the operator sets
-  `VOXTRAL_MODEL_PATH` to a directory they have populated themselves —
-  thereby accepting the CC-BY-NC-4.0 terms (including the prohibition on
-  commercial use of the weights and their outputs).
-- Default build: `ENABLE_VOXTRAL=false`. Inference deps not installed.
-- Opt-in build: `docker build --build-arg ENABLE_VOXTRAL=true .` installs the
-  Apache-2.0 inference deps. The image itself remains permissively licensed;
-  only operator-supplied weights at runtime carry the CC-BY-NC obligation.
-- See `tts-service/NOTICE.md` for details.
+### Qwen3-TTS (in-process in tts-service)
+- Provider code (`tts-service/src/providers/qwen3_provider.py`): STELLA's
+  primary permissive license.
+- Inference library: `faster-qwen3-tts` (MIT,
+  https://github.com/andimarafioti/faster-qwen3-tts). Installed directly
+  into the `tts-service` image when built with `--build-arg TTS_PROVIDER=qwen3`.
+- Model weights (`Qwen/Qwen3-TTS-*`): **Apache-2.0**. STELLA's TTS init
+  container fetches them onto the model PVC at first deploy.
+- Activation: `TTS_PROVIDER=qwen3` selects this provider at build AND
+  runtime. The resulting image carries only Qwen3's deps (no Kokoro,
+  ChatterBox, or Piper); other providers' import guards report
+  unavailable at runtime.
 
 ## Removed components
 

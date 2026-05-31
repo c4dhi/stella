@@ -44,6 +44,47 @@ detect_platform() {
 # Directory Setup
 # =============================================================================
 
+# Resolve and create the temp working directories from a requested base.
+#
+# The production default for STELLA_AI_TEMP_DIR is /mnt/stella-ai-temp (a large
+# data disk), but on a freshly-cloned host /mnt is root-owned, so a non-root
+# operator can't create it. Rather than abort the whole deploy with a cryptic
+# "Permission denied" under `set -e`, this falls back to /tmp and tells the
+# operator exactly how to opt into the intended path. Exports TEMP_DIR plus the
+# namespaced PID/LOG/CHECKSUM dirs.
+configure_temp_dirs() {
+    local requested="${1:-/tmp}"
+
+    # Scope temp dirs by namespace to prevent collisions between parallel instances
+    local ns_suffix=""
+    [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
+
+    # Use the requested base only if we can create it AND write to it;
+    # otherwise fall back to /tmp with a clear, actionable warning.
+    local base="$requested"
+    if ! mkdir -p "$base" 2>/dev/null || [[ ! -w "$base" ]]; then
+        if [[ "$base" != "/tmp" ]]; then
+            warning "Temp directory '$base' is not writable — falling back to /tmp."
+            echo -e "  ${DIM}STELLA_AI_TEMP_DIR points at '$base', which this user cannot create.${NC}"
+            echo -e "  ${DIM}To use it (e.g. a large data disk), create it once:${NC}"
+            echo -e "  ${DIM}  sudo mkdir -p $base && sudo chown \"\$USER\":\"\$USER\" $base${NC}"
+            echo -e "  ${DIM}Or set STELLA_AI_TEMP_DIR to a path you own in .env.production.${NC}"
+        fi
+        base="/tmp"
+        mkdir -p "$base" 2>/dev/null || true
+    fi
+
+    export TEMP_DIR="$base"
+    export PID_DIR="${base}/stella-ai-k8s${ns_suffix}"
+    export LOG_DIR="${base}/stella-ai-logs${ns_suffix}"
+    export CHECKSUM_DIR="${base}/stella-ai-checksums${ns_suffix}"
+
+    # Create required directories
+    ensure_dir "$PID_DIR"
+    ensure_dir "$LOG_DIR"
+    ensure_dir "$CHECKSUM_DIR"
+}
+
 setup_directories() {
     # Script and project paths
     # BASH_SOURCE[0] is this file (lib/environment.sh)
@@ -53,19 +94,9 @@ setup_directories() {
     export PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
     export WORKSPACE_ROOT="$(dirname "$PROJECT_DIR")"
 
-    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files)
-    export TEMP_DIR="${STELLA_AI_TEMP_DIR:-/tmp}"
-    # Scope temp dirs by namespace to prevent collisions between parallel instances
-    local ns_suffix=""
-    [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
-    export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
-    export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
-    export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
-
-    # Create required directories
-    ensure_dir "$PID_DIR"
-    ensure_dir "$LOG_DIR"
-    ensure_dir "$CHECKSUM_DIR"
+    # Temp directory (can be overridden by STELLA_AI_TEMP_DIR in env files).
+    # Falls back to /tmp gracefully if the requested base isn't writable.
+    configure_temp_dirs "${STELLA_AI_TEMP_DIR:-/tmp}"
 
     # Prune old logs (older than 1 day) to prevent storage buildup
     find "$LOG_DIR" -type f -name "*.log" -mtime +1 -delete 2>/dev/null || true
@@ -124,17 +155,15 @@ load_environment() {
         verbose "No $env_file file found - setup wizard will be offered"
     fi
 
-    # Update temp directory after loading env
+    # Resolve the temp base after loading env. Priority: an explicit
+    # STELLA_AI_TEMP_DIR wins; otherwise derive it from STELLA_DATA_ROOT (so
+    # temp lives on the same disk as the rest of the heavy storage); otherwise
+    # keep the /tmp default from setup_directories. configure_temp_dirs applies
+    # the same graceful /tmp fallback if the chosen base isn't writable.
     if [[ -n "${STELLA_AI_TEMP_DIR:-}" ]]; then
-        export TEMP_DIR="$STELLA_AI_TEMP_DIR"
-        local ns_suffix=""
-        [[ "${KUBERNETES_NAMESPACE:-ai-agents}" != "ai-agents" ]] && ns_suffix="-${KUBERNETES_NAMESPACE}"
-        export PID_DIR="${TEMP_DIR}/stella-ai-k8s${ns_suffix}"
-        export LOG_DIR="${TEMP_DIR}/stella-ai-logs${ns_suffix}"
-        export CHECKSUM_DIR="${TEMP_DIR}/stella-ai-checksums${ns_suffix}"
-        ensure_dir "$PID_DIR"
-        ensure_dir "$LOG_DIR"
-        ensure_dir "$CHECKSUM_DIR"
+        configure_temp_dirs "$STELLA_AI_TEMP_DIR"
+    elif [[ -n "${STELLA_DATA_ROOT:-}" ]]; then
+        configure_temp_dirs "${STELLA_DATA_ROOT}/tmp"
     fi
 
     # Set hardcoded defaults (must come before configure_urls — URLs depend on computed ports)
@@ -151,21 +180,32 @@ load_environment() {
 # =============================================================================
 
 configure_urls() {
+    # Single source of truth for the three public endpoints. Each has a default
+    # that follows STELLA's DNS convention, but ANY of them can be overridden by
+    # exporting it in .env.<env> if your DNS layout differs — derivation never
+    # fights an explicit value.
+    #
+    # Production DNS convention (matches the Caddy SNI routes on the host):
+    #   apex domain      -> frontend   e.g. https://stella.example.org
+    #   backend.<domain> -> API        e.g. https://backend.stella.example.org
+    # NOTE: the frontend lives at the APEX, not a frontend.<domain> subdomain.
     if [[ "$NODE_ENV" == "production" ]]; then
-        # Production URLs (custom domains with SSL)
-        export PUBLIC_FRONTEND_URL="https://frontend.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_API_URL="https://backend.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_DB_HOST="db.${PRODUCTION_DOMAIN:-localhost}"
-        export PUBLIC_DB_PORT="5432"
-        export CORS_ORIGIN="https://frontend.${PRODUCTION_DOMAIN:-localhost}"
+        export PUBLIC_FRONTEND_URL="${PUBLIC_FRONTEND_URL:-https://${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_API_URL="${PUBLIC_API_URL:-https://backend.${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_DB_HOST="${PUBLIC_DB_HOST:-db.${PRODUCTION_DOMAIN:-localhost}}"
+        export PUBLIC_DB_PORT="${PUBLIC_DB_PORT:-5432}"
     else
-        # Local URLs
-        export PUBLIC_FRONTEND_URL="http://localhost:${FRONTEND_PORT}"
-        export PUBLIC_API_URL="http://localhost:${BACKEND_PORT}"
-        export PUBLIC_DB_HOST="localhost"
-        export PUBLIC_DB_PORT="${POSTGRES_PORT}"
-        export CORS_ORIGIN="http://localhost:${FRONTEND_PORT}"
+        export PUBLIC_FRONTEND_URL="${PUBLIC_FRONTEND_URL:-http://localhost:${FRONTEND_PORT}}"
+        export PUBLIC_API_URL="${PUBLIC_API_URL:-http://localhost:${BACKEND_PORT}}"
+        export PUBLIC_DB_HOST="${PUBLIC_DB_HOST:-localhost}"
+        export PUBLIC_DB_PORT="${PUBLIC_DB_PORT:-${POSTGRES_PORT}}"
     fi
+
+    # CORS_ORIGIN is NOT an independent setting: the browser's origin IS the
+    # frontend URL, so it is always derived from PUBLIC_FRONTEND_URL. Keeping it
+    # as a separate hardcoded value is exactly what drifted and broke CORS
+    # before. (main.ts also accepts a comma-separated list here if ever needed.)
+    export CORS_ORIGIN="$PUBLIC_FRONTEND_URL"
 
     # Map PUBLIC_LIVEKIT_URL to VITE_LIVEKIT_URL for frontend
     export VITE_LIVEKIT_URL="${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}"
@@ -370,27 +410,39 @@ set_defaults() {
     # GPU Configuration (default - will be auto-detected in production)
     export ENABLE_GPU="${ENABLE_GPU:-false}"
 
-    # Voxtral Configuration. Provider stays inert unless TTS_PROVIDER=voxtral.
-    # When selected we:
-    #   - flip ENABLE_VOXTRAL so the Dockerfile installs Apache-2.0 inference deps,
-    #   - auto-enable ENABLE_GPU (4B model is not realistic on CPU),
-    #   - default VOXTRAL_DTYPE / VOXTRAL_MODEL_ID,
-    #   - leave VOXTRAL_ACCEPT_NC_LICENSE=false. The operator must set it to
-    #     "true" explicitly to allow the init container to download weights.
-    export ENABLE_VOXTRAL="${ENABLE_VOXTRAL:-false}"
-    export VOXTRAL_MODEL_ID="${VOXTRAL_MODEL_ID:-mistralai/Voxtral-4B-TTS-2603}"
-    export VOXTRAL_DTYPE="${VOXTRAL_DTYPE:-}"
-    export VOXTRAL_ACCEPT_NC_LICENSE="${VOXTRAL_ACCEPT_NC_LICENSE:-false}"
-    if [[ "${TTS_PROVIDER:-}" == "voxtral" ]]; then
-        export ENABLE_VOXTRAL="true"
+    # Qwen3-TTS Configuration. Provider stays inert unless TTS_PROVIDER=qwen3.
+    # Qwen3-TTS runs IN-PROCESS in the tts-service container via the
+    # faster-qwen3-tts library (MIT). No sidecar. The tts-service image is
+    # built single-provider via TTS_PROVIDER, so only qwen3's deps land in
+    # the image when selected. Auto-enables ENABLE_GPU because the
+    # CUDA-graph fast path is the whole point.
+    #
+    # QWEN3_MODEL_ID selects between Qwen3-TTS variants:
+    #   - Qwen/Qwen3-TTS-12Hz-0.6B-Base       (~2GB VRAM, fastest)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-Base       (~5GB VRAM, higher quality)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (voice cloning)
+    #   - Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign (instruction-based voice design)
+    export QWEN3_MODEL_ID="${QWEN3_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}"
+    # Reference clip for the voice-clone API (required even by Base
+    # variants). The bundled clip lives at tts-service/assets/ref_audio.mp3
+    # + ref_audio.txt in the repo, gets baked into the tts-service image,
+    # and the init container copies both onto the PVC if no operator
+    # files are there yet. The provider reads the transcript from the
+    # sibling .txt file next to the audio — no env-var transcript sharing.
+    export QWEN3_REF_AUDIO="${QWEN3_REF_AUDIO:-/models/qwen3/ref_audio.mp3}"
+    # Auto = let the model autodetect from the input text. Pin only if
+    # autodetect misfires on your domain (rare).
+    export QWEN3_LANGUAGE="${QWEN3_LANGUAGE:-Auto}"
+    # Codec frames per streamed yield. 2 ≈ 167ms audio per yield = low TTFB.
+    export QWEN3_CHUNK_SIZE="${QWEN3_CHUNK_SIZE:-2}"
+    # bfloat16 is the recommended dtype on Ampere+; drop to float16 on
+    # cards without bf16 support (e.g. V100/T4).
+    export QWEN3_DTYPE="${QWEN3_DTYPE:-bfloat16}"
+    export HF_TOKEN="${HF_TOKEN:-}"
+    if [[ "${TTS_PROVIDER:-}" == "qwen3" ]]; then
         if [[ "$ENABLE_GPU" != "true" ]]; then
             export ENABLE_GPU="true"
-            verbose "TTS_PROVIDER=voxtral: auto-enabled ENABLE_GPU (4B model needs a GPU)"
-        fi
-        if [[ "$VOXTRAL_ACCEPT_NC_LICENSE" != "true" ]]; then
-            warning "TTS_PROVIDER=voxtral selected. Voxtral weights are CC-BY-NC-4.0 (non-commercial)."
-            warning "Set VOXTRAL_ACCEPT_NC_LICENSE=true to acknowledge the license and let the init"
-            warning "container download the weights, OR pre-populate /models/voxtral on the PVC."
+            verbose "TTS_PROVIDER=qwen3: auto-enabled ENABLE_GPU (faster-qwen3-tts needs CUDA)"
         fi
     fi
 

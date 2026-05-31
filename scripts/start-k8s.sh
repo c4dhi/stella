@@ -291,8 +291,33 @@ main() {
             source "$LIB_DIR/setup_wizard.sh"
             run_setup_wizard "$ENV_FLAG"
 
+            # Inherit the env the wizard picked on its welcome screen
+            # (otherwise ENV_FLAG stays empty and load_environment falls
+            # back to .env.local even after saving .env.production).
+            if [[ -n "${WIZARD_SELECTED_ENV:-}" ]]; then
+                ENV_FLAG="$WIZARD_SELECTED_ENV"
+                export ENV_FLAG
+            fi
+
             # Reload environment after setup
             load_environment
+
+            # The operator just reconfigured the system; any previously
+            # running services were started against the old config (or
+            # the wrong env). Stop them before starting fresh so we don't
+            # end up with mixed-state pods.
+            info "Reconfigured — stopping any running services before fresh start..."
+            stop_services
+            echo ""
+
+            # After an inline wizard run, deploy in the background so the
+            # operator gets their shell back rather than being trapped in
+            # a foreground "Press Ctrl+C to stop" loop right after setup.
+            if [[ "$DAEMON_MODE" != "true" ]]; then
+                info "Post-wizard deploy: switching to daemon mode (-d)"
+                DAEMON_MODE=true
+                export DAEMON_MODE
+            fi
         else
             error "Cannot start without configuration"
             echo ""

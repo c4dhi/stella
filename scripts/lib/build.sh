@@ -158,9 +158,13 @@ service_needs_rebuild() {
     # Ensure checksum directory exists
     mkdir -p "$CHECKSUM_DIR" 2>/dev/null || true
 
-    # No cached checksum = needs rebuild
+    # No cached checksum = needs rebuild.
+    # IMPORTANT: do NOT write the checksum here. This function is a pure
+    # predicate — the checksum must only be written by update_service_checksum
+    # AFTER a build is confirmed successful. Writing it at decision time was a
+    # bug: if the build then failed, the checksum was already updated, so every
+    # later deploy saw "unchanged" and silently skipped the still-broken image.
     if [[ ! -f "$cached_checksum_file" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
@@ -168,7 +172,6 @@ service_needs_rebuild() {
     cached_checksum=$(cat "$cached_checksum_file" 2>/dev/null || echo "")
 
     if [[ "$current_checksum" != "$cached_checksum" ]]; then
-        echo "$current_checksum" > "$cached_checksum_file" 2>/dev/null || true
         return 0
     fi
 
@@ -971,12 +974,11 @@ build_images() {
     # Core services
     start_parallel_build "session-management-server" "session-management-server:${IMAGE_TAG}" "." "$session_args"
     start_parallel_build "stt-service" "stt-service:${IMAGE_TAG}" "./stt-service" "$gpu_args"
-    # Piper TTS is GPL-3.0 and opt-in. Default off to keep builds license-clean;
-    # set ENABLE_PIPER=true to include Piper (resulting image becomes GPL-3.0).
-    # Voxtral is opt-in too: ENABLE_VOXTRAL=true installs the Apache-2.0
-    # inference deps. Model weights are CC-BY-NC-4.0 and must be supplied by
-    # the operator at runtime — STELLA never downloads or ships them.
-    local tts_args="$gpu_args --build-arg ENABLE_PIPER=${ENABLE_PIPER:-false} --build-arg ENABLE_VOXTRAL=${ENABLE_VOXTRAL:-false}"
+    # The tts-service image is single-provider. TTS_PROVIDER picks which
+    # provider's deps the build installs; every other provider's import
+    # guard then reports is_available=False at runtime. Keeps the image
+    # small and avoids per-provider torch/onnx version conflicts.
+    local tts_args="$gpu_args --build-arg TTS_PROVIDER=${TTS_PROVIDER:-piper}"
     start_parallel_build "tts-service" "tts-service:${IMAGE_TAG}" "./tts-service" "$tts_args"
     start_parallel_build "frontend-ui" "frontend-ui:${IMAGE_TAG}" "./frontend-ui" "$frontend_args"
     start_parallel_build "message-recorder-python" "message-recorder-python:${IMAGE_TAG}" "./message-recorder-python"

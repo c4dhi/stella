@@ -166,57 +166,72 @@ pipeline = AudioPipeline(
 )
 ```
 
-### Voxtral (opt-in, non-commercial weights)
+### Qwen3-TTS (opt-in, real-time GPU, in-process)
 
-Local Voxtral 4B TTS (`mistralai/Voxtral-4B-TTS-2603`). This is an **opt-in**
-provider: STELLA ships the integration code but does **not** download or
-bundle the model weights, which are released under **CC-BY-NC-4.0**
-(non-commercial use only). Operators who enable Voxtral are responsible for
-downloading the weights and complying with the model license themselves.
+Local Qwen3-TTS via [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) —
+a CUDA-graph-optimized runtime that hits ~156 ms TTFA on an RTX 4090 with the
+0.6B-Base variant. The Qwen3-TTS weights are **Apache-2.0**, so this provider
+is the recommended GPU option for commercial deployments.
 
-To enable Voxtral:
+- **Runs in-process** in the `tts-service` container (no sidecar, no HTTP
+  hop). Selected at build time via `--build-arg TTS_PROVIDER=qwen3`; the
+  resulting image carries only Qwen3's dependency tree (torch 2.5.1+cu124
+  + `faster-qwen3-tts`).
+- **Model variant is wizard-selectable** via `QWEN3_MODEL_ID`:
+  - `Qwen/Qwen3-TTS-12Hz-0.6B-Base` (~2 GB VRAM, 156 ms TTFA on 4090) — recommended starting point
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (~5 GB VRAM, higher quality)
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (voice cloning from a reference clip)
+  - `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign` (instruction-based voice design)
+- **Voice-clone API requires a reference clip + transcript** for every
+  variant (including Base). The transcript lives in a sibling `.txt` file
+  next to the audio (`ref_audio.mp3` → `ref_audio.txt`), so swapping
+  voices is just "drop two files on the PVC, no env edits".
 
-1. Build the TTS service with the opt-in flag — this installs the
-   (Apache-2.0) inference dependencies. STELLA does not fetch any weights:
+To enable Qwen3-TTS:
+
+1. Pick `TTS_PROVIDER=qwen3` in the wizard and choose a `QWEN3_MODEL_ID`
+   variant. `HF_TOKEN` is optional for these Apache-2.0 weights.
+
+2. STELLA bundles a German reference clip + transcript at
+   `tts-service/assets/ref_audio.mp3` + `ref_audio.txt`. The init
+   container copies both onto the PVC at `/models/qwen3/` on first
+   deploy. To use a different voice, drop your own `ref_audio.mp3` +
+   `ref_audio.txt` (same basename, matching transcript) at that path
+   and restart the pod — no env edits, no rebuild.
+
+3. Deploy with `./scripts/start-k8s.sh`. The build step compiles a
+   Qwen3-only `tts-service` image; the init container downloads the
+   weights to the shared PVC; the container loads them and captures CUDA
+   graphs at startup (typically 30–90 s on an L4, including warm-up).
+
+4. Tuning knobs (all optional):
 
    ```bash
-   docker build --build-arg ENABLE_VOXTRAL=true -t stella/tts-service tts-service/
-   ```
-
-2. As the operator, download the weights yourself (this step is your
-   acceptance of CC-BY-NC-4.0):
-
-   ```bash
-   huggingface-cli download mistralai/Voxtral-4B-TTS-2603 \
-     --local-dir /models/voxtral-4b-tts
-   ```
-
-3. Point the provider at the weights at runtime:
-
-   ```bash
-   TTS_PROVIDER=voxtral
-   VOXTRAL_MODEL_PATH=/models/voxtral-4b-tts
-   VOXTRAL_DEVICE=auto       # auto | cuda | cpu | mps
-   VOXTRAL_DTYPE=bfloat16    # bfloat16 | float16 | float32
+   QWEN3_LANGUAGE=Auto           # Auto = model autodetects; pin to override
+   QWEN3_CHUNK_SIZE=2            # codec frames per yield (lower = lower TTFB)
+   QWEN3_DTYPE=bfloat16          # bfloat16 / float16 / float32
    ```
 
 ```python
 pipeline = AudioPipeline(
-    tts_provider="voxtral",
+    tts_provider="qwen3",
 )
 ```
 
 **Pros:**
-- High quality, expressive multilingual voice
-- Local inference, no API costs
+- Apache-2.0 weights — commercially usable.
+- Real-time: 156 ms TTFA / 4.78 RTF on a 4090 with the 0.6B variant.
+- Small VRAM footprint (~2 GB for 0.6B) leaves room next to STT on a 24 GB L4.
+- In-process: no sidecar, no HTTP hop, no extra container to manage.
 
 **Cons:**
-- Non-commercial license on the weights (operator obligation)
-- ~4B parameters — GPU strongly recommended
-- Weights must be obtained and stored by the operator
+- GPU-only. No CPU fallback path — use Piper or Kokoro for non-GPU deploys.
+- The fast-path runtime is newer than vllm and has fewer eyes on it in
+  production; expect to lean on logs for the first few rollouts.
+- Requires an operator-supplied reference audio + transcript.
 
-See `NOTICE.md` and `tts-service/NOTICE.md` for the full license split between
-STELLA's permissively-licensed code and the operator-supplied CC-BY-NC weights.
+See `NOTICE.md` for the full license split between STELLA's permissive code,
+the MIT-licensed `faster-qwen3-tts` engine, and the Apache-2.0 weights.
 
 ## Pipeline Methods
 
