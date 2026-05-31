@@ -1476,7 +1476,7 @@ check_service_runtime_status() {
         # occurrence in case the pod restarted and re-logged.
         local primary
         primary=$(echo "$logs" | grep -i "Primary provider:" | tail -1 \
-            | sed -E 's/.*[Pp]rimary [Pp]rovider:[[:space:]]*([A-Za-z]+).*/\1/' \
+            | sed -E 's/.*[Pp]rimary [Pp]rovider:[[:space:]]*([A-Za-z0-9]+).*/\1/' \
             | tr '[:upper:]' '[:lower:]')
 
         case "$primary" in
