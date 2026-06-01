@@ -185,6 +185,11 @@ export function useTeleprompter(): Teleprompter {
 
       if (state === 'speaking') {
         clearFrozen(transcriptId)
+        // Resuming after a rejected (unuseful) barge-in: the cursor was frozen
+        // at the playhead by the preceding 'interrupted'. Unfreeze so it
+        // continues on the SAME message from where it stopped, over the
+        // remaining audio. Harmless for a fresh sentence (already unfrozen).
+        frozenRef.current = false
         if (prefersReducedMotionRef.current) {
           setSpokenChar(charEnd) // no animation — light the whole sentence at once
           return

@@ -139,6 +139,50 @@ async def test_interrupt_freezes_at_playhead():
     task.cancel()
 
 
+@pytest.mark.asyncio
+async def test_resume_continues_same_message_after_rejected_barge_in():
+    """A barge-in deemed unuseful: suspend freezes the cursor at the playhead,
+    then resume continues on the SAME message from that exact point."""
+    pipe, room = make_pipeline()
+    task = asyncio.create_task(pipe._play_prefetched(silence(50), meta=META))
+
+    # Play a few frames, then suspend (reflex) — freezes the highlight.
+    for _ in range(6):
+        await asyncio.sleep(0)
+    pipe.suspend_speech()
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # Barge-in dismissed → resume the same utterance.
+    pipe.resume_speech()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    events = [e["data"] for e in progress_events(room)]
+    states = [e["state"] for e in events]
+    assert states[0] == "speaking"          # initial playback
+    assert "interrupted" in states          # suspend froze the cursor
+
+    i = states.index("interrupted")
+    frozen = events[i]
+    resume_states = states[i + 1:]
+    assert "speaking" in resume_states      # resume re-emits 'speaking'
+    resumed = events[i + 1 + resume_states.index("speaking")]
+
+    # Continues on the same message, from the frozen playhead — not restarted —
+    # with audio still left to speak.
+    assert resumed["transcript_id"] == frozen["transcript_id"]
+    assert resumed["spoken_char"] == frozen["spoken_char"]
+    assert 10 <= resumed["spoken_char"] <= 20
+    assert resumed["duration_ms"] > 0
+
+    # Clean up: commit so the suspended/playing loop exits.
+    pipe.commit_interrupt()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    task.cancel()
+
+
 def test_default_on_when_env_unset(monkeypatch):
     monkeypatch.delenv("STELLA_TELEPROMPTER_ENABLED", raising=False)
     room = CapturingRoom()
