@@ -69,6 +69,11 @@ class StellaV2Agent(BaseAgent):
     # deployment level via BARGE_IN_ENABLED=false.
     supports_barge_in = True
 
+    # Teleprompter (#241): light up the reply word-by-word as it is spoken.
+    # On by default for this agent; operators can force off with
+    # STELLA_TELEPROMPTER_ENABLED=false.
+    supports_teleprompter = True
+
     def __init__(
         self,
         llm_config_path: Optional[str] = None,

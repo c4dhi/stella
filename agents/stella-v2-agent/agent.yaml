@@ -64,6 +64,8 @@ configSchema:
     - name: TTS_ENABLED
       description: "Enable text-to-speech audio output. Set to 'false' for text-only mode."
       default: "true"
+    - name: STELLA_TELEPROMPTER_ENABLED
+      description: "Live teleprompter (#241): stream the reply dimmed and light each word as it is spoken. ON BY DEFAULT — set 'false' to disable. Leave unset to keep it on."
     - name: TRANSCRIPT_DEBOUNCE_MS
       description: "Debounce window (ms) for aggregating rapid successive final transcripts. 0 to disable."
       default: "300"

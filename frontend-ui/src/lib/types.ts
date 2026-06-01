@@ -130,12 +130,30 @@ export interface ParticipantEvent {
   messageType: 'participant'
 }
 
+/**
+ * Teleprompter (#241): an `agent_speech_progress` envelope payload emitted by
+ * the SDK as it speaks the reply, mapping the audio playhead to a character
+ * span in the published `agent_text`.
+ */
+export interface AgentSpeechProgress {
+  transcript_id?: string
+  char_start?: number
+  char_end?: number
+  spoken_char?: number
+  duration_ms?: number
+  delay_ms?: number
+  /** 'speaking' | 'spoken' | 'interrupted' */
+  state?: string
+}
+
 export interface TransportEvents {
   onConnected: () => void
   onDisconnected: (reason?: string) => void
   onError: (err: Error) => void
   onRemoteAudioTrack: (track: MediaStreamTrack) => void
   onTranscript: (chunk: TranscriptChunk) => void
+  /** Teleprompter (#241): word-by-word speech-progress for the agent's reply. */
+  onSpeechProgress: (data: AgentSpeechProgress) => void
   onProcessingMessage: (message: ProcessingMessage) => void
   onServerMessage: (msg: unknown) => void
   onTTSStart: () => void
@@ -176,6 +194,7 @@ export type EnvelopeType =
   | 'transcript'
   | 'transcript_chunk'
   | 'agent_text'
+  | 'agent_speech_progress'
   | 'system'
   | 'audio_data'
   | 'audio_stream_start'

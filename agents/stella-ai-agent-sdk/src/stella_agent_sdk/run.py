@@ -310,6 +310,12 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
                     "is set — running in turn-based mode"
                 )
 
+        # 6b. Wire the teleprompter (#241): the agent declares whether it wants
+        # word-by-word speech-progress emitted (honoring any explicit
+        # STELLA_TELEPROMPTER_ENABLED operator override).
+        if getattr(agent, "supports_teleprompter", False):
+            audio_pipeline.enable_teleprompter()
+
         # 7. Create HistoryClient for chat history access
         # Generate JWT token with same claims as LiveKit token (for validation)
         now = int(time.time())

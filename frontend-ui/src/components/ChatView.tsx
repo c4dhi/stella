@@ -5,6 +5,7 @@ import { useParams } from 'react-router-dom'
 import { Eye } from 'lucide-react'
 import { useStore } from '../store'
 import { useThemeStore } from '../store/themeStore'
+import { useTeleprompter } from '../hooks/useTeleprompter'
 import ProcessingMessageView from './ProcessingMessageView'
 import ProcessingToggle from './ProcessingToggle'
 import ParticipantNotification from './ParticipantNotification'
@@ -30,6 +31,17 @@ export default function ChatView({
   const { sessionId: paramSessionId } = useParams<{ sessionId: string }>()
   const sessionId = propSessionId || paramSessionId
   const turns = useStore(s => s.turns)
+  // Teleprompter (#241): the same shared hook the participant chat uses. The
+  // discrete progress events arrive via the store (bridged from PeerTransport);
+  // the 60fps word cursor lives here, local to the chat subtree.
+  const lastSpeechProgress = useStore(s => s.lastSpeechProgress)
+  const {
+    spokenChar,
+    spokenTranscriptId,
+    frozenSpoken,
+    applyProgress,
+    noteAgentText,
+  } = useTeleprompter()
   const processingMessages = useStore(s => s.processingMessages)
   const participantEvents = useStore(s => s.participantEvents)
   const showProcessingMessages = useStore(s => s.showProcessingMessages)
@@ -420,6 +432,23 @@ export default function ChatView({
     }
   }, [allMessages, isNearBottom])
 
+  // Teleprompter (#241): apply each speech-progress envelope exactly once (the
+  // store stamps a monotonic seq, so the effect fires per distinct event).
+  useEffect(() => {
+    if (lastSpeechProgress) applyProgress(lastSpeechProgress.data)
+  }, [lastSpeechProgress, applyProgress])
+
+  // Teleprompter (#241): bind the latest streaming agent reply so it renders
+  // dimmed ahead of the voice and lights up as the audio catches up.
+  useEffect(() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].role === 'assistant') {
+        noteAgentText(turns[i].id, turns[i].text)
+        break
+      }
+    }
+  }, [turns, noteAgentText])
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header with processing toggle and task panel toggle */}
@@ -579,6 +608,9 @@ export default function ChatView({
                       message={message as any}
                       deliveryStatus={getDeliveryStatus(message as any, pendingMessageIds)}
                       isDark={isDark}
+                      spokenChar={spokenChar}
+                      spokenTranscriptId={spokenTranscriptId}
+                      frozenSpoken={frozenSpoken}
                     />
                   )
               ) : message.messageType === 'participant' ? (

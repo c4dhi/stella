@@ -2,6 +2,7 @@ import type {
   Envelope,
   Transport,
   TranscriptChunk,
+  AgentSpeechProgress,
   ProcessingMessage,
   ProcessingMessageType,
   DecisionStreamData,
@@ -84,6 +85,7 @@ export class PeerTransport implements Transport {
   onError = (_err: Error) => {}
   onRemoteAudioTrack = (_track: MediaStreamTrack) => {}
   onTranscript = (_chunk: TranscriptChunk) => {}
+  onSpeechProgress = (_data: AgentSpeechProgress) => {}
   onProcessingMessage = (_message: ProcessingMessage) => {}
   onServerMessage = (_msg: unknown) => {}
   onTTSStart = () => {}
@@ -238,6 +240,12 @@ export class PeerTransport implements Transport {
           //   type: env.type,
           //   data: env.data
           // })
+
+          // Teleprompter (#241): word-by-word highlight progress for agent speech.
+          if (env.type === 'agent_speech_progress') {
+            this.onSpeechProgress(env.data || {})
+            return
+          }
 
           if (env.type === 'transcript' || env.type === 'transcript_chunk' || env.type === 'agent_text') {
             // Transform server transcript/agent_text format to frontend format

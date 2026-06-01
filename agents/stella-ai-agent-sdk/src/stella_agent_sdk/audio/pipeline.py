@@ -204,6 +204,23 @@ class AudioPipeline:
             Callable[[str], Awaitable["BargeInDecision"]]
         ] = None
 
+        # Teleprompter (#241): emit agent_speech_progress envelopes so the
+        # frontend can light up the published agent_text exactly as it is
+        # spoken (and freeze it at the playhead on barge-in). ON BY DEFAULT —
+        # an explicit STELLA_TELEPROMPTER_ENABLED env value (e.g. "false")
+        # overrides and locks it for operators who want it off.
+        _tp_env = os.getenv("STELLA_TELEPROMPTER_ENABLED")
+        if _tp_env is None:
+            self._teleprompter_enabled = True  # default on
+            self._teleprompter_env_locked = False
+        else:
+            self._teleprompter_enabled = _tp_env.lower() in ("true", "1", "yes")
+            self._teleprompter_env_locked = True
+        # Character span of the sentence currently held in _cur_audio, used to
+        # translate the byte-accurate playhead into a character offset in the
+        # published agent_text. None when the held audio carries no offsets.
+        self._cur_meta: Optional[dict] = None
+
         # Per-turn analytics state (raw event model)
         self._turn_stt_start_ts: float = 0
         self._turn_stt_end_ts: float = 0
@@ -1081,6 +1098,10 @@ class AudioPipeline:
 
         logger.info("Stopping TTS playback")
 
+        # Teleprompter: freeze the highlight at the playhead before we discard
+        # the held utterance (reads spoken_char from _cur_cursor/_cur_audio).
+        self._emit_speech_progress("interrupted")
+
         self._drain_speech_queue()
         self._cur_audio = b""
         self._cur_cursor = 0
@@ -1125,6 +1146,8 @@ class AudioPipeline:
         self._play_allowed.clear()
         self._audio_active = False
         self._room.clear_playout()
+        # Teleprompter: freeze the highlight at the playhead the user heard.
+        self._emit_speech_progress("interrupted")
         logger.info(
             f"[BARGE-IN] Suspended playback at byte {self._cur_cursor}/"
             f"{len(self._cur_audio)} (rewound ~{queued_ms:.0f}ms of unplayed audio)"
@@ -1139,6 +1162,9 @@ class AudioPipeline:
         logger.info("[BARGE-IN] Resuming playback from playhead")
         self.close_transcript_gate()
         self._play_allowed.set()
+        # Teleprompter: resume the word cursor from the frozen point over the
+        # audio that's still left in this sentence.
+        self._emit_speech_progress("speaking")
 
     def commit_interrupt(self) -> None:
         """Commit a barge-in (interruption is legitimate): discard the rest of
@@ -1146,6 +1172,9 @@ class AudioPipeline:
         left OPEN (the user's turn is being processed). After this the speech
         worker observes the stop and exits."""
         logger.info("[BARGE-IN] Committing interruption — discarding remaining speech")
+        # Teleprompter: freeze the highlight at the playhead before discarding.
+        # (After a suspend the cursor is already rewound to what was heard.)
+        self._emit_speech_progress("interrupted")
         self._drain_speech_queue()
         self._cur_audio = b""
         self._cur_cursor = 0
@@ -1186,6 +1215,22 @@ class AudioPipeline:
         self._barge_in_enabled = True
         logger.info("[BARGE-IN] Enabled from agent declaration")
 
+    def enable_teleprompter(self) -> None:
+        """Enable the teleprompter because the agent declares it supports it.
+
+        Honors an explicit STELLA_TELEPROMPTER_ENABLED env override: if the
+        operator set it (to either value), that wins and this is a no-op.
+        Otherwise the agent's declaration turns emission on.
+        """
+        if self._teleprompter_env_locked:
+            logger.info(
+                f"[TELEPROMPTER] Agent declares support; env override in effect "
+                f"(enabled={self._teleprompter_enabled})"
+            )
+            return
+        self._teleprompter_enabled = True
+        logger.info("[TELEPROMPTER] Enabled from agent declaration")
+
     def set_barge_in_decider(
         self, decider: Callable[[str], Awaitable["BargeInDecision"]]
     ) -> None:
@@ -1208,6 +1253,80 @@ class AudioPipeline:
             })
         except Exception as e:
             logger.error(f"[BARGE-IN] Failed to emit debug message: {e}")
+
+    def _emit_speech_progress(self, state: str, meta: Optional[dict] = None) -> None:
+        """Publish an ``agent_speech_progress`` envelope for the teleprompter.
+
+        Drives the on-screen highlight (#241). ``state`` is one of:
+          - ``speaking``     — this sentence's audio is now playing (fresh or
+                               resumed). Carries ``duration_ms`` = audible time
+                               left so the frontend can advance a word cursor.
+          - ``spoken``       — the sentence finished playing.
+          - ``interrupted``  — barge-in froze playback; the highlight stays at
+                               the playhead.
+
+        ``spoken_char`` is the absolute character offset reached so far,
+        derived from the byte-accurate playhead so the highlight matches what
+        the user actually heard. No-op when the teleprompter is disabled or the
+        sentence carries no character span.
+        """
+        if not self._teleprompter_enabled:
+            return
+        meta = meta if meta is not None else self._cur_meta
+        if not meta:
+            # No character span for this sentence (base._enqueue_sentence could
+            # not locate it in the published agent_text) — nothing to anchor the
+            # highlight to, so emit nothing.
+            return
+
+        char_start = meta["char_start"]
+        char_end = meta["char_end"]
+        span = max(0, char_end - char_start)
+        total = len(self._cur_audio)
+        if total > 0:
+            frac = min(1.0, max(0.0, self._cur_cursor / total))
+        else:
+            frac = 1.0 if state == "spoken" else 0.0
+
+        if state == "spoken":
+            spoken_char = char_end
+            duration_ms = 0
+        elif state == "interrupted":
+            spoken_char = char_start + round(frac * span)
+            duration_ms = 0
+        else:  # "speaking" (fresh or resumed) — advance from the playhead
+            spoken_char = char_start + round(frac * span)
+            remaining_bytes = max(0, total - self._cur_cursor)
+            duration_ms = int(
+                remaining_bytes / (_TTS_SAMPLE_RATE * _BYTES_PER_SAMPLE) * 1000
+            )
+
+        # How long until this sentence is actually audible: audio already queued
+        # in the output buffer must drain first. Lets the frontend start the word
+        # cursor in time with playout rather than with this (earlier) publish.
+        try:
+            delay_ms = int(self._room.queued_playout_ms) if state == "speaking" else 0
+        except Exception:
+            delay_ms = 0
+
+        payload = {
+            "type": "agent_speech_progress",
+            "data": {
+                "transcript_id": meta["transcript_id"],
+                "char_start": char_start,
+                "char_end": char_end,
+                "spoken_char": int(spoken_char),
+                "duration_ms": duration_ms,
+                "delay_ms": delay_ms,
+                "state": state,
+                "agent_id": self._agent_id,
+            },
+        }
+        try:
+            asyncio.create_task(self._room.publish_data(payload))
+        except RuntimeError:
+            # No running loop (e.g. called from sync test context) — skip.
+            pass
 
     async def _resolve_barge_in(self, transcript: str) -> None:
         """Resolve a suspended barge-in given the user's transcript.
@@ -1272,7 +1391,14 @@ class AudioPipeline:
     # Sentence-level streaming TTS
     # ─────────────────────────────────────────────────────────────────────
 
-    def enqueue_sentence(self, sentence: str, source: str = "response") -> None:
+    def enqueue_sentence(
+        self,
+        sentence: str,
+        source: str = "response",
+        transcript_id: Optional[str] = None,
+        char_start: Optional[int] = None,
+        char_end: Optional[int] = None,
+    ) -> None:
         """Enqueue a complete sentence for TTS synthesis.
 
         Sentences are spoken sequentially by a background worker in the
@@ -1286,6 +1412,14 @@ class AudioPipeline:
         Args:
             sentence: The text to synthesize.
             source: Label for analytics — "bridge" or "response".
+            transcript_id: The agent_text transcript this sentence belongs to.
+            char_start: Start offset of this sentence within that agent_text.
+            char_end: End offset (exclusive) within that agent_text.
+
+        The teleprompter (#241) uses transcript_id/char_start/char_end to map
+        the audio playhead back to a character span in the on-screen text. They
+        are optional — without them the sentence is spoken normally and emits no
+        progress envelope.
         """
         if not sentence.strip():
             return
@@ -1294,7 +1428,19 @@ class AudioPipeline:
         if self._speech_worker_task is None or self._speech_worker_task.done():
             self._speech_worker_task = asyncio.create_task(self._speech_worker())
 
-        self._speech_queue.put_nowait((sentence, source))
+        meta = None
+        if (
+            transcript_id is not None
+            and char_start is not None
+            and char_end is not None
+        ):
+            meta = {
+                "transcript_id": transcript_id,
+                "char_start": int(char_start),
+                "char_end": int(char_end),
+            }
+
+        self._speech_queue.put_nowait((sentence, source, meta))
         logger.info(f"[TTS] Enqueued {source} sentence ({len(sentence.split())} words): {sentence[:60]}...")
 
     async def flush_speech_queue(self) -> None:
@@ -1362,7 +1508,9 @@ class AudioPipeline:
                 elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
                 asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
 
-    async def _play_prefetched(self, chunks, source: str = "response") -> None:
+    async def _play_prefetched(
+        self, chunks, source: str = "response", meta: Optional[dict] = None
+    ) -> None:
         """Play a pre-fetched utterance to LiveKit, in fixed frames from a
         sample-accurate playhead so playback can be suspended and resumed.
 
@@ -1370,10 +1518,18 @@ class AudioPipeline:
         memory; ``self._cur_cursor`` tracks the next byte to push. When barge-in
         suspends playback the loop pauses here (without returning) until resumed
         or aborted, so the speech worker does not advance to the next sentence.
+
+        ``meta`` carries the sentence's character span in the published
+        agent_text; with it (and the teleprompter enabled) this emits a
+        ``speaking`` progress envelope on the first frame and ``spoken`` once the
+        whole utterance has played. Interruption envelopes come from
+        suspend_speech()/stop_speaking()/commit_interrupt(), which read the
+        live playhead.
         """
         # Concatenate this utterance into one position-addressable buffer.
         self._cur_audio = b"".join(c.audio_data for c in chunks)
         self._cur_cursor = 0
+        self._cur_meta = meta
         first = True
 
         while self._cur_cursor < len(self._cur_audio):
@@ -1393,14 +1549,24 @@ class AudioPipeline:
             if first:
                 first = False
                 self._emit_first_byte(source)
+                # Teleprompter: this sentence's audio has started. Tell the
+                # frontend its span and audible duration so it can advance a
+                # word cursor across it in time with the audio.
+                self._emit_speech_progress("speaking", meta=meta)
 
             # The agent is now audibly talking — a barge-in may start.
             self._audio_active = True
             await self._room.publish_audio(frame)
 
+        # Did the utterance play to the end (vs. abort via break)?
+        completed = self._cur_cursor >= len(self._cur_audio)
+        if completed:
+            self._emit_speech_progress("spoken", meta=meta)
+
         # Utterance finished (or aborted) — clear held audio.
         self._cur_audio = b""
         self._cur_cursor = 0
+        self._cur_meta = None
 
     async def _speech_worker(self) -> None:
         """Background worker that speaks queued sentences with prefetch.
@@ -1417,6 +1583,7 @@ class AudioPipeline:
         try:
             prefetch_task = None
             prefetch_source = None
+            prefetch_meta = None
 
             while True:
                 # If we have a prefetched result, use it; otherwise wait for queue
@@ -1436,11 +1603,14 @@ class AudioPipeline:
                         prefetch_task.cancel()
                         prefetch_task = None
                         prefetch_source = None
+                        prefetch_meta = None
                         break
                     chunks = await prefetch_task
                     source = prefetch_source
+                    meta = prefetch_meta
                     prefetch_task = None
                     prefetch_source = None
+                    prefetch_meta = None
                 else:
                     # Race the queue against the stop signal. A commit/stop
                     # drains the queue (including the flush sentinel), so a bare
@@ -1463,7 +1633,7 @@ class AudioPipeline:
                     item = await get_task
                     if item is None:
                         break
-                    sentence, source = item
+                    sentence, source, meta = item
                     # No prefetch available — synthesize synchronously for this first sentence
                     chunks = await self._prefetch_sentence(
                         sentence, language=self._tts_language
@@ -1479,13 +1649,14 @@ class AudioPipeline:
                 try:
                     next_item = self._speech_queue.get_nowait()
                     if next_item is not None:
-                        next_sentence, next_source = next_item
+                        next_sentence, next_source, next_meta = next_item
                         prefetch_task = asyncio.create_task(
                             self._prefetch_sentence(
                                 next_sentence, language=self._tts_language
                             )
                         )
                         prefetch_source = next_source
+                        prefetch_meta = next_meta
                     else:
                         # Sentinel — put it back so the main loop sees it
                         self._speech_queue.put_nowait(None)
@@ -1493,7 +1664,7 @@ class AudioPipeline:
                     pass  # No next sentence yet — that's fine
 
                 # Play the current sentence's audio
-                await self._play_prefetched(chunks, source=source)
+                await self._play_prefetched(chunks, source=source, meta=meta)
 
                 # Emit tts_done events after each sentence completes
                 if self.turn_anchor_ts > 0:

@@ -71,6 +71,12 @@ class BaseAgent(ABC):
     #: When False the agent never gets interrupted (current default behaviour).
     supports_barge_in: bool = False
 
+    #: Teleprompter (#241): when True, the pipeline emits agent_speech_progress
+    #: envelopes so the frontend can light up the reply word-by-word as it is
+    #: spoken. On by default (the pipeline also defaults on); an explicit
+    #: STELLA_TELEPROMPTER_ENABLED=false env value forces it off.
+    supports_teleprompter: bool = True
+
     #: Backchannel / filler tokens treated as "not a real interruption" by the
     #: default ``on_barge_in()`` heuristic. Subclasses may override this set or
     #: override ``on_barge_in()`` entirely for semantic evaluation.
@@ -99,6 +105,13 @@ class BaseAgent(ABC):
         self._last_progress_payload: Optional[Dict[str, Any]] = None
         # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
         self._sentence_buffer: str = ""
+        # Teleprompter (#241): to light the published agent_text up as it is
+        # spoken, each enqueued sentence is tagged with its character span in
+        # that text. _tp_text is the latest accumulated agent_text, _tp_cursor
+        # the search offset so repeated sentences resolve in order.
+        self._tp_transcript_id: Optional[str] = None
+        self._tp_text: str = ""
+        self._tp_cursor: int = 0
         # Set to True by the agent when the plan reaches __end__.
         # run_audio_loop checks this after each turn and exits cleanly.
         self._session_completed: bool = False
@@ -648,6 +661,9 @@ class BaseAgent(ABC):
                                 # Detect bridge vs response from transcript_id prefix (legacy)
                                 tid = current_transcript_id
                                 self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_") or tid.startswith("bridge_")) else "response"
+                                # New teleprompter transcript — reset the span cursor.
+                                self._tp_transcript_id = current_transcript_id
+                                self._tp_cursor = 0
 
                             # Explicit tts_source metadata overrides prefix detection
                             if output.metadata.get("tts_source"):
@@ -659,6 +675,9 @@ class BaseAgent(ABC):
                                 is_final=output.is_final,
                                 transcript_id=current_transcript_id
                             )
+                            # Teleprompter: the accumulated text just published
+                            # is what sentence spans are measured against.
+                            self._tp_text = output.content
 
                             # Sentence-level TTS: extract new text from accumulated content.
                             # output.content is the full accumulated text so far.
@@ -687,7 +706,7 @@ class BaseAgent(ABC):
                             ):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    self._enqueue_sentence(remaining, source=self._current_sentence_source)
                                     # After bridge sentence dispatched, revert to "response" for subsequent text
                                     if self._current_sentence_source == "bridge":
                                         self._current_sentence_source = "response"
@@ -696,7 +715,7 @@ class BaseAgent(ABC):
                                 # Flush any remaining partial sentence to TTS
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    self._enqueue_sentence(remaining, source=self._current_sentence_source)
                                 tts_buffer = ""
                                 current_transcript_id = None
                                 self._current_sentence_source = "response"
@@ -713,8 +732,12 @@ class BaseAgent(ABC):
                                     transcript_id=transcript_id
                                 )
 
-                                # Send to TTS via sentence queue
-                                self.audio.enqueue_sentence(output.content)
+                                # Send to TTS via sentence queue, tagged so the
+                                # teleprompter can light up this final message.
+                                self._tp_transcript_id = transcript_id
+                                self._tp_text = output.content
+                                self._tp_cursor = 0
+                                self._enqueue_sentence(output.content)
 
                         elif output.type == OutputType.DEBUG:
                             # Forward debug messages to frontend via LiveKit
@@ -861,6 +884,32 @@ class BaseAgent(ABC):
     # natural sentence.
     _SENTENCE_END = re.compile(r'(?<=[.!?])\s+|(?<=\.\.\.)\s+')
 
+    def _enqueue_sentence(self, sentence: str, source: str = "response") -> None:
+        """Enqueue a sentence for TTS, tagged with its character span in the
+        published agent_text so the teleprompter can light it up as spoken.
+
+        The span is located in the latest accumulated agent_text (``_tp_text``)
+        starting at ``_tp_cursor``, which is then advanced — so a sentence that
+        repeats later in the text still resolves to the correct occurrence.
+        Falls back to a plain enqueue (no offsets) if the sentence can't be
+        located, so TTS never depends on the lookup succeeding.
+        """
+        start = self._tp_text.find(sentence, self._tp_cursor) if sentence else -1
+        if start >= 0 and self._tp_transcript_id is not None:
+            end = start + len(sentence)
+            self._tp_cursor = end
+            self.audio.enqueue_sentence(
+                sentence,
+                source=source,
+                transcript_id=self._tp_transcript_id,
+                char_start=start,
+                char_end=end,
+            )
+        else:
+            # Sentence not located in the published agent_text (or no transcript
+            # id yet) — speak it without offsets; it just won't be highlighted.
+            self.audio.enqueue_sentence(sentence, source=source)
+
     def _dispatch_sentences(self, new_text: str) -> None:
         """Detect sentence boundaries in new_text and enqueue complete sentences.
 
@@ -881,7 +930,7 @@ class BaseAgent(ABC):
         for sentence in parts[:-1]:
             sentence = sentence.strip()
             if sentence:
-                self.audio.enqueue_sentence(sentence, source=self._current_sentence_source)
+                self._enqueue_sentence(sentence, source=self._current_sentence_source)
 
         # Keep the last (incomplete) part in the buffer
         self._sentence_buffer = parts[-1]

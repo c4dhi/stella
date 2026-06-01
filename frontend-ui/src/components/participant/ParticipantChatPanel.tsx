@@ -5,6 +5,7 @@ import { Room } from 'livekit-client'
 import { DeliveryStatusIndicator } from '../messaging'
 import type { ParticipantMessage } from './ParticipantSessionView'
 import { generateUUID } from '../../lib/uuid'
+import SpokenMessageText from '../face/SpokenMessageText'
 
 interface ParticipantChatPanelProps {
   isOpen: boolean
@@ -17,6 +18,13 @@ interface ParticipantChatPanelProps {
   hasMoreMessages?: boolean
   isLoadingMore?: boolean
   onLoadMore?: () => void
+  // Teleprompter (#241): the agent message currently being spoken and how far
+  // the word cursor has advanced. That bubble lights up word-by-word; the rest
+  // render normally.
+  spokenTranscriptId?: string
+  spokenChar?: number
+  // Transcripts frozen by a committed barge-in → keep a partial highlight.
+  frozenSpoken?: Record<string, number>
 }
 
 export default function ParticipantChatPanel({
@@ -30,6 +38,9 @@ export default function ParticipantChatPanel({
   hasMoreMessages = false,
   isLoadingMore = false,
   onLoadMore,
+  spokenTranscriptId,
+  spokenChar = 0,
+  frozenSpoken,
 }: ParticipantChatPanelProps) {
   const [inputText, setInputText] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -268,7 +279,19 @@ export default function ParticipantChatPanel({
                           }`}
                         >
                           <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                            {message.text}
+                            {/* Teleprompter (#241): the live bubble lights up
+                                word-by-word as it is spoken; a barge-in-frozen
+                                bubble keeps its partial highlight; everything
+                                else renders normally. Shared with the organizer
+                                chat via SpokenMessageText. */}
+                            <SpokenMessageText
+                              text={message.text}
+                              messageId={message.id}
+                              isAgent={message.role === 'assistant'}
+                              spokenChar={spokenChar}
+                              spokenTranscriptId={spokenTranscriptId}
+                              frozenSpoken={frozenSpoken}
+                            />
                           </p>
                           {/* Delivery status indicator for user messages */}
                           {message.role === 'user' && message.deliveryStatus && (
