@@ -107,7 +107,7 @@ class LanguageResolver:
     def __init__(
         self,
         supported: Tuple[str, ...] = ("de", "en"),
-        default: str = "de",
+        default: str = "en",
         seed: Optional[str] = None,
         detect_threshold: float = 0.4,
         switch_threshold: float = 0.6,
