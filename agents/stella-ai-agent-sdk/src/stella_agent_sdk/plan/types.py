@@ -213,6 +213,15 @@ class Plan(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     system_prompt: Optional[str] = Field(default=None, description="Custom agent persona")
     session_context: Optional[SessionContext] = Field(default=None)
+    language: str = Field(
+        default="auto",
+        description=(
+            "Declared conversation language seed (ISO 639-1, e.g. 'de'/'en') or "
+            "'auto' to detect. A soft seed, not a cage: it seeds turn-1 resolution "
+            "and aids accuracy, but a confidently-detected supported language "
+            "wins (RFC §8.1)."
+        ),
+    )
 
     model_config = {"extra": "allow"}
 

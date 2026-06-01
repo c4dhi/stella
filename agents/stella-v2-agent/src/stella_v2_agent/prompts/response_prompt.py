@@ -65,7 +65,32 @@ def build_response_system_prompt(
     if sm_section:
         sections.append(sm_section)
 
+    # 5. Resolved language directive (highest priority — placed LAST for recency).
+    #    When the agent has resolved a concrete session language, this replaces the
+    #    vague "match the user" rule above with a deterministic instruction so the
+    #    response stays coherent with the bridge and TTS (RFC §8.2). When language
+    #    is unknown/auto, the persona/guidelines language rules still apply.
+    lang_section = _language_directive(sm_context.get("language"))
+    if lang_section:
+        sections.append(lang_section)
+
     return "\n\n".join(sections)
+
+
+def _language_directive(language: Optional[str]) -> Optional[str]:
+    """Build a deterministic 'respond in <language>' instruction.
+
+    Returns None for unknown/auto so the existing heuristic language rules stand.
+    """
+    names = {"en": "English", "de": "German"}
+    if not language or language == "auto":
+        return None
+    name = names.get(language, language)
+    return (
+        f"LANGUAGE (highest priority — overrides everything above):\n"
+        f"- Respond ENTIRELY in {name}. Every single word, including any examples, must be in {name}.\n"
+        f"- This is the language detected for this conversation; do not switch languages on your own."
+    )
 
 
 def build_response_user_message(

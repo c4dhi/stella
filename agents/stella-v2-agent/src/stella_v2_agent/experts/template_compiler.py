@@ -16,6 +16,7 @@ Available placeholders:
   {{processing_mode}}         Processing mode (sequential/flexible)
   {{history_N}}               Last N messages from conversation (e.g. {{history_10}})
   {{user_message}}            The current user message
+  {{language}}                Resolved session language (e.g. "German")
 
 Unknown placeholders are left as-is to avoid silently breaking prompts.
 """
@@ -267,6 +268,15 @@ def _resolve_user_message(ctx: Dict[str, Any]) -> str:
     return f"CURRENT USER MESSAGE: {user_input}"
 
 
+def _resolve_language(ctx: Dict[str, Any]) -> str:
+    """The resolved session language (single source of truth, RFC §8.2)."""
+    lang = ctx.get("language")
+    names = {"en": "English", "de": "German"}
+    if not lang or lang == "auto":
+        return "the user's language"
+    return names.get(lang, lang)
+
+
 
 # ---------------------------------------------------------------------------
 # Registry (simple placeholders only — history_N is handled separately)
@@ -282,6 +292,7 @@ PLACEHOLDER_REGISTRY: Dict[str, Any] = {
     "progress_percentage": _resolve_progress_percentage,
     "processing_mode": _resolve_processing_mode,
     "user_message": _resolve_user_message,
+    "language": _resolve_language,
 }
 
 

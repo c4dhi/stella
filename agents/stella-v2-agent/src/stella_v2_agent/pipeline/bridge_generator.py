@@ -13,6 +13,7 @@ import time
 from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES as _LANGUAGE_NAMES
 import logging
 
 logger = logging.getLogger(__name__)
@@ -157,12 +158,18 @@ class BridgeGenerator:
         self,
         user_input: str,
         conversation_history: List[Dict[str, str]],
+        language: Optional[str] = None,
     ) -> str:
         """Generate a bridge phrase for the given user input.
 
         Args:
             user_input: The current user message.
             conversation_history: Recent conversation messages.
+            language: The resolved session language (e.g. "de"). When provided,
+                it is the single source of truth — the bridge and its fallback
+                are produced in this language, keeping the bridge coherent with
+                the main response (RFC §8.2.1). When None, falls back to the
+                legacy "match the user" heuristic.
 
         Returns:
             A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
@@ -173,6 +180,11 @@ class BridgeGenerator:
             user_message = self._build_user_message(user_input, conversation_history)
 
             system_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
+            if language:
+                system_prompt += (
+                    f"\n\nRESOLVED LANGUAGE (overrides the rule above): "
+                    f"Produce the bridge in {_LANGUAGE_NAMES.get(language, language)} only."
+                )
             messages = [
                 LLMMessage(role="system", content=system_prompt),
                 LLMMessage(role="user", content=user_message),
@@ -200,20 +212,27 @@ class BridgeGenerator:
                 return bridge
 
             # Validation failed — use context-appropriate fallback
-            fallback = self._pick_fallback(user_input)
+            fallback = self._pick_fallback(user_input, language)
             logger.info(f"Validation failed, fallback '{fallback}' in {latency_ms:.0f}ms")
             return fallback
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            fallback = self._pick_fallback(user_input)
+            fallback = self._pick_fallback(user_input, language)
             logger.error(f"Failed in {latency_ms:.0f}ms: {e}, fallback '{fallback}'")
             return fallback
 
     @staticmethod
-    def _pick_fallback(user_input: str) -> str:
-        """Pick a context-appropriate fallback bridge, matching the user's language."""
-        is_german = _detect_german(user_input)
+    def _pick_fallback(user_input: str, language: Optional[str] = None) -> str:
+        """Pick a context-appropriate fallback bridge, in the resolved language.
+
+        Uses the resolved ``language`` when provided (single source of truth);
+        otherwise falls back to the legacy German heuristic on the input text.
+        """
+        if language:
+            is_german = language == "de"
+        else:
+            is_german = _detect_german(user_input)
         if user_input.strip().lower().rstrip("!.,") in _GREETING_WORDS:
             return random.choice(GREETING_FALLBACKS_DE if is_german else GREETING_FALLBACKS_EN)
         return random.choice(FALLBACK_BRIDGES_DE if is_german else FALLBACK_BRIDGES_EN)

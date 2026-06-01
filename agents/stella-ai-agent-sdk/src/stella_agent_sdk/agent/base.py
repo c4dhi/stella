@@ -575,6 +575,11 @@ class BaseAgent(ABC):
                             if output.metadata.get("tts_source"):
                                 self._current_sentence_source = output.metadata["tts_source"]
 
+                            # Resolved conversation language → drive the TTS voice
+                            # so bridge and response are spoken coherently (RFC §8.2.1).
+                            if output.metadata.get("language"):
+                                self.audio.set_tts_language(output.metadata["language"])
+
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
                                 output.content,

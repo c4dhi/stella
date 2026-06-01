@@ -291,3 +291,24 @@ What can actually be tested, and where, given the current harnesses:
 7. End-to-end on a deployed provider: speak German → German bridge + answer + voice; switch to English mid-session → coherent switch at the next turn; mutter a one-word "ja" → no flip. There is no automated audio-in→audio-out harness today, so this stays a manual checklist for v1.
 
 **Suggested sequence:** land the gating logic + its unit tests (1–4) first behind the provider decision; they're pure and catch the real risks. Service/manual tests (5–7) follow once the provider is chosen and the proto fields exist.
+
+---
+
+## 15. Implementation status (this branch)
+
+The **agent-side coherence slice is implemented** on `feature/language-handling-214` — the part that delivers auto-detection + bridge/response/voice coherence and is self-contained and testable. It uses a transcript-text language signal, which is modality-agnostic (works for typed input too, §8.3).
+
+**Done:**
+- `LanguageResolver` + dependency-free en/de `detect_language` with confidence-gated switching, supported-set clamp, plan seed, fallback chain — `stella-v2-agent/.../pipeline/language_resolver.py` (mechanism #6, signal source for now in lieu of #1/#3).
+- Resolution wired once per turn in `agent.py:process()` (before the bridge), stored in `sm_context["language"]` and stamped on bridge + response `metadata["language"]`.
+- Bridge generated in the resolved language; `_detect_german` reliance removed from the live path (#7).
+- Explicit `Respond entirely in {language}` directive in the response prompt (#8).
+- `{{language}}` template placeholder (#12).
+- TTS voice follows per turn: `AudioPipeline.set_tts_language()` + base-loop wiring from `metadata["language"]`; `TTS_LANGUAGE` env demoted to a seed (#9).
+- `Plan.language` seed field, default `auto` (#5, agent-side half).
+- Unit tests: 22 cases covering lock / hold / confidence-gated switch / debounce / clamp / seed / fallback — `stella-v2-agent/tests/test_language_resolver.py` (green).
+
+**Deferred (follow-up — needs cross-service work + codegen, untestable without GPU/provider):**
+- STT acoustic detection propagation: `proto/stt.proto` `detected_language`+confidence and language hint, `whisper_provider` per-utterance probe, `stt_client.from_proto` (#1–#4). The resolver's signal source is designed to swap from transcript-text to this with no change to the gating/propagation.
+- **TTS provider standardization on Qwen3/ChatterBox (#11)** — still the blocking deployment decision for multilingual *voice*; the plumbing (#9) is in place and is a no-op under the Piper default until then.
+- Text-chat classifier as a distinct input-path hook (#13) — currently covered by the same transcript-text resolver.

@@ -1,0 +1,138 @@
+"""Tests for the language resolver — the single source of truth for the
+conversation language (RFC: docs/rfcs/2026-06-01_language-handling.md).
+
+These cover the reliability promise: lock on confident detection, hold through
+ambiguous/short input, switch only on a sustained confident change, clamp to the
+supported set, and the plan-seed / default fallback chain (RFC §8).
+"""
+
+import pytest
+
+from stella_v2_agent.pipeline.language_resolver import (
+    detect_language,
+    language_name,
+    LanguageResolver,
+)
+
+
+# ─────────────────────────── detect_language ───────────────────────────
+
+def test_detects_german_with_confidence():
+    lang, conf = detect_language("Ich bin müde und habe keine Motivation")
+    assert lang == "de"
+    assert conf >= 0.6
+
+
+def test_detects_english_with_confidence():
+    lang, conf = detect_language("I have been running three times a week")
+    assert lang == "en"
+    assert conf >= 0.6
+
+
+@pytest.mark.parametrize("text", ["", "   ", "123 456"])
+def test_no_signal_returns_none(text):
+    lang, conf = detect_language(text)
+    assert lang is None
+    assert conf == 0.0
+
+
+def test_short_ambiguous_is_low_confidence():
+    # A single cross-lingual token must not read as confident.
+    _, conf = detect_language("okay")
+    assert conf < 0.4
+
+
+def test_umlaut_is_a_strong_german_signal():
+    lang, conf = detect_language("schön")
+    assert lang == "de"
+    assert conf > 0.0
+
+
+# ─────────────────────────── first-turn lock ───────────────────────────
+
+def test_locks_on_first_confident_utterance():
+    r = LanguageResolver()
+    assert r.resolve("Ich habe heute keine Motivation") == "de"
+
+
+def test_default_when_first_utterance_is_ambiguous():
+    r = LanguageResolver(default="en")
+    assert r.resolve("...") == "en"
+
+
+def test_plan_seed_used_when_turn1_ambiguous():
+    r = LanguageResolver()
+    r.set_seed("de")
+    assert r.resolve("ok") == "de"
+
+
+def test_confident_detection_overrides_seed_on_turn1():
+    r = LanguageResolver()
+    r.set_seed("de")
+    assert r.resolve("I want to discuss my weekly running plan") == "en"
+
+
+# ─────────────────────── hold / reliability ───────────────────────
+
+def test_holds_lock_through_ambiguous_input():
+    r = LanguageResolver()
+    r.resolve("Ich habe keine Motivation heute")  # lock de
+    assert r.resolve("ok") == "de"
+    assert r.resolve("ja") == "de"
+
+
+def test_single_short_word_does_not_flip_language():
+    r = LanguageResolver()
+    r.resolve("I have been thinking about this a lot lately")  # lock en
+    # A stray German particle must not flip a locked English session.
+    assert r.resolve("ja") == "en"
+
+
+# ─────────────────────── confidence-gated switch ───────────────────────
+
+def test_switches_on_sustained_confident_change():
+    r = LanguageResolver()
+    r.resolve("Ich habe heute echt keine Motivation")  # lock de
+    assert r.resolve("Actually I would prefer to continue in English now") == "en"
+
+
+def test_switch_requires_high_confidence():
+    # switch_threshold (0.6) is higher than detect_threshold (0.4): a weak
+    # opposite-language signal (one short word) does not switch a locked session.
+    r = LanguageResolver()
+    r.resolve("I have been running a lot this week")  # lock en
+    assert r.resolve("der") == "en"
+
+
+def test_debounce_requires_consecutive_detections():
+    r = LanguageResolver(debounce=2)
+    r.resolve("I have been running a lot this week")  # lock en
+    assert r.resolve("Ich bin heute echt total müde und erschöpft") == "en"  # 1st
+    assert r.resolve("Ich möchte wirklich auf Deutsch weitermachen bitte") == "de"  # 2nd
+
+
+# ─────────────────────── clamp to supported set ───────────────────────
+
+def test_unsupported_language_does_not_win():
+    r = LanguageResolver(supported=("en", "de"))
+    r.resolve("Ich habe heute keine Zeit für das alles")  # lock de
+    # Out-of-set input must keep the existing lock, never break TTS (RFC §7).
+    assert r.resolve("bonjour tout le monde comment allez vous") == "de"
+
+
+def test_seed_outside_supported_is_ignored():
+    r = LanguageResolver(supported=("en", "de"), default="en")
+    r.set_seed("fr")
+    assert r.resolve("...") == "en"
+
+
+# ─────────────────────────── helpers ───────────────────────────
+
+@pytest.mark.parametrize("code,expected", [
+    ("de", "German"),
+    ("en", "English"),
+    ("auto", "the user's language"),
+    (None, "the user's language"),
+])
+def test_language_name(code, expected):
+    assert language_name(code) == expected

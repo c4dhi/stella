@@ -39,6 +39,7 @@ from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
+from stella_v2_agent.pipeline.language_resolver import LanguageResolver
 from stella_v2_agent.adapters import ProgressAdapter
 from stella_v2_agent.utils import normalize_transition_priority
 import logging
@@ -99,6 +100,11 @@ class StellaV2Agent(BaseAgent):
         self.arbitration = Arbitration()
         self.response_generator = ResponseGenerator(self.llm_service)
 
+        # Single source of truth for the conversation language (RFC §8).
+        # One detection per turn, propagated to bridge + response + TTS.
+        self.language_resolver = LanguageResolver()
+        self._session_language: Optional[str] = None
+
         # gRPC state machine client (initialized per session)
         self.sm_client: Optional[StateMachineClient] = None
         self.tool_registry: Optional[ToolRegistry] = None
@@ -158,6 +164,17 @@ class StellaV2Agent(BaseAgent):
             if self._plan_system_prompt:
                 sm_context["plan_system_prompt"] = self._plan_system_prompt
 
+            # Resolve the turn language BEFORE the bridge fires, so bridge,
+            # response prompt ({{language}}), and TTS all read one value and
+            # stay coherent (RFC §8 single source of truth). The plan's declared
+            # language (if any) seeds resolution; confident detection overrides it.
+            plan_language = (self._plan_config or {}).get("language")
+            self.language_resolver.set_seed(plan_language)
+            resolved_language = self.language_resolver.resolve(input.text)
+            self._session_language = resolved_language
+            sm_context["language"] = resolved_language
+            logger.info(f"Resolved language for turn: {resolved_language}")
+
             yield AgentOutput.status(
                 input.session_id, "Processing your message...", StatusSubtype.PROCESSING
             )
@@ -169,7 +186,7 @@ class StellaV2Agent(BaseAgent):
             )
             gate_result, bridge = await asyncio.gather(
                 self.input_gate.classify(input.text, history, sm_context),
-                self.bridge_generator.generate(input.text, history),
+                self.bridge_generator.generate(input.text, history, language=resolved_language),
             )
 
             yield AgentOutput.debug(
@@ -207,6 +224,7 @@ class StellaV2Agent(BaseAgent):
                     is_final=False,
                 )
                 bridge_output.metadata["tts_source"] = "bridge"
+                bridge_output.metadata["language"] = resolved_language
                 yield bridge_output
 
             # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
@@ -292,11 +310,15 @@ class StellaV2Agent(BaseAgent):
                 bridge=bridge,
                 transcript_id=transcript_id,
             ):
-                if not first_token_emitted and output.type.value == "text_chunk":
-                    yield AgentOutput.analytics_event(
-                        input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
-                    )
-                    first_token_emitted = True
+                if output.type.value == "text_chunk":
+                    # Stamp the resolved language so the SDK sets the TTS voice
+                    # for the main response, coherent with the bridge (RFC §8.2.1).
+                    output.metadata["language"] = resolved_language
+                    if not first_token_emitted:
+                        yield AgentOutput.analytics_event(
+                            input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
+                        )
+                        first_token_emitted = True
                 yield output
 
             yield AgentOutput.analytics_event(

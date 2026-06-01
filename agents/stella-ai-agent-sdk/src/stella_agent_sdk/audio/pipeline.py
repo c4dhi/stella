@@ -139,7 +139,9 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
-        # TTS language (resolved once from env, used by all TTS paths)
+        # TTS language. Seeded from the env var for backward compatibility, but
+        # the agent overrides it per turn via set_tts_language() so the voice
+        # follows the resolved conversation language (RFC §8/§9 #9).
         self._tts_language = os.getenv("TTS_LANGUAGE", None) or None
 
         # Sentence-level streaming TTS queue (tuple of sentence text + source label)
@@ -952,6 +954,18 @@ class AudioPipeline:
     # ─────────────────────────────────────────────────────────────────────
     # Sentence-level streaming TTS
     # ─────────────────────────────────────────────────────────────────────
+
+    def set_tts_language(self, language: Optional[str]) -> None:
+        """Set the language used for subsequent TTS synthesis.
+
+        Called by the agent loop per turn from the resolved conversation
+        language so the voice follows the spoken language and stays coherent
+        with the bridge (RFC §8.2.1). ``None``/``"auto"`` is ignored, leaving the
+        current value (env seed or previously-resolved language) in place.
+        """
+        if language and language != "auto" and language != self._tts_language:
+            logger.info(f"[TTS] language set to '{language}' (was '{self._tts_language}')")
+            self._tts_language = language
 
     def enqueue_sentence(self, sentence: str, source: str = "response") -> None:
         """Enqueue a complete sentence for TTS synthesis.
