@@ -106,8 +106,8 @@ class LanguageResolver:
 
     def __init__(
         self,
-        supported: Tuple[str, ...] = ("en", "de"),
-        default: str = "en",
+        supported: Tuple[str, ...] = ("de", "en"),
+        default: str = "de",
         seed: Optional[str] = None,
         detect_threshold: float = 0.4,
         switch_threshold: float = 0.6,
@@ -123,6 +123,28 @@ class LanguageResolver:
         self.locked: Optional[str] = None
         self._pending: Optional[str] = None
         self._pending_count = 0
+
+    def apply_config(self, config: dict) -> None:
+        """Apply resolver configuration overrides from the pipeline config.
+
+        Recognized keys (all optional): ``supported`` (list of ISO codes),
+        ``default`` (fallback language), ``detect_threshold``, ``switch_threshold``,
+        ``debounce``. Unknown keys are ignored.
+        """
+        if "supported" in config and config["supported"]:
+            self.supported = set(config["supported"])
+        if "default" in config and config["default"] in self.supported:
+            self.default = config["default"]
+        elif self.default not in self.supported:
+            self.default = next(iter(self.supported))
+        if "detect_threshold" in config:
+            self.detect_threshold = float(config["detect_threshold"])
+        if "switch_threshold" in config:
+            self.switch_threshold = float(config["switch_threshold"])
+        if "debounce" in config:
+            self.debounce = max(1, int(config["debounce"]))
+        # Re-validate any seed against the (possibly new) supported set.
+        self.seed = self.seed if self.seed in self.supported else None
 
     def set_seed(self, seed: Optional[str]) -> None:
         """Set the plan-declared language seed (``auto``/unsupported → no seed)."""

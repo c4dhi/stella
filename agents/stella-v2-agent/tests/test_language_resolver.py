@@ -126,6 +126,38 @@ def test_seed_outside_supported_is_ignored():
     assert r.resolve("...") == "en"
 
 
+# ─────────────────────────── apply_config ───────────────────────────
+
+def test_apply_config_overrides_default_and_thresholds():
+    r = LanguageResolver()
+    r.apply_config({
+        "supported": ["en", "de"],
+        "default": "en",
+        "detect_threshold": 0.5,
+        "switch_threshold": 0.8,
+        "debounce": 3,
+    })
+    assert r.default == "en"
+    assert r.detect_threshold == 0.5
+    assert r.switch_threshold == 0.8
+    assert r.debounce == 3
+    # default now takes effect on an ambiguous first turn
+    assert r.resolve("...") == "en"
+
+
+def test_apply_config_partial_keeps_other_defaults():
+    r = LanguageResolver(default="de", switch_threshold=0.6)
+    r.apply_config({"switch_threshold": 0.75})
+    assert r.switch_threshold == 0.75
+    assert r.default == "de"  # untouched
+
+
+def test_apply_config_ignores_unknown_and_empty():
+    r = LanguageResolver()
+    r.apply_config({"nonsense": 1, "supported": []})
+    assert r.supported == {"de", "en"}  # empty supported list ignored
+
+
 # ─────────────────────────── helpers ───────────────────────────
 
 @pytest.mark.parametrize("code,expected", [

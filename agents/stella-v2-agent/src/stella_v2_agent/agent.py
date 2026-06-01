@@ -683,6 +683,12 @@ class StellaV2Agent(BaseAgent):
         if "history_limit" in thresholds:
             self._custom_history_limit = int(thresholds["history_limit"])
 
+        # Apply language resolver config (supported set, default, gating thresholds).
+        language_config = pipeline_config.get("language")
+        if isinstance(language_config, dict):
+            self.language_resolver.apply_config(language_config)
+            logger.info(f"Applied language config: {language_config}")
+
         logger.info(f"Pipeline config applied: {len(nodes)} nodes, {len(thresholds)} thresholds")
 
     async def on_session_end(self, session_id: str) -> Dict[str, Any]:
