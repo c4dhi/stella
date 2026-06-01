@@ -88,6 +88,53 @@ def test_single_short_word_does_not_flip_language():
     assert r.resolve("ja") == "en"
 
 
+# ─────────────── last-detected preferred over default/seed ───────────────
+
+def test_holds_last_detected_over_default():
+    # The user's question: after detecting a language, an ambiguous turn must
+    # fall back to the LAST DETECTED language, not the static default.
+    r = LanguageResolver(default="en")
+    r.resolve("Ich habe heute echt keine Motivation mehr")  # detect de
+    assert r.resolve("hmm") == "de"   # ambiguous → last detected (de), not default en
+
+
+def test_provisional_default_yields_to_first_real_detection():
+    # Turn-1 ambiguous → provisional default lock. The first genuine detection
+    # then adopts at detect_threshold (it should NOT need the higher
+    # switch_threshold, because the default was never actually detected).
+    r = LanguageResolver(default="en", detect_threshold=0.2, switch_threshold=0.9)
+    assert r.resolve("...") == "en"          # provisional default
+    assert r.resolve("der") == "de"          # first real detection adopts (0.333 ≥ 0.2)
+    # now confirmed: a same-strength opposite signal must NOT flip it
+    assert r.resolve("the") == "de"          # en signal 0.333 < switch 0.9 → hold
+
+
+def test_confirmed_lock_does_not_yield_at_detect_threshold():
+    r = LanguageResolver(detect_threshold=0.2, switch_threshold=0.9)
+    r.resolve("I have been running a lot this week")  # confident en → confirmed
+    assert r.resolve("der") == "en"          # weak de (0.333) < switch 0.9 → hold
+
+
+# ─────────────────────────── reset ───────────────────────────
+
+def test_reset_clears_session_lock():
+    r = LanguageResolver(default="en")
+    r.resolve("Ich bin müde und total erschöpft heute")  # lock de
+    assert r.locked == "de"
+    r.reset()
+    assert r.locked is None
+    # after reset, the default applies again on an ambiguous first turn
+    assert r.resolve("...") == "en"
+
+
+def test_reset_preserves_config():
+    r = LanguageResolver(default="en")
+    r.apply_config({"switch_threshold": 0.85})
+    r.resolve("Ich bin total müde")
+    r.reset()
+    assert r.switch_threshold == 0.85  # config survives reset
+
+
 # ─────────────────────── confidence-gated switch ───────────────────────
 
 def test_switches_on_sustained_confident_change():

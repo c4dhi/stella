@@ -198,9 +198,11 @@ When the participant **types** (the text chat surface) there is no audio and the
 
 **Unified fallback chain (covers voice-confident, voice-unconfident, and text):** resolved language for a turn =
 1. a confident modality signal (STT acoustic **or** text classifier) ≥ threshold and supported; else
-2. the current session lock (from any prior turn, any modality); else
+2. the current session lock — i.e. **the last detected language** in this conversation, from any prior turn or modality; else
 3. the plan seed (`Plan.language`, if set); else
 4. the service/global default.
+
+So an ambiguous turn in an ongoing conversation always holds the last detected language; the seed/default only apply before anything has been detected. A lock established *provisionally* from the seed/default (turn-1 ambiguity) is **not** treated as a real detection — the first genuine detection adopts it at `detect_threshold` rather than having to clear the higher `switch_threshold`, so the last *detected* language always wins over a placeholder.
 
 This also covers the case where STT *runs* but returns no confident language (too short, noisy) — it simply falls through to step 2/3/4, identical to the text path.
 

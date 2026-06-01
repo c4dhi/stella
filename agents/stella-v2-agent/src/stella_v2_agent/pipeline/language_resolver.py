@@ -121,8 +121,23 @@ class LanguageResolver:
 
         self.seed = seed if seed in self.supported else None
         self.locked: Optional[str] = None
+        # True once the lock came from a real detection (not the default/seed).
+        # A provisional lock yields to the first genuine detection at
+        # detect_threshold; a confirmed lock only changes via switch_threshold.
+        self._confirmed = False
         self._pending: Optional[str] = None
         self._pending_count = 0
+
+    def reset(self) -> None:
+        """Clear per-session state (lock, confirmation, pending switch).
+
+        Call on session start so a resolved language never leaks between
+        conversations. Configuration (supported set, default, thresholds, seed)
+        is preserved.
+        """
+        self.locked = None
+        self._confirmed = False
+        self._reset_pending()
 
     def apply_config(self, config: dict) -> None:
         """Apply resolver configuration overrides from the pipeline config.
@@ -164,16 +179,21 @@ class LanguageResolver:
         if lang not in self.supported:  # clamp; unsupported never wins (§7)
             lang, confidence = None, 0.0
 
-        # First turn: establish the lock.
-        if self.locked is None:
+        # Until a real detection confirms the language, the lock is provisional
+        # (default/seed). Adopt the first confident detection at detect_threshold,
+        # exactly like the first turn — so the last *detected* language is
+        # preferred over the static default/seed (RFC §8.3 fallback chain).
+        if not self._confirmed:
             if lang and confidence >= self.detect_threshold:
                 self.locked = lang
-            else:
+                self._confirmed = True
+            elif self.locked is None:
                 self.locked = self.seed or self.default
             self._reset_pending()
             return self.locked
 
-        # Established lock: confidence-gated switch only.
+        # Confirmed lock: hold it (the last detected language) unless a
+        # sustained, high-confidence change is seen.
         if lang and lang != self.locked and confidence >= self.switch_threshold:
             if self._pending == lang:
                 self._pending_count += 1

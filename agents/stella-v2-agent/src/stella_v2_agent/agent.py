@@ -562,6 +562,9 @@ class StellaV2Agent(BaseAgent):
         self.config = config
         self._plan_system_prompt = None
         self._plan_config = None
+        # Clear any resolved language from a previous session on this instance.
+        self.language_resolver.reset()
+        self._session_language = None
 
         # Load plan and initialize gRPC state machine
         plan = self._load_plan_config(config)
