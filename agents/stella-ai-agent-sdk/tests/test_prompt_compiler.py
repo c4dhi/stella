@@ -48,22 +48,27 @@ def test_compile_resolves_against_runtime_context():
     assert "My name is Sam" in out
 
 
-def test_compile_defaults_to_latest_version():
-    # version omitted -> latest registered compiler is used
-    out = prompts.compile("{{current_state}}", sm_context=_ctx())
-    assert "Intake" in out
+def test_compile_requires_an_explicit_version():
+    # No implicit "latest": calling without a version is an error, so an SDK
+    # upgrade can never silently change how an agent's prompts compile.
+    with pytest.raises(TypeError):
+        prompts.compile("{{current_state}}", sm_context=_ctx())  # type: ignore[call-arg]
+    with pytest.raises(ValueError):
+        prompts.compile("{{current_state}}", None, sm_context=_ctx())  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        prompts.compile("{{current_state}}", "", sm_context=_ctx())
 
 
 def test_compile_leaves_unknown_tokens_and_is_noop_without_tokens():
-    assert "{{nope}}" in prompts.compile("x {{nope}} y", sm_context=_ctx())
-    assert prompts.compile("plain", sm_context=_ctx()) == "plain"
-    assert prompts.compile("", sm_context=_ctx()) == ""
-    assert prompts.compile(None, sm_context=_ctx()) is None
+    assert "{{nope}}" in prompts.compile("x {{nope}} y", COMPILER_VERSION, sm_context=_ctx())
+    assert prompts.compile("plain", COMPILER_VERSION, sm_context=_ctx()) == "plain"
+    assert prompts.compile("", COMPILER_VERSION, sm_context=_ctx()) == ""
+    assert prompts.compile(None, COMPILER_VERSION, sm_context=_ctx()) is None
 
 
 def test_compile_unknown_version_raises():
     with pytest.raises(KeyError):
-        prompts.compile("{{current_state}}", version="99.0.0", sm_context=_ctx())
+        prompts.compile("{{current_state}}", "99.0.0", sm_context=_ctx())
 
 
 # --- registry / versioning --------------------------------------------------------
@@ -72,8 +77,14 @@ def test_registry_has_builtin_version():
     assert COMPILER_VERSION in available_versions()
     assert latest_version() == COMPILER_VERSION
     assert get_compiler(COMPILER_VERSION) is PlaceholderPromptCompiler
-    assert get_compiler() is PlaceholderPromptCompiler  # default -> latest
     assert issubclass(PlaceholderPromptCompiler, PromptCompiler)
+
+
+def test_get_compiler_requires_explicit_version():
+    with pytest.raises(ValueError):
+        get_compiler(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        get_compiler("")
 
 
 def test_register_compiler_adds_a_selectable_version():
@@ -122,4 +133,4 @@ def test_known_placeholders_and_version():
 def test_functional_helper_matches_facade():
     ctx = _ctx()
     expected = compile_prompt("{{current_state}}", {**ctx, "_conversation_history": [], "_user_input": ""})
-    assert prompts.compile("{{current_state}}", sm_context=ctx) == expected
+    assert prompts.compile("{{current_state}}", COMPILER_VERSION, sm_context=ctx) == expected

@@ -55,10 +55,19 @@ def available_versions() -> List[str]:
     return sorted(_REGISTRY, key=_version_key)
 
 
-def get_compiler(version: Optional[str] = None) -> Type[PromptCompiler]:
-    """Return the compiler class for ``version`` (or the latest when omitted)."""
-    if version is None:
-        return _REGISTRY[latest_version()]
+def get_compiler(version: str) -> Type[PromptCompiler]:
+    """Return the compiler class for an explicit ``version``.
+
+    The version is mandatory — there is intentionally no "latest" default, so an
+    SDK upgrade can never silently change how an agent's prompts compile. Use
+    :func:`latest_version` / :func:`available_versions` to discover versions, but
+    the caller must choose one deliberately.
+    """
+    if not version:
+        raise ValueError(
+            "A prompt compiler version must be provided explicitly "
+            f"(no default). Available: {', '.join(available_versions()) or '(none)'}"
+        )
     try:
         return _REGISTRY[version]
     except KeyError:
@@ -70,18 +79,19 @@ def get_compiler(version: Optional[str] = None) -> Type[PromptCompiler]:
 
 def compile(
     template: Optional[str],
-    version: Optional[str] = None,
+    version: str,
     *,
     sm_context: Optional[Dict[str, Any]] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
     user_input: str = "",
 ) -> Optional[str]:
-    """Compile a prompt with the requested compiler version and return the final text.
+    """Compile a prompt with an explicitly requested compiler version.
 
     This is the single entry point agents use: pass the raw prompt (with
-    placeholders) and the compiler version, plus the runtime context the
-    placeholders resolve against, and get back the prompt to hand to the LLM.
-    Returns the input unchanged for falsy/token-free prompts.
+    placeholders) and the compiler ``version`` (required — no implicit latest),
+    plus the runtime context the placeholders resolve against, and get back the
+    prompt to hand to the LLM. Returns the input unchanged for falsy/token-free
+    prompts. Raises ValueError if no version is given, KeyError if unknown.
     """
     compiler = get_compiler(version)(
         sm_context,

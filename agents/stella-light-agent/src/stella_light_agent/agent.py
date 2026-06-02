@@ -32,6 +32,13 @@ from stella_agent_sdk import prompts as sdk_prompts
 from stella_light_agent.adapters import ProgressAdapter
 
 
+# Prompt-compiler version this agent is written and tested against. Pinned on
+# purpose (not the SDK's latest) so an SDK upgrade can't silently change how this
+# agent's prompts compile. Bump deliberately when adopting a new compiler version.
+# Can be overridden per deployment via config["compiler_version"].
+PROMPT_COMPILER_VERSION = "1.0.0"
+
+
 class StellaLightAgent(BaseAgent):
     """
     Stella Light Agent - Simplified single-LLM agent.
@@ -110,8 +117,9 @@ class StellaLightAgent(BaseAgent):
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
         self._history_limit: int = 20
-        # Prompt-compiler version to resolve {{placeholder}} tokens with (None = latest).
-        self._compiler_version: Optional[str] = None
+        # Explicit prompt-compiler version (never implicit/latest). Defaults to the
+        # version this agent was authored against; can be overridden via config.
+        self._compiler_version: str = PROMPT_COMPILER_VERSION
 
         mode_str = "tool-based" if use_tools else "legacy"
         print(f"[StellaLightAgent] Initialized ({mode_str} mode)")
@@ -215,8 +223,8 @@ class StellaLightAgent(BaseAgent):
         self._custom_persona = None
         self._custom_guidelines = None
         self._history_limit = 20
-        # Optional pinned compiler version from config; None resolves to the latest.
-        self._compiler_version = config.get("compiler_version")
+        # Explicit compiler version: config override, else the agent's pinned default.
+        self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
         print(f"[StellaLightAgent] Session started: {session_id}")
         print(f"[StellaLightAgent] Config keys: {list(config.keys())}")
