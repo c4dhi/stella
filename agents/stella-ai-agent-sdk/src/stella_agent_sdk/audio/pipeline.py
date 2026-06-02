@@ -400,6 +400,10 @@ class AudioPipeline:
             session_id=self._session_id,
             participant_id=self._participant_id,
             sample_rate=sample_rate,
+            # Reuse the resolved language (the value that already drives TTS) as
+            # the STT transcription hint, read live per chunk. Detection stays
+            # independent server-side, so this only steers accuracy (RFC §8 #2).
+            language_provider=lambda: self._tts_language,
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
@@ -520,8 +524,16 @@ class AudioPipeline:
                 self._emit_debounced_transcript()
             )
         else:
-            # Aggregate with pending transcript
+            # Aggregate with pending transcript. Carry the language detection from
+            # whichever fragment detected more confidently, so debouncing never
+            # drops the acoustic signal.
             combined_text = f"{self._pending_transcript.text} {event.text}".strip()
+            if event.language_confidence >= self._pending_transcript.language_confidence:
+                detected_language = event.detected_language
+                language_confidence = event.language_confidence
+            else:
+                detected_language = self._pending_transcript.detected_language
+                language_confidence = self._pending_transcript.language_confidence
             self._pending_transcript = TranscriptEvent(
                 text=combined_text,
                 is_final=True,
@@ -530,6 +542,8 @@ class AudioPipeline:
                 confidence=min(self._pending_transcript.confidence, event.confidence),
                 timestamp_ms=event.timestamp_ms,
                 speech_started=False,
+                detected_language=detected_language,
+                language_confidence=language_confidence,
             )
             logger.info(f"Debounced: aggregated to '{combined_text}'")
 

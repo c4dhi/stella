@@ -170,6 +170,11 @@ class SpeechToTextServicer(stt_pb2_grpc.SpeechToTextServicer):
                           f"participant: {chunk.participant_id}, "
                           f"provider: {self.engine.provider_name}")
 
+                # Forward the agent's language hint (if any) so transcription can
+                # be steered to the resolved language. Detection stays independent.
+                if chunk.language:
+                    session.set_language_hint(chunk.language)
+
                 # Process audio and yield events
                 # Pass sample_rate from proto (default to 16000 for backwards compatibility)
                 sample_rate = chunk.sample_rate if chunk.sample_rate > 0 else 16000

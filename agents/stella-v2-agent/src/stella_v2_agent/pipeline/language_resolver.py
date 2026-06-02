@@ -8,10 +8,10 @@ This module collapses that into ONE resolved language per turn that the bridge,
 the response prompt, the {{language}} template variable, and TTS all read.
 
 Design (see RFC §8):
-- Detect a per-turn ``(language, confidence)`` signal from the transcript text.
-  This is modality-agnostic — voice transcripts and typed text flow through the
-  same path (§8.3), so a future STT acoustic-detection signal is a drop-in
-  replacement for ``detect_language`` here.
+- Resolve from a per-turn ``(language, confidence)`` signal. For voice the
+  signal is STT's independent acoustic detection (passed into ``resolve`` by the
+  agent); for typed text it is the bundled ``detect_language`` text classifier.
+  Both shapes are interchangeable — same gating, same propagation (§8.3).
 - Hold a session lock; switch only on a sustained, high-confidence change
   (§8 confidence-gated switch). Short/ambiguous utterances never flip it.
 - Clamp to the supported set — never resolve to a language we cannot speak (§7).
@@ -169,13 +169,30 @@ class LanguageResolver:
         self._pending = None
         self._pending_count = 0
 
-    def resolve(self, text: str) -> str:
+    def resolve(
+        self,
+        text: str,
+        signal: Optional[Tuple[Optional[str], float]] = None,
+    ) -> str:
         """Resolve the language for this turn (single source of truth).
+
+        Args:
+            text: the user's utterance/typed text — used to detect the language
+                when no external ``signal`` is given.
+            signal: an externally-provided ``(language, confidence)`` detection,
+                e.g. the STT acoustic probe (RFC §8 #1–#4). When supplied it is
+                used as-is and ``text`` is not inspected; when ``None`` the
+                language is detected from ``text`` (typed input / no acoustic
+                signal, RFC §8.3). Both signal shapes flow through the same
+                gating below, so the source is interchangeable.
 
         Fallback chain (RFC §8.3): confident supported signal → session lock →
         plan seed → default.
         """
-        lang, confidence = detect_language(text)
+        if signal is not None:
+            lang, confidence = signal
+        else:
+            lang, confidence = detect_language(text)
         if lang not in self.supported:  # clamp; unsupported never wins (§7)
             lang, confidence = None, 0.0
 

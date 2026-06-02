@@ -172,7 +172,16 @@ class StellaV2Agent(BaseAgent):
             # language (if any) seeds resolution; confident detection overrides it.
             plan_language = (self._plan_config or {}).get("language")
             self.language_resolver.set_seed(plan_language)
-            resolved_language = self.language_resolver.resolve(input.text)
+            # Prefer STT's independent acoustic detection (voice); fall back to
+            # the text classifier when absent (typed input / no signal, §8.3).
+            meta = input.metadata or {}
+            detected_language = meta.get("detected_language") or None
+            language_signal = (
+                (detected_language, float(meta.get("language_confidence") or 0.0))
+                if detected_language
+                else None
+            )
+            resolved_language = self.language_resolver.resolve(input.text, signal=language_signal)
             self._session_language = resolved_language
             sm_context["language"] = resolved_language
             logger.info(f"Resolved language for turn: {resolved_language}")

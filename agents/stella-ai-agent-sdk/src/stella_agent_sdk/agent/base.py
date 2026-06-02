@@ -546,11 +546,15 @@ class BaseAgent(ABC):
 
                 # Create AgentInput and route through process(). Forward the STT
                 # transcript_id as turn_id so audio-stage and agent-stage analytics
-                # events share a single key for downstream joins.
+                # events share a single key for downstream joins. Forward the
+                # independent language detection so the agent's resolver can use
+                # the acoustic signal (falls back to text when absent, RFC §8.3).
                 input_msg = AgentInput.text_input(
                     self._session_id or "",
                     event.text,
                     turn_id=getattr(event, "transcript_id", None),
+                    detected_language=getattr(event, "detected_language", "") or "",
+                    language_confidence=getattr(event, "language_confidence", 0.0) or 0.0,
                 )
 
                 # Process and stream response

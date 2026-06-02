@@ -111,8 +111,13 @@ class WhisperSession(STTSession):
         self.pre_buffer_samples = config.get('pre_buffer_samples', 3200)  # 200ms
         self.pre_buffer = []
 
-        # Language detection caching
+        # Language detection caching (internal fallback for transcription stability)
         self.detected_language = None
+        # Agent-supplied language hint (the resolved/locked language). When set,
+        # it takes precedence over the internal cache as the FORCED transcription
+        # language — the agent is the single source of truth (RFC §8). Detection
+        # below stays independent of this so a switch is always visible.
+        self.language_hint = None
 
         # Precompute high-pass filter coefficients (80Hz cutoff for noise removal)
         from scipy import signal
@@ -120,6 +125,49 @@ class WhisperSession(STTSession):
 
         # Processing state
         self.chunk_count = 0
+
+    def set_language_hint(self, language: Optional[str]) -> None:
+        """Set the agent's resolved language as a transcription hint.
+
+        Forwarded from each ``AudioChunk.language`` (the agent's single source of
+        truth). Empty/``auto`` clears it back to auto-detection. This only steers
+        the FORCED transcription language for accuracy; the independent detection
+        probe is unaffected, so a language switch is still surfaced to the agent.
+        """
+        hint = (language or "").strip().lower()
+        hint = hint if hint and hint != "auto" else None
+        if hint != self.language_hint:
+            print(f"[WhisperSession] Language hint set to '{hint}' (was '{self.language_hint}')")
+            self.language_hint = hint
+
+    def _forced_language(self) -> Optional[str]:
+        """The language to FORCE for transcription (accuracy/stability).
+
+        Precedence: agent hint > configured language > internally-cached
+        detection > None (let Whisper auto-detect). Decoupled from the detection
+        probe below, which always runs free of this value.
+        """
+        config_lang = self.config.get('language') or None
+        return self.language_hint or config_lang or self.detected_language or None
+
+    def _detect_language(self, audio_float: np.ndarray) -> tuple:
+        """Independent language probe → ``(language, confidence)``.
+
+        Uses faster-whisper's ``detect_language`` (a single encoder pass, cheaper
+        than full transcription) so detection never depends on the forced
+        transcription language. Returns ``(None, 0.0)`` if unavailable (older
+        library) — the caller then falls back to the transcription's own
+        ``language_probability`` when it ran in auto-detect mode.
+        """
+        try:
+            result = self.whisper_model.detect_language(audio_float)
+            # faster-whisper >=1.0.0: (language, language_probability, all_probs)
+            lang = result[0]
+            prob = float(result[1])
+            return lang, prob
+        except Exception as e:
+            print(f"[WhisperSession] Language probe unavailable: {e}")
+            return None, 0.0
 
     def _preprocess_audio(self, audio_float: np.ndarray) -> np.ndarray:
         """Simple preprocessing: high-pass filter + normalize."""
@@ -439,9 +487,8 @@ class WhisperSession(STTSession):
             # Apply preprocessing
             audio_float = self._preprocess_audio(audio_float)
 
-            # Use cached or configured language
-            config_lang = self.config.get('language')
-            language = self.detected_language or (config_lang if config_lang else None)
+            # Force the agent-resolved / configured / cached language (stability)
+            language = self._forced_language()
 
             # Transcribe with faster-whisper
             segments, info = self.whisper_model.transcribe(
@@ -513,9 +560,8 @@ class WhisperSession(STTSession):
             # Apply preprocessing
             audio_float = self._preprocess_audio(audio_float)
 
-            # Use cached or configured language
-            config_lang = self.config.get('language')
-            language = self.detected_language or (config_lang if config_lang else None)
+            # Force the agent-resolved / configured / cached language (stability)
+            language = self._forced_language()
 
             # Final transcription
             segments, info = self.whisper_model.transcribe(
@@ -532,14 +578,30 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language only if we have enough audio for reliable detection
-            # Require at least 2 seconds of audio to avoid locking in wrong language from short utterances
-            min_duration_for_lang_cache = 2.0  # seconds
-            if (not self.detected_language and
-                hasattr(info, 'language') and info.language and
-                audio_duration_sec >= min_duration_for_lang_cache):
-                self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language} (from {audio_duration_sec:.1f}s audio)")
+            # Independent per-utterance language detection (RFC §6/§8 #3). The
+            # agent owns the switch decision, so STT just reports an HONEST
+            # signal every final utterance — never a permanent lock.
+            #   - auto-detect transcription already yields it for free (info)
+            #   - forced transcription needs a separate probe so the forced
+            #     language can't mask a switch
+            min_duration_for_lang = 2.0  # short clips detect unreliably
+            detected_language, language_confidence = None, 0.0
+            if audio_duration_sec >= min_duration_for_lang:
+                if language is None:
+                    detected_language = getattr(info, 'language', None)
+                    language_confidence = float(getattr(info, 'language_probability', 0.0) or 0.0)
+                else:
+                    detected_language, language_confidence = self._detect_language(audio_float)
+                if detected_language:
+                    print(f"[WhisperSession] Detected language: {detected_language} "
+                          f"(conf={language_confidence:.2f}, forced={language or 'auto'}, "
+                          f"{audio_duration_sec:.1f}s)")
+
+            # Cache the first reliable detection as an internal transcription
+            # fallback (used only when the agent sends no hint). The agent's hint
+            # always overrides this, so it can never freeze a switch.
+            if not self.detected_language and detected_language and language_confidence >= 0.5:
+                self.detected_language = detected_language
 
             final_text = ""
             for segment in segments:
@@ -567,7 +629,9 @@ class WhisperSession(STTSession):
                 transcript_id=self.transcript_id,
                 participant_id=self.participant_id,
                 confidence=0.95,
-                timestamp_ms=int(current_time * 1000)
+                timestamp_ms=int(current_time * 1000),
+                detected_language=detected_language or "",
+                language_confidence=language_confidence,
             )
 
         except Exception as e:

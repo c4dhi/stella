@@ -115,6 +115,42 @@ def test_confirmed_lock_does_not_yield_at_detect_threshold():
     assert r.resolve("der") == "en"          # weak de (0.333) < switch 0.9 → hold
 
 
+# ─────────────── acoustic signal (STT) vs text fallback ───────────────
+
+def test_acoustic_signal_is_used_over_text():
+    # When STT supplies an (lang, confidence) probe, the text is NOT inspected —
+    # a German-looking word spoken in an English session stays English.
+    r = LanguageResolver()
+    assert r.resolve("ja", signal=("en", 0.97)) == "en"
+
+
+def test_acoustic_signal_drives_switch():
+    r = LanguageResolver()
+    r.resolve("hi there", signal=("en", 0.96))      # lock en (acoustic)
+    # sustained, confident German acoustic detection switches
+    assert r.resolve("weiter auf deutsch", signal=("de", 0.95)) == "de"
+
+
+def test_acoustic_unsupported_language_holds_lock():
+    r = LanguageResolver(supported=("en", "de"))
+    r.resolve("hello", signal=("en", 0.96))         # lock en
+    # Whisper confidently detects French → out of set → keep the lock (§7)
+    assert r.resolve("bonjour", signal=("fr", 0.99)) == "en"
+
+
+def test_low_confidence_acoustic_holds_lock():
+    r = LanguageResolver()
+    r.resolve("hello there friend", signal=("en", 0.96))  # lock en
+    # a weak opposite acoustic probe (short/noisy clip) must not flip it
+    assert r.resolve("...", signal=("de", 0.3)) == "en"
+
+
+def test_text_fallback_when_no_signal():
+    # No acoustic signal (typed input) → classify from the text itself (§8.3).
+    r = LanguageResolver()
+    assert r.resolve("Ich habe heute keine Motivation") == "de"
+
+
 # ─────────────────────────── reset ───────────────────────────
 
 def test_reset_clears_session_lock():
