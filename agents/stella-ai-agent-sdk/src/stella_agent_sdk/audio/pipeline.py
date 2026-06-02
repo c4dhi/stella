@@ -400,10 +400,10 @@ class AudioPipeline:
             session_id=self._session_id,
             participant_id=self._participant_id,
             sample_rate=sample_rate,
-            # Reuse the resolved language (the value that already drives TTS) as
-            # the STT transcription hint, read live per chunk. Detection stays
-            # independent server-side, so this only steers accuracy (RFC §8 #2).
-            language_provider=lambda: self._tts_language,
+            # No language hint by default: STT auto-detects, which yields the
+            # per-utterance detection signal for free (RFC §6). Pinning is an
+            # opt-in (env WHISPER_LANGUAGE or a language_provider) and trades
+            # that free detection away, so we leave it off here.
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 

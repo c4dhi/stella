@@ -53,10 +53,11 @@ There is also no way for a plan author to declare an expected language, and the 
 Collapse the three independent detections into **one authoritative detection that flows downstream**:
 
 ```
-Agent session.language  ──(hint, down)──►  STT: force transcription to L   (stability + accuracy)
-   (single source of truth)               STT also probes detection independently
+                                            STT auto-detects (language=None) and
+                                            reports detection FREE from that pass
         ▲                                          │
         └───(detected_language + confidence, up)───┘
+   (single source of truth)   [optional: agent may PIN STT to a language, opt-in]
    Agent applies the confidence-gated switch, then feeds the resolved
    per-turn language to ──► bridge ──► LLM prompt ──► TTS request.language
 ```
@@ -86,18 +87,19 @@ This makes a **language-neutral / filler bridge unnecessary** — an earlier ide
 
 ## 6. The catch with "confidence-gated switch" (and the fix)
 
-As written today, STT will **not** hand the agent a switch signal:
+The original code would **not** hand the agent a switch signal:
 
-1. **It locks once and never re-detects** — `whisper_provider.py:538`: `if not self.detected_language` sets it permanently on the first ≥2s utterance.
-2. **It then *forces* that language into every later transcription** — lines 444/518 pass `language=self.detected_language`. When faster-whisper is given `language=`, detection is **skipped** and `info.language_probability` is effectively 1.0 — so `info.language` on turn 2+ just echoes the locked value. A real switch would be invisible.
+1. **It locked once and never re-detected** — `whisper_provider.py:538`: `if not self.detected_language` set it permanently on the first ≥2s utterance.
+2. **It then *forced* that language into every later transcription** — when faster-whisper is given `language=`, detection is **skipped** and `info.language_probability` is effectively 1.0, so `info.language` on turn 2+ just echoed the locked value. A real switch was invisible.
 
-**Fix:** STT must report a genuine per-utterance detection **separately** from the language it forces for transcription stability. faster-whisper exposes `info.language_probability` and a standalone `detect_language()`, so this is cheap:
+**Fix (as implemented):** transcribe in **auto-detect mode** (`language=None`) and read the detection straight off the transcription result — `info.language` + `info.language_probability` — which faster-whisper computes anyway. This is the cleanest design *and* the cheapest:
 
-- Keep forcing the agent-supplied hint into `transcribe()` for transcription **quality/stability**.
-- On substantial utterances (≥ the existing ~2s threshold), run an **independent** language-detect probe and return `detected_language` + `confidence` on the event regardless of the forced language.
-- The agent compares the probe to its lock and applies the gate.
+- **Zero added latency** — no second model call. The earlier draft kept forcing for "stability" and added a separate `detect_language()` probe (≈ one extra encoder pass per forced utterance); auto-detect makes both unnecessary. The detection is a byproduct of the pass we already run.
+- The genuine `(detected_language, confidence)` is on every final event ≥ the ~2s reliability floor; below it, no signal is emitted and the agent falls back to its text classifier (§8.3).
+- The agent compares it to its lock and applies the gate.
+- **No switch-utterance degradation**: because transcription is never forced to a stale language, the switch utterance itself transcribes in the right language — there is no garbled turn to accept.
 
-**Minor accepted cost:** on the single utterance where a switch is detected, transcription was still forced to the *old* language, so that one transcript may be slightly degraded (e.g. English audio transcribed as German). It is rare, self-corrects on the next turn (now hinted correctly), and is far cheaper than a filler bridge or a lag.
+**Pinning stays available but opt-in** (`WHISPER_LANGUAGE` env or a per-session `AudioChunk.language`): a deployment that must stay in one language can force it, at the cost of the free detection. Default is auto-detect.
 
 ---
 
@@ -190,7 +192,7 @@ The two paths don't share one variable mechanism, so "inject into both" is two w
 
 When the participant **types** (the text chat surface) there is no audio and therefore no Whisper detection. The design stays clean by making language resolution **modality-agnostic**: the resolution/gating logic in §8 consumes a `(language, confidence)` signal and does not care whether that signal came from acoustic detection or from text.
 
-- **The text path produces the same signal shape as STT** via a lightweight text language classifier (confidence-scored — e.g. a `lingua`-class detector; the current `_detect_german` heuristic is the crude floor). It emits `(language, confidence)` exactly like §6's STT probe.
+- **The text path produces the same signal shape as STT** via a lightweight text language classifier (confidence-scored — e.g. a `lingua`-class detector; the current `_detect_german` heuristic is the crude floor). It emits `(language, confidence)` exactly like §6's STT detection.
 - **The same gating applies:** a short/ambiguous typed message ("ok", "ja", "thx") is low-confidence → it does **not** flip the lock, same as a sub-2s utterance.
 - **The lock persists across modalities.** `session.language` is one value per session regardless of whether a turn was spoken or typed, so a voice-established language carries into a typed turn and vice versa (relevant because both chat surfaces can coexist).
 
@@ -213,8 +215,8 @@ Status key: ✅ implemented on `feature/language-handling-214`; ⚙️ deploymen
 | # | Change | Location | Why |
 |---|---|---|---|
 | 1 ✅ | Add `detected_language` (string, ISO 639-1) + `language_confidence` (float) to the **final** `TranscriptEvent`; `language` hint to `AudioChunk` | `proto/stt.proto` (+ regenerated stubs) | The missing pipe — Whisper detects it, used to drop it at the gRPC boundary |
-| 2 ✅ | Add a `language` **hint** field to the STT request; agent stamps the resolved language on each `AudioChunk` (read live via `language_provider`) | `proto/stt.proto`, `stt_client.stream_transcribe`, `pipeline.py`, `stt_server.py` | Lets the agent steer transcription stability/accuracy; detection stays independent |
-| 3 ✅ | Emit a real per-utterance detection + confidence (independent `detect_language()` probe, or `info.language_probability` in auto mode); the internal lock is now just a fallback the agent hint overrides | `stt-service/src/providers/whisper_provider.py` (`_detect_language`, `_forced_language`, `set_language_hint`, `_generate_final`) | Switches are now visible (§6); library (faster-whisper `>=1.0.0`) exposes both |
+| 2 ✅ | `language` **pin** field on `AudioChunk` (+ `language_provider` hook) — opt-in only; default off so auto-detect stays on | `proto/stt.proto`, `stt_client.stream_transcribe`, `pipeline.py`, `stt_server.py` | A deployment can pin a session's language; pinning trades away the free detection, so it's not used by default |
+| 3 ✅ | Per-utterance detection + confidence taken **free** from the auto-detect transcription pass (`info.language` / `info.language_probability`) — no second model call; pinned sessions report the pin | `stt-service/src/providers/whisper_provider.py` (`_forced_language`, `_generate_final`) | Switches are visible (§6) at **zero added latency**; faster-whisper auto-detect already computes this |
 | 4 ✅ | Read new fields through to the agent's `TranscriptEvent` dataclass + onto `AgentInput.metadata` | `stt_client.py` (`from_proto`), `agent/base.py` (`run_audio_loop`) | Plumb language to `process()` |
 | 5 | Add optional `language` to plan/session schema (`auto` default) | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/plan/types.py` | Plan default + STT hint |
 | 6 | Hold `session.language` + apply the gated-switch policy | agent SDK session state | Single source of truth |
@@ -253,7 +255,7 @@ Unlike language there is **no detection step** — voice is a configured choice,
 1. **TTS provider for spoken multilingualism (optional upgrade, not a gate)** — the feature ships and degrades gracefully on any provider (§7). To make the *voice* follow the language too, deploy **Qwen3** (60+ langs, autodetect) or **ChatterBox** (en/de). Worth doing for the study, but not required for the agent-side coherence to land.
 2. **Lock vs. force at plan level** — "optional declared default" is a *soft seed* today; do we also want an explicit `force: true` for plans that must never switch (e.g. a German-only assessment)? Proposed as a later refinement, not v1.
 3. **Threshold values** — initial `detect_threshold` / `switch_threshold` / debounce count (§8) to be set empirically.
-4. **Switch-utterance degradation** (§6) — accept the minor one-utterance transcription cost, or re-transcribe the switch utterance in the detected language at a latency cost? RFC proposes accepting it for v1.
+4. **Switch-utterance degradation** (§6) — **resolved:** auto-detect mode means transcription is never forced to a stale language, so there is no degraded switch utterance and no probe cost. (Was: accept the cost vs. re-transcribe.)
 
 > **Resolved by §13 validation:** Kokoro is English-only; Edge TTS is removed; faster-whisper `>=1.0.0` exposes `language_probability` + `detect_language()`; `TTS_LANGUAGE` is the sole TTS language source today.
 
@@ -297,7 +299,7 @@ What can actually be tested, and where, given the current harnesses:
 4. **Proto round-trip** — `TranscriptEvent.from_proto` carries `detected_language`/`confidence` (`stt_client.py`).
 
 **Service-level tests (need new harness)**
-5. **STT probe** — with audio fixtures (one en, one de clip), assert `detect_language()` returns the right language + a usable confidence, and that the forced-language transcription path is unaffected.
+5. **STT detection** — with audio fixtures (one en, one de clip), assert the final `TranscriptEvent` carries the right `detected_language` + a usable `language_confidence` from the auto-detect pass, and that an explicit pin (`WHISPER_LANGUAGE`) overrides transcription as expected.
 6. **TTS provider honors `language`** — on the chosen provider (Qwen3/ChatterBox), assert two requests differing only in `language` produce different audio; assert out-of-set falls back per §7. (Already true in ChatterBox's `_resolve_language`; this locks it in.)
 
 **Manual / integration (the part only a human or a scripted call can confirm)**
@@ -312,7 +314,7 @@ What can actually be tested, and where, given the current harnesses:
 The feature is **fully implemented** on `feature/language-handling-214` end-to-end: STT acoustic detection → proto → agent resolver → bridge/response/`{{language}}`/TTS coherence, plus per-stream voice. The only remaining item is a deployment toggle (#11, TTS provider for spoken multilingualism).
 
 **Done:**
-- **STT acoustic detection path (#1–#4):** `stt.proto` carries `detected_language`/`language_confidence` (final events) + a `language` hint on `AudioChunk`; the Whisper provider runs an independent `detect_language()` probe per final utterance and forwards an agent hint without freezing switches; the SDK carries the fields through `from_proto` → `AgentInput.metadata` → `process()`. Stubs regenerated for both stt-service and the SDK.
+- **STT acoustic detection path (#1–#4):** `stt.proto` carries `detected_language`/`language_confidence` (final events) + an opt-in `language` pin on `AudioChunk`; the Whisper provider takes the detection **free** from its auto-detect transcription pass (no extra model call) so a mid-session switch is visible at zero added latency; the SDK carries the fields through `from_proto` → `AgentInput.metadata` → `process()`. Stubs regenerated for both stt-service and the SDK.
 - `LanguageResolver` + dependency-free en/de `detect_language` with confidence-gated switching, supported-set clamp, plan seed, fallback chain — `stella-v2-agent/.../pipeline/language_resolver.py` (#6). `resolve(text, signal=…)` takes the acoustic `(lang, confidence)` when present and falls back to the text classifier otherwise (#13) — one gating path, interchangeable signal source.
 - Resolution wired once per turn in `agent.py:process()` (before the bridge) from the STT signal, stored in `sm_context["language"]` and stamped on bridge + response `metadata["language"]`.
 - Bridge generated in the resolved language; `_detect_german` reliance removed from the live path (#7).
