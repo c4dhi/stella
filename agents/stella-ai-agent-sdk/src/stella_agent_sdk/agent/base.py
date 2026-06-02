@@ -293,6 +293,18 @@ class BaseAgent(ABC):
             "last_error": self._last_error,
         }
 
+    def _agent_identity(self) -> Dict[str, Any]:
+        """Identity metadata used to attribute outgoing messages to this agent.
+
+        Passed to :meth:`AgentOutput.to_data_payload` so progress updates carry the
+        agent's id/name/icon for frontend attribution.
+        """
+        return {
+            "agent_id": self._agent_id,
+            "agent_name": self._agent_name,
+            "agent_icon": self._agent_icon,
+        }
+
     @abstractmethod
     async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """
@@ -638,115 +650,17 @@ class BaseAgent(ABC):
                                 # Send to TTS via sentence queue
                                 self.audio.enqueue_sentence(output.content)
 
-                        elif output.type == OutputType.DEBUG:
-                            # Forward debug messages to frontend via LiveKit
-                            debug_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "agent") if output.metadata else "agent",
-                                    "level": output.metadata.get("level", "info") if output.metadata else "info",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[DEBUG MESSAGE] Publishing: {debug_payload}")
-                            await self.audio._room.publish_data(debug_payload)
-
-                        elif output.type == OutputType.STATUS:
-                            # Forward status messages to frontend as debug messages
-                            status_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "status") if output.metadata else "status",
-                                    "level": "info",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[STATUS MESSAGE] Publishing: {status_payload}")
-                            await self.audio._room.publish_data(status_payload)
-
-                        elif output.type == OutputType.ERROR:
-                            # Forward error messages to frontend as debug messages
-                            error_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "error") if output.metadata else "error",
-                                    "level": "error",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[ERROR MESSAGE] Publishing: {error_payload}")
-                            await self.audio._room.publish_data(error_payload)
-
-                        elif output.type == OutputType.METADATA:
-                            # Handle different metadata subtypes
-                            subtype = output.metadata_subtype
-                            metadata = output.metadata or {}
-
-                            if subtype == MetadataSubtype.DELIVERABLE:
-                                # Send as plan_deliverable_update for frontend
-                                deliverable_payload = {
-                                    "type": "plan_deliverable_update",
-                                    "data": {
-                                        "deliverable_key": metadata.get("key"),
-                                        "deliverable_value": metadata.get("value"),
-                                        "confidence": metadata.get("confidence", 1.0),
-                                        "reasoning": metadata.get("reasoning"),
-                                        "state_id": metadata.get("state_id"),
-                                        "task_id": metadata.get("task_id"),
-                                    }
-                                }
-                                logger.info(f"[DELIVERABLE] Publishing: {deliverable_payload}")
-                                await self.audio._room.publish_data(deliverable_payload)
-                            else:
-                                # Forward other metadata messages as debug
-                                subtype_value = subtype.value if subtype else "metadata"
-                                metadata_payload = {
-                                    "type": "debug",
-                                    "data": {
-                                        "content": f"[{subtype_value}] {output.content}",
-                                        "component": "metadata",
-                                        "level": "info",
-                                        "metadata": metadata
-                                    }
-                                }
-                                logger.info(f"[METADATA MESSAGE] Publishing: {metadata_payload}")
-                                await self.audio._room.publish_data(metadata_payload)
-
-                        elif output.type == OutputType.PROGRESS_UPDATE:
-                            # Forward progress updates to frontend for task panel display
-                            # Include agent identity metadata for proper display
-                            progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
-                            # Ensure metadata dict exists
-                            if "metadata" not in progress_data:
-                                progress_data["metadata"] = {}
-                            # Always include agent identity for proper frontend attribution
-                            progress_data["metadata"]["agent_id"] = self._agent_id
-                            progress_data["metadata"]["agent_name"] = self._agent_name
-                            progress_data["metadata"]["agent_icon"] = self._agent_icon
-                            progress_payload = {
-                                "type": "progress_update",
-                                "data": progress_data
-                            }
-                            # Store for re-sending to new participants
-                            self._last_progress_payload = progress_payload
-                            logger.info(f"[PROGRESS UPDATE] Publishing: {progress_payload}")
-                            await self.audio._room.publish_data(progress_payload)
-
-                        elif output.type == OutputType.ANALYTICS:
-                            # Forward analytics timing measurements for storage
-                            analytics_payload = {
-                                "type": "analytics",
-                                "data": {
-                                    "stage": output.metadata.get("stage", "unknown"),
-                                    "timing_ms": output.metadata.get("timing_ms", 0),
-                                    **{k: v for k, v in (output.metadata or {}).items()
-                                       if k not in ("stage", "timing_ms")},
-                                }
-                            }
-                            await self.audio._room.publish_data(analytics_payload)
+                        else:
+                            # All non-text side-channel outputs (DEBUG, STATUS,
+                            # ERROR, METADATA, PROGRESS_UPDATE, ANALYTICS) share one
+                            # payload mapping — see AgentOutput.to_data_payload.
+                            payload = output.to_data_payload(self._agent_identity())
+                            if payload is not None:
+                                if output.type == OutputType.PROGRESS_UPDATE:
+                                    # Store for re-sending to new participants.
+                                    self._last_progress_payload = payload
+                                logger.info(f"[{output.type.value}] Publishing: {payload}")
+                                await self.audio._room.publish_data(payload)
 
                 finally:
                     # Ensure all queued TTS sentences finish before accepting next input

@@ -337,8 +337,13 @@ PLACEHOLDER_SPECS: List[Dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
-def compile_prompt(template: str, sm_context: Optional[Dict[str, Any]] = None) -> str:
+def _compile_prompt(template: str, sm_context: Optional[Dict[str, Any]] = None) -> str:
     """Replace {{placeholder}} tokens in a prompt with resolved runtime values.
+
+    Internal resolver. Agents must NOT call this directly — go through the
+    versioned entry point ``stella_agent_sdk.prompts.compile(template, version=...)``
+    so prompt compilation is always pinned to an explicit compiler version. This
+    function is the version-less engine that the registered compiler delegates to.
 
     Handles both simple {{name}} and parameterized {{history_N}} placeholders.
 
@@ -460,7 +465,7 @@ class PlaceholderPromptCompiler(PromptCompiler):
     def compile(self, template: Optional[str]) -> Optional[str]:
         if not template:
             return template
-        return compile_prompt(template, self._ctx)
+        return _compile_prompt(template, self._ctx)
 
     @classmethod
     def known_placeholders(cls) -> frozenset:

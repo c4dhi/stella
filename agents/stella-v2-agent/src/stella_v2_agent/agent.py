@@ -46,6 +46,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Prompt-compiler version this agent is written and tested against. Pinned on
+# purpose (not the SDK's latest) so an SDK upgrade can't silently change how this
+# agent's expert prompts compile. Bump deliberately when adopting a new compiler
+# version. Can be overridden per deployment via config["compiler_version"].
+PROMPT_COMPILER_VERSION = "1.0.0"
+
+
 class StellaV2Agent(BaseAgent):
     """STELLA V2 Agent: 4-stage pipeline with deterministic arbitration.
 
@@ -88,6 +95,11 @@ class StellaV2Agent(BaseAgent):
             or os.environ.get("STATE_MACHINE_ADDRESS", "localhost:50051")
         )
 
+        # Explicit prompt-compiler version (never implicit/latest). Defaults to the
+        # version this agent was authored against; overridable per deployment via
+        # config["compiler_version"] in on_session_start.
+        self._compiler_version: str = PROMPT_COMPILER_VERSION
+
         # Initialize core services
         self.llm_service = LLMService(config_path=llm_config_path)
         self.expert_registry = ExpertRegistry(experts_dir=experts_dir)
@@ -95,7 +107,10 @@ class StellaV2Agent(BaseAgent):
         # Initialize pipeline stages
         self.input_gate = InputGate(self.llm_service, self.expert_registry)
         self.bridge_generator = BridgeGenerator(self.llm_service)
-        self.expert_pool = ExpertPool(self.llm_service, self.expert_registry)
+        self.expert_pool = ExpertPool(
+            self.llm_service, self.expert_registry,
+            compiler_version=self._compiler_version,
+        )
         self.arbitration = Arbitration()
         self.response_generator = ResponseGenerator(self.llm_service)
 
@@ -540,6 +555,8 @@ class StellaV2Agent(BaseAgent):
         self.config = config
         self._plan_system_prompt = None
         self._plan_config = None
+        # Explicit compiler version: config override, else the agent's pinned default.
+        self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
         # Load plan and initialize gRPC state machine
         plan = self._load_plan_config(config)
@@ -583,7 +600,12 @@ class StellaV2Agent(BaseAgent):
             self.expert_pool = ExpertPool(
                 self.llm_service, self.expert_registry,
                 tool_registry=self.tool_registry,
+                compiler_version=self._compiler_version,
             )
+
+        # Ensure the (possibly rebuilt) expert pool compiles prompts with the
+        # session's resolved compiler version, honoring any config override.
+        self.expert_pool.set_compiler_version(self._compiler_version)
 
         # Apply LLM config overrides
         if "model" in config:

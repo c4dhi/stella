@@ -10,14 +10,16 @@ final prompt for the LLM:
 Also exposed:
   - PromptCompiler / PlaceholderPromptCompiler  classes (advanced use)
   - get_compiler / register_compiler / available_versions / latest_version  registry
-  - compile_prompt                              functional one-shot resolver
-  - COMPILER_VERSION, KNOWN_PLACEHOLDERS, validate_template  versioning primitives
+  - COMPILER_VERSION, KNOWN_PLACEHOLDERS, validate_template, palette  versioning primitives
+
+There is intentionally no version-less ``compile_prompt`` in the public API: all
+prompt compilation must go through ``compile(template, version=...)`` so an SDK
+upgrade can never silently change how an agent's prompts resolve.
 """
 
 from stella_agent_sdk.prompts.base import PromptCompiler
 from stella_agent_sdk.prompts.placeholder_compiler import (
     PlaceholderPromptCompiler,
-    compile_prompt,
     has_user_message_placeholder,
     validate_template,
     palette,
@@ -37,7 +39,6 @@ __all__ = [
     "compile",
     "PromptCompiler",
     "PlaceholderPromptCompiler",
-    "compile_prompt",
     "has_user_message_placeholder",
     "validate_template",
     "palette",

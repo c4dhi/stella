@@ -6,7 +6,6 @@ from stella_agent_sdk import prompts
 from stella_agent_sdk.prompts import (
     PromptCompiler,
     PlaceholderPromptCompiler,
-    compile_prompt,
     validate_template,
     palette,
     PLACEHOLDER_SPECS,
@@ -17,7 +16,10 @@ from stella_agent_sdk.prompts import (
     COMPILER_VERSION,
     KNOWN_PLACEHOLDERS,
 )
-from stella_agent_sdk.prompts.placeholder_compiler import PLACEHOLDER_REGISTRY
+from stella_agent_sdk.prompts.placeholder_compiler import (
+    PLACEHOLDER_REGISTRY,
+    _compile_prompt,
+)
 
 
 def _ctx():
@@ -145,7 +147,9 @@ def test_palette_specs_match_the_resolver_registry():
     assert PLACEHOLDER_SPECS[0]["label"] != "mutated"
 
 
-def test_functional_helper_matches_facade():
+def test_versioned_compile_matches_internal_resolver():
+    # The public versioned entry point must produce exactly what the internal
+    # resolver does — the version gate adds enforcement, not different output.
     ctx = _ctx()
-    expected = compile_prompt("{{current_state}}", {**ctx, "_conversation_history": [], "_user_input": ""})
+    expected = _compile_prompt("{{current_state}}", {**ctx, "_conversation_history": [], "_user_input": ""})
     assert prompts.compile("{{current_state}}", COMPILER_VERSION, sm_context=ctx) == expected

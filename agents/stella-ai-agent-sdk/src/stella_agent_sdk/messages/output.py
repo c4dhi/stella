@@ -403,6 +403,90 @@ class AgentOutput:
             },
         )
 
+    # --- Side-channel dispatch ---
+
+    def to_data_payload(
+        self, agent_identity: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Map a side-channel output to a LiveKit ``publish_data`` payload.
+
+        This is the single source of truth for how non-text outputs (DEBUG,
+        STATUS, ERROR, METADATA, PROGRESS_UPDATE, ANALYTICS) are shaped into the
+        ``{"type": ..., "data": ...}`` envelope the frontend consumes. Both the
+        runtime's audio loop and the on-ready hook use it so the shaping never
+        drifts between the two call sites.
+
+        Returns ``None`` for outputs that are NOT forwarded as data messages —
+        TEXT_CHUNK / TEXT_FINAL (streamed + synthesized by the audio loop) and
+        HEALTH_STATUS (answered over the gRPC stream). Callers handle those.
+
+        Args:
+            agent_identity: ``{"agent_id", "agent_name", "agent_icon"}`` used to
+                attribute PROGRESS_UPDATE messages to the emitting agent.
+        """
+        md = self.metadata or {}
+
+        if self.type == OutputType.DEBUG:
+            return {"type": "debug", "data": {
+                "content": self.content,
+                "component": md.get("component", "agent"),
+                "level": md.get("level", "info"),
+                "metadata": md,
+            }}
+
+        if self.type == OutputType.STATUS:
+            return {"type": "debug", "data": {
+                "content": self.content,
+                "component": md.get("component", "status"),
+                "level": "info",
+                "metadata": md,
+            }}
+
+        if self.type == OutputType.ERROR:
+            return {"type": "debug", "data": {
+                "content": self.content,
+                "component": md.get("component", "error"),
+                "level": "error",
+                "metadata": md,
+            }}
+
+        if self.type == OutputType.METADATA:
+            if self.metadata_subtype == MetadataSubtype.DELIVERABLE:
+                return {"type": "plan_deliverable_update", "data": {
+                    "deliverable_key": md.get("key"),
+                    "deliverable_value": md.get("value"),
+                    "confidence": md.get("confidence", 1.0),
+                    "reasoning": md.get("reasoning"),
+                    "state_id": md.get("state_id"),
+                    "task_id": md.get("task_id"),
+                }}
+            subtype_value = self.metadata_subtype.value if self.metadata_subtype else "metadata"
+            return {"type": "debug", "data": {
+                "content": f"[{subtype_value}] {self.content}",
+                "component": "metadata",
+                "level": "info",
+                "metadata": md,
+            }}
+
+        if self.type == OutputType.PROGRESS_UPDATE:
+            # Copy so we never mutate this output's metadata when injecting identity.
+            progress_data = dict(md.get("progress_state", {}) or {})
+            identity_meta = dict(progress_data.get("metadata") or {})
+            if agent_identity:
+                identity_meta.update(agent_identity)
+            progress_data["metadata"] = identity_meta
+            return {"type": "progress_update", "data": progress_data}
+
+        if self.type == OutputType.ANALYTICS:
+            return {"type": "analytics", "data": {
+                "stage": md.get("stage", "unknown"),
+                "timing_ms": md.get("timing_ms", 0),
+                **{k: v for k, v in md.items() if k not in ("stage", "timing_ms")},
+            }}
+
+        # TEXT_CHUNK / TEXT_FINAL / HEALTH_STATUS — handled by the caller.
+        return None
+
     # --- Factory methods for HEALTH_STATUS outputs ---
 
     @classmethod
