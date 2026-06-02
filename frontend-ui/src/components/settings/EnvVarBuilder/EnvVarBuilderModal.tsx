@@ -3,11 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
 import { apiClient } from '../../../services/ApiClient'
-import type { EnvVarTemplate, CreateEnvVarTemplateDto } from '../../../lib/api-types'
+import type { EnvVarTemplate, AgentType } from '../../../lib/api-types'
 
 interface EnvVarBuilderModalProps {
   isOpen: boolean
   template?: EnvVarTemplate | null
+  // Agent types the template can be scoped to (required on create, immutable after).
+  agentTypes: AgentType[]
   onClose: () => void
   onSave: () => void
 }
@@ -21,6 +23,7 @@ interface EnvVarEntry {
 export default function EnvVarBuilderModal({
   isOpen,
   template,
+  agentTypes,
   onClose,
   onSave,
 }: EnvVarBuilderModalProps) {
@@ -30,6 +33,7 @@ export default function EnvVarBuilderModal({
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [agentTypeId, setAgentTypeId] = useState('')
   const [entries, setEntries] = useState<EnvVarEntry[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +76,7 @@ export default function EnvVarBuilderModal({
       if (template) {
         setName(template.name)
         setDescription(template.description || '')
+        setAgentTypeId(template.agentTypeId) // immutable; shown read-only
         // For editing, we only have keys - values need to be re-entered
         setEntries(
           template.variableKeys.map((key, idx) => ({
@@ -83,6 +88,8 @@ export default function EnvVarBuilderModal({
       } else {
         setName('')
         setDescription('')
+        // Preselect when there's exactly one type; otherwise force an explicit choice.
+        setAgentTypeId(agentTypes.length === 1 ? agentTypes[0].id : '')
         setEntries([{ id: `0-${Date.now()}`, key: '', value: '' }])
       }
       setError(null)
@@ -145,6 +152,12 @@ export default function EnvVarBuilderModal({
       return
     }
 
+    // Agent type is required on create (templates are scoped to one type).
+    if (!isEditing && !agentTypeId) {
+      setError('Please select an agent type for this template')
+      return
+    }
+
     // Filter out empty entries
     const validEntries = entries.filter((e) => e.key.trim())
     if (validEntries.length === 0) {
@@ -190,6 +203,7 @@ export default function EnvVarBuilderModal({
           name: name.trim(),
           description: description.trim() || undefined,
           variables,
+          agentTypeId,
         })
         addToast({ message: 'Template created successfully', type: 'success' })
       }
@@ -316,6 +330,46 @@ export default function EnvVarBuilderModal({
                     `}
                     placeholder="Optional description..."
                   />
+                </div>
+
+                {/* Agent Type — required on create, immutable after */}
+                <div>
+                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                    Agent Type <span className="text-red-500">*</span>
+                  </label>
+                  {isEditing ? (
+                    <div
+                      className={`w-full px-4 py-3 rounded-xl text-sm flex items-center justify-between ${isDark ? 'bg-zinc-700/30 border border-zinc-700 text-zinc-300' : 'bg-neutral-100 border border-neutral-200 text-neutral-600'}`}
+                    >
+                      <span>
+                        {agentTypes.find((t) => t.id === agentTypeId)?.name || 'Unknown agent type'}
+                      </span>
+                      <span className={`text-[11px] ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                        Immutable — duplicate to rebind
+                      </span>
+                    </div>
+                  ) : (
+                    <select
+                      value={agentTypeId}
+                      onChange={(e) => { setAgentTypeId(e.target.value); setHasUnsavedChanges(true) }}
+                      className={`
+                        w-full px-4 py-3 rounded-xl text-sm
+                        focus:outline-none transition-all duration-200
+                        ${isDark
+                          ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 focus:border-zinc-500'
+                          : 'bg-neutral-50 border border-neutral-200 text-neutral-900 focus:border-neutral-400'
+                        }
+                      `}
+                    >
+                      <option value="" disabled>Select an agent type…</option>
+                      {agentTypes.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  <p className={`text-[11px] mt-1.5 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+                    This template will only be offered when deploying agents of this type.
+                  </p>
                 </div>
 
                 {/* Environment Variables */}

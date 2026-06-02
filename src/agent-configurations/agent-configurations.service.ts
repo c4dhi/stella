@@ -4,6 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateAgentConfigurationDto } from './dto/create-agent-configuration.dto';
 import { UpdateAgentConfigurationDto } from './dto/update-agent-configuration.dto';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
+import { validateConfigurationAgainstSchema } from './configuration-compat.util';
+import { deriveEffectiveAgentConfig } from '../kubernetes/utils/agent-config-injection.util';
 
 @Injectable()
 export class AgentConfigurationsService {
@@ -142,49 +144,88 @@ export class AgentConfigurationsService {
   }
 
   /**
+   * Resolve a stored configuration for deployment to an agent of a given type.
+   *
+   * Enforces type + version pinning and guarantees the agent receives a complete,
+   * current-schema-valid config:
+   *   1. ownership (404 via findOne),
+   *   2. agent-type match (400 on mismatch),
+   *   3. not OUTDATED (400; precomputed by reconciliation, so this is an O(1) read),
+   *   4. re-validate the overrides against the CURRENT pipelineSchema (defence in depth),
+   *   5. deep-merge over the AgentType defaults so the pod always gets a full config.
+   *
+   * Returns the effective config object to inject as `pipeline_config`.
+   */
+  async resolveForDeploy(
+    configId: string,
+    userId: string,
+    agentTypeId: string,
+    agentTypeRecord: {
+      version?: string | null;
+      defaultConfig?: Prisma.JsonValue | null;
+      pipelineSchema?: Prisma.JsonValue | null;
+      configSchema?: Prisma.JsonValue | null;
+    },
+  ): Promise<Record<string, unknown>> {
+    const cfg = await this.findOne(configId, userId); // 404 on bad ownership
+
+    if (cfg.agentTypeId !== agentTypeId) {
+      throw new BadRequestException(
+        `Agent configuration ${configId} is bound to agent type ${cfg.agentTypeId}, not ${agentTypeId}`,
+      );
+    }
+
+    if (cfg.compatibility === 'OUTDATED') {
+      throw new BadRequestException(
+        `Agent configuration ${configId} is outdated for the current agent version` +
+          (agentTypeRecord.version ? ` (${agentTypeRecord.version})` : '') +
+          (cfg.compatibilityNote ? `: ${cfg.compatibilityNote}` : '') +
+          '. Open it in settings to review and re-save.',
+      );
+    }
+
+    // Defence in depth: re-validate against the current schema before applying.
+    const overrides = (cfg.configuration ?? {}) as Record<string, unknown>;
+    try {
+      validateConfigurationAgainstSchema(
+        overrides,
+        agentTypeRecord.pipelineSchema as Record<string, unknown> | null,
+      );
+    } catch (e) {
+      throw new BadRequestException(
+        `Agent configuration ${configId} is incompatible with the current agent schema: ${
+          (e as Error).message
+        }`,
+      );
+    }
+
+    // Always merge over defaults so the agent receives a complete config.
+    return deriveEffectiveAgentConfig(
+      {
+        slug: '',
+        defaultConfig: (agentTypeRecord.defaultConfig ?? null) as
+          | Record<string, unknown>
+          | null,
+        configSchema: (agentTypeRecord.configSchema ?? null) as
+          | Record<string, unknown>
+          | null,
+      },
+      { configuration: overrides },
+    );
+  }
+
+  /**
    * Validate configuration against the agent type's pipeline schema.
-   * Checks that only known node IDs are used and threshold values are in range.
+   * Delegates to the shared (DI-free) checker and maps failures to HTTP 400.
    */
   private validateConfiguration(
     config: Record<string, unknown>,
     pipelineSchema: Record<string, unknown>,
   ) {
-    const nodes = pipelineSchema.nodes as Array<Record<string, unknown>> | undefined;
-    const thresholds = pipelineSchema.thresholds as Array<Record<string, unknown>> | undefined;
-
-    // Validate node overrides
-    const configNodes = config.nodes as Record<string, unknown> | undefined;
-    if (configNodes && nodes) {
-      const knownNodeIds = new Set(nodes.map((n) => n.id as string));
-      for (const nodeId of Object.keys(configNodes)) {
-        if (!knownNodeIds.has(nodeId)) {
-          throw new BadRequestException(`Unknown node ID in configuration: ${nodeId}`);
-        }
-      }
-    }
-
-    // Validate threshold values
-    const configThresholds = config.thresholds as Record<string, unknown> | undefined;
-    if (configThresholds && thresholds) {
-      const thresholdMap = new Map(
-        thresholds.map((t) => [t.id as string, t]),
-      );
-      for (const [key, value] of Object.entries(configThresholds)) {
-        const schema = thresholdMap.get(key);
-        if (!schema) {
-          throw new BadRequestException(`Unknown threshold in configuration: ${key}`);
-        }
-        if (typeof value === 'number') {
-          const min = schema.min as number | undefined;
-          const max = schema.max as number | undefined;
-          if (min !== undefined && value < min) {
-            throw new BadRequestException(`Threshold ${key} value ${value} is below minimum ${min}`);
-          }
-          if (max !== undefined && value > max) {
-            throw new BadRequestException(`Threshold ${key} value ${value} is above maximum ${max}`);
-          }
-        }
-      }
+    try {
+      validateConfigurationAgainstSchema(config, pipelineSchema);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
     }
   }
 }

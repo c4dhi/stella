@@ -230,6 +230,9 @@ model AgentType {
 
   // Pipeline configuration schema (declares configurable nodes, edges, slots, thresholds)
   pipelineSchema   Json?
+  // SHA256 of pipelineSchema; lets the seed detect schema edits (even without a version
+  // bump) so saved AgentConfigurations are reconciled only when the schema actually changes.
+  pipelineSchemaHash String?
 
   // SDK requirements
   sdkMinVersion    String?             // Minimum stella-ai-agent-sdk version
@@ -428,9 +431,9 @@ model EnvVarTemplate {
   // Format: {iv}:{authTag}:{encryptedData} (all base64 encoded)
   variables   String     @db.Text
 
-  // Optional: scope to specific agent type
-  agentTypeId String?
-  agentType   AgentType? @relation(fields: [agentTypeId], references: [id])
+  // Required: scope to a single agent type (templates are never "generic")
+  agentTypeId String
+  agentType   AgentType  @relation(fields: [agentTypeId], references: [id])
 
   // Agents using this template
   agents      AgentInstance[]
@@ -560,6 +563,14 @@ model ServerMetricsSnapshot {
   @@index([timestamp])
 }
 
+// Compatibility of a saved AgentConfiguration with its AgentType's current pipelineSchema.
+// Computed by the reconciliation pass that runs when an AgentType version/schema changes.
+enum ConfigCompatibility {
+  CURRENT    // agentVersion == AgentType.version and re-validates cleanly
+  COMPATIBLE // authored against an older version but still re-validates against current schema
+  OUTDATED   // fails re-validation; excluded from deploy pickers until the user fixes it
+}
+
 // Agent pipeline configuration - user-created named configurations
 model AgentConfiguration {
   id            String    @id @default(uuid())
@@ -570,11 +581,18 @@ model AgentConfiguration {
   agentTypeId   String
   agentType     AgentType @relation(fields: [agentTypeId], references: [id])
   configuration Json      // Sparse overrides: { nodes: {...}, thresholds: {...} }
-  agentVersion  String?   // Version of agent type at creation time
+  agentVersion  String?   // Version of agent type this config was last reconciled against
+
+  // Reconciliation state (recomputed only when the AgentType version/schema changes)
+  compatibility     ConfigCompatibility @default(CURRENT)
+  compatibilityNote String?  @db.Text   // Why OUTDATED (e.g. "unknown node ID: expert_pool")
+  lastReconciledAt  DateTime?
+
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   @@index([userId])
   @@index([agentTypeId])
   @@index([userId, agentTypeId])
+  @@index([agentTypeId, compatibility])
 }

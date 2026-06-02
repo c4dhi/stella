@@ -349,7 +349,9 @@ export default function ProjectModal({
           }
 
           if (selectedConfiguration) {
-            // Backend maps pipelineConfig -> pipeline_config at deploy time.
+            // Preferred: store the ID so the spawn resolves a type/version-checked,
+            // defaults-merged config. Keep the inline snapshot as a fallback.
+            agentConfig.agentConfigurationId = selectedConfiguration.id
             agentConfig.pipelineConfig = selectedConfiguration.configuration as unknown as Record<string, unknown>
           }
 
@@ -961,7 +963,7 @@ export default function ProjectModal({
                   className="p-6"
                 >
                   <EnvVarsSelectionStep
-                    agentTypeId={selectedAgentType?.id}
+                    agentTypeId={selectedAgentType?.id ?? ''}
                     requiredEnvVars={agentRequirements.requiredEnvVars}
                     selectedEnvVarTemplate={selectedEnvVarTemplate}
                     onSelectEnvVarTemplate={setSelectedEnvVarTemplate}

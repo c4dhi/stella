@@ -20,6 +20,15 @@ export class CreateAgentDto {
   @IsOptional()
   config?: Record<string, unknown>;  // Agent-specific config (e.g., { plan: {...}, plan_id: "..." })
 
+  // Stored pipeline configuration to apply. When set, the backend loads the
+  // configuration by ID, verifies it matches this agent's type and is not
+  // outdated, and uses its (merged) overrides as pipeline_config — ignoring any
+  // client-supplied config.pipeline_config. This is what makes type/version
+  // scoping enforceable server-side.
+  @IsUUID()
+  @IsOptional()
+  agentConfigurationId?: string;
+
   @IsUUID()
   @IsOptional()
   envVarTemplateId?: string;  // Environment variable template to use for agent pod

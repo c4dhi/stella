@@ -387,6 +387,14 @@ export default function AgentConfigSection() {
 
                         {/* Stats */}
                         <div className="flex flex-wrap gap-1.5 mt-2">
+                          {config.compatibility === 'OUTDATED' && (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-700'}`}
+                              title={config.compatibilityNote || 'This agent type changed; review and re-save to use this configuration'}
+                            >
+                              Outdated — review & re-save
+                            </span>
+                          )}
                           {modifiedNodes === 0 && modifiedThresholds === 0 ? (
                             <span className={`
                               inline-flex items-center px-2 py-0.5 rounded-full text-xs

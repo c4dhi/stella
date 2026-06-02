@@ -20,7 +20,7 @@ import ConfigurationSelectionStep from '../shared/ConfigurationSelectionStep'
 interface DeployAgentModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>) => Promise<void>
+  onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>, agentConfigurationId?: string) => Promise<void>
 }
 
 type Step = 'gallery' | 'upload' | 'configure' | 'configuration' | 'plan' | 'envvars'
@@ -292,10 +292,9 @@ export default function DeployAgentModal({
       }
     }
 
-    // Merge pipeline configuration if one is selected
-    if (selectedConfiguration) {
-      config.pipeline_config = selectedConfiguration.configuration
-    }
+    // A selected pipeline configuration is applied server-side by ID (see below):
+    // the backend verifies its type/version and resolves the effective config, so
+    // we intentionally do NOT inline pipeline_config here.
 
     setIsSubmitting(true)
     setError(null)
@@ -319,7 +318,8 @@ export default function DeployAgentModal({
         Object.keys(config).length > 0 ? config : undefined,
         selectedType.slug,
         selectedEnvVarTemplate?.id,
-        Object.keys(filteredEnvVars).length > 0 ? filteredEnvVars : undefined
+        Object.keys(filteredEnvVars).length > 0 ? filteredEnvVars : undefined,
+        selectedConfiguration?.id
       )
       onClose()
     } catch (err) {

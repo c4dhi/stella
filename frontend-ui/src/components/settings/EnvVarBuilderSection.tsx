@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
 import { apiClient } from '../../services/ApiClient'
-import type { EnvVarTemplate } from '../../lib/api-types'
+import type { EnvVarTemplate, AgentType } from '../../lib/api-types'
 import EnvVarTemplateCard from './EnvVarTemplateCard'
 import EnvVarBuilderModal from './EnvVarBuilder/EnvVarBuilderModal'
 import ConfirmDialog from '../modals/ConfirmDialog'
@@ -35,6 +35,7 @@ export default function EnvVarBuilderSection() {
   const isDark = resolvedTheme === 'dark'
 
   const [templates, setTemplates] = useState<EnvVarTemplate[]>([])
+  const [agentTypes, setAgentTypes] = useState<AgentType[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -46,14 +47,22 @@ export default function EnvVarBuilderSection() {
     try {
       setIsLoading(true)
       setError(null)
-      const data = await apiClient.listEnvVarTemplates()
+      // Management view: all templates across types, plus the type list for badges/picker.
+      const [data, types] = await Promise.all([
+        apiClient.listEnvVarTemplates(),
+        apiClient.getAgentTypes(),
+      ])
       setTemplates(data)
+      setAgentTypes(types)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load templates')
     } finally {
       setIsLoading(false)
     }
   }
+
+  const agentTypeName = (id: string): string =>
+    agentTypes.find((t) => t.id === id)?.name || 'Unknown type'
 
   useEffect(() => {
     loadTemplates()
@@ -260,6 +269,7 @@ export default function EnvVarBuilderSection() {
                   <EnvVarTemplateCard
                     key={template.id}
                     template={template}
+                    agentTypeName={agentTypeName(template.agentTypeId)}
                     index={index}
                     onEdit={() => handleEdit(template)}
                     onDelete={() => handleDelete(template)}
@@ -276,6 +286,7 @@ export default function EnvVarBuilderSection() {
       <EnvVarBuilderModal
         isOpen={isModalOpen}
         template={editingTemplate}
+        agentTypes={agentTypes}
         onClose={handleModalClose}
         onSave={loadTemplates}
       />

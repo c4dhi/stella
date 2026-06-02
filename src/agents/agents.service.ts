@@ -21,6 +21,7 @@ import { AgentStatus, Prisma } from '@prisma/client';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 import { EncryptionService } from '../env-var-templates/encryption.service';
 import { EnvVarTemplatesService } from '../env-var-templates/env-var-templates.service';
+import { AgentConfigurationsService } from '../agent-configurations/agent-configurations.service';
 
 /**
  * AgentsService - Manages agent lifecycle.
@@ -42,6 +43,8 @@ export class AgentsService {
     private readonly encryptionService: EncryptionService,
     // Used for resolving env vars (template decrypt + manual merge) before K8s pod creation.
     private readonly envVarTemplatesService: EnvVarTemplatesService,
+    // Used to resolve + validate a stored pipeline configuration at deploy time.
+    private readonly agentConfigurationsService: AgentConfigurationsService,
     private readonly eventEmitter: EventEmitter2,
     @Optional() private agentServerService?: AgentServerService,
     @Optional() @Inject(forwardRef(() => SessionsService)) private sessionsService?: SessionsService,
@@ -272,10 +275,19 @@ export class AgentsService {
       throw new BadRequestException(`Invalid agent type: ${agentType}. Allowed: ${allowedAgentTypes.join(', ')}`);
     }
 
-    // Look up AgentType from DB for per-agent resource limits
+    // Look up AgentType from DB for per-agent resource limits, type scoping and
+    // pipeline-config resolution.
     const agentTypeRecord = await this.prisma.agentType.findUnique({
       where: { slug: agentType },
-      select: { resourceCpu: true, resourceMemory: true },
+      select: {
+        id: true,
+        version: true,
+        resourceCpu: true,
+        resourceMemory: true,
+        defaultConfig: true,
+        pipelineSchema: true,
+        configSchema: true,
+      },
     });
 
     // Security: Sanitize agent name (max 255 chars, no control characters)
@@ -290,6 +302,10 @@ export class AgentsService {
     // (Previously this only ran for public-project flows in PublicProjectsService.)
     this.validateRuntimeConfigForAgentType(agentType, agentConfig);
 
+    // Enforce type/version scoping of configuration artifacts BEFORE persisting the
+    // agent or creating any pod, so a mismatch returns 400 and leaves no trace.
+    await this.applyScopedConfiguration(createAgentDto, userId, agentTypeRecord, agentConfig);
+
     // Encrypt manual env vars now so they are persisted before the async pod creation.
     // This guarantees restart() can recover them even if the pod creation fails.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
@@ -302,6 +318,7 @@ export class AgentsService {
         icon: createAgentDto.icon || '🤖',
         agentConfig: agentConfig as Prisma.InputJsonValue,
         agentType,
+        agentTypeId: agentTypeRecord?.id ?? null,  // Persist FK (was previously left null)
         envVarTemplateId: createAgentDto.envVarTemplateId || null,  // Store for restarts
         // Keep encrypted manual env vars for restart path parity with template-based deployments.
         manualEnvVarsEncrypted,
@@ -422,6 +439,61 @@ export class AgentsService {
       // Emit internal EventEmitter event for PublicProjectsService to catch
       // This allows event-based waiting instead of DB polling
       this.eventEmitter.emit(`agent.failed.${session.id}`, { error: error.message });
+    }
+  }
+
+  /**
+   * Enforce that env-var templates and pipeline configurations are scoped to the
+   * target agent's type (and, for configurations, not outdated) BEFORE anything is
+   * persisted. A mismatch throws BadRequestException (HTTP 400) and no pod is created.
+   *
+   * When an `agentConfigurationId` is supplied, the resolved (defaults-merged,
+   * current-schema-valid) config replaces any client-supplied `pipeline_config`,
+   * so the agent always receives a config it can reliably process.
+   *
+   * Mutates `agentConfig` in place (sets `pipeline_config`).
+   */
+  private async applyScopedConfiguration(
+    createAgentDto: CreateAgentDto,
+    userId: string,
+    agentTypeRecord:
+      | {
+          id: string;
+          version: string | null;
+          defaultConfig: Prisma.JsonValue | null;
+          pipelineSchema: Prisma.JsonValue | null;
+          configSchema: Prisma.JsonValue | null;
+        }
+      | null,
+    agentConfig: Record<string, unknown>,
+  ): Promise<void> {
+    const { envVarTemplateId, agentConfigurationId } = createAgentDto;
+
+    if (!envVarTemplateId && !agentConfigurationId) return;
+
+    // Scoping requires a known AgentType row to compare against.
+    if (!agentTypeRecord) {
+      throw new BadRequestException(
+        'Cannot apply a scoped env-var template or configuration: the target agent type is not registered',
+      );
+    }
+
+    if (envVarTemplateId) {
+      await this.envVarTemplatesService.assertCompatibleWithAgentType(
+        envVarTemplateId,
+        userId,
+        agentTypeRecord.id,
+      );
+    }
+
+    if (agentConfigurationId) {
+      agentConfig.pipeline_config =
+        await this.agentConfigurationsService.resolveForDeploy(
+          agentConfigurationId,
+          userId,
+          agentTypeRecord.id,
+          agentTypeRecord,
+        );
     }
   }
 
@@ -906,6 +978,17 @@ export class AgentsService {
     const storedManualVars = agent.manualEnvVarsEncrypted
       ? this.encryptionService.decrypt(agent.manualEnvVarsEncrypted)
       : undefined;
+
+    // Defence in depth: if both the persisted template and agent type are known,
+    // re-assert their binding before re-resolving (legacy agents have a null
+    // agentTypeId and are skipped — they were validated at original create time).
+    if (agent.envVarTemplateId && agent.agentTypeId) {
+      await this.envVarTemplatesService.assertCompatibleWithAgentType(
+        agent.envVarTemplateId,
+        projectMembership.userId,
+        agent.agentTypeId,
+      );
+    }
 
     // Re-resolve env vars using the same code path as create() to guarantee the restarted pod
     // gets an identical secret to the original deployment.

@@ -3,6 +3,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as dotenv from 'dotenv'
 import { parseAgentManifestYaml, type CanonicalAgentManifest } from '../src/agent-package/schemas/agent-manifest.schema'
+import { reconcileAgentTypeConfigurations } from '../src/agent-configurations/configuration-reconciliation'
+import { hashPipelineSchema } from '../src/agent-configurations/configuration-compat.util'
 
 function resolveWorkspaceRoot(): string {
   if (process.env.AGENT_WORKSPACE_ROOT) {
@@ -159,6 +161,7 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
     configSchema: manifest.configSchema ? (manifest.configSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     defaultConfig: manifest.defaultConfig ? (manifest.defaultConfig as Prisma.InputJsonValue) : Prisma.JsonNull,
     pipelineSchema: manifest.pipelineSchema ? (manifest.pipelineSchema as Prisma.InputJsonValue) : Prisma.DbNull,
+    pipelineSchemaHash: hashPipelineSchema((manifest.pipelineSchema as Record<string, unknown>) ?? null),
     sdkMinVersion: manifest.sdk?.minVersion || null,
   }
 }
@@ -352,6 +355,13 @@ async function main() {
   for (const { manifest } of agents) {
     const dbFields = mapManifestToDbFields(manifest)
 
+    // Capture the pre-upsert state so we can detect a version/schema change and
+    // reconcile saved configurations ONLY when the agent type actually changed.
+    const before = await prisma.agentType.findUnique({
+      where: { slug: manifest.metadata.slug },
+      select: { version: true, pipelineSchemaHash: true },
+    })
+
     const result = await prisma.agentType.upsert({
       where: { slug: manifest.metadata.slug },
       update: {
@@ -371,6 +381,7 @@ async function main() {
         configSchema: dbFields.configSchema,
         defaultConfig: dbFields.defaultConfig,
         pipelineSchema: dbFields.pipelineSchema,
+        pipelineSchemaHash: dbFields.pipelineSchemaHash,
         sdkMinVersion: dbFields.sdkMinVersion,
         // Preserve isBuiltIn and validationStatus on update
       },
@@ -383,6 +394,21 @@ async function main() {
     })
 
     console.log(`  - ${result.name} (${result.slug}) [${result.id}]`)
+
+    // Reconcile saved configurations only when the version or pipeline schema
+    // changed (or this type is brand new). Keeps the seed O(changed types).
+    const versionChanged = before?.version !== result.version
+    const schemaChanged = before?.pipelineSchemaHash !== result.pipelineSchemaHash
+    if (!before || versionChanged || schemaChanged) {
+      const report = await reconcileAgentTypeConfigurations(prisma, result.id)
+      if (report.total > 0) {
+        console.log(
+          `    reconciled ${report.total} configuration(s): ` +
+            `${report.current} current, ${report.compatible} compatible, ` +
+            `${report.outdated} outdated, ${report.pruned} pruned`,
+        )
+      }
+    }
   }
 
   await verifySeedRoundTrip(agents)

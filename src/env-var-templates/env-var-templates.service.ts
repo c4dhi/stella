@@ -19,7 +19,7 @@ export interface EnvVarTemplateResponse {
   name: string;
   description: string | null;
   variableKeys: string[];
-  agentTypeId: string | null;
+  agentTypeId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +43,17 @@ export class EnvVarTemplatesService {
     this.logger.log(
       `Creating env var template "${dto.name}" for user ${userId}`,
     );
+
+    // Templates are always scoped to exactly one agent type; verify it exists.
+    // Mirrors AgentConfigurationsService.create.
+    const agentType = await this.prisma.agentType.findUnique({
+      where: { id: dto.agentTypeId },
+    });
+    if (!agentType) {
+      throw new BadRequestException(
+        `Agent type with ID ${dto.agentTypeId} not found`,
+      );
+    }
 
     // Encrypt the variables
     const encryptedVariables = this.encryption.encrypt(dto.variables);
@@ -73,24 +84,37 @@ export class EnvVarTemplatesService {
   }
 
   /**
-   * Find all templates for a user, optionally filtered by agent type
+   * Find templates for a user scoped strictly to a single agent type.
+   * No "generic" fallthrough — only templates whose agentTypeId matches.
    */
   async findByAgentType(
     userId: string,
-    agentTypeId?: string,
+    agentTypeId: string,
   ): Promise<EnvVarTemplateResponse[]> {
     const templates = await this.prisma.envVarTemplate.findMany({
-      where: {
-        userId,
-        OR: [
-          { agentTypeId: null }, // Generic templates
-          { agentTypeId: agentTypeId }, // Agent-specific templates
-        ],
-      },
+      where: { userId, agentTypeId },
       orderBy: { updatedAt: 'desc' },
     });
 
     return templates.map((t) => this.toResponse(t));
+  }
+
+  /**
+   * Assert an env var template is compatible with a target agent type.
+   * Throws 404 if the template isn't owned by the user, 400 on a type mismatch.
+   * Call this before persisting a templateId on an agent or resolving its vars.
+   */
+  async assertCompatibleWithAgentType(
+    templateId: string,
+    userId: string,
+    agentTypeId: string,
+  ): Promise<void> {
+    const template = await this.findOne(templateId, userId);
+    if (template.agentTypeId !== agentTypeId) {
+      throw new BadRequestException(
+        `Env var template ${templateId} is bound to agent type ${template.agentTypeId}, not ${agentTypeId}`,
+      );
+    }
   }
 
   /**
@@ -123,10 +147,11 @@ export class EnvVarTemplatesService {
     // Verify ownership
     await this.findOne(id, userId);
 
+    // agentTypeId is immutable post-create (templates belong to the type they were
+    // authored for); rebind via duplicate. It is intentionally absent from the DTO.
     const updateData: any = {
       name: dto.name,
       description: dto.description,
-      agentTypeId: dto.agentTypeId,
     };
 
     // Only encrypt and update variables if provided
@@ -283,7 +308,7 @@ export class EnvVarTemplatesService {
     name: string;
     description: string | null;
     variables: string;
-    agentTypeId: string | null;
+    agentTypeId: string;
     createdAt: Date;
     updatedAt: Date;
   }): EnvVarTemplateResponse {

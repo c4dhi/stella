@@ -137,6 +137,7 @@ export default function ConfigurationSelectionStep({
       {configurations.map((config, index) => {
         const style = getConfigCardStyle(config.id)
         const isSelected = selectedConfiguration?.id === config.id
+        const isOutdated = config.compatibility === 'OUTDATED'
         const modifiedNodes = countModifiedNodes(config.configuration)
         const modifiedThresholds = Object.keys(config.configuration.thresholds || {}).length
 
@@ -144,14 +145,22 @@ export default function ConfigurationSelectionStep({
           <motion.button
             key={config.id}
             type="button"
-            onClick={() => onSelectConfiguration(config)}
+            // Outdated configs can't be deployed (the backend would 400); clicking
+            // opens the editor so the user can review & re-save instead of selecting.
+            onClick={(e) => (isOutdated ? handleEditExisting(config, e) : onSelectConfiguration(config))}
             whileHover={{ y: -2 }}
+            title={isOutdated ? (config.compatibilityNote || 'Outdated — review and re-save to use') : undefined}
             className={`
               group/card relative p-4 rounded-xl text-left transition-all duration-200
+              ${isOutdated ? 'opacity-60' : ''}
               ${isSelected
                 ? isDark
                   ? 'bg-primary-500/20 border-2 border-primary-500 shadow-lg shadow-primary-500/20'
                   : 'bg-neutral-100 border-2 border-neutral-900 shadow-lg shadow-neutral-900/10'
+                : isOutdated
+                  ? isDark
+                    ? 'bg-zinc-800/40 border border-amber-500/30'
+                    : 'bg-amber-50/40 border border-amber-300/50'
                 : isDark
                   ? 'bg-zinc-700/50 border border-zinc-600 hover:border-zinc-500 hover:bg-zinc-700/80'
                   : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:shadow-md'
@@ -207,6 +216,14 @@ export default function ConfigurationSelectionStep({
 
             {/* Stats */}
             <div className="flex flex-wrap gap-1.5 mt-2">
+              {isOutdated && (
+                <span className={`
+                  inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+                  ${isDark ? 'bg-amber-500/20 text-amber-300' : 'bg-amber-100 text-amber-700'}
+                `}>
+                  Outdated — review & re-save
+                </span>
+              )}
               {modifiedNodes === 0 && modifiedThresholds === 0 ? (
                 <span className={`
                   inline-flex items-center px-2 py-0.5 rounded-full text-xs
