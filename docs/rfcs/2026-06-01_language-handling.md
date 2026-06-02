@@ -1,331 +1,165 @@
-# RFC: Coherent language handling (STT → LLM → TTS)
+# Coherent language handling (STT → LLM → TTS)
 
 - **Ticket:** [#214 — Coherent language handling for STT, TTS, and user selection](https://github.com/c4dhi/STELLA/issues/214)
-- **Status:** Implemented on `feature/language-handling-214` (except #11, a deployment toggle) — see §15.
-- **Date:** 2026-06-01 (design); implementation follows.
-- **Scope:** Target behaviour + the mechanism changes (§9). Originally a design proposal; now also the record of what was built and what remains a deployment decision.
+- **Branch / PR:** `feature/language-handling-214` · PR #244
+- **Status:** Implemented. One item is a deployment toggle, not code — see [§9](#9-whats-left).
+
+The system automatically detects the spoken language and responds in it — bridge, main response text, and voice all coherent within a turn — and switches language only on a sustained, confident change. Typed input is handled by the same logic via a text classifier.
 
 ---
 
 ## 1. Problem
 
-Language is currently **decided three separate times** in a single session, and nothing keeps those decisions in sync:
+Language was decided **three times independently** in a single turn, with nothing keeping them in sync:
 
-| Stage | How language is decided today | Source |
-|---|---|---|
-| STT (Whisper) | Auto-detects, caches **once** per session after ≥2s, then forces it | `stt-service/src/providers/whisper_provider.py:444,518,538-542` |
-| Bridge | German word-list heuristic on the transcript text | `agents/stella-v2-agent/src/stella_v2_agent/pipeline/bridge_generator.py:110-127` |
-| LLM response | "Respond in the same language the user speaks" prompt; LLM infers | `agents/stella-v2-agent/src/stella_v2_agent/prompts/response_prompt.py:102-123` |
-| TTS voice | Static `TTS_LANGUAGE` env var, fixed per process | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/audio/pipeline.py:152` |
+| Stage | How it decided | 
+|---|---|
+| STT (Whisper) | auto-detected, then **cached once** and forced for the rest of the session |
+| Bridge | a German word-list heuristic on the transcript |
+| LLM response | a "respond in the same language" prompt — the model guessed |
+| TTS voice | a static `TTS_LANGUAGE` env var, fixed per process |
 
-Because each stage decides independently, they can disagree **within one turn** — the most visible failure being a **bridge in one language and the main response in another**, spoken by whatever voice the env var happens to name.
-
-There is also no way for a plan author to declare an expected language, and the STT proto cannot accept a language hint even if we wanted to give one.
+Because each stage guessed on its own, they could disagree **within one turn** — most visibly a **bridge in one language and the answer in another**, spoken by whatever voice the env var named. There was also no way for a plan to declare an expected language, and the STT proto couldn't carry a language signal at all.
 
 ---
 
-## 2. Goals
+## 2. Design: detect once, propagate everywhere
 
-1. The system **automatically** picks up the spoken language and responds in it — no required user action.
-2. **Coherence by construction:** the bridge and the main response (text + voice) are always in the same language within a turn.
-3. **Reliable, not twitchy:** a single ambiguous word ("ja", "ok", a number) must not flip the language; switching is allowed but only on a sustained, confident change.
-4. Keep it **simple**: one source of truth, minimal new surface area.
-
-### Non-goals
-
-- Supporting languages we cannot serve end-to-end (see §7). Auto-detection is only ever as wide as our voice coverage.
-- Per-word / intra-utterance language mixing.
-
----
-
-## 3. Decisions (agreed)
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Detection granularity | **Confidence-gated switch** — session-locked by default; switches only on a sustained, high-confidence change | Reliability without trapping a genuine language switch |
-| Plan-author control | **Optional declared default** — author may set a language (acts as seed + STT hint) or leave it `auto` | Reliability when language is known; auto otherwise |
-| Participant picker | **None — pure auto-detect** | Matches the "system just picks it up" goal; zero friction |
-
----
-
-## 4. Core principle: detect once, propagate everywhere
-
-Collapse the three independent detections into **one authoritative detection that flows downstream**:
+One language is resolved **per turn**, before the bridge fires, and every downstream stage reads that one value.
 
 ```
-                                            STT auto-detects (language=None) and
-                                            reports detection FREE from that pass
-        ▲                                          │
-        └───(detected_language + confidence, up)───┘
-   (single source of truth)   [optional: agent may PIN STT to a language, opt-in]
-   Agent applies the confidence-gated switch, then feeds the resolved
-   per-turn language to ──► bridge ──► LLM prompt ──► TTS request.language
+   STT auto-detects each utterance (language=None) and reports
+   (detected_language, confidence) FREE from the transcription pass
+                          │
+                          ▼
+   Agent LanguageResolver  ── confidence-gated switch, lock, fallback ──►  session language
+                          │
+        ┌─────────────────┼───────────────────┬───────────────┐
+        ▼                 ▼                   ▼               ▼
+      bridge        LLM response      {{language}} var     TTS (language + voice)
 ```
 
-- **STT reports, the agent decides.** STT emits a real per-utterance `detected_language` + `confidence`. The gating policy (debounce, thresholds, clamp to supported set) lives in the **agent**, where it belongs as product logic — not in the STT VAD loop.
-- The agent sends its locked language **down** to STT as a transcription hint (improves transcription accuracy and stability).
-- The agent feeds the single resolved per-turn language **up the rest of the pipeline**: bridge, LLM prompt, TTS request.
+- **STT reports, the agent decides.** STT emits a genuine per-utterance `detected_language` + `confidence`. The gating policy (thresholds, debounce, clamp to the supported set) lives in the **agent**, as product logic — not in the STT VAD loop.
+- The resolved value is frozen for the turn and fed to the bridge, the response prompt, the `{{language}}` template variable, and the TTS request (language + voice).
+
+### Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Switching | **Confidence-gated** — session-locked; switches only on a sustained, high-confidence change | Reliable, but never traps a real switch |
+| Plan control | **Optional declared language** — a soft *seed*, default `auto` | Sharpens turn-1 detection when known; pure auto otherwise |
+| Participant picker | **None — pure auto-detect** | Zero friction; matches "the system just picks it up" |
 
 ---
 
-## 5. Why this guarantees bridge ↔ main coherence
+## 3. Why bridge ↔ response are coherent by construction
 
-The bridge is **not** racing ahead of language detection. The actual timing:
+The bridge does **not** race ahead of detection. It is generated from the **final** transcript, in parallel with the input gate (`agent.py` `process()`), and the final transcript is exactly where Whisper computes the language. So at bridge time the language for that utterance is already known.
 
-- The bridge is generated from the **final** transcript text, in parallel with the **input gate** — not ahead of STT (`agents/stella-v2-agent/src/stella_v2_agent/agent.py:170-172`).
-- The final transcript is produced by `_generate_final()`, and **that exact call is where Whisper computes the language** (`whisper_provider.py:521,538-542`).
+> **The rule:** language is resolved once per turn, before the bridge, and is immutable for that turn. A gated switch takes effect at a **turn boundary**, never mid-turn.
 
-So at the moment the bridge text is generated, STT has *already* decided the language for that very utterance — the language simply isn't plumbed to the agent yet (the proto `TranscriptEvent` has no language field).
-
-**Therefore:** once `detected_language` rides on the final `TranscriptEvent`, the bridge, the LLM response, and the TTS request can all be generated in the same confident, STT-detected language for that turn.
-
-> **The coherence rule:** language is resolved once per turn, before the bridge fires, and is immutable for that turn. A confidence-gated switch takes effect at a **turn boundary**, never mid-turn.
-
-This makes a **language-neutral / filler bridge unnecessary** — an earlier idea we explicitly reject here. It would have degraded as bridges grow longer; instead the bridge is always produced directly in the detected language. No filler, no one-turn lag.
+This is why no language-neutral / filler bridge is needed: the bridge is produced directly in the detected language, with no one-turn lag.
 
 ---
 
-## 6. The catch with "confidence-gated switch" (and the fix)
+## 4. STT detection — free, no added latency
 
-The original code would **not** hand the agent a switch signal:
+Whisper transcribes in **auto-detect mode** (`language=None`) and the detection is read straight off the transcription result (`info.language` / `info.language_probability`) — values faster-whisper computes anyway. There is **no second model call**: detection is a byproduct of the pass we already run.
 
-1. **It locked once and never re-detected** — `whisper_provider.py:538`: `if not self.detected_language` set it permanently on the first ≥2s utterance.
-2. **It then *forced* that language into every later transcription** — when faster-whisper is given `language=`, detection is **skipped** and `info.language_probability` is effectively 1.0, so `info.language` on turn 2+ just echoed the locked value. A real switch was invisible.
+- A genuine `(detected_language, confidence)` rides on every final `TranscriptEvent` above the ~2s reliability floor. Below it, no signal is emitted and the agent falls back to its text classifier ([§6](#6-typed-input--unified-fallback)).
+- Because transcription is never forced to a stale language, the switch utterance itself transcribes correctly — there is no garbled turn.
+- **Pinning is opt-in** (`WHISPER_LANGUAGE` env, or a per-session `AudioChunk.language`) for deployments that must stay in one language; it trades away the free detection. Off by default.
 
-**Fix (as implemented):** transcribe in **auto-detect mode** (`language=None`) and read the detection straight off the transcription result — `info.language` + `info.language_probability` — which faster-whisper computes anyway. This is the cleanest design *and* the cheapest:
-
-- **Zero added latency** — no second model call. The earlier draft kept forcing for "stability" and added a separate `detect_language()` probe (≈ one extra encoder pass per forced utterance); auto-detect makes both unnecessary. The detection is a byproduct of the pass we already run.
-- The genuine `(detected_language, confidence)` is on every final event ≥ the ~2s reliability floor; below it, no signal is emitted and the agent falls back to its text classifier (§8.3).
-- The agent compares it to its lock and applies the gate.
-- **No switch-utterance degradation**: because transcription is never forced to a stale language, the switch utterance itself transcribes in the right language — there is no garbled turn to accept.
-
-**Pinning stays available but opt-in** (`WHISPER_LANGUAGE` env or a per-session `AudioChunk.language`): a deployment that must stay in one language can force it, at the cost of the free detection. Default is auto-detect.
+> An earlier cut forced transcription to the resolved language and ran a separate `detect_language()` probe (~one extra encoder pass per utterance). Auto-detect makes both unnecessary — same signal, zero cost.
 
 ---
 
-## 7. Provider / voice coverage — **best-effort, provider-agnostic**
+## 5. Resolution order & gating (per turn)
 
-The resolved language is plumbed to TTS as a **per-request hint**: a provider that can switch language honors it; a provider that can't **discards it**. The feature is **not gated on any particular provider** — it works with whatever is deployed, and spoken-voice multilingualism is an upgrade you get for free when the deployed provider supports it.
+`LanguageResolver.resolve(text, signal=…)` takes the acoustic `(language, confidence)` when present (voice) and falls back to the bundled text classifier otherwise (typed input / no signal). Both shapes flow through one gating path:
 
-Crucially, the **LLM-side coherence is provider-independent**: the response *text*, the bridge, and the `{{language}}` variable always follow the detected language regardless of which voice speaks it. The provider only decides whether the *spoken audio* can also follow.
+1. **Confident, supported signal** (`confidence ≥ threshold`) → adopt it.
+2. **Hold the lock** — unchanged turn-to-turn by default.
+3. **Confidence-gated switch** — change only on a *different supported* language at `confidence ≥ switch_threshold`, debounced. A stray "ja"/"ok"/number cannot flip it.
+4. **Clamp** — anything outside the supported set keeps the current lock.
 
-A validation pass (see §13) found the provider landscape changed since the ticket was filed — **Edge TTS is fully removed** — and that providers fall into two groups, **all of which accept the `language` field without erroring** (verified):
+**Fallback chain** when a turn has no confident signal:
 
-| Provider | Languages | Per-request `language` | Behavior when it can't honor it | File |
-|---|---|---|---|---|
-| **Piper** (current default) | One per deployed voice | Ignored | Accepts & silently ignores; speaks its built `PIPER_VOICE` | `piper_provider.py:131,172` |
-| **Kokoro** | English only | Ignored | Accepts & silently ignores | `kokoro_provider.py:332,390` |
-| **Qwen3** | 60+, autodetect | **Honored** (`_resolve_language` → model) | n/a (autodetects) | `qwen3_provider.py:217-227` |
-| **ChatterBox** | `en`, `de` | **Honored** (`_resolve_language` → `language_id`) | Unsupported code → logs + falls back to `CHATTERBOX_LANGUAGE` | `chatterbox_provider.py:203-209` |
+1. the current session lock (**the last detected language**), else
+2. the plan seed (`Plan.language`, if set), else
+3. the global default.
 
-**Consequence:** with Piper/Kokoro the spoken voice stays fixed, but the agent still *responds* in the user's language — degraded gracefully, not broken. Deploying Qwen3 or ChatterBox additionally makes the **voice** follow, with no code change (env/build-arg + model weights only). Mechanism #9 is a no-op on a non-honoring provider but is never harmful.
-
-**Agent-side clamp (separate concern):** the resolver still clamps its *own* decision to a committed supported set (v1: `en`, `de`) so the LLM is never asked to respond in a language we don't intend to support. If STT confidently detects something outside that set, the agent keeps the current locked / plan-default language. This clamp is about what the system commits to answer in; the TTS discard-the-tag behavior above is the independent provider layer. Adding a language later means widening the resolver's supported set **and** (for spoken voice) deploying a provider that can speak it.
+A lock established *provisionally* from the seed/default (turn-1 ambiguity) is not treated as a real detection: the first genuine detection adopts it at the lower `detect_threshold` rather than having to clear `switch_threshold`, so the last *detected* language always wins over a placeholder. Thresholds and debounce are tunable constants in the resolver.
 
 ---
 
-## 8. Language resolution order (per turn)
+## 6. Plan language vs. spoken language — *hint, never deafen*
 
-The agent resolves **one** `session.language` value each turn, in order:
-
-1. **Plan default**, if the author set one — seeds turn 1 and is sent to STT as the transcription hint. If `auto`, skip.
-2. **Auto-detect** — the first confident (`confidence ≥ threshold`, ≥2s) utterance sets the lock.
-3. **Hold the lock** — it does not change turn-to-turn by default.
-4. **Confidence-gated switch** — change the lock only if STT's independent detection reports a *different supported* language, with `confidence ≥ switch_threshold`, over a *substantial* utterance, ideally debounced over 2 consecutive detections. Stray short utterances cannot flip it.
-5. **Clamp to supported set** — anything outside §7 keeps the current lock.
-
-### 8.1 Conflict: plan language ≠ spoken language
-
-**Default rule: the spoken language wins.** The plan language is a *seed*, never a cage — consistent with the "optional declared default (soft)" decision in §3.
+The plan language is a seed, not a cage: **the spoken language wins.**
 
 | Plan | User speaks | Resolution |
 |---|---|---|
-| `auto` | anything | Pure detect. No conflict. |
-| `de` (seed) | German | No conflict; seed also sharpens turn-1 STT accuracy. |
-| `de` (seed) | **English (supported)** | **English wins.** Seed is used only as (a) the turn-1 STT hint and (b) the tiebreaker *while detection is still low-confidence*; a confident detection overrides it. |
-| `de` (seed) | French (unsupported) | Clamp (§7): stay in `de`. Never switch into a language we can't speak. |
+| `auto` | anything | pure detect |
+| `de` (seed) | German | no conflict; seed also sharpens turn-1 accuracy |
+| `de` (seed) | **English** (supported) | **English wins** — seed only biases turn 1 / sub-2s, a confident detection overrides |
+| `de` (seed) | French (unsupported) | clamp: stay in `de` |
 
-This is safe because of validation finding 6 (§13): **plans are instructions, not scripts.** Plan states carry `description` / `instruction` / `goal.objective` / `acceptance_criteria` — interpreted by the LLM, never spoken verbatim — and transitions match collected *data values* (`actual == expected`), not text. So a German-authored plan conducted in English still behaves correctly; it just sounds English. There is no opening/verbatim line to mis-language.
+This is safe because **plans are instructions, not scripts** — states carry LLM-interpreted `description`/`instruction`/`goal`/`acceptance_criteria`, never verbatim spoken lines, and transitions match collected *data values*, not text. A German-authored plan conducted in English still behaves correctly; it just sounds English.
 
-**The trap this exposes — hint, never deafen.** The agent feeds its locked language *down* to STT as a transcription hint (§4). Naively, a `de`-seeded plan would hint Whisper to German and then **mis-transcribe an English speaker and never detect the mismatch** — the plan would silently corrupt comprehension.
+> The seed may *bias* STT's first guess but must never suppress STT's independent detection ([§4](#4-stt-detection--free-no-added-latency)). Once STT confidently hears another supported language, that wins — for transcription, response, and voice.
 
-> **Rule: the plan seed may *bias* STT's first guess, but must never suppress STT's independent detection (§6).** STT always reports the true spoken language even when hinted otherwise. The seed governs the resolved language only while detection is genuinely uncertain (turn 1, sub-2s utterances). Once STT confidently hears another supported language, that wins — for transcription, response, **and** voice.
+### Typed input & unified fallback
 
-**Residual edge:** transitions compare canonical deliverable values (e.g. `issue_type == "billing"`). When the user speaks German, the deliverable-extraction step must normalize to the plan's canonical value (`"billing"`, not `"Abrechnung"`). Usually handled by `acceptance_criteria`/`options`, but it is the one place cross-language can bite — flagged for a test (§14).
+Typed turns carry no acoustic signal, so `resolve()` classifies the text instead (same `(language, confidence)` shape, same gating). The session lock is one value regardless of modality, so a voice-established language carries into a typed turn and vice-versa.
 
-**Forced plans (deferred — open question #2):** if a future `force: true` plan must stay in its language (e.g. a German-only assessment/tutor), the rule is **pin the output, never the ears**: force the LLM response + TTS to the plan language, but let STT still detect/transcribe the actually-spoken language so the agent comprehends and can redirect. Forcing STT is never correct.
+---
 
-Thresholds (`detect_threshold`, `switch_threshold`, debounce count, min duration) are tunable constants, defined in the agent.
+## 7. Provider contract — best-effort, provider-agnostic
 
-### 8.2 Exposing the resolved language as a runtime variable
+The resolved **language** and **voice** are passed to TTS as per-request hints. A provider that can switch honors them; one that can't **discards them without erroring** (verified across all four). Crucially, the **response text, bridge, and `{{language}}` always follow the language regardless of provider** — only the spoken audio is provider-limited.
 
-The resolved language should be surfaced into prompts as a **runtime variable**, so the LLM (and optionally plan authors) can reference it like any other context. There are two existing variable systems, and the choice between them matters:
-
-| System | Lifecycle | Populated by | Fit for detected language |
+| Provider | Languages | Per-request `language` | Per-request `voice` |
 |---|---|---|---|
-| `SessionContextField` (`plan/types.py:157-189`) | **Set-once** at session start | Author-declared, participant-filled | ❌ No — it's for static participant data; we also chose no participant picker |
-| `{{placeholder}}` template vars (`experts/template_compiler.py`, `PLACEHOLDER_REGISTRY`) | **Recomputed per turn** | System-computed from plan/state/history | ✅ Yes — already dynamic and system-populated |
+| **Piper** (current default) | one per built voice | ignored | ignored (single ONNX) |
+| **Kokoro** | English only | ignored | **honored** (`_resolve_working_voice`) |
+| **Qwen3** | 60+, autodetect | **honored** | ignored (reference-clip cloning) |
+| **ChatterBox** | en / de | **honored** | ignored (reference-clip cloning) |
 
-**Decision:** add a `{{language}}` placeholder backed by the resolved `session.language`, populated into `sm_context` each turn. It would be the first *observation-derived* placeholder (today they're plan/history-derived) — a small, natural extension of the registry.
+So on the default Piper the voice stays fixed but the agent still *responds* in the user's language — degraded gracefully, not broken. Deploying Qwen3/ChatterBox makes the voice follow too, with no code change (env/build-arg + weights).
 
-The variable is a **projection** of the single source of truth (§4/§6), not a second source. `session.language` remains authoritative; `{{language}}` merely exposes it to the response prompt — and, if useful, to plan instructions (an author could write "the user is speaking {{language}}"). This keeps two things distinct that are easy to conflate: the **seed** (`Plan.language`, static, author-set, default `auto`) *feeds* resolution; the **exposed value** (`{{language}}`, dynamic) is the *result*.
+**Voice** rides the exact same contract: `Plan.voice` → `metadata["voice"]` → `AudioPipeline.set_tts_voice()` → `SynthesizeRequest.voice`, stamped on the bridge and every response chunk so they share one voice. Unlike language there is no detection — voice is a configured choice, just propagated.
 
-### 8.2.1 Bridge ↔ pipeline consistency
+**Agent-side clamp (separate concern):** the resolver clamps its own decision to the committed supported set (v1: `en`, `de`) so the LLM is never asked to answer in a language we don't intend to support. Adding a language later means widening the supported set **and** (for voice) deploying a provider that can speak it.
 
-There is **no inherent drift** to engineer around: the only reason bridge and pipeline can disagree today is that each **independently infers** language. The fix is exactly to inject the one resolved value into both — no special coherence machinery.
+---
 
-Today's three independent guesses:
-- **Bridge LLM** — relies on the prompt instruction *"Always match the user's language"* (`bridge_generator.py:59`); the model guesses from the user text.
-- **Bridge fallback** — uses the `_detect_german` heuristic when the LLM call fails/rejects (`bridge_generator.py:216`).
-- **Pipeline LLM** — a separate call with its own *"respond in the same language"* instruction (`response_prompt.py:102-123`).
+## 8. Where it lives
 
-The two paths don't share one variable mechanism, so "inject into both" is two wirings, not one shared `{{language}}`:
+The resolved value (`session.language`) is the single source of truth; `{{language}}` and the per-stage injections are projections of it, not second sources.
 
-| Path | Prompt construction | Injection point |
+| Surface | How language reaches it | File |
 |---|---|---|
-| Pipeline / experts | `template_compiler` `{{placeholder}}` | Add `{{language}}`, backed by `sm_context["language"]` |
-| Bridge | Direct string messages, **no template engine** (`bridge_generator.py:175-179`) | Pass resolved value into `generate(..., language=...)`; use it in the prompt **and** in `_pick_fallback` (replace `_detect_german`) |
-
-> **Requirement: one source, frozen per turn, no path guesses on its own.** Resolve `session.language` once at turn start (before the bridge fires) and feed that same value into all three injection points above. Across a confidence-gated switch the value changes only at a turn boundary, so the bridge and the response stay coherent through the switch.
-
-### 8.3 Text input (no STT signal available)
-
-When the participant **types** (the text chat surface) there is no audio and therefore no Whisper detection. The design stays clean by making language resolution **modality-agnostic**: the resolution/gating logic in §8 consumes a `(language, confidence)` signal and does not care whether that signal came from acoustic detection or from text.
-
-- **The text path produces the same signal shape as STT** via a lightweight text language classifier (confidence-scored — e.g. a `lingua`-class detector; the current `_detect_german` heuristic is the crude floor). It emits `(language, confidence)` exactly like §6's STT detection.
-- **The same gating applies:** a short/ambiguous typed message ("ok", "ja", "thx") is low-confidence → it does **not** flip the lock, same as a sub-2s utterance.
-- **The lock persists across modalities.** `session.language` is one value per session regardless of whether a turn was spoken or typed, so a voice-established language carries into a typed turn and vice versa (relevant because both chat surfaces can coexist).
-
-**Unified fallback chain (covers voice-confident, voice-unconfident, and text):** resolved language for a turn =
-1. a confident modality signal (STT acoustic **or** text classifier) ≥ threshold and supported; else
-2. the current session lock — i.e. **the last detected language** in this conversation, from any prior turn or modality; else
-3. the plan seed (`Plan.language`, if set); else
-4. the service/global default.
-
-So an ambiguous turn in an ongoing conversation always holds the last detected language; the seed/default only apply before anything has been detected. A lock established *provisionally* from the seed/default (turn-1 ambiguity) is **not** treated as a real detection — the first genuine detection adopts it at `detect_threshold` rather than having to clear the higher `switch_threshold`, so the last *detected* language always wins over a placeholder.
-
-This also covers the case where STT *runs* but returns no confident language (too short, noisy) — it simply falls through to step 2/3/4, identical to the text path.
+| **STT detection** | `detected_language` + `language_confidence` on the final `TranscriptEvent`; opt-in `language` pin on `AudioChunk` | `proto/stt.proto`, `whisper_provider.py`, `stt_server.py` |
+| **SDK → agent** | `from_proto` → `AgentInput.metadata` → `process()` | `stt_client.py`, `agent/base.py` |
+| **Resolver** | confidence-gated `resolve(text, signal)` + fallback chain | `language_resolver.py` |
+| **Bridge** | `generate(…, language=…)`: explicit directive + language-correct fallback (`_detect_german` no longer on the live path) | `bridge_generator.py` |
+| **Response** | unconditional highest-priority `Respond entirely in {language}` directive | `response_prompt.py` |
+| **Runtime variable** | `{{language}}` placeholder backed by `sm_context["language"]`, recomputed per turn — usable in any expert/configured prompt | `template_compiler.py` |
+| **TTS language** | `set_tts_language()` from `metadata["language"]`; `TTS_LANGUAGE` demoted to a seed | `audio/pipeline.py`, `agent/base.py` |
+| **TTS voice** | `Plan.voice` → `set_tts_voice()` → `SynthesizeRequest.voice` | `plan/types.py`, `agent.py`, `pipeline.py` |
 
 ---
 
-## 9. Mechanism changes
+## 9. Testing
 
-Status key: ✅ implemented on `feature/language-handling-214`; ⚙️ deployment toggle (no code).
-
-| # | Change | Location | Why |
-|---|---|---|---|
-| 1 ✅ | Add `detected_language` (string, ISO 639-1) + `language_confidence` (float) to the **final** `TranscriptEvent`; `language` hint to `AudioChunk` | `proto/stt.proto` (+ regenerated stubs) | The missing pipe — Whisper detects it, used to drop it at the gRPC boundary |
-| 2 ✅ | `language` **pin** field on `AudioChunk` (+ `language_provider` hook) — opt-in only; default off so auto-detect stays on | `proto/stt.proto`, `stt_client.stream_transcribe`, `pipeline.py`, `stt_server.py` | A deployment can pin a session's language; pinning trades away the free detection, so it's not used by default |
-| 3 ✅ | Per-utterance detection + confidence taken **free** from the auto-detect transcription pass (`info.language` / `info.language_probability`) — no second model call; pinned sessions report the pin | `stt-service/src/providers/whisper_provider.py` (`_forced_language`, `_generate_final`) | Switches are visible (§6) at **zero added latency**; faster-whisper auto-detect already computes this |
-| 4 ✅ | Read new fields through to the agent's `TranscriptEvent` dataclass + onto `AgentInput.metadata` | `stt_client.py` (`from_proto`), `agent/base.py` (`run_audio_loop`) | Plumb language to `process()` |
-| 5 | Add optional `language` to plan/session schema (`auto` default) | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/plan/types.py` | Plan default + STT hint |
-| 6 | Hold `session.language` + apply the gated-switch policy | agent SDK session state | Single source of truth |
-| 7 | Generate the bridge in the resolved language; **remove** the `_detect_german` word-list heuristic | `agents/stella-v2-agent/src/stella_v2_agent/pipeline/bridge_generator.py:110-127,156-174` | Stop independent guessing |
-| 8 | Replace "match the user" with an explicit `Respond in {language}` instruction | `agents/stella-v2-agent/src/stella_v2_agent/prompts/response_prompt.py:102-123` | Deterministic LLM language |
-| 9 | Pass the resolved language per-utterance into `SynthesizeRequest.language`; retire static `TTS_LANGUAGE` | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/audio/pipeline.py:143,834,1102,1118` | Dynamic voice; proto already supports it (`proto/tts.proto:22`). Best-effort: honoring providers switch voice, others discard the tag (§7) |
-| 10 | Define + document the supported language set and out-of-set fallback | `tts-service/src/providers/*` | Reliability guardrail (§7) |
-| 11 ⚙️ | *(Optional upgrade)* Deploy a provider that honors per-request `language` (Qwen3 or ChatterBox) to make the **spoken voice** follow too | `tts-service/src/tts_server.py:35`, Dockerfile `ARG TTS_PROVIDER` | Env/build-arg + weights only, no code. Without it the voice stays fixed but the response text still follows the language (§7) |
-| 12 | Add a `{{language}}` placeholder; populate `sm_context["language"]` from the resolved value each turn | `agents/stella-v2-agent/src/stella_v2_agent/experts/template_compiler.py` (`PLACEHOLDER_REGISTRY`) | Expose the resolved language as a runtime variable (§8.2); first observation-derived placeholder |
-| 13 ✅ | Confidence-scored **text** classifier for typed turns | `language_resolver.detect_language` (used as the `resolve` fallback when no acoustic signal) | Modality-agnostic resolution — typed input carries no STT signal, so the resolver classifies the text (§8.3) |
-| 14 | Per-stream **voice** selection on the same contract as language: `Plan.voice` → `metadata["voice"]` → `set_tts_voice()` → `SynthesizeRequest.voice` (proto field 3) | `plan/types.py`, `stella-v2-agent/agent.py`, SDK `agent/base.py`, `audio/pipeline.py` | One voice for bridge + response; honoring providers (Kokoro) use it, others disregard it inside the provider (§7.1) |
+- **`test_language_resolver.py` — 35 unit tests** (green): detect / lock / hold / confidence-gated switch / debounce / clamp / seed / provisional-vs-confirmed fallback / reset, and the acoustic-signal path (signal-over-text, acoustic switch, out-of-set clamp, low-confidence hold, text fallback).
+- **STT proto round-trip** verified (provider event → `from_proto` → `AgentInput`), including backward-compat for events without the new fields.
+- **Not runnable locally** (no GPU / models): the live STT→TTS audio path. Manual checklist on a real deployment — speak German → German answer + voice; mid-session switch → coherent at the next turn; one-word "ja" → no flip. `stt-service`/`tts-service` have no pytest harness yet; adding one is the path to provider-level regression coverage.
 
 ---
 
-### 7.1 Per-stream voice (same contract as language)
+## 10. What's left
 
-Voice selection reuses the language plumbing exactly, so it "looks the same for all providers" and degrades the same way. The proto already carries `voice` (field 3) and every provider's `synthesize_stream` already accepts it; what was missing was the **stateful per-stream override** and the metadata wiring, now added:
+**TTS provider for spoken multilingualism** — a *deployment toggle, no code*: to make the spoken **voice** switch language, deploy Qwen3 (60+ langs) or ChatterBox (native en/de) instead of Piper (env/build-arg + model weights). Response text already follows the language on any provider. Recommendation: **ChatterBox** for the committed en/de v1.
 
-- **Source:** `Plan.voice` (optional; `None` → provider/env default). Stamped onto `metadata["voice"]` on the bridge chunk and every response chunk, so bridge and main response share one voice.
-- **Propagation:** SDK base loop reads `metadata["voice"]` → `AudioPipeline.set_tts_voice()` → held in `_tts_voice` (seeded from `TTS_VOICE` env) → threaded through the speech-worker prefetch path into `SynthesizeRequest.voice`.
-- **Provider contract (honor-or-disregard, verified):** **Kokoro** honors it (`_resolve_working_voice` tries the requested voice first, falls back if it fails to load); **Piper** (single loaded ONNX), **Qwen3** and **ChatterBox** (reference-audio voice cloning) accept the field and disregard it without erroring.
-
-Unlike language there is **no detection step** — voice is a configured choice, not inferred — so there is no resolver, no confidence gating, just propagation.
-
-## 10. Participant experience
-
-- Speaks German → STT detects `de` → bridge in German, answer in German, German voice. Speaks English → all English. **No setup, no picker.**
-- Mid-session switch to the *other supported* language → resolves at the next turn boundary; bridge + response + voice all switch together, coherently. No filler.
-- Single ambiguous word → **nothing flips**; stays stable.
-- Unsupported language → stays in the locked / plan-default language instead of going silent or broken.
-
----
-
-## 11. Open questions for review
-
-1. **TTS provider for spoken multilingualism (optional upgrade, not a gate)** — the feature ships and degrades gracefully on any provider (§7). To make the *voice* follow the language too, deploy **Qwen3** (60+ langs, autodetect) or **ChatterBox** (en/de). Worth doing for the study, but not required for the agent-side coherence to land.
-2. **Lock vs. force at plan level** — "optional declared default" is a *soft seed* today; do we also want an explicit `force: true` for plans that must never switch (e.g. a German-only assessment)? Proposed as a later refinement, not v1.
-3. **Threshold values** — initial `detect_threshold` / `switch_threshold` / debounce count (§8) to be set empirically.
-4. **Switch-utterance degradation** (§6) — **resolved:** auto-detect mode means transcription is never forced to a stale language, so there is no degraded switch utterance and no probe cost. (Was: accept the cost vs. re-transcribe.)
-
-> **Resolved by §13 validation:** Kokoro is English-only; Edge TTS is removed; faster-whisper `>=1.0.0` exposes `language_probability` + `detect_language()`; `TTS_LANGUAGE` is the sole TTS language source today.
-
----
-
-## 12. Summary
-
-One authoritative detection (STT), plumbed up through the proto, owned and gated by the agent, fed to bridge + LLM + TTS. The bridge already fires on the final transcript — the same moment STT computes the language — so coherence is free once the language is plumbed. No neutral bridge, no static env var, no triple-detection drift. The resolved language is plumbed to TTS as a best-effort hint — honoring providers switch the voice, others discard it — so the design works on any provider and the spoken voice is a free upgrade (§7).
-
----
-
-## 13. Validation findings (2026-06-01)
-
-Before any implementation, the RFC's load-bearing assumptions were checked against the code and dependency pins. This is the "test" appropriate to the design stage — verifying the claims the design rests on.
-
-| # | Assumption | Verdict | Evidence |
-|---|---|---|---|
-| 1 | faster-whisper exposes per-utterance language **+ confidence** + standalone detect | **Confirmed (library-level)** | Pin `faster-whisper>=1.0.0` (`requirements-gpu.txt:5`) — that API has `TranscriptionInfo.language_probability` and `WhisperModel.detect_language()`. Code reads only `info.language` today (`whisper_provider.py:539`). *Not run live (not installed locally).* |
-| 2 | Kokoro covers en/de | **Refuted** | Kokoro is English-only; `language` accepted & ignored (`kokoro_provider.py:337`) |
-| 3 | `SynthesizeRequest.language` selects a voice | **Refuted for default** | Default **Piper ignores** `language` (`piper_provider.py:131`); only **Qwen3** + **ChatterBox** honor it |
-| 4 | `TTS_LANGUAGE` env is the only TTS language source | **Verified** | Single read at `pipeline.py:143`; clean to retire |
-| 5 | Edge TTS present (per ticket) | **Stale** | Fully removed — no `edge` references in `tts-service/` |
-| 6 | Plans contain verbatim lines that would mis-language on a switch | **Refuted (good news)** | Plans are **instructions, not scripts** — `description`/`instruction`/`goal.objective`/`acceptance_criteria` are LLM-interpreted (`plan/types.py`, `response_prompt.py:204-303`); no `say`/`script`/`opening` field; transitions match data values not text (`execution_state.py:188-204`) |
-
-**Net effect on the design:** the coherence mechanism (detect-once → propagate) is unaffected and still correct. The change is to §7/§9 — multilingual output is **gated on a TTS provider decision**, not on plumbing. Finding 6 is what makes the §8.1 "spoken language wins" rule safe: conducting a plan in a different language than it was authored in has no content penalty.
-
----
-
-## 14. Test strategy (for implementation)
-
-What can actually be tested, and where, given the current harnesses:
-
-**Test infrastructure that exists today**
-- **Agent SDK** has pytest (`asyncio_mode=auto`, `tests/` — `agents/stella-ai-agent-sdk/pyproject.toml:55-57`). This is where the highest-value, deterministic tests live.
-- **stt-service and tts-service have NO test framework** — adding one (pytest) is part of the work if we want service-level coverage.
-
-**Unit tests (deterministic, no models) — Agent SDK pytest, mock the gRPC clients**
-1. **Language resolution / gating logic** (§8) — the core. Feed synthetic `TranscriptEvent`s with `(detected_language, confidence, duration)` and assert the resolved `session.language`: holds the lock on low confidence / short utterances; switches only on sustained high-confidence change; clamps out-of-set languages to the lock. *This is the single most important test — it encodes the reliability promise.*
-2. **Coherence invariant** — assert that within one turn the bridge language, the LLM prompt's `Respond in {X}`, and the `SynthesizeRequest.language` are the **same** value. This is the regression guard for the original bug.
-3. **Plan-default seeding** — `auto` vs explicit; explicit is sent to STT as the hint and seeds turn 1.
-4. **Proto round-trip** — `TranscriptEvent.from_proto` carries `detected_language`/`confidence` (`stt_client.py`).
-
-**Service-level tests (need new harness)**
-5. **STT detection** — with audio fixtures (one en, one de clip), assert the final `TranscriptEvent` carries the right `detected_language` + a usable `language_confidence` from the auto-detect pass, and that an explicit pin (`WHISPER_LANGUAGE`) overrides transcription as expected.
-6. **TTS provider honors `language`** — on the chosen provider (Qwen3/ChatterBox), assert two requests differing only in `language` produce different audio; assert out-of-set falls back per §7. (Already true in ChatterBox's `_resolve_language`; this locks it in.)
-
-**Manual / integration (the part only a human or a scripted call can confirm)**
-7. End-to-end on a deployed provider: speak German → German bridge + answer + voice; switch to English mid-session → coherent switch at the next turn; mutter a one-word "ja" → no flip. There is no automated audio-in→audio-out harness today, so this stays a manual checklist for v1.
-
-**Suggested sequence:** land the gating logic + its unit tests (1–4) first behind the provider decision; they're pure and catch the real risks. Service/manual tests (5–7) follow once the provider is chosen and the proto fields exist.
-
----
-
-## 15. Implementation status (this branch)
-
-The feature is **fully implemented** on `feature/language-handling-214` end-to-end: STT acoustic detection → proto → agent resolver → bridge/response/`{{language}}`/TTS coherence, plus per-stream voice. The only remaining item is a deployment toggle (#11, TTS provider for spoken multilingualism).
-
-**Done:**
-- **STT acoustic detection path (#1–#4):** `stt.proto` carries `detected_language`/`language_confidence` (final events) + an opt-in `language` pin on `AudioChunk`; the Whisper provider takes the detection **free** from its auto-detect transcription pass (no extra model call) so a mid-session switch is visible at zero added latency; the SDK carries the fields through `from_proto` → `AgentInput.metadata` → `process()`. Stubs regenerated for both stt-service and the SDK.
-- `LanguageResolver` + dependency-free en/de `detect_language` with confidence-gated switching, supported-set clamp, plan seed, fallback chain — `stella-v2-agent/.../pipeline/language_resolver.py` (#6). `resolve(text, signal=…)` takes the acoustic `(lang, confidence)` when present and falls back to the text classifier otherwise (#13) — one gating path, interchangeable signal source.
-- Resolution wired once per turn in `agent.py:process()` (before the bridge) from the STT signal, stored in `sm_context["language"]` and stamped on bridge + response `metadata["language"]`.
-- Bridge generated in the resolved language; `_detect_german` reliance removed from the live path (#7).
-- Explicit `Respond entirely in {language}` directive in the response prompt (#8).
-- `{{language}}` template placeholder (#12).
-- TTS voice follows per turn (best-effort): `AudioPipeline.set_tts_language()` + base-loop wiring from `metadata["language"]`; `TTS_LANGUAGE` env demoted to a seed (#9). Honoring providers switch voice; others discard the tag (§7).
-- `Plan.language` seed field, default `auto` (#5, agent-side half).
-- Unit tests: 35 cases covering detect / lock / hold / confidence-gated switch / debounce / clamp / seed / provisional-vs-confirmed fallback / reset, **plus the acoustic-signal path** (signal-over-text, acoustic switch, out-of-set clamp, low-confidence hold, text fallback) — `stella-v2-agent/tests/test_language_resolver.py` (green).
-- Verified the STT proto round-trip (provider event → `from_proto` → `AgentInput`) including backward-compat for events without the new fields.
-
-**Deferred (deployment toggle only — no code):**
-- **TTS provider for spoken multilingualism (#11)** — deploying Qwen3/ChatterBox makes the *voice* follow the language; env/build-arg + weights only. The plumbing (#9) is in place and degrades gracefully on the Piper default (voice fixed, response text still follows).
-
-**Not runnable locally (no GPU / models / installed services):** the live STT→TTS audio path. The cross-service seams are unit-/round-trip-tested; end-to-end voice (speak German → German answer + voice; mid-session switch; one-word "ja" no-flip) remains the manual checklist in §14.7.
+Possible later refinements: an explicit `force: true` plan flag (pin output, never the ears — still let STT detect so the agent comprehends and can redirect); empirical tuning of `detect_threshold` / `switch_threshold` / debounce; deliverable normalization across languages (extraction must map e.g. a German answer to the plan's canonical value).
