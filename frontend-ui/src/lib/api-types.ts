@@ -246,11 +246,22 @@ export interface AgentType {
   validationStatus?: AgentValidationStatus
   configSchema?: Record<string, unknown>  // JSON Schema for config options
   pipelineSchema?: PipelineSchema | null  // Pipeline topology + configurable slots
+  runtimeVariables?: RuntimeVariable[] | null  // Manifest-declared {{placeholder}} palette
+  compilerVersion?: string | null  // SDK prompt-compiler version this agent uses
   resourceGpu?: boolean
   authorName?: string | null
   authorEmail?: string | null
   tags?: string[]
   createdAt?: string
+}
+
+/** A {{placeholder}} the agent's prompt compiler can resolve (manifest-declared). */
+export interface RuntimeVariable {
+  name: string            // token base; {{name}} or, when parametric, {{name_N}}
+  label?: string          // display label (e.g. "history_N")
+  description?: string
+  preview?: string        // example value shown in the editor
+  parametric?: boolean    // true for {{name_N}}-style tokens
 }
 
 // Extended AgentType with build info (for my-agents endpoint)
@@ -1494,6 +1505,8 @@ export interface AgentConfiguration {
   }
   configuration: AgentConfigurationPayload
   agentVersion: string | null
+  // Minimum SDK prompt-compiler version this config's prompts require.
+  minCompilerVersion: string | null
   // Compatibility of this config with its agent type's current pipeline schema,
   // recomputed by the backend reconciliation pass when the agent type changes.
   compatibility: ConfigCompatibility
@@ -1511,6 +1524,8 @@ export interface CreateAgentConfigurationDto {
   agentTypeId: string
   configuration: AgentConfigurationPayload
   agentVersion?: string
+  // Optional; the backend defaults it to the agent type's current compilerVersion.
+  minCompilerVersion?: string
 }
 
 export interface UpdateAgentConfigurationDto {

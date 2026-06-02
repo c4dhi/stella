@@ -8,6 +8,8 @@ from stella_agent_sdk.prompts import (
     PlaceholderPromptCompiler,
     compile_prompt,
     validate_template,
+    palette,
+    PLACEHOLDER_SPECS,
     get_compiler,
     register_compiler,
     available_versions,
@@ -15,6 +17,7 @@ from stella_agent_sdk.prompts import (
     COMPILER_VERSION,
     KNOWN_PLACEHOLDERS,
 )
+from stella_agent_sdk.prompts.placeholder_compiler import PLACEHOLDER_REGISTRY
 
 
 def _ctx():
@@ -128,6 +131,18 @@ def test_known_placeholders_and_version():
     assert "plan" in KNOWN_PLACEHOLDERS
     assert "history_N" in KNOWN_PLACEHOLDERS
     assert PlaceholderPromptCompiler.known_placeholders() == KNOWN_PLACEHOLDERS
+
+
+def test_palette_specs_match_the_resolver_registry():
+    # The palette metadata (the UI menu) must stay in sync with what the compiler
+    # actually resolves, minus the parametric history_N (which has no plain resolver).
+    spec_names = {s["name"] for s in palette()}
+    non_parametric = {s["name"] for s in palette() if not s["parametric"]}
+    assert non_parametric == set(PLACEHOLDER_REGISTRY)
+    assert "history" in spec_names  # parametric {{history_N}}
+    # palette() returns copies (callers can't mutate the source specs)
+    palette()[0]["label"] = "mutated"
+    assert PLACEHOLDER_SPECS[0]["label"] != "mutated"
 
 
 def test_functional_helper_matches_facade():

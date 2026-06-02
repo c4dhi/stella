@@ -2,6 +2,7 @@ import { PrismaClient, ConfigCompatibility, Prisma } from '@prisma/client';
 import {
   validateConfigurationAgainstSchema,
   pruneRemovedOverrides,
+  satisfiesMinCompilerVersion,
   type PipelineSchema,
 } from './configuration-compat.util';
 
@@ -40,7 +41,7 @@ export async function reconcileAgentTypeConfigurations(
 ): Promise<ReconcileReport> {
   const agentType = await prisma.agentType.findUnique({
     where: { id: agentTypeId },
-    select: { version: true, pipelineSchema: true },
+    select: { version: true, pipelineSchema: true, compilerVersion: true },
   });
 
   const report: ReconcileReport = {
@@ -57,7 +58,12 @@ export async function reconcileAgentTypeConfigurations(
   const pipelineSchema = agentType.pipelineSchema as PipelineSchema;
   const configs = await prisma.agentConfiguration.findMany({
     where: { agentTypeId },
-    select: { id: true, configuration: true, agentVersion: true },
+    select: {
+      id: true,
+      configuration: true,
+      agentVersion: true,
+      minCompilerVersion: true,
+    },
   });
 
   report.total = configs.length;
@@ -70,6 +76,18 @@ export async function reconcileAgentTypeConfigurations(
     );
 
     try {
+      // The agent's compiler must satisfy the config's required minimum.
+      if (
+        !satisfiesMinCompilerVersion(
+          agentType.compilerVersion,
+          cfg.minCompilerVersion,
+        )
+      ) {
+        throw new Error(
+          `requires prompt-compiler version >= ${cfg.minCompilerVersion}, ` +
+            `agent provides ${agentType.compilerVersion ?? '(none)'}`,
+        );
+      }
       validateConfigurationAgainstSchema(sanitized, pipelineSchema);
 
       const status =

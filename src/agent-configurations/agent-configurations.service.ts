@@ -4,7 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateAgentConfigurationDto } from './dto/create-agent-configuration.dto';
 import { UpdateAgentConfigurationDto } from './dto/update-agent-configuration.dto';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
-import { validateConfigurationAgainstSchema } from './configuration-compat.util';
+import {
+  validateConfigurationAgainstSchema,
+  satisfiesMinCompilerVersion,
+} from './configuration-compat.util';
 import { deriveEffectiveAgentConfig } from '../kubernetes/utils/agent-config-injection.util';
 
 @Injectable()
@@ -39,6 +42,9 @@ export class AgentConfigurationsService {
         agentTypeId: dto.agentTypeId,
         configuration: sanitized as Prisma.InputJsonValue,
         agentVersion: dto.agentVersion || agentType.version,
+        // Default the required minimum compiler version to the type's current one
+        // (the version available when this config was authored).
+        minCompilerVersion: dto.minCompilerVersion ?? agentType.compilerVersion,
         userId,
       },
     });
@@ -162,6 +168,7 @@ export class AgentConfigurationsService {
     agentTypeId: string,
     agentTypeRecord: {
       version?: string | null;
+      compilerVersion?: string | null;
       defaultConfig?: Prisma.JsonValue | null;
       pipelineSchema?: Prisma.JsonValue | null;
       configSchema?: Prisma.JsonValue | null;
@@ -181,6 +188,19 @@ export class AgentConfigurationsService {
           (agentTypeRecord.version ? ` (${agentTypeRecord.version})` : '') +
           (cfg.compatibilityNote ? `: ${cfg.compatibilityNote}` : '') +
           '. Open it in settings to review and re-save.',
+      );
+    }
+
+    // The target agent's prompt compiler must be new enough for this config's prompts.
+    if (
+      !satisfiesMinCompilerVersion(
+        agentTypeRecord.compilerVersion,
+        cfg.minCompilerVersion,
+      )
+    ) {
+      throw new BadRequestException(
+        `Agent configuration ${configId} requires prompt-compiler version >= ${cfg.minCompilerVersion}, ` +
+          `but the agent provides ${agentTypeRecord.compilerVersion ?? '(none)'}. Upgrade the agent or re-save the configuration.`,
       );
     }
 

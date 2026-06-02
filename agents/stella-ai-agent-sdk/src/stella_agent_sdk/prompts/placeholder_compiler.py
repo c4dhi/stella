@@ -293,6 +293,45 @@ PLACEHOLDER_REGISTRY: Dict[str, Any] = {
 }
 
 
+# Canonical palette metadata for the built-in placeholders. This is the single
+# source of truth for the {{placeholder}} "menu": agents mirror it in their
+# manifest `runtimeVariables`, and the Configurator renders chips from it. Keep in
+# sync with PLACEHOLDER_REGISTRY (resolvers) — a test asserts they match.
+# `name` is the token base; `parametric=True` means {{name_N}} (e.g. history_8).
+PLACEHOLDER_SPECS: List[Dict[str, Any]] = [
+    {"name": "plan", "label": "plan", "parametric": False,
+     "description": "Full plan: all states, tasks, deliverables",
+     "preview": "States:\n  - welcome_intro (active)\nTasks:\n  - greeting (completed)"},
+    {"name": "current_focus", "label": "current_focus", "parametric": False,
+     "description": "Active task + pending deliverables with criteria",
+     "preview": "Task: collect_basic_info\nPending:\n  - user_name (required)"},
+    {"name": "pending_deliverables", "label": "pending_deliverables", "parametric": False,
+     "description": "Pending deliverables with required/optional flags",
+     "preview": "- user_name: User's first name [required]"},
+    {"name": "collected_deliverables", "label": "collected_deliverables", "parametric": False,
+     "description": "Already collected deliverable keys",
+     "preview": "- age: 28\n- frequency: 3x per week"},
+    {"name": "turns_without_progress", "label": "turns_without_progress", "parametric": False,
+     "description": "Turns since last deliverable collected",
+     "preview": "3"},
+    {"name": "current_state", "label": "current_state", "parametric": False,
+     "description": "Current state name + description",
+     "preview": "welcome_intro: Greet the user and collect basic info"},
+    {"name": "progress_percentage", "label": "progress_percentage", "parametric": False,
+     "description": "Overall progress %",
+     "preview": "42%"},
+    {"name": "processing_mode", "label": "processing_mode", "parametric": False,
+     "description": "Processing mode (sequential/flexible/goal)",
+     "preview": "flexible (any order)"},
+    {"name": "history", "label": "history_N", "parametric": True,
+     "description": "Last N conversation messages (e.g. {{history_8}})",
+     "preview": "[USER]: Hi\n[ASSISTANT]: Welcome! How can I help?"},
+    {"name": "user_message", "label": "user_message", "parametric": False,
+     "description": "The user's latest message",
+     "preview": "I usually go running three times a week."},
+]
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -352,6 +391,15 @@ COMPILER_VERSION = "1.0.0"
 # parameterized (any positive integer N), represented here by the sentinel
 # "history_N".
 KNOWN_PLACEHOLDERS = frozenset(PLACEHOLDER_REGISTRY) | {"history_N"}
+
+
+def palette() -> List[Dict[str, Any]]:
+    """Return a copy of the placeholder palette metadata (the Configurator menu).
+
+    Agents declare a manifest ``runtimeVariables`` block mirroring these entries;
+    this accessor lets tooling read the canonical set for the current version.
+    """
+    return [dict(spec) for spec in PLACEHOLDER_SPECS]
 
 
 def validate_template(template: Optional[str]) -> List[str]:

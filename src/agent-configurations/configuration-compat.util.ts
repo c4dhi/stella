@@ -129,6 +129,46 @@ export function pruneRemovedOverrides(
 }
 
 /**
+ * Compare two dotted version strings numerically (e.g. "1.2.0" vs "1.10.0").
+ * Non-numeric segments compare lexically and sort after numeric ones. Returns
+ * negative if a < b, 0 if equal, positive if a > b.
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = String(a).split('.');
+  const pb = String(b).split('.');
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const sa = pa[i] ?? '0';
+    const sb = pb[i] ?? '0';
+    const na = Number(sa);
+    const nb = Number(sb);
+    const aNum = Number.isInteger(na);
+    const bNum = Number.isInteger(nb);
+    if (aNum && bNum) {
+      if (na !== nb) return na - nb;
+    } else if (sa !== sb) {
+      return sa < sb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Whether an available compiler version satisfies a configuration's required
+ * minimum. No requirement (falsy) is always satisfied. If a minimum is required
+ * but the agent declares no compiler version, it cannot be guaranteed → not
+ * satisfied.
+ */
+export function satisfiesMinCompilerVersion(
+  available: string | null | undefined,
+  required: string | null | undefined,
+): boolean {
+  if (!required) return true;
+  if (!available) return false;
+  return compareVersions(available, required) >= 0;
+}
+
+/**
  * Stable SHA-256 of a pipelineSchema, used by the seed to detect schema edits
  * (even when the manifest version string didn't change) so reconciliation runs
  * only when the schema actually changed.

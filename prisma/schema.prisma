@@ -233,6 +233,11 @@ model AgentType {
   // SHA256 of pipelineSchema; lets the seed detect schema edits (even without a version
   // bump) so saved AgentConfigurations are reconciled only when the schema actually changes.
   pipelineSchemaHash String?
+  // Manifest-declared {{placeholder}} palette for the Configurator (per agent type).
+  runtimeVariables Json?
+  // Version of the SDK prompt compiler this agent resolves prompts with. Saved
+  // configurations declare a minCompilerVersion that must be <= this.
+  compilerVersion  String?
 
   // SDK requirements
   sdkMinVersion    String?             // Minimum stella-ai-agent-sdk version
@@ -582,6 +587,9 @@ model AgentConfiguration {
   agentType     AgentType @relation(fields: [agentTypeId], references: [id])
   configuration Json      // Sparse overrides: { nodes: {...}, thresholds: {...} }
   agentVersion  String?   // Version of agent type this config was last reconciled against
+  // Minimum SDK prompt-compiler version this config's prompts require. The target
+  // agent's compilerVersion must be >= this, else the config is OUTDATED/rejected.
+  minCompilerVersion String?
 
   // Reconciliation state (recomputed only when the AgentType version/schema changes)
   compatibility     ConfigCompatibility @default(CURRENT)

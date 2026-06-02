@@ -39,4 +39,21 @@ describe('stella-light-agent manifest', () => {
     const configSchema = result.manifest?.configSchema as Record<string, unknown> | undefined;
     expect(configSchema?.['x-stella-supports-configurator']).toBe(true);
   });
+
+  it('declares a runtime-variable palette and a prompt-compiler version', () => {
+    const manifest = result.manifest as
+      | { runtimeVariables?: Array<{ name: string; parametric?: boolean }>; promptCompiler?: { version: string } }
+      | undefined;
+    const names = (manifest?.runtimeVariables ?? []).map((v) => v.name);
+    // Mirrors the SDK placeholder compiler's resolvable set.
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'plan', 'current_focus', 'pending_deliverables', 'collected_deliverables',
+        'turns_without_progress', 'current_state', 'progress_percentage',
+        'processing_mode', 'history', 'user_message',
+      ]),
+    );
+    expect(manifest?.runtimeVariables?.find((v) => v.name === 'history')?.parametric).toBe(true);
+    expect(manifest?.promptCompiler?.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
 });

@@ -20,6 +20,8 @@ from stella_agent_sdk.prompts.placeholder_compiler import (
     compile_prompt,
     has_user_message_placeholder,
     validate_template,
+    palette,
+    PLACEHOLDER_SPECS,
     COMPILER_VERSION,
     KNOWN_PLACEHOLDERS,
 )
@@ -38,6 +40,8 @@ __all__ = [
     "compile_prompt",
     "has_user_message_placeholder",
     "validate_template",
+    "palette",
+    "PLACEHOLDER_SPECS",
     "COMPILER_VERSION",
     "KNOWN_PLACEHOLDERS",
     "get_compiler",

@@ -282,6 +282,7 @@ export class AgentsService {
       select: {
         id: true,
         version: true,
+        compilerVersion: true,
         resourceCpu: true,
         resourceMemory: true,
         defaultConfig: true,
@@ -460,6 +461,7 @@ export class AgentsService {
       | {
           id: string;
           version: string | null;
+          compilerVersion: string | null;
           defaultConfig: Prisma.JsonValue | null;
           pipelineSchema: Prisma.JsonValue | null;
           configSchema: Prisma.JsonValue | null;

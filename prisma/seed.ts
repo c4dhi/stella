@@ -162,6 +162,8 @@ function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateI
     defaultConfig: manifest.defaultConfig ? (manifest.defaultConfig as Prisma.InputJsonValue) : Prisma.JsonNull,
     pipelineSchema: manifest.pipelineSchema ? (manifest.pipelineSchema as Prisma.InputJsonValue) : Prisma.DbNull,
     pipelineSchemaHash: hashPipelineSchema((manifest.pipelineSchema as Record<string, unknown>) ?? null),
+    runtimeVariables: manifest.runtimeVariables ? (manifest.runtimeVariables as Prisma.InputJsonValue) : Prisma.DbNull,
+    compilerVersion: manifest.promptCompiler?.version || null,
     sdkMinVersion: manifest.sdk?.minVersion || null,
   }
 }
@@ -382,6 +384,8 @@ async function main() {
         defaultConfig: dbFields.defaultConfig,
         pipelineSchema: dbFields.pipelineSchema,
         pipelineSchemaHash: dbFields.pipelineSchemaHash,
+        runtimeVariables: dbFields.runtimeVariables,
+        compilerVersion: dbFields.compilerVersion,
         sdkMinVersion: dbFields.sdkMinVersion,
         // Preserve isBuiltIn and validationStatus on update
       },
