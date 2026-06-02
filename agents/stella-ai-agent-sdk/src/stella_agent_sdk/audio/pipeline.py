@@ -144,6 +144,12 @@ class AudioPipeline:
         # follows the resolved conversation language (RFC §8/§9 #9).
         self._tts_language = os.getenv("TTS_LANGUAGE", None) or None
 
+        # TTS voice. Seeded from the env var; the agent can override it per
+        # stream via set_tts_voice() so the spoken voice can change per turn.
+        # Same contract as language — passed to the provider as a hint that
+        # voice-selecting providers honor (e.g. Kokoro) and others disregard.
+        self._tts_voice = os.getenv("TTS_VOICE", None) or None
+
         # Sentence-level streaming TTS queue (tuple of sentence text + source label)
         self._speech_queue: asyncio.Queue = asyncio.Queue()
         self._speech_worker_task: Optional[asyncio.Task] = None
@@ -834,6 +840,9 @@ class AudioPipeline:
         # Resolve language: explicit param > instance default (from env) > None (provider default)
         if language is None:
             language = self._tts_language
+        # Resolve voice the same way (per-stream override > env seed > provider default)
+        if voice is None:
+            voice = self._tts_voice
 
         logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
@@ -966,6 +975,20 @@ class AudioPipeline:
         if language and language != "auto" and language != self._tts_language:
             logger.info(f"[TTS] language set to '{language}' (was '{self._tts_language}')")
             self._tts_language = language
+
+    def set_tts_voice(self, voice: Optional[str]) -> None:
+        """Set the voice used for subsequent TTS synthesis (per-stream).
+
+        Called by the agent loop from ``metadata["voice"]`` so the spoken voice
+        can change on a per-stream basis. The value is forwarded to the provider
+        as a hint: voice-selecting providers honor it (e.g. Kokoro tries the
+        requested voice first), the rest disregard it without erroring.
+        ``None``/``"auto"``/``"default"`` is ignored, leaving the current value
+        (env seed or previously-set voice) in place.
+        """
+        if voice and voice not in ("auto", "default") and voice != self._tts_voice:
+            logger.info(f"[TTS] voice set to '{voice}' (was '{self._tts_voice}')")
+            self._tts_voice = voice
 
     def enqueue_sentence(self, sentence: str, source: str = "response") -> None:
         """Enqueue a complete sentence for TTS synthesis.
@@ -1113,7 +1136,7 @@ class AudioPipeline:
                         break
                     # No prefetch available — synthesize synchronously for this first sentence
                     chunks = await self._prefetch_sentence(
-                        sentence, language=self._tts_language
+                        sentence, voice=self._tts_voice, language=self._tts_language
                     )
 
                 if self._stop_speaking_event.is_set():
@@ -1129,7 +1152,7 @@ class AudioPipeline:
                         next_sentence, next_source = next_item
                         prefetch_task = asyncio.create_task(
                             self._prefetch_sentence(
-                                next_sentence, language=self._tts_language
+                                next_sentence, voice=self._tts_voice, language=self._tts_language
                             )
                         )
                         prefetch_source = next_source

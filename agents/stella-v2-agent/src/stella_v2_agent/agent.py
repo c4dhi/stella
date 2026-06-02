@@ -104,6 +104,8 @@ class StellaV2Agent(BaseAgent):
         # One detection per turn, propagated to bridge + response + TTS.
         self.language_resolver = LanguageResolver()
         self._session_language: Optional[str] = None
+        # Per-stream TTS voice (configured, not detected). See process().
+        self._session_voice: Optional[str] = None
 
         # gRPC state machine client (initialized per session)
         self.sm_client: Optional[StateMachineClient] = None
@@ -175,6 +177,14 @@ class StellaV2Agent(BaseAgent):
             sm_context["language"] = resolved_language
             logger.info(f"Resolved language for turn: {resolved_language}")
 
+            # Resolve the per-stream TTS voice. Unlike language there is no
+            # detection — the voice is a configured choice (plan-level), stamped
+            # on every chunk so bridge and response are spoken in one coherent
+            # voice. Providers that support voice selection honor it; others
+            # disregard it. None → provider/env default.
+            resolved_voice = (self._plan_config or {}).get("voice") or None
+            self._session_voice = resolved_voice
+
             yield AgentOutput.status(
                 input.session_id, "Processing your message...", StatusSubtype.PROCESSING
             )
@@ -225,6 +235,8 @@ class StellaV2Agent(BaseAgent):
                 )
                 bridge_output.metadata["tts_source"] = "bridge"
                 bridge_output.metadata["language"] = resolved_language
+                if resolved_voice:
+                    bridge_output.metadata["voice"] = resolved_voice
                 yield bridge_output
 
             # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
@@ -314,6 +326,8 @@ class StellaV2Agent(BaseAgent):
                     # Stamp the resolved language so the SDK sets the TTS voice
                     # for the main response, coherent with the bridge (RFC §8.2.1).
                     output.metadata["language"] = resolved_language
+                    if resolved_voice:
+                        output.metadata["voice"] = resolved_voice
                     if not first_token_emitted:
                         yield AgentOutput.analytics_event(
                             input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
@@ -565,6 +579,7 @@ class StellaV2Agent(BaseAgent):
         # Clear any resolved language from a previous session on this instance.
         self.language_resolver.reset()
         self._session_language = None
+        self._session_voice = None
 
         # Load plan and initialize gRPC state machine
         plan = self._load_plan_config(config)

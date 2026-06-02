@@ -223,8 +223,19 @@ This also covers the case where STT *runs* but returns no confident language (to
 | 11 | *(Optional upgrade)* Deploy a provider that honors per-request `language` (Qwen3 or ChatterBox) to make the **spoken voice** follow too | `tts-service/src/tts_server.py:35`, Dockerfile `ARG TTS_PROVIDER` | Env/build-arg + weights only, no code. Without it the voice stays fixed but the response text still follows the language (§7) |
 | 12 | Add a `{{language}}` placeholder; populate `sm_context["language"]` from the resolved value each turn | `agents/stella-v2-agent/src/stella_v2_agent/experts/template_compiler.py` (`PLACEHOLDER_REGISTRY`) | Expose the resolved language as a runtime variable (§8.2); first observation-derived placeholder |
 | 13 | Add a confidence-scored **text** language classifier emitting `(language, confidence)` for typed turns | text-chat input path (agent SDK) | Modality-agnostic resolution when no STT signal exists (§8.3) |
+| 14 | Per-stream **voice** selection on the same contract as language: `Plan.voice` → `metadata["voice"]` → `set_tts_voice()` → `SynthesizeRequest.voice` (proto field 3) | `plan/types.py`, `stella-v2-agent/agent.py`, SDK `agent/base.py`, `audio/pipeline.py` | One voice for bridge + response; honoring providers (Kokoro) use it, others disregard it inside the provider (§7.1) |
 
 ---
+
+### 7.1 Per-stream voice (same contract as language)
+
+Voice selection reuses the language plumbing exactly, so it "looks the same for all providers" and degrades the same way. The proto already carries `voice` (field 3) and every provider's `synthesize_stream` already accepts it; what was missing was the **stateful per-stream override** and the metadata wiring, now added:
+
+- **Source:** `Plan.voice` (optional; `None` → provider/env default). Stamped onto `metadata["voice"]` on the bridge chunk and every response chunk, so bridge and main response share one voice.
+- **Propagation:** SDK base loop reads `metadata["voice"]` → `AudioPipeline.set_tts_voice()` → held in `_tts_voice` (seeded from `TTS_VOICE` env) → threaded through the speech-worker prefetch path into `SynthesizeRequest.voice`.
+- **Provider contract (honor-or-disregard, verified):** **Kokoro** honors it (`_resolve_working_voice` tries the requested voice first, falls back if it fails to load); **Piper** (single loaded ONNX), **Qwen3** and **ChatterBox** (reference-audio voice cloning) accept the field and disregard it without erroring.
+
+Unlike language there is **no detection step** — voice is a configured choice, not inferred — so there is no resolver, no confidence gating, just propagation.
 
 ## 10. Participant experience
 

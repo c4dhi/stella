@@ -222,6 +222,15 @@ class Plan(BaseModel):
             "wins (RFC §8.1)."
         ),
     )
+    voice: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional TTS voice for this plan, stamped on every spoken chunk so "
+            "bridge and response share one voice. Passed to the provider as a "
+            "hint: voice-selecting providers (e.g. Kokoro) honor it, others "
+            "disregard it. None → provider/env default."
+        ),
+    )
 
     model_config = {"extra": "allow"}
 

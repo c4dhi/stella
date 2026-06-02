@@ -580,6 +580,12 @@ class BaseAgent(ABC):
                             if output.metadata.get("language"):
                                 self.audio.set_tts_language(output.metadata["language"])
 
+                            # Per-stream voice selection (same contract as
+                            # language): voice-selecting providers honor it,
+                            # others disregard it inside the provider.
+                            if output.metadata.get("voice"):
+                                self.audio.set_tts_voice(output.metadata["voice"])
+
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(
                                 output.content,
