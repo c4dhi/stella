@@ -84,6 +84,7 @@ export default function AgentConfigSection() {
     if (!agentType.pipelineSchema) return
     openModal({
       pipelineSchema: agentType.pipelineSchema,
+      runtimeVariables: agentType.runtimeVariables,
       saveLabel: 'Create Configuration',
       onSave: async (name, description, configuration) => {
         try {
@@ -113,6 +114,7 @@ export default function AgentConfigSection() {
     if (!schema) return
     openModal({
       pipelineSchema: schema,
+      runtimeVariables: agentTypes.find((t) => t.id === config.agentTypeId)?.runtimeVariables,
       initialConfiguration: config.configuration,
       initialName: config.name,
       initialDescription: config.description || '',

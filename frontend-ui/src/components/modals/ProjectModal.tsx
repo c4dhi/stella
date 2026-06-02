@@ -927,6 +927,7 @@ export default function ProjectModal({
                   <ConfigurationSelectionStep
                     agentTypeId={selectedAgentType.id}
                     pipelineSchema={selectedAgentType.pipelineSchema}
+                    runtimeVariables={selectedAgentType.runtimeVariables}
                     selectedConfiguration={selectedConfiguration}
                     onSelectConfiguration={setSelectedConfiguration}
                   />

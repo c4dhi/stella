@@ -7,11 +7,14 @@ import type {
   AgentConfiguration,
   AgentConfigurationPayload,
   PipelineSchema,
+  RuntimeVariable,
 } from '../../lib/api-types'
 
 interface ConfigurationSelectionStepProps {
   agentTypeId: string
   pipelineSchema: PipelineSchema
+  // Manifest-declared {{placeholder}} palette for this agent type (for the editor).
+  runtimeVariables?: RuntimeVariable[] | null
   selectedConfiguration: AgentConfiguration | null
   onSelectConfiguration: (config: AgentConfiguration | null) => void
 }
@@ -57,6 +60,7 @@ const ConfigIcon = ({ className }: { className?: string }) => (
 export default function ConfigurationSelectionStep({
   agentTypeId,
   pipelineSchema,
+  runtimeVariables,
   selectedConfiguration,
   onSelectConfiguration,
 }: ConfigurationSelectionStepProps) {
@@ -78,6 +82,7 @@ export default function ConfigurationSelectionStep({
   const handleCreateNew = () => {
     openModal({
       pipelineSchema,
+      runtimeVariables,
       onSave: async (name, description, configuration) => {
         try {
           const created = await apiClient.createAgentConfiguration({
@@ -99,6 +104,7 @@ export default function ConfigurationSelectionStep({
     e.stopPropagation()
     openModal({
       pipelineSchema,
+      runtimeVariables,
       initialConfiguration: config.configuration,
       initialName: config.name,
       initialDescription: config.description || '',

@@ -9,10 +9,12 @@
  * block types for non-placeholder-based stages.
  */
 
-import { memo, useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
+import { memo, useState, useRef, useCallback, useEffect, useMemo, useContext, createContext, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { ExpertDefinition } from './useConfiguratorState'
+import type { RuntimeVariable } from '../../lib/api-types'
+import { useConfiguratorStore } from '../../store/configuratorStore'
 
 // ---------------------------------------------------------------------------
 // Placeholder registry — colors and descriptions for each variable
@@ -169,6 +171,48 @@ const PLACEHOLDER_MAP = new Map(
 
 const PLACEHOLDER_RE = /(\{\{\w+\}\})/g
 
+// Deterministic color cycle for manifest-declared variables that aren't one of the
+// built-ins above (so a new agent type's custom variables still get distinct chips).
+const COLOR_CYCLE: Array<{ dark: PlaceholderDef['dark']; light: PlaceholderDef['light'] }> =
+  PLACEHOLDER_REGISTRY.map((p) => ({ dark: p.dark, light: p.light }))
+
+/**
+ * Build the effective palette for a given agent type's manifest-declared
+ * runtimeVariables. Reuses the built-in def (colors/preview/description) when the
+ * name matches, otherwise synthesizes a def with cycled colors. Falls back to the
+ * full hardcoded registry when an agent declares no runtimeVariables (legacy).
+ */
+function buildPalette(runtimeVariables?: RuntimeVariable[] | null): PlaceholderDef[] {
+  if (!runtimeVariables || runtimeVariables.length === 0) return PLACEHOLDER_REGISTRY
+
+  return runtimeVariables.map((rv, i) => {
+    const existing = PLACEHOLDER_REGISTRY.find((p) => p.name === rv.name)
+    const colors = COLOR_CYCLE[i % COLOR_CYCLE.length]
+    const label = rv.label || rv.name
+    return {
+      name: rv.name,
+      label,
+      description: rv.description ?? existing?.description ?? '',
+      preview: rv.preview ?? existing?.preview ?? '',
+      insertToken: rv.parametric ? `{{${rv.name}_8}}` : `{{${rv.name}}}`,
+      pattern: rv.parametric
+        ? new RegExp(`\\{\\{${rv.name}_\\d+\\}\\}`)
+        : `{{${rv.name}}}`,
+      dark: existing?.dark ?? colors.dark,
+      light: existing?.light ?? colors.light,
+    }
+  })
+}
+
+interface Palette {
+  defs: PlaceholderDef[]
+  map: Map<string, PlaceholderDef>
+}
+
+// Defaults to the hardcoded registry so any PromptComposer rendered outside a
+// configured agent context still works exactly as before.
+const PaletteContext = createContext<Palette>({ defs: PLACEHOLDER_REGISTRY, map: PLACEHOLDER_MAP })
+
 // ---------------------------------------------------------------------------
 // Output format registry (per expert name)
 // ---------------------------------------------------------------------------
@@ -250,25 +294,33 @@ export function buildExpertBlocks(
 // Highlighted text renderer
 // ---------------------------------------------------------------------------
 
-function getPlaceholderDef(token: string): PlaceholderDef | undefined {
+function getPlaceholderDef(
+  token: string,
+  defs: PlaceholderDef[],
+  map: Map<string, PlaceholderDef>,
+): PlaceholderDef | undefined {
   const match = token.match(/^\{\{(\w+)\}\}$/)
   if (!match) return undefined
   const name = match[1]
-  const simple = PLACEHOLDER_MAP.get(name)
+  const simple = map.get(name)
   if (simple) return simple
-  if (/^history_\d+$/.test(name)) {
-    return PLACEHOLDER_REGISTRY.find((p) => p.name === 'history')
-  }
-  return undefined
+  // Parametric tokens (e.g. {{history_8}}) match a def whose pattern is a RegExp.
+  return defs.find((p) => p.pattern instanceof RegExp && p.pattern.test(token))
 }
 
-function renderHighlightedText(text: string, isDark: boolean, dimmed?: boolean): ReactNode[] {
+function renderHighlightedText(
+  text: string,
+  isDark: boolean,
+  defs: PlaceholderDef[],
+  map: Map<string, PlaceholderDef>,
+  dimmed?: boolean,
+): ReactNode[] {
   if (!text) return [<span key="empty">{'\n'}</span>]
 
   const parts = text.split(PLACEHOLDER_RE)
   return parts.map((part, i) => {
     if (/^\{\{\w+\}\}$/.test(part)) {
-      const def = getPlaceholderDef(part)
+      const def = getPlaceholderDef(part, defs, map)
       if (def) {
         const colors = isDark ? def.dark : def.light
         return (
@@ -312,6 +364,7 @@ function VariablesPopover({
 }) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  const { defs } = useContext(PaletteContext)
 
   useEffect(() => {
     if (anchorRef.current) {
@@ -357,7 +410,7 @@ function VariablesPopover({
         </span>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {PLACEHOLDER_REGISTRY.map((ph) => {
+        {defs.map((ph) => {
           const colors = isDark ? ph.dark : ph.light
           const isUsed = isPlaceholderUsed(promptText, ph)
           return (
@@ -375,7 +428,7 @@ function VariablesPopover({
         })}
       </div>
       <div className={`mt-2.5 pt-2 border-t space-y-1 ${isDark ? 'border-zinc-800' : 'border-neutral-100'}`}>
-        {PLACEHOLDER_REGISTRY.map((ph) => {
+        {defs.map((ph) => {
           const colors = isDark ? ph.dark : ph.light
           const isUsed = isPlaceholderUsed(promptText, ph)
           return (
@@ -464,13 +517,15 @@ function renderHoverTargets(
   onEnter: (def: PlaceholderDef, e: React.MouseEvent) => void,
   onLeave: () => void,
   textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+  defs: PlaceholderDef[],
+  map: Map<string, PlaceholderDef>,
 ): ReactNode[] {
   if (!text) return [<span key="empty">{'\n'}</span>]
 
   const parts = text.split(PLACEHOLDER_RE)
   return parts.map((part, i) => {
     if (/^\{\{\w+\}\}$/.test(part)) {
-      const def = getPlaceholderDef(part)
+      const def = getPlaceholderDef(part, defs, map)
       if (def) {
         return (
           <span
@@ -527,6 +582,7 @@ function HighlightedEditor({
   const hoverLayerRef = useRef<HTMLDivElement>(null)
   const [hoveredPh, setHoveredPh] = useState<{ def: PlaceholderDef; x: number; y: number } | null>(null)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const { defs, map } = useContext(PaletteContext)
 
   const syncScroll = useCallback(() => {
     if (textareaRef.current) {
@@ -603,7 +659,7 @@ function HighlightedEditor({
           aria-hidden
         >
           <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.7] m-0">
-            {renderHighlightedText(backdropText, isDark, dimmed)}
+            {renderHighlightedText(backdropText, isDark, defs, map, dimmed)}
           </pre>
         </div>
 
@@ -631,7 +687,7 @@ function HighlightedEditor({
           className="absolute inset-0 z-20 overflow-hidden pointer-events-none px-3.5 py-2.5"
         >
           <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.7] m-0">
-            {renderHoverTargets(backdropText, handlePhEnter, handlePhLeave, textareaRef)}
+            {renderHoverTargets(backdropText, handlePhEnter, handlePhLeave, textareaRef, defs, map)}
           </pre>
         </div>
       </div>
@@ -1150,7 +1206,19 @@ function ContextBlock({ block, isDark }: { block: PromptBlock; isDark: boolean }
 // ---------------------------------------------------------------------------
 
 function PromptComposerInner({ blocks, isDark, compact }: PromptComposerProps) {
+  // The agent type's manifest-declared palette (set when the configurator opened).
+  // Falls back to the built-in registry for agents that declare none.
+  const runtimeVariables = useConfiguratorStore((s) => s.runtimeVariables)
+  const palette = useMemo<Palette>(() => {
+    const defs = buildPalette(runtimeVariables)
+    const map = new Map(
+      defs.filter((p) => typeof p.pattern === 'string').map((p) => [p.name, p]),
+    )
+    return { defs, map }
+  }, [runtimeVariables])
+
   return (
+    <PaletteContext.Provider value={palette}>
     <div className={compact ? 'space-y-2.5' : 'space-y-3.5'}>
       {blocks.map((block) => (
         <div key={block.id}>
@@ -1188,6 +1256,7 @@ function PromptComposerInner({ blocks, isDark, compact }: PromptComposerProps) {
         </div>
       ))}
     </div>
+    </PaletteContext.Provider>
   )
 }
 

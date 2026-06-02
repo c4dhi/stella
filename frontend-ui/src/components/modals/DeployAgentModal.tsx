@@ -720,6 +720,7 @@ export default function DeployAgentModal({
                     <ConfigurationSelectionStep
                       agentTypeId={selectedType.id}
                       pipelineSchema={selectedType.pipelineSchema}
+                      runtimeVariables={selectedType.runtimeVariables}
                       selectedConfiguration={selectedConfiguration}
                       onSelectConfiguration={setSelectedConfiguration}
                     />
