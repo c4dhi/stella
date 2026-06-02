@@ -101,26 +101,24 @@ As written today, STT will **not** hand the agent a switch signal:
 
 ---
 
-## 7. Provider / voice coverage (reliability guardrail) — **blocking precondition**
+## 7. Provider / voice coverage — **best-effort, provider-agnostic**
 
-Auto-detection must be **clamped to the set of languages we can serve end-to-end**, and end-to-end coverage is gated by the **TTS provider**. A validation pass (see §13) found the provider landscape has changed since the ticket was filed — **Edge TTS is fully removed** — and, critically, **the production default cannot switch language per request:**
+The resolved language is plumbed to TTS as a **per-request hint**: a provider that can switch language honors it; a provider that can't **discards it**. The feature is **not gated on any particular provider** — it works with whatever is deployed, and spoken-voice multilingualism is an upgrade you get for free when the deployed provider supports it.
 
-| Provider | Languages | Honors per-request `language`? | Voice selection | File |
+Crucially, the **LLM-side coherence is provider-independent**: the response *text*, the bridge, and the `{{language}}` variable always follow the detected language regardless of which voice speaks it. The provider only decides whether the *spoken audio* can also follow.
+
+A validation pass (see §13) found the provider landscape changed since the ticket was filed — **Edge TTS is fully removed** — and that providers fall into two groups, **all of which accept the `language` field without erroring** (verified):
+
+| Provider | Languages | Per-request `language` | Behavior when it can't honor it | File |
 |---|---|---|---|---|
-| **Piper** (**current default**, `TTS_PROVIDER` default in `tts_server.py:35` + Dockerfile `ARG TTS_PROVIDER=piper`) | One per deployed voice | **No — accepted & ignored** | Static, locked at init (`PIPER_VOICE`, default `en_US-lessac-medium`) | `piper_provider.py:56,131` |
-| **Kokoro** | English only | **No — accepted & ignored** | Static voice + fallback chain | `kokoro_provider.py:50,337` |
-| **Qwen3** | 60+, autodetect | **Yes** (`_resolve_language` → model) | Reference-audio voice cloning | `qwen3_provider.py:217-227,242,296` |
-| **ChatterBox** | `en`, `de` | **Yes** (`_resolve_language` → `language_id`) | Language ID (+ optional voice-clone prompt) | `chatterbox_provider.py:49,203-209,373,437` |
+| **Piper** (current default) | One per deployed voice | Ignored | Accepts & silently ignores; speaks its built `PIPER_VOICE` | `piper_provider.py:131,172` |
+| **Kokoro** | English only | Ignored | Accepts & silently ignores | `kokoro_provider.py:332,390` |
+| **Qwen3** | 60+, autodetect | **Honored** (`_resolve_language` → model) | n/a (autodetects) | `qwen3_provider.py:217-227` |
+| **ChatterBox** | `en`, `de` | **Honored** (`_resolve_language` → `language_id`) | Unsupported code → logs + falls back to `CHATTERBOX_LANGUAGE` | `chatterbox_provider.py:203-209` |
 
-**Consequence:** with Piper (today's default), the entire coherence design is moot — TTS will speak one language regardless of what STT detects or what we plumb. **Mechanism change #9 only works on a provider that honors per-request `language`.**
+**Consequence:** with Piper/Kokoro the spoken voice stays fixed, but the agent still *responds* in the user's language — degraded gracefully, not broken. Deploying Qwen3 or ChatterBox additionally makes the **voice** follow, with no code change (env/build-arg + model weights only). Mechanism #9 is a no-op on a non-honoring provider but is never harmful.
 
-**Required decision before implementation:** standardize the multilingual deployment on **Qwen3** or **ChatterBox**.
-
-- **Qwen3** — broadest coverage (60+ langs), per-request switching works, autodetect. Best fit for "respond in whatever the user speaks." Cost: heavier model, voice identity comes from a single reference clip.
-- **ChatterBox** — exactly the `en`/`de` we commit to for v1, per-request switching works, lighter. Best fit if v1 scope is strictly en/de.
-- **Piper/Kokoro** — cannot do per-utterance switching; Piper would need a rebuild per language. Not viable for coherent multilingual.
-
-**Committed supported set for v1: `en`, `de`** — satisfiable by either ChatterBox (native) or Qwen3 (subset). If STT confidently detects a language **outside** the committed set, the agent **keeps the current locked / plan-default language** rather than switching into broken or wrong-language TTS. Adding a language later means: STT can detect it (Whisper can) **and** the chosen provider can speak it.
+**Agent-side clamp (separate concern):** the resolver still clamps its *own* decision to a committed supported set (v1: `en`, `de`) so the LLM is never asked to respond in a language we don't intend to support. If STT confidently detects something outside that set, the agent keeps the current locked / plan-default language. This clamp is about what the system commits to answer in; the TTS discard-the-tag behavior above is the independent provider layer. Adding a language later means widening the resolver's supported set **and** (for spoken voice) deploying a provider that can speak it.
 
 ---
 
@@ -220,9 +218,9 @@ This also covers the case where STT *runs* but returns no confident language (to
 | 6 | Hold `session.language` + apply the gated-switch policy | agent SDK session state | Single source of truth |
 | 7 | Generate the bridge in the resolved language; **remove** the `_detect_german` word-list heuristic | `agents/stella-v2-agent/src/stella_v2_agent/pipeline/bridge_generator.py:110-127,156-174` | Stop independent guessing |
 | 8 | Replace "match the user" with an explicit `Respond in {language}` instruction | `agents/stella-v2-agent/src/stella_v2_agent/prompts/response_prompt.py:102-123` | Deterministic LLM language |
-| 9 | Pass the resolved language per-utterance into `SynthesizeRequest.language`; retire static `TTS_LANGUAGE` | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/audio/pipeline.py:143,834,1102,1118` | Dynamic voice; proto already supports it (`proto/tts.proto:22`). **No-op unless the deployed provider honors per-request language — see #11** |
+| 9 | Pass the resolved language per-utterance into `SynthesizeRequest.language`; retire static `TTS_LANGUAGE` | `agents/stella-ai-agent-sdk/src/stella_agent_sdk/audio/pipeline.py:143,834,1102,1118` | Dynamic voice; proto already supports it (`proto/tts.proto:22`). Best-effort: honoring providers switch voice, others discard the tag (§7) |
 | 10 | Define + document the supported language set and out-of-set fallback | `tts-service/src/providers/*` | Reliability guardrail (§7) |
-| 11 | **Standardize the multilingual deployment on a provider that honors per-request `language` (Qwen3 or ChatterBox)** | `tts-service/src/tts_server.py:35`, Dockerfile `ARG TTS_PROVIDER` | **Blocking precondition** — default Piper ignores `language` (§7); without this, #9 does nothing |
+| 11 | *(Optional upgrade)* Deploy a provider that honors per-request `language` (Qwen3 or ChatterBox) to make the **spoken voice** follow too | `tts-service/src/tts_server.py:35`, Dockerfile `ARG TTS_PROVIDER` | Env/build-arg + weights only, no code. Without it the voice stays fixed but the response text still follows the language (§7) |
 | 12 | Add a `{{language}}` placeholder; populate `sm_context["language"]` from the resolved value each turn | `agents/stella-v2-agent/src/stella_v2_agent/experts/template_compiler.py` (`PLACEHOLDER_REGISTRY`) | Expose the resolved language as a runtime variable (§8.2); first observation-derived placeholder |
 | 13 | Add a confidence-scored **text** language classifier emitting `(language, confidence)` for typed turns | text-chat input path (agent SDK) | Modality-agnostic resolution when no STT signal exists (§8.3) |
 
@@ -239,7 +237,7 @@ This also covers the case where STT *runs* but returns no confident language (to
 
 ## 11. Open questions for review
 
-1. **TTS provider standardization (blocking)** — adopt **Qwen3** (60+ langs, autodetect) or **ChatterBox** (en/de) as the multilingual default? Piper/Kokoro cannot switch per utterance (§7). This decision gates the whole feature.
+1. **TTS provider for spoken multilingualism (optional upgrade, not a gate)** — the feature ships and degrades gracefully on any provider (§7). To make the *voice* follow the language too, deploy **Qwen3** (60+ langs, autodetect) or **ChatterBox** (en/de). Worth doing for the study, but not required for the agent-side coherence to land.
 2. **Lock vs. force at plan level** — "optional declared default" is a *soft seed* today; do we also want an explicit `force: true` for plans that must never switch (e.g. a German-only assessment)? Proposed as a later refinement, not v1.
 3. **Threshold values** — initial `detect_threshold` / `switch_threshold` / debounce count (§8) to be set empirically.
 4. **Switch-utterance degradation** (§6) — accept the minor one-utterance transcription cost, or re-transcribe the switch utterance in the detected language at a latency cost? RFC proposes accepting it for v1.
@@ -250,7 +248,7 @@ This also covers the case where STT *runs* but returns no confident language (to
 
 ## 12. Summary
 
-One authoritative detection (STT), plumbed up through the proto, owned and gated by the agent, fed to bridge + LLM + TTS. The bridge already fires on the final transcript — the same moment STT computes the language — so coherence is free once the language is plumbed. No neutral bridge, no static env var, no triple-detection drift. **The one hard precondition is the TTS provider (§7): the design is inert on the current Piper default.**
+One authoritative detection (STT), plumbed up through the proto, owned and gated by the agent, fed to bridge + LLM + TTS. The bridge already fires on the final transcript — the same moment STT computes the language — so coherence is free once the language is plumbed. No neutral bridge, no static env var, no triple-detection drift. The resolved language is plumbed to TTS as a best-effort hint — honoring providers switch the voice, others discard it — so the design works on any provider and the spoken voice is a free upgrade (§7).
 
 ---
 
@@ -306,11 +304,11 @@ The **agent-side coherence slice is implemented** on `feature/language-handling-
 - Bridge generated in the resolved language; `_detect_german` reliance removed from the live path (#7).
 - Explicit `Respond entirely in {language}` directive in the response prompt (#8).
 - `{{language}}` template placeholder (#12).
-- TTS voice follows per turn: `AudioPipeline.set_tts_language()` + base-loop wiring from `metadata["language"]`; `TTS_LANGUAGE` env demoted to a seed (#9).
+- TTS voice follows per turn (best-effort): `AudioPipeline.set_tts_language()` + base-loop wiring from `metadata["language"]`; `TTS_LANGUAGE` env demoted to a seed (#9). Honoring providers switch voice; others discard the tag (§7).
 - `Plan.language` seed field, default `auto` (#5, agent-side half).
-- Unit tests: 22 cases covering lock / hold / confidence-gated switch / debounce / clamp / seed / fallback — `stella-v2-agent/tests/test_language_resolver.py` (green).
+- Unit tests: 30 cases covering detect / lock / hold / confidence-gated switch / debounce / clamp / seed / provisional-vs-confirmed fallback / reset — `stella-v2-agent/tests/test_language_resolver.py` (green).
 
 **Deferred (follow-up — needs cross-service work + codegen, untestable without GPU/provider):**
 - STT acoustic detection propagation: `proto/stt.proto` `detected_language`+confidence and language hint, `whisper_provider` per-utterance probe, `stt_client.from_proto` (#1–#4). The resolver's signal source is designed to swap from transcript-text to this with no change to the gating/propagation.
-- **TTS provider standardization on Qwen3/ChatterBox (#11)** — still the blocking deployment decision for multilingual *voice*; the plumbing (#9) is in place and is a no-op under the Piper default until then.
+- **TTS provider for spoken multilingualism (#11, optional)** — deploying Qwen3/ChatterBox makes the *voice* follow the language; env/build-arg + weights only, no code. The plumbing (#9) is in place and degrades gracefully on the Piper default (voice fixed, response text still follows).
 - Text-chat classifier as a distinct input-path hook (#13) — currently covered by the same transcript-text resolver.
