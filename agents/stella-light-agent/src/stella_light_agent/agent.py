@@ -28,7 +28,7 @@ from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.state_machine import StateMachine
 from stella_light_agent.prompts import LightPromptBuilder
-from stella_agent_sdk.prompts import get_compiler
+from stella_agent_sdk import prompts as sdk_prompts
 from stella_light_agent.adapters import ProgressAdapter
 
 
@@ -110,6 +110,8 @@ class StellaLightAgent(BaseAgent):
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
         self._history_limit: int = 20
+        # Prompt-compiler version to resolve {{placeholder}} tokens with (None = latest).
+        self._compiler_version: Optional[str] = None
 
         mode_str = "tool-based" if use_tools else "legacy"
         print(f"[StellaLightAgent] Initialized ({mode_str} mode)")
@@ -180,21 +182,24 @@ class StellaLightAgent(BaseAgent):
         values ({{plan}}, {{current_focus}}, {{history_N}}, {{user_message}}, ...).
         Compiled per turn because history/user-message placeholders change each turn.
         """
-        # Ring up the placeholder compiler from the SDK, bound to this turn's
-        # runtime context, then resolve placeholders in each configured prompt.
-        compiler = get_compiler("placeholder")(
-            sm_context,
-            conversation_history=conversation_history,
-            user_input=user_input,
-        )
+        # Resolve {{placeholder}} tokens in each configured prompt through the SDK's
+        # single compile entry point (prompt + compiler version -> final prompt).
+        def render(text: Optional[str]) -> Optional[str]:
+            return sdk_prompts.compile(
+                text,
+                version=self._compiler_version,
+                sm_context=sm_context,
+                conversation_history=conversation_history,
+                user_input=user_input,
+            )
 
         if self._custom_persona:
-            sm_context["custom_persona"] = compiler.compile(self._custom_persona)
+            sm_context["custom_persona"] = render(self._custom_persona)
         if self._custom_guidelines:
-            sm_context["custom_guidelines"] = compiler.compile(self._custom_guidelines)
+            sm_context["custom_guidelines"] = render(self._custom_guidelines)
         # The plan system prompt may also contain placeholders.
         if sm_context.get("plan_system_prompt"):
-            sm_context["plan_system_prompt"] = compiler.compile(sm_context["plan_system_prompt"])
+            sm_context["plan_system_prompt"] = render(sm_context["plan_system_prompt"])
 
     async def on_session_start(self, session_id: str, config: Dict[str, Any]) -> None:
         """
@@ -210,6 +215,8 @@ class StellaLightAgent(BaseAgent):
         self._custom_persona = None
         self._custom_guidelines = None
         self._history_limit = 20
+        # Optional pinned compiler version from config; None resolves to the latest.
+        self._compiler_version = config.get("compiler_version")
 
         print(f"[StellaLightAgent] Session started: {session_id}")
         print(f"[StellaLightAgent] Config keys: {list(config.keys())}")

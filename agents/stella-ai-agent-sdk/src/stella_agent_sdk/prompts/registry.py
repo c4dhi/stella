@@ -1,51 +1,95 @@
-"""Registry of prompt compilers exposed by the SDK.
+"""Versioned registry + single compile entry point for SDK prompt compilers.
 
-Lets an agent fetch whichever compiler it wants by name instead of importing a
-concrete class:
+Agents don't construct a compiler directly — they call one method with the raw
+prompt and the compiler version they want, and get back the final prompt:
 
-    from stella_agent_sdk.prompts import get_compiler
-    Compiler = get_compiler("placeholder")
-    compiler = Compiler(sm_context, conversation_history=h, user_input=t)
-    text = compiler.compile(raw_prompt)
+    from stella_agent_sdk import prompts
+    final = prompts.compile(
+        raw_prompt,
+        version="1.0.0",                 # omit for the latest
+        sm_context=sm_context,
+        conversation_history=history,
+        user_input=text,
+    )
 
-Third-party / custom agents can register their own compilers with
-:func:`register_compiler`.
+Each compiler implementation registers itself under its ``VERSION``; new behavior
+ships as a new version so old prompts keep compiling against the version they were
+authored for. Custom agents can add versions with :func:`register_compiler`.
 """
 
-from typing import Dict, Type
+from typing import Dict, List, Optional, Type, Any
 
 from stella_agent_sdk.prompts.base import PromptCompiler
 from stella_agent_sdk.prompts.placeholder_compiler import PlaceholderPromptCompiler
 
+# version string -> compiler class
 _REGISTRY: Dict[str, Type[PromptCompiler]] = {}
 
 
+def _version_key(version: str):
+    """Sort key for semantic-ish versions; non-numeric parts sort last."""
+    parts = []
+    for piece in str(version).split("."):
+        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
+    return tuple(parts)
+
+
 def register_compiler(compiler_cls: Type[PromptCompiler]) -> Type[PromptCompiler]:
-    """Register a compiler class under its ``NAME``. Returns the class (usable as a decorator)."""
-    name = getattr(compiler_cls, "NAME", None)
-    if not name or name == "base":
-        raise ValueError(f"Compiler {compiler_cls!r} must define a non-empty, non-'base' NAME")
-    _REGISTRY[name] = compiler_cls
+    """Register a compiler class under its ``VERSION`` (usable as a decorator)."""
+    version = getattr(compiler_cls, "VERSION", None)
+    if not version or version == "0.0.0":
+        raise ValueError(f"Compiler {compiler_cls!r} must define a real VERSION")
+    _REGISTRY[version] = compiler_cls
     return compiler_cls
 
 
-def get_compiler(name: str) -> Type[PromptCompiler]:
-    """Return the registered compiler class for ``name``.
+def latest_version() -> str:
+    """The highest registered compiler version."""
+    if not _REGISTRY:
+        raise LookupError("No prompt compilers are registered")
+    return max(_REGISTRY, key=_version_key)
 
-    Raises:
-        KeyError: if no compiler is registered under that name.
-    """
+
+def available_versions() -> List[str]:
+    """All registered compiler versions, oldest first."""
+    return sorted(_REGISTRY, key=_version_key)
+
+
+def get_compiler(version: Optional[str] = None) -> Type[PromptCompiler]:
+    """Return the compiler class for ``version`` (or the latest when omitted)."""
+    if version is None:
+        return _REGISTRY[latest_version()]
     try:
-        return _REGISTRY[name]
+        return _REGISTRY[version]
     except KeyError:
-        available = ", ".join(sorted(_REGISTRY)) or "(none)"
-        raise KeyError(f"No prompt compiler registered as '{name}'. Available: {available}")
+        avail = ", ".join(available_versions()) or "(none)"
+        raise KeyError(
+            f"No prompt compiler registered for version '{version}'. Available: {avail}"
+        )
 
 
-def available_compilers() -> Dict[str, Type[PromptCompiler]]:
-    """A copy of the name -> compiler-class registry."""
-    return dict(_REGISTRY)
+def compile(
+    template: Optional[str],
+    version: Optional[str] = None,
+    *,
+    sm_context: Optional[Dict[str, Any]] = None,
+    conversation_history: Optional[List[Dict[str, str]]] = None,
+    user_input: str = "",
+) -> Optional[str]:
+    """Compile a prompt with the requested compiler version and return the final text.
+
+    This is the single entry point agents use: pass the raw prompt (with
+    placeholders) and the compiler version, plus the runtime context the
+    placeholders resolve against, and get back the prompt to hand to the LLM.
+    Returns the input unchanged for falsy/token-free prompts.
+    """
+    compiler = get_compiler(version)(
+        sm_context,
+        conversation_history=conversation_history,
+        user_input=user_input,
+    )
+    return compiler.compile(template)
 
 
-# Register the built-in compilers shipped with the SDK.
+# Register the built-in compiler version(s) shipped with the SDK.
 register_compiler(PlaceholderPromptCompiler)

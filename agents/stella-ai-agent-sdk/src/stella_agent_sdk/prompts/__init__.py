@@ -1,10 +1,16 @@
 """SDK prompt-compiler library.
 
-Public surface:
-  - PromptCompiler            base class / interface for compilers
-  - PlaceholderPromptCompiler the built-in {{placeholder}} resolver
-  - get_compiler/register_compiler/available_compilers  registry access
-  - compile_prompt            functional one-shot {{placeholder}} resolver
+Primary entry point — one call, given a prompt + compiler version, returns the
+final prompt for the LLM:
+
+    from stella_agent_sdk import prompts
+    final = prompts.compile(raw_prompt, version="1.0.0", sm_context=ctx,
+                            conversation_history=h, user_input=t)
+
+Also exposed:
+  - PromptCompiler / PlaceholderPromptCompiler  classes (advanced use)
+  - get_compiler / register_compiler / available_versions / latest_version  registry
+  - compile_prompt                              functional one-shot resolver
   - COMPILER_VERSION, KNOWN_PLACEHOLDERS, validate_template  versioning primitives
 """
 
@@ -18,12 +24,15 @@ from stella_agent_sdk.prompts.placeholder_compiler import (
     KNOWN_PLACEHOLDERS,
 )
 from stella_agent_sdk.prompts.registry import (
+    compile,
     get_compiler,
     register_compiler,
-    available_compilers,
+    available_versions,
+    latest_version,
 )
 
 __all__ = [
+    "compile",
     "PromptCompiler",
     "PlaceholderPromptCompiler",
     "compile_prompt",
@@ -33,5 +42,6 @@ __all__ = [
     "KNOWN_PLACEHOLDERS",
     "get_compiler",
     "register_compiler",
-    "available_compilers",
+    "available_versions",
+    "latest_version",
 ]

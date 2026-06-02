@@ -1,7 +1,8 @@
-"""Tests for the shared SDK prompt-compiler library."""
+"""Tests for the shared SDK prompt-compiler library and the single compile entry point."""
 
 import pytest
 
+from stella_agent_sdk import prompts
 from stella_agent_sdk.prompts import (
     PromptCompiler,
     PlaceholderPromptCompiler,
@@ -9,7 +10,8 @@ from stella_agent_sdk.prompts import (
     validate_template,
     get_compiler,
     register_compiler,
-    available_compilers,
+    available_versions,
+    latest_version,
     COMPILER_VERSION,
     KNOWN_PLACEHOLDERS,
 )
@@ -28,26 +30,16 @@ def _ctx():
     }
 
 
-def test_registry_exposes_placeholder_compiler():
-    assert "placeholder" in available_compilers()
-    assert get_compiler("placeholder") is PlaceholderPromptCompiler
-    assert issubclass(PlaceholderPromptCompiler, PromptCompiler)
+# --- single compile() entry point -------------------------------------------------
 
-
-def test_get_compiler_unknown_name_raises():
-    with pytest.raises(KeyError):
-        get_compiler("does-not-exist")
-
-
-def test_compile_resolves_known_placeholders():
-    compiler = PlaceholderPromptCompiler(
-        _ctx(),
+def test_compile_resolves_against_runtime_context():
+    out = prompts.compile(
+        "State {{current_state}} / {{progress_percentage}} / "
+        "{{collected_deliverables}} / {{history_1}} / {{user_message}}",
+        version=COMPILER_VERSION,
+        sm_context=_ctx(),
         conversation_history=[{"role": "user", "content": "hi"}],
         user_input="My name is Sam",
-    )
-    out = compiler.compile(
-        "State {{current_state}} / {{progress_percentage}} / "
-        "{{collected_deliverables}} / {{history_1}} / {{user_message}}"
     )
     assert "Intake" in out
     assert "50%" in out
@@ -56,17 +48,63 @@ def test_compile_resolves_known_placeholders():
     assert "My name is Sam" in out
 
 
-def test_unknown_placeholder_is_left_as_is():
-    compiler = PlaceholderPromptCompiler(_ctx())
-    assert "{{not_a_var}}" in compiler.compile("x {{not_a_var}} y")
+def test_compile_defaults_to_latest_version():
+    # version omitted -> latest registered compiler is used
+    out = prompts.compile("{{current_state}}", sm_context=_ctx())
+    assert "Intake" in out
 
 
-def test_compile_is_noop_without_tokens():
-    compiler = PlaceholderPromptCompiler(_ctx())
-    assert compiler.compile("plain text") == "plain text"
-    assert compiler.compile("") == ""
-    assert compiler.compile(None) is None
+def test_compile_leaves_unknown_tokens_and_is_noop_without_tokens():
+    assert "{{nope}}" in prompts.compile("x {{nope}} y", sm_context=_ctx())
+    assert prompts.compile("plain", sm_context=_ctx()) == "plain"
+    assert prompts.compile("", sm_context=_ctx()) == ""
+    assert prompts.compile(None, sm_context=_ctx()) is None
 
+
+def test_compile_unknown_version_raises():
+    with pytest.raises(KeyError):
+        prompts.compile("{{current_state}}", version="99.0.0", sm_context=_ctx())
+
+
+# --- registry / versioning --------------------------------------------------------
+
+def test_registry_has_builtin_version():
+    assert COMPILER_VERSION in available_versions()
+    assert latest_version() == COMPILER_VERSION
+    assert get_compiler(COMPILER_VERSION) is PlaceholderPromptCompiler
+    assert get_compiler() is PlaceholderPromptCompiler  # default -> latest
+    assert issubclass(PlaceholderPromptCompiler, PromptCompiler)
+
+
+def test_register_compiler_adds_a_selectable_version():
+    class V2(PlaceholderPromptCompiler):
+        VERSION = "2.0.0-test"
+
+    try:
+        register_compiler(V2)
+        assert "2.0.0-test" in available_versions()
+        assert get_compiler("2.0.0-test") is V2
+        assert latest_version() == "2.0.0-test"  # sorts above 1.0.0
+        # The single entry point can target the new version explicitly.
+        assert prompts.compile("{{current_state}}", version="2.0.0-test", sm_context=_ctx())
+    finally:
+        # Keep the registry clean for other tests.
+        from stella_agent_sdk.prompts import registry
+        registry._REGISTRY.pop("2.0.0-test", None)
+
+
+def test_register_compiler_rejects_placeholder_version():
+    class Bad(PromptCompiler):
+        VERSION = "0.0.0"
+
+        def compile(self, template):
+            return template
+
+    with pytest.raises(ValueError):
+        register_compiler(Bad)
+
+
+# --- versioning primitives --------------------------------------------------------
 
 def test_validate_template_reports_only_unknown():
     assert validate_template("{{plan}} {{history_8}} {{user_message}}") == []
@@ -74,26 +112,14 @@ def test_validate_template_reports_only_unknown():
     assert validate_template(None) == []
 
 
-def test_versioning_primitives():
+def test_known_placeholders_and_version():
     assert COMPILER_VERSION == PlaceholderPromptCompiler.VERSION
     assert "plan" in KNOWN_PLACEHOLDERS
     assert "history_N" in KNOWN_PLACEHOLDERS
     assert PlaceholderPromptCompiler.known_placeholders() == KNOWN_PLACEHOLDERS
 
 
-def test_functional_compile_prompt_matches_class():
+def test_functional_helper_matches_facade():
     ctx = _ctx()
-    tpl = "{{current_state}}"
-    compiler = PlaceholderPromptCompiler(ctx)
-    assert compiler.compile(tpl) == compile_prompt(tpl, {**ctx, "_conversation_history": [], "_user_input": ""})
-
-
-def test_register_compiler_rejects_base_name():
-    class Bad(PromptCompiler):
-        NAME = "base"
-
-        def compile(self, template):
-            return template
-
-    with pytest.raises(ValueError):
-        register_compiler(Bad)
+    expected = compile_prompt("{{current_state}}", {**ctx, "_conversation_history": [], "_user_input": ""})
+    assert prompts.compile("{{current_state}}", sm_context=ctx) == expected
