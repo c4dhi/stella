@@ -28,6 +28,7 @@ from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.state_machine import StateMachine
 from stella_light_agent.prompts import LightPromptBuilder
+from stella_agent_sdk.prompts import get_compiler
 from stella_light_agent.adapters import ProgressAdapter
 
 
@@ -165,6 +166,35 @@ class StellaLightAgent(BaseAgent):
             f"guidelines={'custom' if self._custom_guidelines else 'default'}, "
             f"history_limit={self._history_limit}"
         )
+
+    def _inject_configured_prompts(
+        self,
+        sm_context: Dict[str, Any],
+        conversation_history: List[Dict[str, str]],
+        user_input: str,
+    ) -> None:
+        """Resolve {{placeholder}} tokens in configured prompts and inject them.
+
+        Mirrors stella-v2's template compilation so the Configurator's persona /
+        conversation_guidelines and the plan system prompt can reference live runtime
+        values ({{plan}}, {{current_focus}}, {{history_N}}, {{user_message}}, ...).
+        Compiled per turn because history/user-message placeholders change each turn.
+        """
+        # Ring up the placeholder compiler from the SDK, bound to this turn's
+        # runtime context, then resolve placeholders in each configured prompt.
+        compiler = get_compiler("placeholder")(
+            sm_context,
+            conversation_history=conversation_history,
+            user_input=user_input,
+        )
+
+        if self._custom_persona:
+            sm_context["custom_persona"] = compiler.compile(self._custom_persona)
+        if self._custom_guidelines:
+            sm_context["custom_guidelines"] = compiler.compile(self._custom_guidelines)
+        # The plan system prompt may also contain placeholders.
+        if sm_context.get("plan_system_prompt"):
+            sm_context["plan_system_prompt"] = compiler.compile(sm_context["plan_system_prompt"])
 
     async def on_session_start(self, session_id: str, config: Dict[str, Any]) -> None:
         """
@@ -467,11 +497,9 @@ class StellaLightAgent(BaseAgent):
             sm_context["plan_system_prompt"] = self._plan_system_prompt
             print(f"[StellaLightAgent] Using plan system prompt: {self._plan_system_prompt[:100]}...")
 
-        # Inject Configurator persona/guidelines overrides (same principle as stella-v2).
-        if self._custom_persona:
-            sm_context["custom_persona"] = self._custom_persona
-        if self._custom_guidelines:
-            sm_context["custom_guidelines"] = self._custom_guidelines
+        # Inject configured prompts, resolving {{placeholder}} variables against
+        # the live runtime context (same principle as stella-v2).
+        self._inject_configured_prompts(sm_context, conversation_history, input.text)
 
         # Build prompts
         system_prompt = self.prompt_builder.build_system_prompt(sm_context)
@@ -560,11 +588,9 @@ class StellaLightAgent(BaseAgent):
         if self._plan_system_prompt:
             sm_context["plan_system_prompt"] = self._plan_system_prompt
 
-        # Inject Configurator persona/guidelines overrides (same principle as stella-v2).
-        if self._custom_persona:
-            sm_context["custom_persona"] = self._custom_persona
-        if self._custom_guidelines:
-            sm_context["custom_guidelines"] = self._custom_guidelines
+        # Inject configured prompts, resolving {{placeholder}} variables against
+        # the live runtime context (same principle as stella-v2).
+        self._inject_configured_prompts(sm_context, conversation_history, input.text)
 
         # Build prompts
         system_prompt = self.prompt_builder.build_system_prompt(sm_context)
