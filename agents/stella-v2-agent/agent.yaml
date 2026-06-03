@@ -328,7 +328,13 @@ pipelineSchema:
   language:
     supported:
       label: "Supported languages"
-      description: "ISO 639-1 codes the agent resolves to; anything else is clamped to the current lock. v1: en, de."
+      description: >-
+        ISO 639-1 codes the agent resolves to; anything else is clamped to the
+        current lock. v1: en, de. NOTE: widening this set alone is not enough —
+        the language-name map and fallback bridges (language_resolver.py /
+        bridge_generator.py) and a capable TTS provider (RFC §7) only know en/de,
+        so an unlisted language falls back to English text. Add a language as a
+        deliberate, multi-part change, not via config only.
       type: array
       default: ["de", "en"]
     default:

@@ -10,6 +10,7 @@ Composes the final system prompt from:
 from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.models.arbitration_result import ResponseDirective
+from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES
 
 
 def build_response_system_prompt(
@@ -82,10 +83,9 @@ def _language_directive(language: Optional[str]) -> Optional[str]:
 
     Returns None for unknown/auto so the existing heuristic language rules stand.
     """
-    names = {"en": "English", "de": "German"}
     if not language or language == "auto":
         return None
-    name = names.get(language, language)
+    name = LANGUAGE_NAMES.get(language, language)
     return (
         f"LANGUAGE (highest priority — overrides everything above):\n"
         f"- Respond ENTIRELY in {name}. Every single word, including any examples, must be in {name}.\n"

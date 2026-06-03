@@ -559,23 +559,24 @@ class WhisperSession(STTSession):
 
             # Per-utterance language signal — taken FREE from the transcription
             # pass (RFC §6 #3), no second model call:
-            #   - auto-detect (default): info carries the honest detection, so a
-            #     mid-session switch is visible to the agent every utterance.
-            #   - pinned: transcription was forced, so the pin is authoritative.
-            # Short clips detect unreliably, so below the floor we emit no signal
-            # and let the agent fall back to its text classifier (RFC §8.3).
+            #   - pinned: transcription was forced to `language`, so the pin is
+            #     authoritative regardless of clip length — emit it even for
+            #     sub-2s utterances (no detection uncertainty to guard against).
+            #   - auto-detect (default): info carries the honest detection, but
+            #     short clips detect unreliably, so below the floor we emit no
+            #     signal and let the agent fall back to its text classifier
+            #     (RFC §8.3).
             min_duration_for_lang = 2.0
             detected_language, language_confidence = "", 0.0
-            if audio_duration_sec >= min_duration_for_lang:
-                if language is None:
-                    detected_language = getattr(info, 'language', None) or ""
-                    language_confidence = float(getattr(info, 'language_probability', 0.0) or 0.0)
-                else:
-                    detected_language, language_confidence = language, 1.0
-                if detected_language:
-                    print(f"[WhisperSession] Language: {detected_language} "
-                          f"(conf={language_confidence:.2f}, "
-                          f"{'pinned' if language else 'auto'}, {audio_duration_sec:.1f}s)")
+            if language is not None:
+                detected_language, language_confidence = language, 1.0
+            elif audio_duration_sec >= min_duration_for_lang:
+                detected_language = getattr(info, 'language', None) or ""
+                language_confidence = float(getattr(info, 'language_probability', 0.0) or 0.0)
+            if detected_language:
+                print(f"[WhisperSession] Language: {detected_language} "
+                      f"(conf={language_confidence:.2f}, "
+                      f"{'pinned' if language else 'auto'}, {audio_duration_sec:.1f}s)")
 
             final_text = ""
             for segment in segments:

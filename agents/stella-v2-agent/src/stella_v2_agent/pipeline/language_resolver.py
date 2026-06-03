@@ -219,8 +219,12 @@ class LanguageResolver:
             if self._pending_count >= self.debounce:
                 self.locked = lang
                 self._reset_pending()
-        elif not lang or lang == self.locked:
-            # Same language or no signal → cancel any in-flight switch.
+        else:
+            # Anything that is NOT a confident switch toward `lang` cancels an
+            # in-flight switch: same language, no signal, OR a weak/ambiguous
+            # opposite signal (different supported language below switch_threshold).
+            # This keeps "sustained" meaning CONSECUTIVE confident detections —
+            # a weak turn in between resets the debounce count (RFC §8 #3).
             self._reset_pending()
 
         return self.locked

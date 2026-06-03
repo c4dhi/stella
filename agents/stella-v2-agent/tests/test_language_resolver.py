@@ -194,6 +194,18 @@ def test_debounce_requires_consecutive_detections():
     assert r.resolve("Ich möchte wirklich auf Deutsch weitermachen bitte") == "de"  # 2nd
 
 
+def test_debounce_resets_on_weak_opposite_signal():
+    # A weak/ambiguous opposite signal BETWEEN two confident German turns must
+    # reset the pending switch — "sustained" means CONSECUTIVE, so the two
+    # confident turns must not accumulate across the gap (finding #3).
+    r = LanguageResolver(debounce=2)
+    r.resolve("I have been running a lot this week")  # lock en
+    assert r.resolve("", signal=("de", 0.95)) == "en"  # pending de = 1
+    assert r.resolve("", signal=("de", 0.50)) == "en"  # weak de < switch → reset
+    assert r.resolve("", signal=("de", 0.95)) == "en"  # pending de = 1 again, no flip
+    assert r.resolve("", signal=("de", 0.95)) == "de"  # now 2 consecutive → switch
+
+
 # ─────────────────────── clamp to supported set ───────────────────────
 
 def test_unsupported_language_does_not_win():

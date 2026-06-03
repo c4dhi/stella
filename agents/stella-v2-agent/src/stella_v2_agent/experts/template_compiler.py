@@ -24,6 +24,8 @@ Unknown placeholders are left as-is to avoid silently breaking prompts.
 import re
 from typing import Dict, Any, List, Optional
 
+from stella_v2_agent.pipeline.language_resolver import language_name
+
 
 # Matches both simple {{name}} and parameterized {{history_10}} placeholders
 PLACEHOLDER_PATTERN = re.compile(r"\{\{(\w+)\}\}")
@@ -269,12 +271,12 @@ def _resolve_user_message(ctx: Dict[str, Any]) -> str:
 
 
 def _resolve_language(ctx: Dict[str, Any]) -> str:
-    """The resolved session language (single source of truth, RFC §8.2)."""
-    lang = ctx.get("language")
-    names = {"en": "English", "de": "German"}
-    if not lang or lang == "auto":
-        return "the user's language"
-    return names.get(lang, lang)
+    """The resolved session language (single source of truth, RFC §8.2).
+
+    Delegates to the resolver's ``language_name`` so the en/de→display map lives
+    in exactly one place (RFC §8 single source of truth).
+    """
+    return language_name(ctx.get("language"))
 
 
 
