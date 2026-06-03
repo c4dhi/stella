@@ -27,7 +27,9 @@ const getEnvVarCardStyle = (index: number) => {
 }
 
 interface EnvVarsSelectionStepProps {
-  agentTypeId?: string
+  // Required: strict scoping means the agent type must always be supplied so the
+  // template list is filtered server-side. Fail fast at the boundary if missing.
+  agentTypeId: string
   requiredEnvVars: string[]
   selectedEnvVarTemplate: EnvVarTemplate | null
   onSelectEnvVarTemplate: (template: EnvVarTemplate | null) => void

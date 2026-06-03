@@ -28,7 +28,9 @@ pip install -e .
 ## Quick Start
 
 ```python
-from stella_agent_sdk import BaseAgent, AgentInput, AgentOutput, connect
+import asyncio
+from typing import AsyncIterator
+from stella_agent_sdk import BaseAgent, AgentInput, AgentOutput, run_agent_from_env
 
 class MyAgent(BaseAgent):
     async def on_session_start(self, session_id: str, config: dict) -> None:
@@ -52,9 +54,11 @@ class MyAgent(BaseAgent):
         # Cleanup and return final data
         return {"messages": self.message_count}
 
-# Connect to session-management and run
-async with connect("localhost:50051", MyAgent()) as session:
-    await session.run()
+# run_agent_from_env() is the ONLY entry point. It reads all connection config
+# (LiveKit room, STT/TTS addresses, AGENT_CONFIG, ...) from environment variables
+# set by the session-management-server, connects everything, and runs the agent.
+if __name__ == "__main__":
+    asyncio.run(run_agent_from_env(MyAgent()))
 ```
 
 ## Architecture
@@ -106,6 +110,36 @@ The agent is a **black box** from session-management's perspective:
 | `STATUS` | Processing status update | No |
 | `METADATA` | Plan/deliverable update | No |
 | `ERROR` | Error message | No |
+
+## Prompt Compiler
+
+The SDK ships a shared, **versioned** prompt compiler that resolves
+`{{placeholder}}` tokens in an authored prompt (from the Configurator or a plan)
+against live runtime state. Agents call one entry point:
+
+```python
+from stella_agent_sdk import prompts
+
+final = prompts.compile(
+    "Helping with: {{current_focus}}\n\n{{history_8}}\n\n{{user_message}}",
+    version="1.0.0",                 # required — no implicit "latest"
+    sm_context=sm_context,
+    conversation_history=history,
+    user_input=text,
+)
+```
+
+The `version` is **mandatory** so an SDK upgrade can never silently change how an
+agent's prompts compile. Pin the version your agent was tested against
+(`PROMPT_COMPILER_VERSION`), and let a deployment override it via
+`config["compiler_version"]`.
+
+Add a new version by subclassing `PlaceholderPromptCompiler` (or `PromptCompiler`),
+bumping `VERSION`, and calling `register_compiler` — older versions stay registered
+so existing prompts keep compiling.
+
+See the full guide — placeholders, versioning, manifest declaration, and adding a
+compiler — in **[SDK Reference → Prompt Compiler](../../docs-site/docs/sdk/prompt-compiler.md)**.
 
 ## Environment Variables
 

@@ -3,11 +3,14 @@ import type {
   PipelineSchema,
   AgentConfigurationPayload,
   AgentConfiguration,
+  RuntimeVariable,
 } from '../lib/api-types'
 
 interface ConfiguratorStore {
   isOpen: boolean
   pipelineSchema: PipelineSchema | null
+  // Manifest-declared {{placeholder}} palette for the agent type being configured.
+  runtimeVariables: RuntimeVariable[] | null
   initialConfiguration: AgentConfigurationPayload | undefined
   initialName: string
   initialDescription: string
@@ -18,6 +21,7 @@ interface ConfiguratorStore {
   // Actions
   openModal: (opts: {
     pipelineSchema: PipelineSchema
+    runtimeVariables?: RuntimeVariable[] | null
     initialConfiguration?: AgentConfigurationPayload
     initialName?: string
     initialDescription?: string
@@ -31,6 +35,7 @@ interface ConfiguratorStore {
 export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
   isOpen: false,
   pipelineSchema: null,
+  runtimeVariables: null,
   initialConfiguration: undefined,
   initialName: '',
   initialDescription: '',
@@ -42,6 +47,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
     set({
       isOpen: true,
       pipelineSchema: opts.pipelineSchema,
+      runtimeVariables: opts.runtimeVariables ?? null,
       initialConfiguration: opts.initialConfiguration,
       initialName: opts.initialName || '',
       initialDescription: opts.initialDescription || '',
@@ -54,6 +60,7 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
     set({
       isOpen: false,
       pipelineSchema: null,
+      runtimeVariables: null,
       initialConfiguration: undefined,
       initialName: '',
       initialDescription: '',

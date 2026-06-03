@@ -1,0 +1,479 @@
+"""Placeholder prompt compiler: resolves {{placeholder}} tokens against runtime state.
+
+Shared SDK compiler used by any agent (stella-v2 expert prompts, stella-light
+persona/guidelines/plan prompts, ...). A prompt is scanned for {{name}} tokens and
+each is replaced with the corresponding runtime value from the state-machine
+context, so configured prompts can reference live plan/conversation state.
+
+Use it via the SDK registry so an agent can pick the compiler it wants:
+
+    from stella_agent_sdk.prompts import get_compiler
+    compiler = get_compiler("placeholder")(sm_context, conversation_history=h, user_input=t)
+    text = compiler.compile(raw_prompt)
+
+Available placeholders:
+  {{plan}}                    Full plan (all states, tasks, deliverables)
+  {{current_focus}}           Active task + pending deliverables with acceptance criteria
+  {{pending_deliverables}}    Pending deliverables list with required/optional flags
+  {{collected_deliverables}}  Already collected deliverable keys
+  {{turns_without_progress}}  Counter since last deliverable was collected
+  {{current_state}}           Current state name + description + processing mode
+  {{progress_percentage}}     Overall progress percentage
+  {{processing_mode}}         Processing mode (sequential/flexible)
+  {{history_N}}               Last N messages from conversation (e.g. {{history_10}})
+  {{user_message}}            The current user message
+
+Unknown placeholders are left as-is to avoid silently breaking prompts.
+"""
+
+import re
+from typing import Dict, Any, List, Optional
+
+from stella_agent_sdk.prompts.base import PromptCompiler
+
+
+# Matches both simple {{name}} and parameterized {{history_10}} placeholders
+PLACEHOLDER_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+HISTORY_PATTERN = re.compile(r"\{\{history_(\d+)\}\}")
+
+
+# ---------------------------------------------------------------------------
+# Placeholder resolvers — each takes sm_context and returns a string
+# ---------------------------------------------------------------------------
+
+
+def _resolve_plan(ctx: Dict[str, Any]) -> str:
+    """Full plan: all states, tasks, deliverables with completion status."""
+    full_plan = ctx.get("full_plan", [])
+    if not full_plan:
+        return _resolve_plan_legacy(ctx)
+
+    parts: List[str] = ["=== FULL PLAN (extract deliverables from current state only) ==="]
+    current_task_info = ctx.get("current_task")
+
+    for state in full_plan:
+        marker = " ← CURRENT" if state.get("is_current") else ""
+        parts.append(f"\n## {state['title']}{marker}")
+
+        for task in state.get("tasks", []):
+            task_status = task.get("status", "pending")
+            is_active = current_task_info and task.get("id") == current_task_info.get("id")
+            task_marker = " ← ACTIVE TASK" if is_active else ""
+            parts.append(
+                f"  Task: {task['description']} [task_id={task.get('id', '?')}] ({task_status}){task_marker}"
+            )
+
+            for d in task.get("deliverables", []):
+                status = d.get("status", "pending")
+                req = "required" if d.get("required") else "optional"
+                dtype = d.get("type", "string")
+
+                if status == "completed":
+                    parts.append(f"    ✓ {d['key']} = {d.get('value', '?')}")
+                else:
+                    parts.append(f"    ○ {d['key']} [{dtype}, {req}]: {d.get('description', '')}")
+
+            if not task.get("has_deliverables"):
+                parts.append("    (no deliverables — mark completed when performed)")
+
+    return "\n".join(parts)
+
+
+def _resolve_plan_legacy(ctx: Dict[str, Any]) -> str:
+    """Fallback plan using only current state deliverables."""
+    parts: List[str] = []
+    deliverables = ctx.get("deliverables", [])
+    pending = [d for d in deliverables if d.get("status") == "pending"]
+    completed = [d for d in deliverables if d.get("status") == "completed"]
+
+    if pending:
+        parts.append("PENDING DELIVERABLES:")
+        for d in pending:
+            line = f"- {d['key']} ({d.get('type', 'string')}, {'required' if d.get('required') else 'optional'}): {d.get('description', '')}"
+            criteria = d.get("acceptance_criteria", "")
+            if criteria:
+                line += f"\n  Acceptance: {criteria}"
+            examples = d.get("examples", [])
+            if examples:
+                line += f"\n  Examples: {', '.join(str(e) for e in examples)}"
+            parts.append(line)
+
+    if completed:
+        parts.append("\nCOMPLETED DELIVERABLES:")
+        for d in completed:
+            parts.append(f"- {d['key']}: {d.get('value', '?')}")
+
+    return "\n".join(parts) if parts else "No plan data available."
+
+
+def _resolve_current_focus(ctx: Dict[str, Any]) -> str:
+    """Active task + pending deliverables with acceptance criteria."""
+    full_plan = ctx.get("full_plan", [])
+    current_state_info = ctx.get("state", {})
+    current_task_info = ctx.get("current_task")
+    mode = ctx.get("processing_mode", "loose")
+
+    parts: List[str] = ["=== CURRENT FOCUS ==="]
+    parts.append(f"State: {current_state_info.get('title', '?')}")
+    if current_state_info.get("description"):
+        parts.append(f"Goal: {current_state_info['description']}")
+    if mode == 'goal':
+        parts.append("Mode: goal-oriented (natural conversation toward objective)")
+    elif mode == 'strict':
+        parts.append("Mode: sequential (one task at a time)")
+    else:
+        parts.append("Mode: flexible (any order)")
+
+    # Render goal context when in goal mode
+    if mode == 'goal':
+        goal_obj = current_state_info.get("goal_objective")
+        if goal_obj:
+            parts.append(f"Objective: {goal_obj}")
+        goal_ctx = current_state_info.get("goal_context")
+        if goal_ctx:
+            parts.append(f"Context: {goal_ctx}")
+        goal_bounds = current_state_info.get("goal_boundaries")
+        if goal_bounds:
+            parts.append(f"Boundaries: {goal_bounds}")
+        goal_success = current_state_info.get("goal_success_description")
+        if goal_success:
+            parts.append(f"Success looks like: {goal_success}")
+
+    if current_task_info:
+        parts.append(f"Active task: {current_task_info.get('description', '?')}")
+        parts.append(f"Active task_id: {current_task_info.get('id', '?')}")
+        if current_task_info.get("instruction"):
+            parts.append(f"Instruction: {current_task_info['instruction']}")
+
+    # Show current state's pending deliverables with full detail
+    current_state_id = current_state_info.get("id", "")
+    current_plan_state = next((s for s in full_plan if s.get("id") == current_state_id), None)
+    if current_plan_state:
+        pending_in_current = []
+        for task in current_plan_state.get("tasks", []):
+            for d in task.get("deliverables", []):
+                if d.get("status") == "pending":
+                    pending_in_current.append(d)
+
+        if pending_in_current:
+            parts.append("")
+            parts.append("PRIORITY — extract these if the user provided them:")
+            for d in pending_in_current:
+                req = "required" if d.get("required") else "optional"
+                line = f"  ○ {d['key']} [{d.get('type', 'string')}, {req}]: {d.get('description', '')}"
+                criteria = d.get("acceptance_criteria", "")
+                if criteria:
+                    line += f" (criteria: {criteria})"
+                examples = d.get("examples", [])
+                if examples:
+                    line += f" (e.g. {', '.join(str(e) for e in examples)})"
+                parts.append(line)
+
+        # Explicitly list task IDs to prevent using descriptions as task_id.
+        no_deliverable_tasks = [
+            t for t in current_plan_state.get("tasks", [])
+            if not t.get("has_deliverables") and t.get("status") != "completed"
+        ]
+        if no_deliverable_tasks:
+            parts.append("")
+            parts.append("TASK IDs for complete_task/batch_update.tasks:")
+            for task in no_deliverable_tasks:
+                parts.append(f"  - task_id={task.get('id', '?')} | {task.get('description', '')}")
+
+    return "\n".join(parts)
+
+
+def _resolve_pending_deliverables(ctx: Dict[str, Any]) -> str:
+    """Pending deliverables list with required/optional flags."""
+    deliverables = ctx.get("deliverables", [])
+    pending = [d for d in deliverables if d.get("status") == "pending"]
+
+    if not pending:
+        return "No pending deliverables."
+
+    parts = ["PENDING DELIVERABLES (signal if user provided any):"]
+    for d in pending:
+        req_label = "REQUIRED" if d.get("required") else "OPTIONAL"
+        parts.append(f"- {d['key']} [{req_label}]: {d.get('description', '')}")
+
+    return "\n".join(parts)
+
+
+def _resolve_collected_deliverables(ctx: Dict[str, Any]) -> str:
+    """Already collected deliverable keys and values."""
+    deliverables = ctx.get("deliverables", [])
+    completed = [d for d in deliverables if d.get("status") == "completed"]
+
+    if not completed:
+        return "Already collected: nothing yet"
+    return "Already collected: " + ", ".join(d["key"] for d in completed)
+
+
+def _resolve_turns_without_progress(ctx: Dict[str, Any]) -> str:
+    """Turns without deliverable progress counter."""
+    turns = ctx.get("progress", {}).get("turns_without_deliverable", 0)
+    return f"TURNS WITHOUT PROGRESS: {turns}"
+
+
+def _resolve_current_state(ctx: Dict[str, Any]) -> str:
+    """Current state name, description, and processing mode."""
+    state = ctx.get("state", {})
+    mode = ctx.get("processing_mode", "loose")
+
+    parts = [f"Current state: {state.get('title', '?')}"]
+    if state.get("description"):
+        parts.append(f"Goal: {state['description']}")
+
+    if mode == 'goal':
+        parts.append("Mode: goal-oriented")
+        goal_obj = state.get("goal_objective")
+        if goal_obj:
+            parts.append(f"Objective: {goal_obj}")
+        goal_ctx = state.get("goal_context")
+        if goal_ctx:
+            parts.append(f"Context: {goal_ctx}")
+        goal_bounds = state.get("goal_boundaries")
+        if goal_bounds:
+            parts.append(f"Boundaries: {goal_bounds}")
+        goal_success = state.get("goal_success_description")
+        if goal_success:
+            parts.append(f"Success looks like: {goal_success}")
+    elif mode == 'strict':
+        parts.append("Mode: sequential")
+    else:
+        parts.append("Mode: flexible")
+
+    return "\n".join(parts)
+
+
+def _resolve_progress_percentage(ctx: Dict[str, Any]) -> str:
+    """Overall progress percentage."""
+    pct = ctx.get("progress", {}).get("percentage", 0)
+    return f"Overall progress: {pct:.0f}%"
+
+
+def _resolve_processing_mode(ctx: Dict[str, Any]) -> str:
+    """Processing mode (sequential/flexible)."""
+    mode = ctx.get("processing_mode", "loose")
+    return "sequential (one task at a time)" if mode == "strict" else "flexible (any order)"
+
+
+def _resolve_history(ctx: Dict[str, Any], count: int) -> str:
+    """Last N messages from conversation history."""
+    history = ctx.get("_conversation_history", [])
+    if not history:
+        return "CONVERSATION:\n(no messages yet)"
+
+    recent = history[-count:]
+    lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
+    return "CONVERSATION:\n" + "\n".join(lines)
+
+
+def _resolve_user_message(ctx: Dict[str, Any]) -> str:
+    """The current user message."""
+    user_input = ctx.get("_user_input", "")
+    return f"CURRENT USER MESSAGE: {user_input}"
+
+
+
+# ---------------------------------------------------------------------------
+# Registry (simple placeholders only — history_N is handled separately)
+# ---------------------------------------------------------------------------
+
+PLACEHOLDER_REGISTRY: Dict[str, Any] = {
+    "plan": _resolve_plan,
+    "current_focus": _resolve_current_focus,
+    "pending_deliverables": _resolve_pending_deliverables,
+    "collected_deliverables": _resolve_collected_deliverables,
+    "turns_without_progress": _resolve_turns_without_progress,
+    "current_state": _resolve_current_state,
+    "progress_percentage": _resolve_progress_percentage,
+    "processing_mode": _resolve_processing_mode,
+    "user_message": _resolve_user_message,
+}
+
+
+# Canonical palette metadata for the built-in placeholders. This is the single
+# source of truth for the {{placeholder}} "menu": agents mirror it in their
+# manifest `runtimeVariables`, and the Configurator renders chips from it. Keep in
+# sync with PLACEHOLDER_REGISTRY (resolvers) — a test asserts they match.
+# `name` is the token base; `parametric=True` means {{name_N}} (e.g. history_8).
+PLACEHOLDER_SPECS: List[Dict[str, Any]] = [
+    {"name": "plan", "label": "plan", "parametric": False,
+     "description": "Full plan: all states, tasks, deliverables",
+     "preview": "States:\n  - welcome_intro (active)\nTasks:\n  - greeting (completed)"},
+    {"name": "current_focus", "label": "current_focus", "parametric": False,
+     "description": "Active task + pending deliverables with criteria",
+     "preview": "Task: collect_basic_info\nPending:\n  - user_name (required)"},
+    {"name": "pending_deliverables", "label": "pending_deliverables", "parametric": False,
+     "description": "Pending deliverables with required/optional flags",
+     "preview": "- user_name: User's first name [required]"},
+    {"name": "collected_deliverables", "label": "collected_deliverables", "parametric": False,
+     "description": "Already collected deliverable keys",
+     "preview": "- age: 28\n- frequency: 3x per week"},
+    {"name": "turns_without_progress", "label": "turns_without_progress", "parametric": False,
+     "description": "Turns since last deliverable collected",
+     "preview": "3"},
+    {"name": "current_state", "label": "current_state", "parametric": False,
+     "description": "Current state name + description",
+     "preview": "welcome_intro: Greet the user and collect basic info"},
+    {"name": "progress_percentage", "label": "progress_percentage", "parametric": False,
+     "description": "Overall progress %",
+     "preview": "42%"},
+    {"name": "processing_mode", "label": "processing_mode", "parametric": False,
+     "description": "Processing mode (sequential/flexible/goal)",
+     "preview": "flexible (any order)"},
+    {"name": "history", "label": "history_N", "parametric": True,
+     "description": "Last N conversation messages (e.g. {{history_8}})",
+     "preview": "[USER]: Hi\n[ASSISTANT]: Welcome! How can I help?"},
+    {"name": "user_message", "label": "user_message", "parametric": False,
+     "description": "The user's latest message",
+     "preview": "I usually go running three times a week."},
+]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def _compile_prompt(template: str, sm_context: Optional[Dict[str, Any]] = None) -> str:
+    """Replace {{placeholder}} tokens in a prompt with resolved runtime values.
+
+    Internal resolver. Agents must NOT call this directly — go through the
+    versioned entry point ``stella_agent_sdk.prompts.compile(template, version=...)``
+    so prompt compilation is always pinned to an explicit compiler version. This
+    function is the version-less engine that the registered compiler delegates to.
+
+    Handles both simple {{name}} and parameterized {{history_N}} placeholders.
+
+    Args:
+        template: The system prompt template containing {{placeholder}} tokens.
+        sm_context: State machine context providing runtime values.
+
+    Returns:
+        The compiled prompt with placeholders replaced.
+    """
+    if not template or "{{" not in template:
+        return template
+
+    if not sm_context:
+        return PLACEHOLDER_PATTERN.sub("[no context available]", template)
+
+    # First pass: resolve parameterized {{history_N}} placeholders
+    def history_replacer(match: re.Match) -> str:
+        count = int(match.group(1))
+        return _resolve_history(sm_context, count)
+
+    result = HISTORY_PATTERN.sub(history_replacer, template)
+
+    # Second pass: resolve simple {{name}} placeholders
+    def replacer(match: re.Match) -> str:
+        name = match.group(1)
+        resolver = PLACEHOLDER_REGISTRY.get(name)
+        if resolver is None:
+            return match.group(0)  # Unknown placeholder — leave as-is
+        return resolver(sm_context)
+
+    return PLACEHOLDER_PATTERN.sub(replacer, result)
+
+
+def has_user_message_placeholder(template: str) -> bool:
+    """Check if template contains {{user_message}}."""
+    return "{{user_message}}" in template if template else False
+
+
+# ---------------------------------------------------------------------------
+# Versioning primitives
+# ---------------------------------------------------------------------------
+
+# Semantic version of the placeholder grammar/behavior. Bump when placeholders are
+# added/removed or their rendering changes, so prompts/configs can be reconciled
+# against the grammar they were authored for.
+COMPILER_VERSION = "1.0.0"
+
+# The full set of placeholder names this compiler resolves. `history_N` is
+# parameterized (any positive integer N), represented here by the sentinel
+# "history_N".
+KNOWN_PLACEHOLDERS = frozenset(PLACEHOLDER_REGISTRY) | {"history_N"}
+
+
+def palette() -> List[Dict[str, Any]]:
+    """Return a copy of the placeholder palette metadata (the Configurator menu).
+
+    Agents declare a manifest ``runtimeVariables`` block mirroring these entries;
+    this accessor lets tooling read the canonical set for the current version.
+    """
+    return [dict(spec) for spec in PLACEHOLDER_SPECS]
+
+
+def validate_template(template: Optional[str]) -> List[str]:
+    """Return the sorted, de-duplicated list of UNKNOWN placeholder names in a prompt.
+
+    An empty list means every {{token}} in the template is resolvable by this
+    compiler version. Useful for authoring-time validation and for versioning
+    checks (e.g. flagging a saved prompt that uses a placeholder a newer compiler
+    version removed).
+    """
+    if not template:
+        return []
+    unknown = set()
+    for match in PLACEHOLDER_PATTERN.finditer(template):
+        name = match.group(1)
+        if HISTORY_PATTERN.fullmatch(match.group(0)):
+            continue  # {{history_N}} — always valid
+        if name not in PLACEHOLDER_REGISTRY:
+            unknown.add(name)
+    return sorted(unknown)
+
+
+# ---------------------------------------------------------------------------
+# Compiler class (registry-friendly wrapper)
+# ---------------------------------------------------------------------------
+
+
+class PlaceholderPromptCompiler(PromptCompiler):
+    """Reusable {{placeholder}} resolver bound to a single runtime context.
+
+    Ring it up once per turn with the live state-machine context (plus the current
+    conversation history and user message), then call :meth:`compile` on any text
+    prompt to resolve its placeholders:
+
+        compiler = PlaceholderPromptCompiler(sm_context, conversation_history=h, user_input=t)
+        persona = compiler.compile(raw_persona)
+        guidelines = compiler.compile(raw_guidelines)
+
+    This keeps callers from threading the context dict (and the per-turn history /
+    user-message values) through every compile call.
+    """
+
+    NAME = "placeholder"
+    VERSION = COMPILER_VERSION
+
+    def __init__(
+        self,
+        sm_context: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        user_input: str = "",
+    ) -> None:
+        # Copy so we never mutate the caller's context, then layer in the per-turn
+        # runtime values that {{history_N}} and {{user_message}} need.
+        self._ctx: Dict[str, Any] = dict(sm_context or {})
+        self._ctx["_conversation_history"] = conversation_history or []
+        self._ctx["_user_input"] = user_input or ""
+
+    def compile(self, template: Optional[str]) -> Optional[str]:
+        if not template:
+            return template
+        return _compile_prompt(template, self._ctx)
+
+    @classmethod
+    def known_placeholders(cls) -> frozenset:
+        """The set of placeholder names this compiler resolves."""
+        return KNOWN_PLACEHOLDERS
+
+    @staticmethod
+    def validate(template: Optional[str]) -> List[str]:
+        """Unknown placeholders in ``template`` (see :func:`validate_template`)."""
+        return validate_template(template)
+

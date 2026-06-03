@@ -33,6 +33,9 @@ interface PublicAgentConfig {
   plan?: Record<string, unknown>;
   config?: Record<string, unknown>;
   pipelineConfig?: Record<string, unknown>;
+  // Preferred: resolved by ID at spawn (type/version-checked). pipelineConfig is a
+  // backward-compatible inline snapshot for public projects saved before this field.
+  agentConfigurationId?: string;
   envVarTemplateId?: string;
   envVars?: Record<string, string>;
 }
@@ -219,6 +222,7 @@ export class PublicProjectsService {
         icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
         agentType: project.publicAgentType?.slug || 'stella-agent',
         config: this.buildRuntimeAgentConfig(agentConfig),
+        agentConfigurationId: agentConfig?.agentConfigurationId,
         envVarTemplateId: agentConfig?.envVarTemplateId,
         envVars: agentConfig?.envVars,
       },
@@ -283,6 +287,7 @@ export class PublicProjectsService {
       icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
       agentType: project.publicAgentType?.slug || 'stella-agent',
       agentConfig: this.buildRuntimeAgentConfig(agentConfig),
+      agentConfigurationId: agentConfig?.agentConfigurationId || null,
       envVarTemplateId: agentConfig?.envVarTemplateId || null,
       envVars: agentConfig?.envVars || {},
     };
@@ -407,6 +412,7 @@ export class PublicProjectsService {
             icon: agentConfig?.icon || project.publicAgentType?.icon || '🤖',
             agentType: project.publicAgentType?.slug || 'stella-agent',
             config: this.buildRuntimeAgentConfig(agentConfig),
+            agentConfigurationId: agentConfig?.agentConfigurationId,
             envVarTemplateId: agentConfig?.envVarTemplateId,
             envVars: agentConfig?.envVars,
           },

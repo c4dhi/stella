@@ -2,7 +2,6 @@ import {
   IsString,
   IsOptional,
   IsObject,
-  IsUUID,
   MinLength,
   MaxLength,
 } from 'class-validator';
@@ -23,7 +22,6 @@ export class UpdateEnvVarTemplateDto {
   @IsOptional()
   variables?: Record<string, string>;
 
-  @IsUUID()
-  @IsOptional()
-  agentTypeId?: string;
+  // agentTypeId is intentionally omitted: a template's agent type is immutable
+  // after creation. To rebind, duplicate the template under the desired type.
 }

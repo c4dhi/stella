@@ -6,6 +6,7 @@ import { AgentServerModule } from '../agent-server/agent-server.module';
 import { AgentImageModule } from '../agent-image/agent-image.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { EnvVarTemplatesModule } from '../env-var-templates/env-var-templates.module';
+import { AgentConfigurationsModule } from '../agent-configurations/agent-configurations.module';
 
 /**
  * AgentsModule - Manages agent lifecycle.
@@ -21,6 +22,8 @@ import { EnvVarTemplatesModule } from '../env-var-templates/env-var-templates.mo
     AgentImageModule,
     // Import encryption provider so manual env vars can be persisted securely for restart reuse.
     EnvVarTemplatesModule,
+    // Resolve + validate stored pipeline configurations at deploy time.
+    AgentConfigurationsModule,
     forwardRef(() => AgentServerModule),
     forwardRef(() => SessionsModule),
   ],

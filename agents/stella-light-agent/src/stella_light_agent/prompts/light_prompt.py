@@ -44,10 +44,13 @@ class LightPromptBuilder:
         available_tasks = context.get("available_tasks", [])
         collected_deliverables = context.get("collected_deliverables", {})
         plan_system_prompt = context.get("plan_system_prompt")
+        # Configurator overrides injected via SDK config (pipeline_config), mirroring stella-v2.
+        custom_persona = context.get("custom_persona")
+        custom_guidelines = context.get("custom_guidelines")
 
         parts = [
-            self._build_identity(plan_system_prompt),
-            self._build_conversational_style(),
+            self._build_identity(plan_system_prompt, custom_persona),
+            self._build_conversational_style(custom_guidelines),
             self._build_guardrails(),
         ]
 
@@ -76,14 +79,32 @@ class LightPromptBuilder:
 
         return "\n\n".join(parts)
 
-    def _build_identity(self, plan_system_prompt: Optional[str] = None) -> str:
+    def _build_identity(
+        self,
+        plan_system_prompt: Optional[str] = None,
+        custom_persona: Optional[str] = None,
+    ) -> str:
         """
         Build STELLA identity section.
 
+        Precedence mirrors stella-v2's response prompt:
+          - plan_system_prompt AND custom_persona -> both are included
+          - plan_system_prompt only               -> plan identity
+          - custom_persona only                   -> custom persona as identity
+          - neither                               -> default STELLA identity
+
         Args:
             plan_system_prompt: Optional custom system prompt from the plan.
-                               If provided, uses this instead of the default identity.
+            custom_persona: Optional persona injected via the Agent Configurator.
         """
+        # Plan prompt + configured persona: apply both (plan first, then persona).
+        if plan_system_prompt and custom_persona:
+            return f"""## Your Identity & Instructions
+{plan_system_prompt}
+
+## Persona
+{custom_persona}"""
+
         # If a custom system prompt is provided in the plan, use it
         if plan_system_prompt:
             return f"""## Your Identity & Instructions
@@ -96,6 +117,11 @@ class LightPromptBuilder:
 - Concise but thorough - aim for 30-50 words per response
 - Ask only ONE question at a time to keep the conversation flowing naturally"""
 
+        # A configured persona (no plan prompt) overrides the default identity.
+        if custom_persona:
+            return f"""## Your Identity
+{custom_persona}"""
+
         # Default STELLA identity
         return """## Your Identity
 You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.
@@ -107,8 +133,17 @@ You are STELLA, a warm and engaging AI companion supporting cognitive health and
 - Concise but thorough - aim for 30-50 words per response
 - Ask only ONE question at a time to keep the conversation flowing naturally"""
 
-    def _build_conversational_style(self) -> str:
-        """Build conversational style rules for natural-sounding speech."""
+    def _build_conversational_style(self, custom_guidelines: Optional[str] = None) -> str:
+        """Build conversational style rules for natural-sounding speech.
+
+        Args:
+            custom_guidelines: Optional guidelines injected via the Agent Configurator.
+                               When provided, they replace the default speaking style
+                               (mirrors stella-v2's custom_guidelines behavior).
+        """
+        if custom_guidelines:
+            return custom_guidelines
+
         return """## Conversational Style (CRITICAL - Follow These Rules)
 You are a calm, observant, and grounded conversationalist. Your goal is to sound like a thoughtful peer.
 

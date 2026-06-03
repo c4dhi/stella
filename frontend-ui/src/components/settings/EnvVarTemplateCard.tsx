@@ -4,6 +4,7 @@ import type { EnvVarTemplate } from '../../lib/api-types'
 
 interface EnvVarTemplateCardProps {
   template: EnvVarTemplate
+  agentTypeName: string
   index: number
   onEdit: () => void
   onDelete: () => void
@@ -12,6 +13,7 @@ interface EnvVarTemplateCardProps {
 
 export default function EnvVarTemplateCard({
   template,
+  agentTypeName,
   index,
   onEdit,
   onDelete,
@@ -81,10 +83,18 @@ export default function EnvVarTemplateCard({
 
           {/* Title & Description */}
           <div className="flex-1 min-w-0">
-            <h3 className={`text-heading-sm font-semibold truncate ${isDark ? 'text-content-inverse' : 'text-content'
-              }`}>
-              {template.name}
-            </h3>
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className={`text-heading-sm font-semibold truncate ${isDark ? 'text-content-inverse' : 'text-content'
+                }`}>
+                {template.name}
+              </h3>
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-neutral-100 text-neutral-500'}`}
+                title={`Scoped to ${agentTypeName}`}
+              >
+                {agentTypeName}
+              </span>
+            </div>
             {template.description ? (
               <p className={`text-body-sm mt-1 line-clamp-2 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
                 }`}>

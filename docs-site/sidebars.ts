@@ -114,6 +114,7 @@ const sidebars: SidebarsConfig = {
         'sdk/message-types',
         'sdk/tools',
         'sdk/streaming',
+        'sdk/prompt-compiler',
         'sdk/typescript-types',
       ],
     },

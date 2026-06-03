@@ -317,5 +317,56 @@ pipelineSchema:
       step: 5
       default: 20
 
+# SDK prompt-compiler version this agent resolves {{placeholder}} tokens with.
+promptCompiler:
+  version: "1.0.0"
+
+# {{placeholder}} palette offered in the Agent Configurator. Mirrors the SDK
+# placeholder compiler's resolvable set (stella_agent_sdk.prompts palette()).
+# (The legacy frontend palette also listed trigger_rules / plan_persona /
+# arbitration_directive, which the agent does not actually resolve — dropped here.)
+runtimeVariables:
+  - name: plan
+    label: plan
+    description: "Full plan: all states, tasks, deliverables"
+    preview: "States:\n  - welcome_intro (active)\nTasks:\n  - greeting (completed)"
+  - name: current_focus
+    label: current_focus
+    description: "Active task + pending deliverables with criteria"
+    preview: "Task: collect_basic_info\nPending:\n  - user_name (required)"
+  - name: pending_deliverables
+    label: pending_deliverables
+    description: "Pending deliverables with required/optional flags"
+    preview: "- user_name: User's first name [required]"
+  - name: collected_deliverables
+    label: collected_deliverables
+    description: "Already collected deliverable keys"
+    preview: "- age: 28\n- frequency: 3x per week"
+  - name: turns_without_progress
+    label: turns_without_progress
+    description: "Turns since last deliverable collected"
+    preview: "3"
+  - name: current_state
+    label: current_state
+    description: "Current state name + description"
+    preview: "welcome_intro: Greet the user and collect basic info"
+  - name: progress_percentage
+    label: progress_percentage
+    description: "Overall progress %"
+    preview: "42%"
+  - name: processing_mode
+    label: processing_mode
+    description: "Processing mode (sequential/flexible/goal)"
+    preview: "flexible (any order)"
+  - name: history
+    label: history_N
+    parametric: true
+    description: "Last N conversation messages (e.g. {{history_8}})"
+    preview: "[USER]: Hi\n[ASSISTANT]: Welcome! How can I help?"
+  - name: user_message
+    label: user_message
+    description: "The user's latest message"
+    preview: "I usually go running three times a week."
+
 sdk:
   minVersion: "0.4.0"
