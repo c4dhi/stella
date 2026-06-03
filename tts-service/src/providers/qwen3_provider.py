@@ -51,6 +51,26 @@ DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 # built-in language autodetection from the input text. Pin a specific
 # language only if autodetect misfires on your domain (rare).
 DEFAULT_LANGUAGE = ""
+# faster-qwen3-tts labels languages by full name ("English", "German", …),
+# but callers (the agent SDK) pass ISO 639-1 codes ("en", "de", …). Passing a
+# code straight through raises "Language <code> not implemented" and yields no
+# audio. Map the codes we expose in the deploy wizard to the model's names;
+# anything unrecognized falls back to autodetect (None) so TTS never goes silent.
+_ISO_TO_QWEN3_LANGUAGE = {
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "pl": "Polish",
+    "nl": "Dutch",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+}
+# The set of labels the model accepts directly (already full names).
+_QWEN3_LANGUAGE_NAMES = {v.lower(): v for v in _ISO_TO_QWEN3_LANGUAGE.values()}
 DEFAULT_SAMPLE_RATE = 24000
 # Codec runs at 12 Hz token rate; chunk_size=2 ≈ 167 ms audio per yield.
 # Smaller = lower TTFB, more decoder calls per second. The CUDA-graph
@@ -218,13 +238,25 @@ class Qwen3Provider(TTSProvider):
         """Pick the effective language label, or None for autodetect.
 
         Empty string and the literal "Auto" both map to None so we can
-        carry the wizard's "Auto" option straight through.
+        carry the wizard's "Auto" option straight through. ISO 639-1 codes
+        (e.g. "en") are translated to the full names the model expects
+        ("English"); any label the model doesn't know falls back to
+        autodetect (None) rather than crashing the synthesis stream.
         """
         candidate = (override if override is not None else self._language) or ""
         candidate = candidate.strip()
         if not candidate or candidate.lower() == "auto":
             return None
-        return candidate
+        key = candidate.lower()
+        # ISO 639-1 code → model language name (e.g. "en" → "English").
+        if key in _ISO_TO_QWEN3_LANGUAGE:
+            return _ISO_TO_QWEN3_LANGUAGE[key]
+        # Already a full name the model knows (case-insensitive).
+        if key in _QWEN3_LANGUAGE_NAMES:
+            return _QWEN3_LANGUAGE_NAMES[key]
+        # Unknown label: don't risk "Language X not implemented" — autodetect.
+        print(f"[Qwen3] Unknown language label '{candidate}', falling back to autodetect")
+        return None
 
     async def synthesize(
         self,
@@ -293,62 +325,79 @@ class Qwen3Provider(TTSProvider):
         if not text or not text.strip():
             return
 
-        lang = self._resolve_language(language)
         codec_chunk = self._chunk_size
-
         loop = asyncio.get_event_loop()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=16)
 
-        def _producer():
-            try:
-                for audio_chunk, _sr, _timing in self._model.generate_voice_clone_streaming(
-                    text=text,
-                    language=lang,
-                    ref_audio=self._ref_audio,
-                    ref_text=self._ref_text,
-                    chunk_size=codec_chunk,
-                ):
-                    loop.call_soon_threadsafe(queue.put_nowait, audio_chunk)
-            except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, e)
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _QWEN3_STREAM_DONE)
+        # Try the resolved language first. If synthesis fails *before* emitting
+        # any audio (e.g. a label the model can't handle slips past
+        # normalization), fall back once to autodetect (None) so a language
+        # problem degrades to "wrong-accent audio" instead of silence. Once a
+        # frame has been yielded we're committed to that attempt — we can't
+        # un-send audio to the consumer, so we never retry mid-stream.
+        resolved = self._resolve_language(language)
+        attempts = [resolved] if resolved is None else [resolved, None]
 
-        t0 = time.time()
-        producer_fut = loop.run_in_executor(None, _producer)
+        for attempt_idx, attempt_lang in enumerate(attempts):
+            queue: asyncio.Queue = asyncio.Queue(maxsize=16)
 
-        first_yielded = False
-        leftover = np.empty(0, dtype=np.int16)
+            def _producer(attempt_lang=attempt_lang):
+                try:
+                    for audio_chunk, _sr, _timing in self._model.generate_voice_clone_streaming(
+                        text=text,
+                        language=attempt_lang,
+                        ref_audio=self._ref_audio,
+                        ref_text=self._ref_text,
+                        chunk_size=codec_chunk,
+                    ):
+                        loop.call_soon_threadsafe(queue.put_nowait, audio_chunk)
+                except Exception as e:
+                    loop.call_soon_threadsafe(queue.put_nowait, e)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, _QWEN3_STREAM_DONE)
 
-        while True:
-            item = await queue.get()
-            if isinstance(item, Exception):
-                print(f"[Qwen3] Streaming error: {item}")
-                break
-            if item is _QWEN3_STREAM_DONE:
+            t0 = time.time()
+            producer_fut = loop.run_in_executor(None, _producer)
+
+            first_yielded = False
+            errored = False
+            leftover = np.empty(0, dtype=np.int16)
+
+            while True:
+                item = await queue.get()
+                if isinstance(item, Exception):
+                    errored = True
+                    print(f"[Qwen3] Streaming error (language={attempt_lang!r}): {item}")
+                    break
+                if item is _QWEN3_STREAM_DONE:
+                    if len(leftover):
+                        yield (leftover, True)
+                    elif first_yielded:
+                        yield (np.empty(0, dtype=np.int16), True)
+                    break
+
+                int16 = self._to_int16_numpy(item)
                 if len(leftover):
-                    yield (leftover, True)
-                elif first_yielded:
-                    yield (np.empty(0, dtype=np.int16), True)
-                break
+                    int16 = np.concatenate([leftover, int16])
 
-            int16 = self._to_int16_numpy(item)
-            if len(leftover):
-                int16 = np.concatenate([leftover, int16])
+                if not first_yielded:
+                    print(f"[Qwen3] First audio in {(time.time() - t0) * 1000:.0f}ms (stream)")
 
-            if not first_yielded:
-                print(f"[Qwen3] First audio in {(time.time() - t0) * 1000:.0f}ms (stream)")
+                total = len(int16)
+                full = total - (total % chunk_size)
+                for i in range(0, full, chunk_size):
+                    yield (int16[i:i + chunk_size], False)
+                    first_yielded = True
+                leftover = int16[full:]
 
-            total = len(int16)
-            full = total - (total % chunk_size)
-            for i in range(0, full, chunk_size):
-                yield (int16[i:i + chunk_size], False)
-                first_yielded = True
-            leftover = int16[full:]
+            await producer_fut
 
-        await producer_fut
-        if first_yielded:
-            print(f"[Qwen3] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
+            if first_yielded:
+                print(f"[Qwen3] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
+                return
+            if errored and attempt_idx + 1 < len(attempts):
+                print("[Qwen3] Retrying synthesis with autodetect (language=None)")
+                continue
+            return
 
     async def cleanup(self) -> None:
         self._model = None
