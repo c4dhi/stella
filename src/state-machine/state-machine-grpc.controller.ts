@@ -310,7 +310,10 @@ export class StateMachineGrpcController {
     this.logger.debug(`IncrementTurn called for session: ${request.sessionId}`);
 
     try {
-      const turnsWithoutProgress = await this.stateMachineService.incrementTurn(
+      // incrementTurn now also re-evaluates transitions (turn_count_exceeded can
+      // fire here, #172). The transition is reflected on the next GetFullState the
+      // agent fetches, so the gRPC response only needs to carry the counter.
+      const { turnsWithoutProgress } = await this.stateMachineService.incrementTurn(
         request.sessionId,
       );
 

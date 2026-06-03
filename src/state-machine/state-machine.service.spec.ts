@@ -174,10 +174,15 @@ function buildCircularPlan(): PlanData {
         title: 'A',
         type: 'loose',
         tasks: [],
+        // turn_count_exceeded with turns:0 is trivially true on entry
+        // (totalTurns starts at 0), giving a stable always-true condition to
+        // exercise the cycle guard without relying on all_tasks_complete (which
+        // no longer fires for no-required-work states, #172).
         transitions: [
           {
             target_state_id: 'state-b',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 1,
           },
         ],
@@ -190,7 +195,8 @@ function buildCircularPlan(): PlanData {
         transitions: [
           {
             target_state_id: 'state-a',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 1,
           },
         ],
@@ -237,6 +243,9 @@ function buildDeadEndPlan(): PlanData {
 function buildMultiMatchPriorityPlan(): PlanData {
   // Multiple transitions from state-a intentionally match at the same time.
   // The lower priority number (1) should win deterministically.
+  // Both conditions use turn_count_exceeded turns:0 (trivially true on entry) so
+  // the test exercises priority resolution rather than all_tasks_complete, which
+  // no longer fires for no-required-work states (#172).
   return {
     id: 'plan-multi-match-priority',
     title: 'Multi Match Priority Plan',
@@ -250,12 +259,14 @@ function buildMultiMatchPriorityPlan(): PlanData {
         transitions: [
           {
             target_state_id: 'state-b',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 2,
           },
           {
             target_state_id: 'state-c',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 1,
           },
         ],
@@ -269,6 +280,8 @@ function buildMultiMatchPriorityPlan(): PlanData {
 function buildMultiMatchTiePlan(): PlanData {
   // Tie case: both transitions from state-a have identical priority and both match.
   // We verify runtime behavior stays deterministic across repeated runs.
+  // turn_count_exceeded turns:0 is trivially true on entry — a stable always-true
+  // condition independent of the no-required-work completion fix (#172).
   return {
     id: 'plan-multi-match-tie',
     title: 'Multi Match Tie Plan',
@@ -282,12 +295,14 @@ function buildMultiMatchTiePlan(): PlanData {
         transitions: [
           {
             target_state_id: 'state-b',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 1,
           },
           {
             target_state_id: 'state-c',
-            condition_type: 'all_tasks_complete',
+            condition_type: 'turn_count_exceeded',
+            condition_config: { turns: 0, scope: 'total' },
             priority: 1,
           },
         ],
@@ -423,7 +438,7 @@ describe('StateMachineService non-linear transitions', () => {
   });
 
   it('uses priority deterministically when multiple transition conditions match', async () => {
-    // Both transitions are true ("all_tasks_complete" on an empty task list),
+    // Both transitions are trivially true (turn_count_exceeded turns:0),
     // so transition choice must be resolved by priority.
     const sessionId = 'session-multi-match-priority';
     await service.initializeForSession(sessionId, buildMultiMatchPriorityPlan());
@@ -729,13 +744,14 @@ describe('turn_count_exceeded condition', () => {
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, plan);
 
-    // incrementTurn() advances both counters (total and without-progress)
-    // without touching deliverables, so 'without_progress' scope accumulates.
-    await svc.incrementTurn(sessionId);
-    await svc.incrementTurn(sessionId);
+    // incrementTurn() advances both counters (total and without-progress) without
+    // touching deliverables, AND now re-evaluates transitions itself (#172) — so
+    // the transition fires on the turn that crosses the threshold, not on a
+    // separate evaluation pass.
+    const firstTurn = await svc.incrementTurn(sessionId); // turn 1 — below threshold
+    expect(firstTurn.transitioned).toBe(false);
 
-    const result = await (svc as any).evaluateAndTransition(sessionId);
-
+    const result = await svc.incrementTurn(sessionId); // turn 2 — reaches threshold
     expect(result.transitioned).toBe(true);
     expect(result.newStateId).toBe('state-b');
   });
@@ -761,7 +777,8 @@ describe('turn_count_exceeded condition', () => {
 
   it('transitions based on total turns (scope: total)', async () => {
     // 'total' scope counts all turns regardless of whether progress was made.
-    // incrementTurn() increments totalTurns, which is what this scope reads.
+    // incrementTurn() increments totalTurns and re-evaluates transitions (#172),
+    // so a single turn both reaches the threshold and fires the transition.
     const sessionId = 'session-turn-total';
     const plan = buildTwoStatePlan({
       target_state_id: 'state-b',
@@ -774,10 +791,8 @@ describe('turn_count_exceeded condition', () => {
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, plan);
 
-    // One turn is enough to reach totalTurns >= 1.
-    await svc.incrementTurn(sessionId);
-
-    const result = await (svc as any).evaluateAndTransition(sessionId);
+    // One turn is enough to reach totalTurns >= 1, and incrementTurn transitions.
+    const result = await svc.incrementTurn(sessionId);
     expect(result.transitioned).toBe(true);
     expect(result.newStateId).toBe('state-b');
   });
@@ -801,6 +816,169 @@ describe('turn_count_exceeded condition', () => {
     // validateConditionConfig() catches the missing field and skips the transition.
     const result = await (svc as any).evaluateAndTransition(sessionId);
     expect(result.transitioned).toBe(false);
+  });
+});
+
+// =============================================================================
+// All-optional states (#172)
+// A state whose tasks/deliverables are all optional must NOT auto-complete on
+// entry (that skipped it instantly, sometimes jumping several states). Instead
+// the agent "tries" the optional work for a few turns, then the state releases
+// on a turn-based fallback — it does not persist the way required work does.
+// =============================================================================
+describe('all-optional state handling (#172)', () => {
+  // required state-a -> all-optional state-b -> state-c.
+  // state-b has only an optional deliverable; pass stateBTransitions to give it
+  // an explicit route, otherwise it relies on the auto-injected turn fallback.
+  function buildOptionalMiddlePlan(
+    stateBTransitions?: import('./state-machine.service').StateTransition[],
+  ): PlanData {
+    return {
+      id: 'plan-optional-middle',
+      title: 'Optional Middle Plan',
+      initial_state_id: 'state-a',
+      states: [
+        {
+          id: 'state-a',
+          title: 'A',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'task-a',
+              description: 'Collect route',
+              deliverables: [{ key: 'go_to_b', description: 'go', required: true, type: 'string' }],
+            },
+          ],
+          transitions: [
+            {
+              target_state_id: 'state-b',
+              condition_type: 'deliverable_exists',
+              condition_config: { key: 'go_to_b' },
+              priority: 1,
+            },
+          ],
+        },
+        {
+          id: 'state-b',
+          title: 'B',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'task-b',
+              description: 'Optional chat',
+              deliverables: [{ key: 'opt_note', description: 'optional note', required: false }],
+            },
+          ],
+          ...(stateBTransitions ? { transitions: stateBTransitions } : {}),
+        },
+        { id: 'state-c', title: 'C', type: 'loose', tasks: [], transitions: [] },
+      ],
+    };
+  }
+
+  it('does not skip an all-optional state on entry', async () => {
+    const sessionId = 'session-optional-no-skip';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
+
+    // Enter state-b by satisfying state-a's required deliverable.
+    const enter = await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing');
+    expect(enter.transitioned).toBe(true);
+    expect(enter.newStateId).toBe('state-b');
+
+    // It must NOT chain straight through the all-optional state-b to state-c.
+    const state = await svc.getCurrentState(sessionId);
+    expect(state?.stateId).toBe('state-b');
+  });
+
+  it('auto-injects a turn-based fallback (not all_tasks_complete) for an all-optional state', async () => {
+    const sessionId = 'session-optional-fallback-shape';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
+
+    const raw = await (svc as any).getState(sessionId);
+    const states = (raw.planData as PlanData).states;
+    const stateB = states.find((s) => s.id === 'state-b');
+    expect(stateB?.transitions?.[0]?.condition_type).toBe('turn_count_exceeded');
+    expect(stateB?.transitions?.[0]?.target_state_id).toBe('state-c');
+
+    // A required-work state is left untouched — no turn fallback appended.
+    const stateA = states.find((s) => s.id === 'state-a');
+    expect(stateA?.transitions?.map((t) => t.condition_type)).toEqual(['deliverable_exists']);
+  });
+
+  it('releases an all-optional state after the default no-progress threshold', async () => {
+    const sessionId = 'session-optional-release';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
+    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
+
+    // Default threshold is 3 turns without progress: try for two, release on the third.
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    const release = await svc.incrementTurn(sessionId);
+    expect(release.transitioned).toBe(true);
+    expect(release.newStateId).toBe('state-c');
+  });
+
+  it('takes an explicit data route immediately, keeping the turn fallback only as backup', async () => {
+    const sessionId = 'session-optional-data-route';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(
+      sessionId,
+      buildOptionalMiddlePlan([
+        {
+          target_state_id: 'state-c',
+          condition_type: 'deliverable_exists',
+          condition_config: { key: 'opt_note' },
+          priority: 1,
+        },
+      ]),
+    );
+    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-b');
+
+    // Providing the optional note wins via the explicit route (priority 1) over
+    // the injected turn fallback (priority 1000) — no need to wait out the turns.
+    const res = await svc.setDeliverable(sessionId, 'opt_note', 'hello', 'optional');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('isCurrentStateComplete returns false for a non-goal state with only optional work', async () => {
+    const sessionId = 'session-optional-iscomplete';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan: PlanData = {
+      id: 'plan-opt-only',
+      title: 'Optional Only',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 't',
+              description: 'opt-only',
+              deliverables: [{ key: 'opt', description: 'optional', required: false }],
+            },
+          ],
+          transitions: [],
+        },
+      ],
+    };
+    await svc.initializeForSession(sessionId, plan);
+
+    const raw = await (svc as any).getState(sessionId);
+    const planState = (raw.planData as PlanData).states[0];
+    // No required work → must not be treated as vacuously complete (#172).
+    expect((svc as any).isCurrentStateComplete(raw, planState)).toBe(false);
   });
 });
 

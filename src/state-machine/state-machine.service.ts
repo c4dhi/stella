@@ -236,6 +236,10 @@ export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
   // Guard against circular transition loops in a single turn (e.g., A -> B -> A).
   private static readonly MAX_TRANSITIONS_PER_TURN = 10;
+  // Turns-without-progress before an all-optional state releases on its own. The
+  // agent "tries" the optional work for this many turns, then advances rather
+  // than persisting the way it would for required work (#172).
+  private static readonly DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD = 3;
   // Guard against runaway recursion in composite conditions (all_of / any_of / compound).
   private static readonly MAX_CONDITION_DEPTH = 5;
 
@@ -253,40 +257,80 @@ export class StateMachineService {
           : transition,
       );
 
-      // If state already has transitions, keep them
+      const isLastState = index === plan.states.length - 1;
+      const stateType = state.type || 'loose';
+      const nextStateId = isLastState ? undefined : plan.states[index + 1].id;
+
+      // An all-optional non-goal state can never satisfy all_tasks_complete after
+      // the vacuous-truth fix (#172), so it needs a turn-based way out or it would
+      // get stuck. Give it one — unless it already has a turn_count_exceeded escape
+      // or is the last state (nowhere to go). This realises "try, then move on".
+      const needsTurnFallback =
+        stateType !== 'goal' &&
+        !isLastState &&
+        !this.stateHasRequiredWork(state) &&
+        !normalizedExistingTransitions.some((t) => t.condition_type === 'turn_count_exceeded');
+
+      // If state already has transitions, keep them — but add the turn fallback
+      // when the state is all-optional so it can't persist indefinitely.
       if (normalizedExistingTransitions.length > 0) {
-        return {
-          ...state,
-          transitions: normalizedExistingTransitions,
-        };
+        if (needsTurnFallback && nextStateId) {
+          this.logger.log(
+            `Adding turn-based fallback for all-optional state '${state.id}' -> '${nextStateId}'`,
+          );
+          return {
+            ...state,
+            transitions: [
+              ...normalizedExistingTransitions,
+              this.buildTurnFallbackTransition(nextStateId),
+            ],
+          };
+        }
+        return { ...state, transitions: normalizedExistingTransitions };
       }
 
       // If this is the last state, no transition needed
-      if (index === plan.states.length - 1) {
+      if (isLastState) {
         return { ...state, transitions: [] };
       }
 
-      // Generate default transition to next state
-      const nextStateId = plan.states[index + 1].id;
-      const defaultConditionType: StateTransition['condition_type'] =
-        state.type === 'goal' ? 'goal_achieved' : 'all_tasks_complete';
+      // Generate default transition to next state. An all-optional state advances
+      // on a turn-based fallback (all_tasks_complete would never fire for it);
+      // everything else keeps the completion/goal default.
       this.logger.log(
         `Auto-generating transition for state '${state.id}' -> '${nextStateId}'`,
       );
-
-      return {
-        ...state,
-        transitions: [
-          {
-            target_state_id: nextStateId,
-            condition_type: defaultConditionType,
+      const defaultTransition: StateTransition = needsTurnFallback
+        ? this.buildTurnFallbackTransition(nextStateId!)
+        : {
+            target_state_id: nextStateId!,
+            condition_type: stateType === 'goal' ? 'goal_achieved' : 'all_tasks_complete',
             priority: 1,
-          },
-        ],
-      };
+          };
+
+      return { ...state, transitions: [defaultTransition] };
     });
 
     return { ...plan, states: statesWithTransitions };
+  }
+
+  /**
+   * Build the turn-based fallback transition used to release an all-optional
+   * state after a few turns without progress (#172). Low urgency (high priority
+   * number) so any explicit author condition — e.g. a deliverable_value route —
+   * wins when the user actually provides the optional information; this only
+   * fires when nothing else matched for DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD turns.
+   */
+  private buildTurnFallbackTransition(nextStateId: string): StateTransition {
+    return {
+      target_state_id: nextStateId,
+      condition_type: 'turn_count_exceeded',
+      condition_config: {
+        turns: StateMachineService.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD,
+        scope: 'without_progress',
+      },
+      priority: 1000,
+    };
   }
 
   /**
@@ -786,7 +830,15 @@ export class StateMachineService {
   /**
    * Increment turn counter (when no progress is made)
    */
-  async incrementTurn(sessionId: string): Promise<number> {
+  async incrementTurn(sessionId: string): Promise<{
+    turnsWithoutProgress: number;
+    transitioned: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
+  }> {
     const result = await this.prisma.sessionState.update({
       where: { sessionId },
       data: {
@@ -795,7 +847,22 @@ export class StateMachineService {
       },
     });
 
-    return result.turnsWithoutProgress;
+    // Counting a turn is itself a transition trigger. turn_count_exceeded — the
+    // natural fallback for optional/goal states — can only fire if we re-evaluate
+    // here; nothing else does after a no-progress turn, so without this the
+    // counter crosses the threshold but no transition ever happens (#172).
+    const transition = await this.evaluateAndTransition(sessionId);
+
+    return {
+      // A transition resets turnsWithoutProgress to 0; surface the post-eval value.
+      turnsWithoutProgress: transition.transitioned ? 0 : result.turnsWithoutProgress,
+      transitioned: transition.transitioned,
+      newStateId: transition.newStateId,
+      newStateTitle: transition.newStateTitle,
+      sessionCompleted: transition.sessionCompleted,
+      farewellMessage: transition.farewellMessage,
+      summaryBehavior: transition.summaryBehavior,
+    };
   }
 
   /**
@@ -975,8 +1042,57 @@ export class StateMachineService {
       }
     }
 
+    // A non-goal state with NO required work must not be treated as vacuously
+    // "complete". Otherwise an all_tasks_complete transition fires the instant the
+    // state is entered and the state is skipped without the agent doing anything
+    // (#172). Such all-optional states advance via a turn-based fallback instead
+    // (see ensureTransitions), so the agent tries the optional work, then moves on.
+    // Goal states keep their existing semantics — completion is driven by
+    // goal_achieved, and isCurrentStateComplete is not used to advance them.
+    if (stateType !== 'goal' && !this.stateHasRequiredWork(currentState)) {
+      this.logger.log(
+        `[isCurrentStateComplete] State '${currentState.id}' has no required work — NOT auto-complete (advances via turn-based fallback)`,
+      );
+      return false;
+    }
+
     this.logger.log(`[isCurrentStateComplete] All required tasks/deliverables complete - state IS complete`);
     return true;
+  }
+
+  /**
+   * Whether a state has any *required* work that should block advancement.
+   *
+   * Mirrors the required-work checks in isCurrentStateComplete so a state whose
+   * tasks/deliverables are all optional is recognised as having nothing to block
+   * on. Such states must not auto-complete (which would skip them instantly);
+   * they advance on a turn-based fallback instead (#172).
+   */
+  private stateHasRequiredWork(state: PlanState): boolean {
+    const stateType = state.type || 'loose';
+
+    for (const task of state.tasks) {
+      if (task.required === false) continue; // optional task never blocks
+
+      const taskDeliverables = task.deliverables || [];
+      if (taskDeliverables.length === 0) {
+        // A required deliverable-less task blocks in non-goal states; in goal
+        // mode such tasks are auto-complete scaffolding (not blocking).
+        if (stateType !== 'goal') return true;
+        continue;
+      }
+
+      // A required task with deliverables blocks only if at least one of those
+      // deliverables is itself required.
+      if (taskDeliverables.some((d) => d.required !== false)) return true;
+    }
+
+    // Goal-level required deliverables also count as required work.
+    if (stateType === 'goal' && state.goal?.deliverables?.some((d) => d.required !== false)) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
