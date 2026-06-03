@@ -445,14 +445,18 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           return
         }
 
+        // Barge-in (#15): silence the agent track the instant playback is
+        // interrupted (and un-silence on resume) so the user does not keep
+        // hearing buffered agent audio after interrupting. On its own signal,
+        // independent of the teleprompter so it works when that is disabled.
+        if (envelope.type === 'agent_playback') {
+          applyAgentAudioSilencing((envelope.data || {}).state, pendingAudioElementRef.current)
+          return
+        }
+
         // Teleprompter (#241): word-by-word highlight progress for agent speech.
         if (envelope.type === 'agent_speech_progress') {
-          const progress = envelope.data || {}
-          // Barge-in: silence the agent track the instant playback is
-          // interrupted (and un-silence on resume) so the user does not keep
-          // hearing buffered agent audio after interrupting.
-          applyAgentAudioSilencing(progress.state, pendingAudioElementRef.current)
-          applySpeechProgress(progress)
+          applySpeechProgress(envelope.data || {})
           return
         }
 

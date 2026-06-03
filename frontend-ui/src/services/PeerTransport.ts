@@ -242,13 +242,18 @@ export class PeerTransport implements Transport {
           //   data: env.data
           // })
 
+          // Barge-in (#15): silence/un-silence the agent track on its own
+          // teleprompter-independent signal, synchronously on packet receipt so
+          // it never waits on a React re-render. Kept off agent_speech_progress
+          // so it still works when the teleprompter is disabled.
+          if (env.type === 'agent_playback') {
+            applyAgentAudioSilencing((env.data || {}).state, this.remoteAudio)
+            return
+          }
+
           // Teleprompter (#241): word-by-word highlight progress for agent speech.
           if (env.type === 'agent_speech_progress') {
-            const progress = env.data || {}
-            // Barge-in: silence the agent track here, synchronously on packet
-            // receipt, so it does not depend on a React re-render landing first.
-            applyAgentAudioSilencing(progress.state, this.remoteAudio)
-            this.onSpeechProgress(progress)
+            this.onSpeechProgress(env.data || {})
             return
           }
 

@@ -23,6 +23,7 @@ class FakeRoom:
         self.clear_count = 0
         self.queued_ms = 0.0
         self.data_handler = None
+        self.captured = []  # every publish_data payload, for envelope assertions
 
     def on_data_received(self, cb):
         self.data_handler = cb
@@ -34,6 +35,7 @@ class FakeRoom:
         self.published.extend(data)
 
     async def publish_data(self, data, *a, **k):
+        self.captured.append(data)
         await asyncio.sleep(0)
 
     def flush_audio_queue(self):
@@ -437,3 +439,102 @@ def test_env_override_forces_on(monkeypatch):
     monkeypatch.setenv("BARGE_IN_ENABLED", "true")
     pipe, _ = make_pipeline()
     assert pipe.barge_in_enabled is True
+
+
+# ── Client silencing signal: decoupled from the teleprompter (A) ──────────
+
+
+def _playback_states(room):
+    return [
+        d["data"]["state"]
+        for d in room.captured
+        if isinstance(d, dict) and d.get("type") == "agent_playback"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_playback_state_emitted_with_teleprompter_off():
+    """Client silencing must fire even when the teleprompter is disabled — it's
+    a barge-in concern, not a highlight one (would otherwise no-op and the agent
+    stays audible after a barge-in)."""
+    pipe, room = make_pipeline()
+    pipe._barge_in_enabled = True
+    pipe._teleprompter_enabled = False     # teleprompter OFF
+    pipe._is_speaking = True
+
+    task = asyncio.create_task(pipe._play_prefetched(silence(50)))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    pipe.suspend_speech()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # An agent_playback "interrupted" must have been published to silence the
+    # client, despite no agent_speech_progress (teleprompter) envelope.
+    assert "interrupted" in _playback_states(room)
+    assert not any(d.get("type") == "agent_speech_progress" for d in room.captured)
+
+    pipe.resume_speech()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert _playback_states(room)[-1] == "speaking"   # un-silenced on resume
+
+
+@pytest.mark.asyncio
+async def test_no_playback_state_when_barge_in_disabled():
+    """With barge-in off there is no interruption to silence — emit nothing."""
+    pipe, room = make_pipeline()
+    pipe._barge_in_enabled = False
+    pipe._is_speaking = True
+    await asyncio.wait_for(pipe._play_prefetched(silence(20)), timeout=1.0)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert _playback_states(room) == []
+
+
+# ── Suspension watchdog: never-resolved barge-in auto-resumes (B) ─────────
+
+
+@pytest.mark.asyncio
+async def test_suspend_watchdog_auto_resumes_when_never_resolved():
+    """If STT never delivers a final after the partial that triggered the
+    suspend, _resolve_barge_in never runs. The watchdog must auto-resume so
+    playback does not stay suspended (silent) forever."""
+    pipe, room = make_pipeline()
+    pipe._barge_in_enabled = True
+    pipe._is_speaking = True
+    pipe._barge_in_suspend_timeout_s = 0.05    # fire fast
+    pipe._barge_in_active = True               # as detection would have set it
+
+    task = asyncio.create_task(pipe._play_prefetched(silence(80)))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    pipe.suspend_speech()
+    assert pipe.is_suspended is True
+
+    # No final transcript ever arrives — only the watchdog can recover.
+    await asyncio.sleep(0.12)
+
+    assert pipe._play_allowed.is_set()         # auto-resumed
+    assert pipe.is_suspended is False
+    assert pipe._barge_in_active is False      # flags cleared → detection re-armed
+    assert "speaking" in _playback_states(room)
+    await asyncio.wait_for(task, timeout=1.0)  # utterance plays to the end
+
+
+@pytest.mark.asyncio
+async def test_suspend_watchdog_disarmed_on_normal_resume():
+    """A timely resolution cancels the watchdog so it never double-fires."""
+    pipe, room = make_pipeline()
+    pipe._barge_in_enabled = True
+    pipe._is_speaking = True
+    pipe._barge_in_suspend_timeout_s = 0.05
+
+    task = asyncio.create_task(pipe._play_prefetched(silence(80)))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    pipe.suspend_speech()
+    pipe.resume_speech()                        # resolved before the watchdog
+    assert pipe._barge_in_watchdog_task is None # disarmed
+
+    await asyncio.sleep(0.12)                    # let the old window elapse
+    await asyncio.wait_for(task, timeout=1.0)    # completes cleanly, no re-fire

@@ -146,6 +146,17 @@ export interface AgentSpeechProgress {
   state?: string
 }
 
+/**
+ * Barge-in (#15): an `agent_playback` envelope. A teleprompter-independent
+ * signal emitted by the SDK whenever agent playback is interrupted/resumed, so
+ * the client can silence the agent track on barge-in even when the teleprompter
+ * is disabled. Carries only the playback state — no highlight char offsets.
+ */
+export interface AgentPlaybackState {
+  /** 'speaking' | 'interrupted' */
+  state?: string
+}
+
 export interface TransportEvents {
   onConnected: () => void
   onDisconnected: (reason?: string) => void
@@ -195,6 +206,7 @@ export type EnvelopeType =
   | 'transcript_chunk'
   | 'agent_text'
   | 'agent_speech_progress'
+  | 'agent_playback'
   | 'system'
   | 'audio_data'
   | 'audio_stream_start'

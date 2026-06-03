@@ -203,6 +203,15 @@ class AudioPipeline:
         self._barge_in_decider: Optional[
             Callable[[str], Awaitable["BargeInDecision"]]
         ] = None
+        # Safety net: a suspend only resolves when STT delivers a FINAL transcript
+        # (-> _resolve_barge_in). If STT errors/reconnects mid-barge-in and never
+        # emits a final, the suspend would otherwise persist forever — permanent
+        # dead air, turn never completes. This watchdog auto-resumes a suspend
+        # that goes this long unresolved. Tunable via BARGE_IN_SUSPEND_TIMEOUT_MS.
+        self._barge_in_suspend_timeout_s: float = float(
+            os.getenv("BARGE_IN_SUSPEND_TIMEOUT_MS", "8000")
+        ) / 1000
+        self._barge_in_watchdog_task: Optional[asyncio.Task] = None
 
         # Teleprompter (#241): emit agent_speech_progress envelopes so the
         # frontend can light up the published agent_text exactly as it is
@@ -1094,6 +1103,7 @@ class AudioPipeline:
             return
 
         logger.info("Stopping TTS playback")
+        self._disarm_suspend_watchdog()
 
         # Teleprompter: freeze the highlight at the playhead before we discard
         # the held utterance (reads spoken_char from _cur_cursor/_cur_audio).
@@ -1145,6 +1155,8 @@ class AudioPipeline:
         self._room.clear_playout()
         # Teleprompter: freeze the highlight at the playhead the user heard.
         self._emit_speech_progress("interrupted")
+        # Safety net: auto-resume if no final transcript ever resolves this.
+        self._arm_suspend_watchdog()
         logger.info(
             f"[BARGE-IN] Suspended playback at byte {self._cur_cursor}/"
             f"{len(self._cur_audio)} (rewound ~{queued_ms:.0f}ms of unplayed audio)"
@@ -1156,6 +1168,7 @@ class AudioPipeline:
         speaking again. No-op if not suspended."""
         if self._play_allowed.is_set():
             return
+        self._disarm_suspend_watchdog()
         logger.info("[BARGE-IN] Resuming playback from playhead")
         self.close_transcript_gate()
         self._play_allowed.set()
@@ -1169,6 +1182,7 @@ class AudioPipeline:
         left OPEN (the user's turn is being processed). After this the speech
         worker observes the stop and exits."""
         logger.info("[BARGE-IN] Committing interruption — discarding remaining speech")
+        self._disarm_suspend_watchdog()
         # Teleprompter: freeze the highlight at the playhead before discarding.
         # (After a suspend the cursor is already rewound to what was heard.)
         self._emit_speech_progress("interrupted")
@@ -1251,6 +1265,83 @@ class AudioPipeline:
         except Exception as e:
             logger.error(f"[BARGE-IN] Failed to emit debug message: {e}")
 
+    def _emit_playback_state(self, state: str) -> None:
+        """Publish an ``agent_playback`` envelope so the client can silence the
+        agent track on barge-in.
+
+        Deliberately separate from ``agent_speech_progress``: client silencing is
+        a barge-in concern, but the speech-progress envelope is gated on the
+        teleprompter flag AND on the sentence having a char span, so driving the
+        mute off it would silently no-op when the teleprompter is off or a
+        sentence couldn't be located in the published text. This signal is gated
+        only on barge-in (the feature that needs it) and carries no char offsets.
+
+        Only the two states that gate the mute are emitted: ``interrupted``
+        (silence) and ``speaking`` (un-silence on resume or a fresh utterance).
+        """
+        if not self._barge_in_enabled:
+            return
+        if state not in ("speaking", "interrupted"):
+            return
+        payload = {
+            "type": "agent_playback",
+            "data": {"state": state, "agent_id": self._agent_id},
+        }
+        try:
+            asyncio.create_task(self._room.publish_data(payload))
+        except RuntimeError:
+            # No running loop (e.g. sync test context) — skip.
+            pass
+
+    def _arm_suspend_watchdog(self) -> None:
+        """(Re)arm the watchdog that auto-resumes a suspend that never resolves."""
+        self._disarm_suspend_watchdog()
+        try:
+            self._barge_in_watchdog_task = asyncio.create_task(self._suspend_watchdog())
+        except RuntimeError:
+            # No running loop (sync test context) — nothing to guard.
+            self._barge_in_watchdog_task = None
+
+    def _disarm_suspend_watchdog(self) -> None:
+        """Cancel the suspension watchdog (resolution arrived in time)."""
+        task = self._barge_in_watchdog_task
+        self._barge_in_watchdog_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _suspend_watchdog(self) -> None:
+        """Auto-resume a barge-in suspend that no final transcript ever resolves.
+
+        Closes the hang where STT drops the final after the partial that
+        triggered the suspend: without this, ``_resolve_barge_in`` never runs and
+        playback stays suspended indefinitely. RESUME is the safe default here —
+        keep talking and drop the unintelligible interruption rather than discard
+        the agent's turn.
+        """
+        try:
+            await asyncio.sleep(self._barge_in_suspend_timeout_s)
+        except asyncio.CancelledError:
+            return
+        # Resolved (resumed/committed) while we slept — nothing to do.
+        if self._play_allowed.is_set():
+            return
+        logger.warning(
+            f"[BARGE-IN] Suspension watchdog fired after "
+            f"{self._barge_in_suspend_timeout_s:.0f}s with no resolving transcript "
+            "— auto-resuming"
+        )
+        # Drop our own ref first so resume_speech()'s disarm is a no-op (no
+        # self-cancel of the task currently running).
+        self._barge_in_watchdog_task = None
+        self._barge_in_active = False
+        self._barge_in_resolving = False
+        self._pending_barge_in = None
+        self.resume_speech()
+        await self._emit_barge_in_debug(
+            "▶️ Barge-in never resolved (no final transcript) — auto-resumed",
+            decision="resume",
+        )
+
     def _emit_speech_progress(self, state: str, meta: Optional[dict] = None) -> None:
         """Publish an ``agent_speech_progress`` envelope for the teleprompter.
 
@@ -1269,6 +1360,10 @@ class AudioPipeline:
         the user actually heard. No-op when the teleprompter is disabled or the
         sentence carries no character span.
         """
+        # Drive client-side barge-in silencing first, on its own barge-in-gated
+        # channel — it must NOT be suppressed by the teleprompter flag or by a
+        # missing char span below (see _emit_playback_state).
+        self._emit_playback_state(state)
         if not self._teleprompter_enabled:
             return
         meta = meta if meta is not None else self._cur_meta
