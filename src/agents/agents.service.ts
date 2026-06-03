@@ -299,13 +299,16 @@ export class AgentsService {
     // Security: Validate and sanitize agent config
     const agentConfig = this.sanitizeAgentConfig(createAgentDto.config || {});
 
+    // Enforce type/version scoping of configuration artifacts BEFORE persisting the
+    // agent or creating any pod, so a mismatch returns 400 and leaves no trace.
+    // This runs FIRST so that a selected `agentConfigurationId` resolves and injects
+    // `pipeline_config` before the type-specific validator checks for its presence
+    // (the deploy modal passes only the id and intentionally does not inline it).
+    await this.applyScopedConfiguration(createAgentDto, userId, agentTypeRecord, agentConfig);
+
     // Validate type-specific config requirements for ALL creation paths.
     // (Previously this only ran for public-project flows in PublicProjectsService.)
     this.validateRuntimeConfigForAgentType(agentType, agentConfig);
-
-    // Enforce type/version scoping of configuration artifacts BEFORE persisting the
-    // agent or creating any pod, so a mismatch returns 400 and leaves no trace.
-    await this.applyScopedConfiguration(createAgentDto, userId, agentTypeRecord, agentConfig);
 
     // Encrypt manual env vars now so they are persisted before the async pod creation.
     // This guarantees restart() can recover them even if the pod creation fails.

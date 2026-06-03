@@ -71,11 +71,25 @@ describe('AgentConfigurationsService.resolveForDeploy', () => {
   it('rejects a config that no longer validates against the current schema', async () => {
     const svc = createService({
       ...base,
-      // references a node the current schema does not declare
-      configuration: { nodes: { ghost: {} } },
+      // an out-of-range threshold cannot be pruned, so it still rejects
+      configuration: { thresholds: { temperature: 5 } },
     });
     await expect(
       svc.resolveForDeploy('cfg-1', 'user-1', 'type-A', agentTypeRecord),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('prunes dangling refs (node the schema dropped) and accepts, matching reconciliation', async () => {
+    const svc = createService({
+      ...base,
+      // `ghost` references a node the current schema no longer declares; pruning
+      // drops it so the deploy succeeds (same outcome reconciliation would persist).
+      configuration: { nodes: { planner: { x: 1 }, ghost: {} } },
+    });
+    const effective = await svc.resolveForDeploy('cfg-1', 'user-1', 'type-A', agentTypeRecord);
+    expect(effective).toEqual({
+      llm: { model: 'gpt-4o-mini', temperature: 0.7 },
+      nodes: { planner: { x: 1 } },
+    });
   });
 });

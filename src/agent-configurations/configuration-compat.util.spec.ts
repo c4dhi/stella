@@ -2,6 +2,8 @@ import {
   validateConfigurationAgainstSchema,
   pruneRemovedOverrides,
   hashPipelineSchema,
+  compareVersions,
+  satisfiesMinCompilerVersion,
 } from './configuration-compat.util';
 
 const schema = {
@@ -86,5 +88,46 @@ describe('hashPipelineSchema', () => {
 
   it('treats null and undefined identically', () => {
     expect(hashPipelineSchema(null)).toBe(hashPipelineSchema(undefined));
+  });
+});
+
+describe('compareVersions', () => {
+  it('compares release cores numerically (not lexically)', () => {
+    expect(compareVersions('1.10.0', '1.2.0')).toBeGreaterThan(0);
+    expect(compareVersions('1.2.0', '1.2.0')).toBe(0);
+    expect(compareVersions('2.0.0', '1.9.9')).toBeGreaterThan(0);
+  });
+
+  it('ranks a release above its pre-release (semver §11)', () => {
+    expect(compareVersions('1.0.0', '1.0.0-beta')).toBeGreaterThan(0);
+    expect(compareVersions('1.0.0-beta', '1.0.0')).toBeLessThan(0);
+    expect(compareVersions('1.1.0-rc1', '1.0.0')).toBeGreaterThan(0); // core wins first
+  });
+
+  it('orders pre-release identifiers per semver', () => {
+    expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBeLessThan(0);
+    expect(compareVersions('1.0.0-alpha.1', '1.0.0-alpha')).toBeGreaterThan(0); // longer set wins
+    expect(compareVersions('1.0.0-alpha.1', '1.0.0-alpha.2')).toBeLessThan(0); // numeric
+    expect(compareVersions('1.0.0-1', '1.0.0-alpha')).toBeLessThan(0); // numeric < alphanumeric
+  });
+});
+
+describe('satisfiesMinCompilerVersion', () => {
+  it('treats no requirement as always satisfied', () => {
+    expect(satisfiesMinCompilerVersion(null, null)).toBe(true);
+    expect(satisfiesMinCompilerVersion(null, undefined)).toBe(true);
+    expect(satisfiesMinCompilerVersion('1.0.0', undefined)).toBe(true);
+  });
+
+  it('rejects when a minimum is required but none is available', () => {
+    expect(satisfiesMinCompilerVersion(null, '1.0.0')).toBe(false);
+  });
+
+  it('compares available against the required floor', () => {
+    expect(satisfiesMinCompilerVersion('1.2.0', '1.1.0')).toBe(true);
+    expect(satisfiesMinCompilerVersion('1.0.0', '1.0.0')).toBe(true);
+    expect(satisfiesMinCompilerVersion('1.0.0', '1.1.0')).toBe(false);
+    // a pre-release compiler does not satisfy a stable floor
+    expect(satisfiesMinCompilerVersion('1.1.0-rc1', '1.1.0')).toBe(false);
   });
 });

@@ -23,6 +23,13 @@ CREATE INDEX "AgentConfiguration_agentTypeId_compatibility_idx" ON "AgentConfigu
 --   and the type resolved via COALESCE(ai.agentTypeId, AgentType matched by slug).
 -- ============================================================================
 
+-- 0) Snapshot the templates that need backfilling so we can report the resolved
+--    bindings below. The backfill heuristic (most-recently-used type) can mis-scope
+--    a template authored for a different type, which then 400s at spawn — so make
+--    the silent re-binding auditable in the migration log.
+CREATE TEMP TABLE _envtpl_backfill_targets AS
+  SELECT id FROM "EnvVarTemplate" WHERE "agentTypeId" IS NULL;
+
 -- 1) Most-recently-used AgentType per owning user.
 UPDATE "EnvVarTemplate" AS et
 SET "agentTypeId" = ranked.resolved_type_id
@@ -48,7 +55,30 @@ SET "agentTypeId" = f.id
 FROM (SELECT id FROM "AgentType" WHERE "slug" = 'stella-v2-agent' LIMIT 1) AS f
 WHERE et."agentTypeId" IS NULL;
 
+-- 2b) Report every backfilled binding so an operator can spot a mis-scoped template
+--     (one re-bound to a type it wasn't authored for) instead of discovering it as a
+--     spawn-time 400. Temp tables are dropped automatically at end of session.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT et.id AS template_id, et."name" AS template_name, at."slug" AS type_slug
+    FROM "EnvVarTemplate" et
+    JOIN _envtpl_backfill_targets t ON t.id = et.id
+    LEFT JOIN "AgentType" at ON at.id = et."agentTypeId"
+  LOOP
+    RAISE NOTICE 'Migration #240 backfill: EnvVarTemplate % (%) -> AgentType %',
+      r.template_id, r.template_name, COALESCE(r.type_slug, '(UNRESOLVED)');
+  END LOOP;
+END $$;
+
 -- 3) Guard: abort (rolls back the whole migration) if any NULL remains; never drop rows.
+--    NOTE: this is a HARD STOP for the deploy — on a database whose AgentTypes are not
+--    yet seeded (or were renamed) and that has templates with no resolvable agent
+--    history, the init-container `prisma migrate deploy` fails and the whole rollout
+--    halts. Seed/create the stella-v2-agent AgentType (or assign the listed templates
+--    manually) before retrying.
 DO $$
 DECLARE
   remaining BIGINT;

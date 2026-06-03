@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ConfigCompatibility } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAgentConfigurationDto } from './dto/create-agent-configuration.dto';
 import { UpdateAgentConfigurationDto } from './dto/update-agent-configuration.dto';
 import { sanitizeAgentConfig } from '../common/utils/sanitize-config';
 import {
   validateConfigurationAgainstSchema,
+  pruneRemovedOverrides,
   satisfiesMinCompilerVersion,
+  type PipelineSchema,
 } from './configuration-compat.util';
 import { deriveEffectiveAgentConfig } from '../kubernetes/utils/agent-config-injection.util';
 
@@ -94,26 +96,108 @@ export class AgentConfigurationsService {
     const data: Prisma.AgentConfigurationUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.agentVersion !== undefined) data.agentVersion = dto.agentVersion;
 
     if (dto.configuration !== undefined) {
+      // A re-save is the user's remediation path for an OUTDATED config, so we must
+      // recompute compatibility here (the seed-time reconciliation pass only runs on
+      // version/schema changes). Mirror that pass for this single row: prune dangling
+      // refs, re-validate against the CURRENT schema, and re-stamp the state so a
+      // fixed config flips back to CURRENT and clears its note.
       const sanitized = sanitizeAgentConfig(dto.configuration as Record<string, unknown>);
-
-      // Validate against pipeline schema if available
       const agentType = await this.prisma.agentType.findUnique({
         where: { id: existing.agentTypeId },
+        select: { version: true, pipelineSchema: true, compilerVersion: true },
       });
-      if (agentType?.pipelineSchema) {
-        this.validateConfiguration(sanitized, agentType.pipelineSchema as Record<string, unknown>);
-      }
 
-      data.configuration = sanitized as Prisma.InputJsonValue;
+      const recomputed = this.recomputeCompatibility(
+        sanitized,
+        existing.minCompilerVersion,
+        existing.agentVersion,
+        agentType,
+      );
+      data.configuration = recomputed.configuration as Prisma.InputJsonValue;
+      data.compatibility = recomputed.compatibility;
+      data.compatibilityNote = recomputed.compatibilityNote;
+      data.agentVersion = recomputed.agentVersion;
+      data.lastReconciledAt = recomputed.lastReconciledAt;
+    } else if (dto.agentVersion !== undefined) {
+      data.agentVersion = dto.agentVersion;
     }
 
     return this.prisma.agentConfiguration.update({
       where: { id },
       data,
     });
+  }
+
+  /**
+   * Single-row equivalent of {@link reconcileAgentTypeConfigurations}: validate a
+   * (just-edited) override payload against the agent type's CURRENT schema and
+   * derive the persisted reconciliation state.
+   *
+   *  - prune dangling node/threshold refs the schema no longer declares,
+   *  - if the pruned overrides satisfy the compiler floor and re-validate: mark
+   *    CURRENT and stamp agentVersion to the type's current version,
+   *  - otherwise: mark OUTDATED with the reason and leave agentVersion untouched.
+   *
+   * When the type carries no schema we cannot judge compatibility, so we accept the
+   * payload as-is and keep it CURRENT.
+   */
+  private recomputeCompatibility(
+    overrides: Record<string, unknown>,
+    minCompilerVersion: string | null,
+    existingAgentVersion: string | null,
+    agentType: {
+      version: string | null;
+      pipelineSchema: Prisma.JsonValue | null;
+      compilerVersion: string | null;
+    } | null,
+    now: Date = new Date(),
+  ): {
+    configuration: Record<string, unknown>;
+    compatibility: ConfigCompatibility;
+    compatibilityNote: string | null;
+    agentVersion: string | null;
+    lastReconciledAt: Date;
+  } {
+    if (!agentType) {
+      return {
+        configuration: overrides,
+        compatibility: ConfigCompatibility.CURRENT,
+        compatibilityNote: null,
+        agentVersion: existingAgentVersion,
+        lastReconciledAt: now,
+      };
+    }
+
+    const pipelineSchema = agentType.pipelineSchema as PipelineSchema;
+    const { sanitized } = pruneRemovedOverrides(overrides, pipelineSchema);
+
+    try {
+      if (!satisfiesMinCompilerVersion(agentType.compilerVersion, minCompilerVersion)) {
+        throw new Error(
+          `requires prompt-compiler version >= ${minCompilerVersion}, ` +
+            `agent provides ${agentType.compilerVersion ?? '(none)'}`,
+        );
+      }
+      validateConfigurationAgainstSchema(sanitized, pipelineSchema);
+
+      return {
+        configuration: sanitized,
+        compatibility: ConfigCompatibility.CURRENT,
+        compatibilityNote: null,
+        agentVersion: agentType.version,
+        lastReconciledAt: now,
+      };
+    } catch (e) {
+      return {
+        configuration: sanitized,
+        compatibility: ConfigCompatibility.OUTDATED,
+        compatibilityNote: (e as Error).message,
+        agentVersion: existingAgentVersion,
+        lastReconciledAt: now,
+      };
+    }
   }
 
   async remove(id: string, userId: string) {
@@ -137,6 +221,10 @@ export class AgentConfigurationsService {
       `Duplicating agent configuration ${id} (${config.name}) for user ${userId}`,
     );
 
+    // A duplicate is a faithful copy: carry the compiler-version floor and the
+    // reconciliation state so the copy doesn't silently lose its requirements (a
+    // dropped minCompilerVersion would default to "no requirement") or masquerade
+    // as CURRENT when the source was OUTDATED.
     return this.prisma.agentConfiguration.create({
       data: {
         name: `${config.name} (Copy)`,
@@ -144,6 +232,10 @@ export class AgentConfigurationsService {
         agentTypeId: config.agentTypeId,
         configuration: config.configuration as Prisma.InputJsonValue,
         agentVersion: config.agentVersion,
+        minCompilerVersion: config.minCompilerVersion,
+        compatibility: config.compatibility,
+        compatibilityNote: config.compatibilityNote,
+        lastReconciledAt: config.lastReconciledAt,
         userId,
       },
     });
@@ -205,7 +297,16 @@ export class AgentConfigurationsService {
     }
 
     // Defence in depth: re-validate against the current schema before applying.
-    const overrides = (cfg.configuration ?? {}) as Record<string, unknown>;
+    // Prune dangling node/threshold refs FIRST, exactly as the reconciliation pass
+    // does, so the two paths agree: a config reconciliation would have pruned and
+    // accepted (e.g. a node the schema dropped after the last re-seed) deploys here
+    // too, instead of 400-ing with "Unknown node ID." Pruning never clamps values,
+    // so genuinely invalid overrides (e.g. out-of-range thresholds) still reject.
+    const stored = (cfg.configuration ?? {}) as Record<string, unknown>;
+    const { sanitized: overrides } = pruneRemovedOverrides(
+      stored,
+      agentTypeRecord.pipelineSchema as PipelineSchema,
+    );
     try {
       validateConfigurationAgainstSchema(
         overrides,

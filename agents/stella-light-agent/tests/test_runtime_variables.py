@@ -15,21 +15,48 @@ MANIFEST_PATH = os.path.join(AGENT_DIR, "agent.yaml")
 AGENT_PY = os.path.join(AGENT_DIR, "src", "stella_light_agent", "agent.py")
 
 
+# stella-light exposes the SDK's full placeholder palette. If a resolver is ever
+# added to the SDK that this agent intentionally should NOT surface, list its token
+# here (with a reason) so the reverse drift guard below stays green by decision, not
+# by oversight.
+INTENTIONALLY_OMITTED: set = set()
+
+
 def _manifest():
     with open(MANIFEST_PATH) as f:
         return yaml.safe_load(f)
 
 
+def _declared_tokens(runtime_vars):
+    # Parametric vars (e.g. history) resolve as {{name_N}} → sentinel "name_N".
+    return {
+        f"{v['name']}_N" if v.get("parametric") else v["name"] for v in runtime_vars
+    }
+
+
 def test_declared_runtime_variables_are_resolvable_by_the_compiler():
+    """Forward drift guard: every declared variable must be resolvable by the SDK."""
     runtime_vars = _manifest().get("runtimeVariables") or []
     assert runtime_vars, "stella-light must declare runtimeVariables"
-    for v in runtime_vars:
-        # Parametric vars (e.g. history) resolve as {{name_N}} → sentinel "name_N".
-        token = f"{v['name']}_N" if v.get("parametric") else v["name"]
+    for token in _declared_tokens(runtime_vars):
         assert token in KNOWN_PLACEHOLDERS, (
-            f"runtimeVariable '{v['name']}' is declared but not resolvable by the "
+            f"runtimeVariable token '{token}' is declared but not resolvable by the "
             f"SDK prompt compiler (known: {sorted(KNOWN_PLACEHOLDERS)})"
         )
+
+
+def test_every_resolvable_placeholder_is_declared_or_intentionally_omitted():
+    """Reverse drift guard: a resolver added to the SDK must be either declared in
+    the manifest or explicitly listed in INTENTIONALLY_OMITTED — never silently
+    forgotten (which would leave a working {{placeholder}} undocumented in the UI
+    palette)."""
+    declared = _declared_tokens(_manifest().get("runtimeVariables") or [])
+    missing = KNOWN_PLACEHOLDERS - declared - INTENTIONALLY_OMITTED
+    assert not missing, (
+        f"SDK resolves placeholders the manifest neither declares nor intentionally "
+        f"omits: {sorted(missing)}. Add them to runtimeVariables, or to "
+        f"INTENTIONALLY_OMITTED with a reason."
+    )
 
 
 def test_manifest_compiler_version_matches_pinned_constant():

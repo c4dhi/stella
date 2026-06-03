@@ -130,12 +130,38 @@ export function pruneRemovedOverrides(
 
 /**
  * Compare two dotted version strings numerically (e.g. "1.2.0" vs "1.10.0").
- * Non-numeric segments compare lexically and sort after numeric ones. Returns
- * negative if a < b, 0 if equal, positive if a > b.
+ * Returns negative if a < b, 0 if equal, positive if a > b.
+ *
+ * Pre-release suffixes follow semver §11: the release core (before the first "-")
+ * is compared first, and a normal release outranks its pre-release
+ * (1.0.0 > 1.0.0-rc1). Two pre-releases compare identifier-by-identifier — numeric
+ * identifiers numerically and below alphanumerics, and a longer identifier set wins
+ * when all preceding identifiers are equal.
  */
 export function compareVersions(a: string, b: string): number {
-  const pa = String(a).split('.');
-  const pb = String(b).split('.');
+  const [mainA, preA] = splitPrerelease(String(a));
+  const [mainB, preB] = splitPrerelease(String(b));
+
+  const mainCmp = compareDottedNumeric(mainA, mainB);
+  if (mainCmp !== 0) return mainCmp;
+
+  // Equal release core: a release (no pre-release) outranks its pre-release.
+  if (!preA && !preB) return 0;
+  if (!preA) return 1;
+  if (!preB) return -1;
+  return comparePrerelease(preA, preB);
+}
+
+/** Split "1.2.0-rc.1" into ["1.2.0", "rc.1"]; ["1.2.0", ""] when no suffix. */
+function splitPrerelease(v: string): [string, string] {
+  const i = v.indexOf('-');
+  return i === -1 ? [v, ''] : [v.slice(0, i), v.slice(i + 1)];
+}
+
+/** Per-segment compare; numeric segments numerically, others lexically. */
+function compareDottedNumeric(a: string, b: string): number {
+  const pa = a.split('.');
+  const pb = b.split('.');
   const len = Math.max(pa.length, pb.length);
   for (let i = 0; i < len; i++) {
     const sa = pa[i] ?? '0';
@@ -146,6 +172,30 @@ export function compareVersions(a: string, b: string): number {
     const bNum = Number.isInteger(nb);
     if (aNum && bNum) {
       if (na !== nb) return na - nb;
+    } else if (sa !== sb) {
+      return sa < sb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/** Compare two pre-release strings ("rc.1", "beta") per semver §11. */
+function comparePrerelease(a: string, b: string): number {
+  const pa = a.split('.');
+  const pb = b.split('.');
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    if (i >= pa.length) return -1; // a is a prefix of b → a < b
+    if (i >= pb.length) return 1;
+    const sa = pa[i];
+    const sb = pb[i];
+    const aNum = /^\d+$/.test(sa);
+    const bNum = /^\d+$/.test(sb);
+    if (aNum && bNum) {
+      const diff = Number(sa) - Number(sb);
+      if (diff !== 0) return diff;
+    } else if (aNum !== bNum) {
+      return aNum ? -1 : 1; // numeric identifiers rank below alphanumerics
     } else if (sa !== sb) {
       return sa < sb ? -1 : 1;
     }
