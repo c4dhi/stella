@@ -25,6 +25,7 @@ import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
 import { useTeleprompter } from '../../hooks/useTeleprompter'
+import { applyAgentAudioSilencing } from '../../lib/agentAudio'
 import type { DeliveryStatus } from '../../lib/types'
 
 // Message type for participant chat - extends basic message with delivery tracking
@@ -446,7 +447,12 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
         // Teleprompter (#241): word-by-word highlight progress for agent speech.
         if (envelope.type === 'agent_speech_progress') {
-          applySpeechProgress(envelope.data || {})
+          const progress = envelope.data || {}
+          // Barge-in: silence the agent track the instant playback is
+          // interrupted (and un-silence on resume) so the user does not keep
+          // hearing buffered agent audio after interrupting.
+          applyAgentAudioSilencing(progress.state, pendingAudioElementRef.current)
+          applySpeechProgress(progress)
           return
         }
 

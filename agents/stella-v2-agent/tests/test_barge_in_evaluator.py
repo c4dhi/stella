@@ -1,10 +1,12 @@
 """Tests for the Barge-in Evaluator stage."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from stella_agent_sdk.messages.types import BargeInDecision
+from stella_v2_agent.llm.service import LLMProvider
 from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
 
 
@@ -115,3 +117,47 @@ async def test_llm_failure_defaults_to_commit():
 
     ev = BargeInEvaluator(BoomLLM())
     assert await ev.evaluate("anything") == BargeInDecision.COMMIT
+
+
+@pytest.mark.asyncio
+async def test_slow_llm_times_out_to_commit():
+    """A slow classifier must not stall the suspended turn — it defaults to
+    COMMIT once the tight timeout elapses, regardless of what it would say."""
+    class SlowLLM:
+        async def generate(self, *a, **k):
+            await asyncio.sleep(1.0)
+            return SimpleNamespace(content="RESUME")
+
+    ev = BargeInEvaluator(SlowLLM())
+    ev.apply_config({"timeout_ms": 20})  # 20ms ceiling
+    decision = await ev.evaluate("this would resume if we waited")
+    assert decision == BargeInDecision.COMMIT
+
+
+def test_apply_config_provider_override():
+    ev = BargeInEvaluator(FakeLLM())
+    assert ev.provider == LLMProvider.OPENAI_LANGCHAIN  # default
+    ev.apply_config({"provider": "ollama"})
+    assert ev.provider == LLMProvider.OLLAMA
+    # An enum value passes through unchanged.
+    ev.apply_config({"provider": LLMProvider.OPENAI_DIRECT})
+    assert ev.provider == LLMProvider.OPENAI_DIRECT
+    # An unknown provider falls back to the OpenAI default rather than crashing.
+    ev.apply_config({"provider": "nope"})
+    assert ev.provider == LLMProvider.OPENAI_LANGCHAIN
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_reaches_llm_call():
+    """The override actually drives the LLM config, not just the attribute."""
+    captured = {}
+
+    class CapturingLLM:
+        async def generate(self, messages, config, component_name=""):
+            captured["provider"] = config.provider
+            return SimpleNamespace(content="COMMIT")
+
+    ev = BargeInEvaluator(CapturingLLM())
+    ev.apply_config({"provider": "ollama"})
+    await ev.evaluate("stop")
+    assert captured["provider"] == LLMProvider.OLLAMA

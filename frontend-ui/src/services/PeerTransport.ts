@@ -17,6 +17,7 @@ import type {
 } from '../lib/types'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
+import { applyAgentAudioSilencing } from '../lib/agentAudio'
 import { generateUUID } from '../lib/uuid'
 import { determineMessageRole } from '../lib/messageUtils'
 
@@ -243,7 +244,11 @@ export class PeerTransport implements Transport {
 
           // Teleprompter (#241): word-by-word highlight progress for agent speech.
           if (env.type === 'agent_speech_progress') {
-            this.onSpeechProgress(env.data || {})
+            const progress = env.data || {}
+            // Barge-in: silence the agent track here, synchronously on packet
+            // receipt, so it does not depend on a React re-render landing first.
+            applyAgentAudioSilencing(progress.state, this.remoteAudio)
+            this.onSpeechProgress(progress)
             return
           }
 

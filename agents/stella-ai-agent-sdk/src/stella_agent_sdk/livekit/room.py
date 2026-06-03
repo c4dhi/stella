@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
@@ -98,7 +99,6 @@ class RoomManager:
 
         # Acoustic Echo Cancellation (AEC)
         # Can be disabled via environment variable for debugging
-        import os
         aec_disabled_by_env = os.getenv("DISABLE_AEC", "false").lower() in ("true", "1", "yes")
         if aec_disabled_by_env:
             logger.info("[AEC] Disabled via DISABLE_AEC environment variable")
@@ -288,7 +288,6 @@ class RoomManager:
         # bounds both the position error and how much audible audio survives a
         # clear_queue() on interruption. Tunable via TTS_PLAYOUT_BUFFER_MS;
         # defaults to LiveKit's 1000ms so non-barge-in deployments are unchanged.
-        import os
         try:
             queue_size_ms = int(os.getenv("TTS_PLAYOUT_BUFFER_MS", "1000"))
         except ValueError:

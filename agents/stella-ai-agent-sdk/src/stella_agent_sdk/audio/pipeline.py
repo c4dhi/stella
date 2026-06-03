@@ -691,9 +691,6 @@ class AudioPipeline:
             participant_id: Identity of the participant who sent the message (LiveKit identity)
             data: Raw bytes of the message (JSON encoded)
         """
-        import json
-        import uuid
-
         try:
             message = json.loads(data.decode("utf-8"))
 
@@ -1261,7 +1258,9 @@ class AudioPipeline:
           - ``speaking``     — this sentence's audio is now playing (fresh or
                                resumed). Carries ``duration_ms`` = audible time
                                left so the frontend can advance a word cursor.
-          - ``spoken``       — the sentence finished playing.
+          - ``spoken``       — the sentence's last frame was *pushed* (not yet
+                               necessarily heard — see the contract note at the
+                               emission site in ``_play_prefetched``).
           - ``interrupted``  — barge-in froze playback; the highlight stays at
                                the playhead.
 
@@ -1561,6 +1560,12 @@ class AudioPipeline:
         # Did the utterance play to the end (vs. abort via break)?
         completed = self._cur_cursor >= len(self._cur_audio)
         if completed:
+            # CONTRACT: "spoken" fires when the last frame is *pushed* to the
+            # room, not when the user *hears* the end — up to queued_playout_ms
+            # of this audio is still draining the output + client buffers. The
+            # frontend must therefore drive end-of-highlight timing from the
+            # "speaking" envelope's schedule (delay_ms + duration_ms), and treat
+            # "spoken" only as "this sentence is done, settle it fully lit".
             self._emit_speech_progress("spoken", meta=meta)
 
         # Utterance finished (or aborted) — clear held audio.

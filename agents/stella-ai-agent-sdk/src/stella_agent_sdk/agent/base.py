@@ -908,6 +908,14 @@ class BaseAgent(ABC):
         else:
             # Sentence not located in the published agent_text (or no transcript
             # id yet) — speak it without offsets; it just won't be highlighted.
+            # Log it so a silently-degraded teleprompter (e.g. TTS text drifting
+            # from the published text) is diagnosable rather than invisible.
+            if sentence:
+                logger.debug(
+                    "Teleprompter: sentence not located in agent_text "
+                    "(tid=%s, cursor=%d) — speaking without highlight: %r",
+                    self._tp_transcript_id, self._tp_cursor, sentence[:60],
+                )
             self.audio.enqueue_sentence(sentence, source=source)
 
     def _dispatch_sentences(self, new_text: str) -> None:
