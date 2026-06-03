@@ -130,12 +130,41 @@ export interface ParticipantEvent {
   messageType: 'participant'
 }
 
+/**
+ * Teleprompter (#241): an `agent_speech_progress` envelope payload emitted by
+ * the SDK as it speaks the reply, mapping the audio playhead to a character
+ * span in the published `agent_text`.
+ */
+export interface AgentSpeechProgress {
+  transcript_id?: string
+  char_start?: number
+  char_end?: number
+  spoken_char?: number
+  duration_ms?: number
+  delay_ms?: number
+  /** 'speaking' | 'spoken' | 'interrupted' */
+  state?: string
+}
+
+/**
+ * Barge-in (#15): an `agent_playback` envelope. A teleprompter-independent
+ * signal emitted by the SDK whenever agent playback is interrupted/resumed, so
+ * the client can silence the agent track on barge-in even when the teleprompter
+ * is disabled. Carries only the playback state — no highlight char offsets.
+ */
+export interface AgentPlaybackState {
+  /** 'speaking' | 'interrupted' */
+  state?: string
+}
+
 export interface TransportEvents {
   onConnected: () => void
   onDisconnected: (reason?: string) => void
   onError: (err: Error) => void
   onRemoteAudioTrack: (track: MediaStreamTrack) => void
   onTranscript: (chunk: TranscriptChunk) => void
+  /** Teleprompter (#241): word-by-word speech-progress for the agent's reply. */
+  onSpeechProgress: (data: AgentSpeechProgress) => void
   onProcessingMessage: (message: ProcessingMessage) => void
   onServerMessage: (msg: unknown) => void
   onTTSStart: () => void
@@ -176,6 +205,8 @@ export type EnvelopeType =
   | 'transcript'
   | 'transcript_chunk'
   | 'agent_text'
+  | 'agent_speech_progress'
+  | 'agent_playback'
   | 'system'
   | 'audio_data'
   | 'audio_stream_start'

@@ -1240,11 +1240,15 @@ class SessionManagementClient {
   // ============================================================================
 
   /**
-   * List all environment variable templates for the current user.
-   * Optionally filter by agent type.
+   * List environment variable templates for the current user.
+   *
+   * IMPORTANT: type-scoped flows (deploy / project / configurator) MUST pass
+   * `agentTypeId` — the backend returns ONLY templates for that type (no generic
+   * fallthrough). Calling without `agentTypeId` returns every template across
+   * types and is intended for the settings management page only.
    */
   async listEnvVarTemplates(agentTypeId?: string): Promise<EnvVarTemplate[]> {
-    const query = agentTypeId ? `?agentTypeId=${agentTypeId}` : ''
+    const query = agentTypeId ? `?agentTypeId=${encodeURIComponent(agentTypeId)}` : ''
     return this.get<EnvVarTemplate[]>(`/env-var-templates${query}`)
   }
 

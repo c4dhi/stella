@@ -28,6 +28,9 @@ class TranscriptEvent:
     # classifier as the fallback signal (RFC §8.3).
     detected_language: str = ""
     language_confidence: float = 0.0
+    # True when this transcript was produced by a committed barge-in and is
+    # being injected as a new turn (set by the pipeline, not the STT service).
+    is_barge_in: bool = False
 
     @classmethod
     def from_proto(cls, proto) -> "TranscriptEvent":

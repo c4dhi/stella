@@ -225,6 +225,10 @@ export interface CreateAgentDto {
   icon?: string // max 10 characters (emoji), optional
   agentType?: string // agent type id (e.g., 'stella-agent', 'echo-agent')
   config?: Record<string, unknown> // agent-specific config (e.g., { plan: {...} })
+  // Stored pipeline configuration to apply. When set, the backend loads it by ID,
+  // verifies it matches this agent's type and is not outdated, and uses its
+  // (defaults-merged) overrides as pipeline_config — ignoring any client pipeline_config.
+  agentConfigurationId?: string
   envVarTemplateId?: string // environment variable template to use
   envVars?: Record<string, string> // additional env vars to merge with template (overrides template values)
 }
@@ -242,11 +246,22 @@ export interface AgentType {
   validationStatus?: AgentValidationStatus
   configSchema?: Record<string, unknown>  // JSON Schema for config options
   pipelineSchema?: PipelineSchema | null  // Pipeline topology + configurable slots
+  runtimeVariables?: RuntimeVariable[] | null  // Manifest-declared {{placeholder}} palette
+  compilerVersion?: string | null  // SDK prompt-compiler version this agent uses
   resourceGpu?: boolean
   authorName?: string | null
   authorEmail?: string | null
   tags?: string[]
   createdAt?: string
+}
+
+/** A {{placeholder}} the agent's prompt compiler can resolve (manifest-declared). */
+export interface RuntimeVariable {
+  name: string            // token base; {{name}} or, when parametric, {{name_N}}
+  label?: string          // display label (e.g. "history_N")
+  description?: string
+  preview?: string        // example value shown in the editor
+  parametric?: boolean    // true for {{name_N}}-style tokens
 }
 
 // Extended AgentType with build info (for my-agents endpoint)
@@ -884,7 +899,7 @@ export interface EnvVarTemplate {
   name: string
   description?: string
   variableKeys: string[]  // Only keys, not values (for security)
-  agentTypeId?: string
+  agentTypeId: string  // Required: every template is scoped to exactly one agent type
   createdAt: string
   updatedAt: string
 }
@@ -893,14 +908,14 @@ export interface CreateEnvVarTemplateDto {
   name: string
   description?: string
   variables: Record<string, string>
-  agentTypeId?: string
+  agentTypeId: string  // Required
 }
 
 export interface UpdateEnvVarTemplateDto {
   name?: string
   description?: string
   variables?: Record<string, string>
-  agentTypeId?: string
+  // agentTypeId is immutable post-create; duplicate the template to rebind.
 }
 
 // ============================================================================
@@ -950,6 +965,10 @@ export interface PublicAgentConfig {
   plan?: Record<string, unknown>
   config?: Record<string, unknown>
   pipelineConfig?: Record<string, unknown>
+  // Preferred: the saved configuration's ID. At spawn the backend resolves it by
+  // ID (type/version-checked, defaults-merged). pipelineConfig is kept only as a
+  // backward-compatible snapshot for public projects saved before this field.
+  agentConfigurationId?: string
   envVarTemplateId?: string
   envVars?: Record<string, string>
 }
@@ -1486,9 +1505,18 @@ export interface AgentConfiguration {
   }
   configuration: AgentConfigurationPayload
   agentVersion: string | null
+  // Minimum SDK prompt-compiler version this config's prompts require.
+  minCompilerVersion: string | null
+  // Compatibility of this config with its agent type's current pipeline schema,
+  // recomputed by the backend reconciliation pass when the agent type changes.
+  compatibility: ConfigCompatibility
+  compatibilityNote: string | null
+  lastReconciledAt: string | null
   createdAt: string
   updatedAt: string
 }
+
+export type ConfigCompatibility = 'CURRENT' | 'COMPATIBLE' | 'OUTDATED'
 
 export interface CreateAgentConfigurationDto {
   name: string
@@ -1496,6 +1524,8 @@ export interface CreateAgentConfigurationDto {
   agentTypeId: string
   configuration: AgentConfigurationPayload
   agentVersion?: string
+  // Optional; the backend defaults it to the agent type's current compilerVersion.
+  minCompilerVersion?: string
 }
 
 export interface UpdateAgentConfigurationDto {

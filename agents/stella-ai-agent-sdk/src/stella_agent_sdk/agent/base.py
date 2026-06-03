@@ -10,7 +10,13 @@ from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
 
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import AgentState, ChatMessage, MetadataSubtype, OutputType
+from stella_agent_sdk.messages.types import (
+    AgentState,
+    BargeInDecision,
+    ChatMessage,
+    MetadataSubtype,
+    OutputType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,29 @@ class BaseAgent(ABC):
         4. on_session_end() - Called when session ends, cleanup
     """
 
+    #: Whether this agent supports user barge-in (interrupting mid-speech).
+    #: When True *and* barge-in is enabled at the deployment level (env), the
+    #: pipeline arms the reflex: detecting user speech while the agent is
+    #: talking suspends playback, transcribes the user, and routes the final
+    #: transcript to ``on_barge_in()`` to decide whether to commit or resume.
+    #: When False the agent never gets interrupted (current default behaviour).
+    supports_barge_in: bool = False
+
+    #: Teleprompter (#241): when True, the pipeline emits agent_speech_progress
+    #: envelopes so the frontend can light up the reply word-by-word as it is
+    #: spoken. On by default (the pipeline also defaults on); an explicit
+    #: STELLA_TELEPROMPTER_ENABLED=false env value forces it off.
+    supports_teleprompter: bool = True
+
+    #: Backchannel / filler tokens treated as "not a real interruption" by the
+    #: default ``on_barge_in()`` heuristic. Subclasses may override this set or
+    #: override ``on_barge_in()`` entirely for semantic evaluation.
+    _BARGE_IN_BACKCHANNELS = frozenset({
+        "mhm", "mm", "mmhm", "uh huh", "uh-huh", "uhuh", "yeah", "yep", "yup",
+        "ok", "okay", "right", "sure", "got it", "i see", "go on", "continue",
+        "hmm", "ah", "oh", "huh", "aha", "ja", "genau", "okay", "verstehe",
+    })
+
     def __init__(self) -> None:
         """Initialize the agent. Override to add your own initialization."""
         self._session_id: Optional[str] = None
@@ -76,6 +105,13 @@ class BaseAgent(ABC):
         self._last_progress_payload: Optional[Dict[str, Any]] = None
         # Sentence buffer for TTS dispatch (accumulates text between sentence boundaries)
         self._sentence_buffer: str = ""
+        # Teleprompter (#241): to light the published agent_text up as it is
+        # spoken, each enqueued sentence is tagged with its character span in
+        # that text. _tp_text is the latest accumulated agent_text, _tp_cursor
+        # the search offset so repeated sentences resolve in order.
+        self._tp_transcript_id: Optional[str] = None
+        self._tp_text: str = ""
+        self._tp_cursor: int = 0
         # Set to True by the agent when the plan reaches __end__.
         # run_audio_loop checks this after each turn and exits cleanly.
         self._session_completed: bool = False
@@ -293,6 +329,18 @@ class BaseAgent(ABC):
             "last_error": self._last_error,
         }
 
+    def _agent_identity(self) -> Dict[str, Any]:
+        """Identity metadata used to attribute outgoing messages to this agent.
+
+        Passed to :meth:`AgentOutput.to_data_payload` so progress updates carry the
+        agent's id/name/icon for frontend attribution.
+        """
+        return {
+            "agent_id": self._agent_id,
+            "agent_name": self._agent_name,
+            "agent_icon": self._agent_icon,
+        }
+
     @abstractmethod
     async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """
@@ -369,6 +417,60 @@ class BaseAgent(ABC):
             ```
         """
         pass
+
+    async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+        """Evaluate a user barge-in and decide whether to act on it.
+
+        Called only when ``supports_barge_in`` is True and barge-in is enabled
+        at the deployment level. By the time this fires, the system has already
+        suspended playback (reversibly) and transcribed the user's full
+        utterance — nothing has been discarded yet. Your return value decides:
+
+        - ``BargeInDecision.COMMIT``: the interruption is worth addressing. The
+          system discards the remainder of the current message, truncates it to
+          what was actually spoken, and processes ``transcript`` as a new turn.
+        - ``BargeInDecision.RESUME``: the interruption was not meaningful
+          (backchannel, noise, filler). Playback resumes from exactly where it
+          was suspended and ``transcript`` is discarded.
+
+        The default implementation is a fast, synchronous heuristic: short
+        utterances consisting only of backchannel/filler tokens resume;
+        anything else commits. Override for semantic evaluation (e.g. an LLM
+        classifier) — but keep it fast, since the user hears silence while this
+        runs on the resume path.
+
+        Args:
+            session_id: The session being interrupted.
+            transcript: The user's transcribed barge-in utterance.
+
+        Returns:
+            A ``BargeInDecision`` (COMMIT or RESUME).
+
+        Example:
+            ```python
+            async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+                if await self.is_real_instruction(transcript):
+                    return BargeInDecision.COMMIT
+                return BargeInDecision.RESUME
+            ```
+        """
+        normalized = transcript.strip().lower().strip(".,!?…")
+        if not normalized:
+            # Pure noise / no words recognized — not a real interruption.
+            return BargeInDecision.RESUME
+        # Whole utterance is a known (possibly multi-word) backchannel phrase,
+        # e.g. "go on", "uh huh", "got it".
+        if normalized in self._BARGE_IN_BACKCHANNELS:
+            return BargeInDecision.RESUME
+        # ...or a short utterance made up entirely of single-token backchannels
+        # ("mhm", "okay yeah"). Anything substantive commits — when in doubt we
+        # commit, since ignoring a real interruption is worse than over-stopping.
+        words = normalized.split()
+        if len(words) <= 3 and all(
+            w in self._BARGE_IN_BACKCHANNELS for w in words
+        ):
+            return BargeInDecision.RESUME
+        return BargeInDecision.COMMIT
 
     async def on_session_start(self, session_id: str, config: Dict[str, Any]) -> None:
         """
@@ -555,6 +657,7 @@ class BaseAgent(ABC):
                     turn_id=getattr(event, "transcript_id", None),
                     detected_language=getattr(event, "detected_language", "") or "",
                     language_confidence=getattr(event, "language_confidence", 0.0) or 0.0,
+                    is_barge_in=getattr(event, "is_barge_in", False),
                 )
 
                 # Process and stream response
@@ -574,6 +677,9 @@ class BaseAgent(ABC):
                                 # Detect bridge vs response from transcript_id prefix (legacy)
                                 tid = current_transcript_id
                                 self._current_sentence_source = "bridge" if (tid.startswith("gate_ack_") or tid.startswith("gate_fallback_") or tid.startswith("bridge_")) else "response"
+                                # New teleprompter transcript — reset the span cursor.
+                                self._tp_transcript_id = current_transcript_id
+                                self._tp_cursor = 0
 
                             # Explicit tts_source metadata overrides prefix detection
                             if output.metadata.get("tts_source"):
@@ -596,6 +702,9 @@ class BaseAgent(ABC):
                                 is_final=output.is_final,
                                 transcript_id=current_transcript_id
                             )
+                            # Teleprompter: the accumulated text just published
+                            # is what sentence spans are measured against.
+                            self._tp_text = output.content
 
                             # Sentence-level TTS: extract new text from accumulated content.
                             # output.content is the full accumulated text so far.
@@ -624,7 +733,7 @@ class BaseAgent(ABC):
                             ):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    self._enqueue_sentence(remaining, source=self._current_sentence_source)
                                     # After bridge sentence dispatched, revert to "response" for subsequent text
                                     if self._current_sentence_source == "bridge":
                                         self._current_sentence_source = "response"
@@ -633,7 +742,7 @@ class BaseAgent(ABC):
                                 # Flush any remaining partial sentence to TTS
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
-                                    self.audio.enqueue_sentence(remaining, source=self._current_sentence_source)
+                                    self._enqueue_sentence(remaining, source=self._current_sentence_source)
                                 tts_buffer = ""
                                 current_transcript_id = None
                                 self._current_sentence_source = "response"
@@ -650,118 +759,24 @@ class BaseAgent(ABC):
                                     transcript_id=transcript_id
                                 )
 
-                                # Send to TTS via sentence queue
-                                self.audio.enqueue_sentence(output.content)
+                                # Send to TTS via sentence queue, tagged so the
+                                # teleprompter can light up this final message.
+                                self._tp_transcript_id = transcript_id
+                                self._tp_text = output.content
+                                self._tp_cursor = 0
+                                self._enqueue_sentence(output.content)
 
-                        elif output.type == OutputType.DEBUG:
-                            # Forward debug messages to frontend via LiveKit
-                            debug_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "agent") if output.metadata else "agent",
-                                    "level": output.metadata.get("level", "info") if output.metadata else "info",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[DEBUG MESSAGE] Publishing: {debug_payload}")
-                            await self.audio._room.publish_data(debug_payload)
-
-                        elif output.type == OutputType.STATUS:
-                            # Forward status messages to frontend as debug messages
-                            status_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "status") if output.metadata else "status",
-                                    "level": "info",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[STATUS MESSAGE] Publishing: {status_payload}")
-                            await self.audio._room.publish_data(status_payload)
-
-                        elif output.type == OutputType.ERROR:
-                            # Forward error messages to frontend as debug messages
-                            error_payload = {
-                                "type": "debug",
-                                "data": {
-                                    "content": output.content,
-                                    "component": output.metadata.get("component", "error") if output.metadata else "error",
-                                    "level": "error",
-                                    "metadata": output.metadata or {}
-                                }
-                            }
-                            logger.info(f"[ERROR MESSAGE] Publishing: {error_payload}")
-                            await self.audio._room.publish_data(error_payload)
-
-                        elif output.type == OutputType.METADATA:
-                            # Handle different metadata subtypes
-                            subtype = output.metadata_subtype
-                            metadata = output.metadata or {}
-
-                            if subtype == MetadataSubtype.DELIVERABLE:
-                                # Send as plan_deliverable_update for frontend
-                                deliverable_payload = {
-                                    "type": "plan_deliverable_update",
-                                    "data": {
-                                        "deliverable_key": metadata.get("key"),
-                                        "deliverable_value": metadata.get("value"),
-                                        "confidence": metadata.get("confidence", 1.0),
-                                        "reasoning": metadata.get("reasoning"),
-                                        "state_id": metadata.get("state_id"),
-                                        "task_id": metadata.get("task_id"),
-                                    }
-                                }
-                                logger.info(f"[DELIVERABLE] Publishing: {deliverable_payload}")
-                                await self.audio._room.publish_data(deliverable_payload)
-                            else:
-                                # Forward other metadata messages as debug
-                                subtype_value = subtype.value if subtype else "metadata"
-                                metadata_payload = {
-                                    "type": "debug",
-                                    "data": {
-                                        "content": f"[{subtype_value}] {output.content}",
-                                        "component": "metadata",
-                                        "level": "info",
-                                        "metadata": metadata
-                                    }
-                                }
-                                logger.info(f"[METADATA MESSAGE] Publishing: {metadata_payload}")
-                                await self.audio._room.publish_data(metadata_payload)
-
-                        elif output.type == OutputType.PROGRESS_UPDATE:
-                            # Forward progress updates to frontend for task panel display
-                            # Include agent identity metadata for proper display
-                            progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
-                            # Ensure metadata dict exists
-                            if "metadata" not in progress_data:
-                                progress_data["metadata"] = {}
-                            # Always include agent identity for proper frontend attribution
-                            progress_data["metadata"]["agent_id"] = self._agent_id
-                            progress_data["metadata"]["agent_name"] = self._agent_name
-                            progress_data["metadata"]["agent_icon"] = self._agent_icon
-                            progress_payload = {
-                                "type": "progress_update",
-                                "data": progress_data
-                            }
-                            # Store for re-sending to new participants
-                            self._last_progress_payload = progress_payload
-                            logger.info(f"[PROGRESS UPDATE] Publishing: {progress_payload}")
-                            await self.audio._room.publish_data(progress_payload)
-
-                        elif output.type == OutputType.ANALYTICS:
-                            # Forward analytics timing measurements for storage
-                            analytics_payload = {
-                                "type": "analytics",
-                                "data": {
-                                    "stage": output.metadata.get("stage", "unknown"),
-                                    "timing_ms": output.metadata.get("timing_ms", 0),
-                                    **{k: v for k, v in (output.metadata or {}).items()
-                                       if k not in ("stage", "timing_ms")},
-                                }
-                            }
-                            await self.audio._room.publish_data(analytics_payload)
+                        else:
+                            # All non-text side-channel outputs (DEBUG, STATUS,
+                            # ERROR, METADATA, PROGRESS_UPDATE, ANALYTICS) share one
+                            # payload mapping — see AgentOutput.to_data_payload.
+                            payload = output.to_data_payload(self._agent_identity())
+                            if payload is not None:
+                                if output.type == OutputType.PROGRESS_UPDATE:
+                                    # Store for re-sending to new participants.
+                                    self._last_progress_payload = payload
+                                logger.info(f"[{output.type.value}] Publishing: {payload}")
+                                await self.audio._room.publish_data(payload)
 
                 finally:
                     # Ensure all queued TTS sentences finish before accepting next input
@@ -798,6 +813,40 @@ class BaseAgent(ABC):
     # natural sentence.
     _SENTENCE_END = re.compile(r'(?<=[.!?])\s+|(?<=\.\.\.)\s+')
 
+    def _enqueue_sentence(self, sentence: str, source: str = "response") -> None:
+        """Enqueue a sentence for TTS, tagged with its character span in the
+        published agent_text so the teleprompter can light it up as spoken.
+
+        The span is located in the latest accumulated agent_text (``_tp_text``)
+        starting at ``_tp_cursor``, which is then advanced — so a sentence that
+        repeats later in the text still resolves to the correct occurrence.
+        Falls back to a plain enqueue (no offsets) if the sentence can't be
+        located, so TTS never depends on the lookup succeeding.
+        """
+        start = self._tp_text.find(sentence, self._tp_cursor) if sentence else -1
+        if start >= 0 and self._tp_transcript_id is not None:
+            end = start + len(sentence)
+            self._tp_cursor = end
+            self.audio.enqueue_sentence(
+                sentence,
+                source=source,
+                transcript_id=self._tp_transcript_id,
+                char_start=start,
+                char_end=end,
+            )
+        else:
+            # Sentence not located in the published agent_text (or no transcript
+            # id yet) — speak it without offsets; it just won't be highlighted.
+            # Log it so a silently-degraded teleprompter (e.g. TTS text drifting
+            # from the published text) is diagnosable rather than invisible.
+            if sentence:
+                logger.debug(
+                    "Teleprompter: sentence not located in agent_text "
+                    "(tid=%s, cursor=%d) — speaking without highlight: %r",
+                    self._tp_transcript_id, self._tp_cursor, sentence[:60],
+                )
+            self.audio.enqueue_sentence(sentence, source=source)
+
     def _dispatch_sentences(self, new_text: str) -> None:
         """Detect sentence boundaries in new_text and enqueue complete sentences.
 
@@ -818,7 +867,7 @@ class BaseAgent(ABC):
         for sentence in parts[:-1]:
             sentence = sentence.strip()
             if sentence:
-                self.audio.enqueue_sentence(sentence, source=self._current_sentence_source)
+                self._enqueue_sentence(sentence, source=self._current_sentence_source)
 
         # Keep the last (incomplete) part in the buffer
         self._sentence_buffer = parts[-1]

@@ -15,10 +15,10 @@ import time
 from typing import Dict, Any, List, Optional
 
 from stella_agent_sdk.tools import BaseTool
+from stella_agent_sdk import prompts as sdk_prompts
 
 from stella_v2_agent.experts.base import ExpertConfig
 from stella_v2_agent.experts.template_compiler import (
-    compile_prompt,
     has_user_message_placeholder,
     HISTORY_PATTERN,
 )
@@ -44,8 +44,17 @@ class ExpertRunner:
     5. Handles timeouts and failures gracefully
     """
 
-    def __init__(self, llm_service: LLMService):
+    def __init__(self, llm_service: LLMService, *, compiler_version: str):
+        """Args:
+            llm_service: Shared LLM service used for expert calls.
+            compiler_version: Prompt-compiler version this runner resolves
+                {{placeholder}} tokens with. Required and explicit — there is no
+                implicit "latest", so an SDK upgrade can't silently change how an
+                expert's prompt compiles. Threaded down from the agent's pinned
+                PROMPT_COMPILER_VERSION (overridable per deployment via config).
+        """
         self._llm_service = llm_service
+        self._compiler_version = compiler_version
 
     async def run(
         self,
@@ -289,13 +298,17 @@ class ExpertRunner:
         prompt_has_history = bool(HISTORY_PATTERN.search(template))
         prompt_has_user_msg = has_user_message_placeholder(template)
 
-        # Shallow copy to avoid mutating the shared sm_context across concurrent experts
-        sm_context = {**sm_context}
-        sm_context["_user_input"] = user_input
-        sm_context["_conversation_history"] = conversation_history
-
-        # Compile system prompt — resolve all {{placeholders}}
-        compiled_prompt = compile_prompt(template, sm_context)
+        # Compile system prompt through the SDK's single, version-pinned entry
+        # point — resolve all {{placeholders}} against the live runtime context.
+        # The compiler copies sm_context internally and layers in the per-turn
+        # history / user message, so we never mutate the shared context here.
+        compiled_prompt = sdk_prompts.compile(
+            template,
+            version=self._compiler_version,
+            sm_context=sm_context,
+            conversation_history=conversation_history,
+            user_input=user_input,
+        )
 
         # Append output format instruction if configured (not in tool mode)
         if append_output_format and config.output_format:

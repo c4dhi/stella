@@ -34,8 +34,12 @@ export class EnvVarTemplatesController {
   }
 
   /**
-   * Get all environment variable templates for the current user
-   * Optionally filter by agent type
+   * Get environment variable templates for the current user.
+   *
+   * - With `agentTypeId`: returns ONLY templates scoped to that type (strict).
+   *   Type-aware flows (deploy/project/configurator) MUST pass `agentTypeId`.
+   * - Without `agentTypeId`: returns all of the user's templates across types,
+   *   for the settings management page only.
    */
   @Get()
   findAll(

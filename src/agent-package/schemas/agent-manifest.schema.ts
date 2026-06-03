@@ -276,6 +276,20 @@ const pipelineSchemaSchema = z
     }
   })
 
+// Runtime variable the agent's prompt compiler can resolve ({{name}} or, when
+// parametric, {{name_N}}). Declared per-AgentType so the Configurator renders the
+// palette generically instead of hardcoding it. Color/theming is assigned in the
+// frontend, not declared here.
+const runtimeVariableSchema = z
+  .object({
+    name: z.string().min(1),
+    label: z.string().min(1).optional(),
+    description: z.string().optional(),
+    preview: z.string().optional(),
+    parametric: z.boolean().optional(),
+  })
+  .passthrough()
+
 const resourcesSchema = z.object({
   memory: z
     .object({
@@ -336,6 +350,17 @@ export const agentManifestSchema = z
     configSchema: configSchemaSchema.optional(),
     pipelineSchema: pipelineSchemaSchema.optional(),
     defaultConfig: z.record(z.string(), jsonValueSchema).optional(),
+    // Per-AgentType {{placeholder}} palette for the Configurator (manifest-driven).
+    runtimeVariables: z.array(runtimeVariableSchema).optional(),
+    // Version of the SDK prompt compiler this agent resolves prompts with. Saved
+    // configurations are checked against it (a config can require a minimum version).
+    promptCompiler: z
+      .object({
+        version: z
+          .string()
+          .regex(VERSION_REGEX, 'must be semantic version format (e.g. 1.0.0)'),
+      })
+      .optional(),
     sdk: z
       .object({
         minVersion: z

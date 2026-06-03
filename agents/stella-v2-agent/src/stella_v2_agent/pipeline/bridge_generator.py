@@ -8,12 +8,15 @@ the Input Gate via asyncio.gather().
 On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """
 
+import asyncio
+import os
 import random
 import time
 from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
 from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES as _LANGUAGE_NAMES
+from stella_v2_agent.prompts.template import render_prompt
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,7 +61,9 @@ EXAMPLES (user → bridge):
 - "Ich weiß nicht, ich hatte einfach keine Motivation und die Arbeit war echt stressig" → "Ja, okay, das kann ich verstehen."
 
 LANGUAGE: Always match the user's language. If the user speaks German, your bridge MUST be in German. If the user speaks English, your bridge MUST be in English.
-
+{{#if isBargeIn}}
+BARGE-IN: The user just interrupted you mid-sentence. Acknowledge the interruption naturally and yield the floor — short and unflustered ("Oh, sorry — go ahead." / "Yeah?" / "Of course."). Do not resume your previous point.
+{{/if}}
 Output ONLY the bridge. No quotes, no labels, no explanation."""
 
 # Short fallback bridges used when LLM generation fails or is rejected.
@@ -140,6 +145,10 @@ class BridgeGenerator:
         self.bridge_temperature = 0.7
         self.custom_system_prompt: Optional[str] = None
         self.history_limit: int = 0  # 0 = default (2)
+        # The bridge only buys ~1s while the main pipeline runs; it must never
+        # stall the turn. If the LLM is slow (API latency spike), fall back to a
+        # canned bridge instead of hanging. Tunable via BRIDGE_TIMEOUT_MS.
+        self.bridge_timeout_s: float = float(os.getenv("BRIDGE_TIMEOUT_MS", "2000")) / 1000
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -159,6 +168,7 @@ class BridgeGenerator:
         user_input: str,
         conversation_history: List[Dict[str, str]],
         language: Optional[str] = None,
+        variables: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate a bridge phrase for the given user input.
 
@@ -170,6 +180,9 @@ class BridgeGenerator:
                 are produced in this language, keeping the bridge coherent with
                 the main response (RFC §8.2.1). When None, falls back to the
                 legacy "match the user" heuristic.
+            variables: Template variables for prompt rendering (e.g.
+                ``isBargeIn``). Lets the configured bridge prompt react to
+                context such as the turn being a barge-in.
 
         Returns:
             A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
@@ -179,7 +192,10 @@ class BridgeGenerator:
         try:
             user_message = self._build_user_message(user_input, conversation_history)
 
-            system_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
+            raw_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
+            # Render template variables (isBargeIn, etc.) into the prompt so the
+            # bridge can adapt — e.g. acknowledge that the user just interrupted.
+            system_prompt = render_prompt(raw_prompt, variables or {})
             if language:
                 system_prompt += (
                     f"\n\nRESOLVED LANGUAGE (overrides the rule above): "
@@ -199,10 +215,16 @@ class BridgeGenerator:
                 json_mode=False,
             )
 
-            response = await self._llm_service.generate(
-                messages=messages,
-                config=config,
-                component_name="bridge_generator",
+            # Bound the bridge on wall-clock — a slow LLM must not stall the
+            # whole turn (the user otherwise hears nothing and thinks the agent
+            # is dead). On timeout, fall back to a canned bridge.
+            response = await asyncio.wait_for(
+                self._llm_service.generate(
+                    messages=messages,
+                    config=config,
+                    component_name="bridge_generator",
+                ),
+                timeout=self.bridge_timeout_s,
             )
 
             latency_ms = (time.time() - start_time) * 1000

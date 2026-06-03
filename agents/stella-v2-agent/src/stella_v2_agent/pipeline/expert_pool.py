@@ -44,8 +44,10 @@ class ExpertPool:
         llm_service: LLMService,
         expert_registry: ExpertRegistry,
         tool_registry: Optional[ToolRegistry] = None,
+        *,
+        compiler_version: str,
     ):
-        self._runner = ExpertRunner(llm_service)
+        self._runner = ExpertRunner(llm_service, compiler_version=compiler_version)
         self._registry = expert_registry
         self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "15000"))
@@ -56,6 +58,15 @@ class ExpertPool:
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
         """Set or update the tool registry (called after session start)."""
         self._tool_registry = tool_registry
+
+    def set_compiler_version(self, compiler_version: str) -> None:
+        """Update the prompt-compiler version experts compile prompts with.
+
+        Called after session start so a per-deployment ``compiler_version`` config
+        override reaches the runner regardless of whether the pool was rebuilt for
+        expert overrides.
+        """
+        self._runner._compiler_version = compiler_version
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""

@@ -27,7 +27,7 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import StatusSubtype
+from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
@@ -40,11 +40,19 @@ from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
 from stella_v2_agent.pipeline.language_resolver import LanguageResolver
+from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
 from stella_v2_agent.adapters import ProgressAdapter
 from stella_v2_agent.utils import normalize_transition_priority
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Prompt-compiler version this agent is written and tested against. Pinned on
+# purpose (not the SDK's latest) so an SDK upgrade can't silently change how this
+# agent's expert prompts compile. Bump deliberately when adopting a new compiler
+# version. Can be overridden per deployment via config["compiler_version"].
+PROMPT_COMPILER_VERSION = "1.0.0"
 
 
 class StellaV2Agent(BaseAgent):
@@ -61,6 +69,18 @@ class StellaV2Agent(BaseAgent):
     - Handle state transitions
     - Emit progress updates
     """
+
+    # This agent supports user barge-in: it ships a Barge-in Evaluator stage
+    # and its pipeline config exposes the barge-in prompt. Barge-in support is
+    # an intrinsic property of the agent (the configuration depends on it), not
+    # a client-side preference. Operators can still force it off at the
+    # deployment level via BARGE_IN_ENABLED=false.
+    supports_barge_in = True
+
+    # Teleprompter (#241): light up the reply word-by-word as it is spoken.
+    # On by default for this agent; operators can force off with
+    # STELLA_TELEPROMPTER_ENABLED=false.
+    supports_teleprompter = True
 
     def __init__(
         self,
@@ -89,6 +109,11 @@ class StellaV2Agent(BaseAgent):
             or os.environ.get("STATE_MACHINE_ADDRESS", "localhost:50051")
         )
 
+        # Explicit prompt-compiler version (never implicit/latest). Defaults to the
+        # version this agent was authored against; overridable per deployment via
+        # config["compiler_version"] in on_session_start.
+        self._compiler_version: str = PROMPT_COMPILER_VERSION
+
         # Initialize core services
         self.llm_service = LLMService(config_path=llm_config_path)
         self.expert_registry = ExpertRegistry(experts_dir=experts_dir)
@@ -96,9 +121,13 @@ class StellaV2Agent(BaseAgent):
         # Initialize pipeline stages
         self.input_gate = InputGate(self.llm_service, self.expert_registry)
         self.bridge_generator = BridgeGenerator(self.llm_service)
-        self.expert_pool = ExpertPool(self.llm_service, self.expert_registry)
+        self.expert_pool = ExpertPool(
+            self.llm_service, self.expert_registry,
+            compiler_version=self._compiler_version,
+        )
         self.arbitration = Arbitration()
         self.response_generator = ResponseGenerator(self.llm_service)
+        self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
 
         # Single source of truth for the conversation language (RFC §8).
         # One detection per turn, propagated to bridge + response + TTS.
@@ -154,6 +183,17 @@ class StellaV2Agent(BaseAgent):
         forwarded_turn_id = (input.metadata or {}).get("turn_id")
         turn_id = forwarded_turn_id or f"turn_{self._turn_counter}"
 
+        # Barge-in context: when the SDK commits a user interruption it feeds the
+        # new transcript back through process() with is_barge_in=True. Expose it
+        # as a template variable so configurable prompts (notably the bridge) can
+        # react to "the user just interrupted me".
+        is_barge_in = bool((input.metadata or {}).get("is_barge_in"))
+        prompt_variables: Dict[str, Any] = {
+            "isBargeIn": is_barge_in,
+            "bargeInTranscript": input.text if is_barge_in else "",
+            "userInput": input.text,
+        }
+
         try:
             # Fetch context
             history_limit = self._custom_history_limit
@@ -205,7 +245,9 @@ class StellaV2Agent(BaseAgent):
             )
             gate_result, bridge = await asyncio.gather(
                 self.input_gate.classify(input.text, history, sm_context),
-                self.bridge_generator.generate(input.text, history, language=resolved_language),
+                self.bridge_generator.generate(
+                    input.text, history, language=resolved_language, variables=prompt_variables
+                ),
             )
 
             yield AgentOutput.debug(
@@ -589,6 +631,8 @@ class StellaV2Agent(BaseAgent):
         self.language_resolver.reset()
         self._session_language = None
         self._session_voice = None
+        # Explicit compiler version: config override, else the agent's pinned default.
+        self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
         # Load plan and initialize gRPC state machine
         plan = self._load_plan_config(config)
@@ -632,7 +676,12 @@ class StellaV2Agent(BaseAgent):
             self.expert_pool = ExpertPool(
                 self.llm_service, self.expert_registry,
                 tool_registry=self.tool_registry,
+                compiler_version=self._compiler_version,
             )
+
+        # Ensure the (possibly rebuilt) expert pool compiles prompts with the
+        # session's resolved compiler version, honoring any config override.
+        self.expert_pool.set_compiler_version(self._compiler_version)
 
         # Apply LLM config overrides
         if "model" in config:
@@ -686,6 +735,7 @@ class StellaV2Agent(BaseAgent):
             "arbitration": self.arbitration,
             "response_generator": self.response_generator,
             "bridge_generator": self.bridge_generator,
+            "barge_in": self.barge_in_evaluator,
         }
 
         for node_id, node_config in nodes.items():
@@ -752,6 +802,26 @@ class StellaV2Agent(BaseAgent):
         """Handle user interrupt (barge-in)."""
         logger.info(f"Interrupt received: {session_id}")
         self._is_processing = False
+
+    async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+        """Evaluate a user barge-in via the configurable Barge-in Evaluator.
+
+        Delegates to the LLM-backed evaluator (whose prompt/model are editable
+        in the Agent Configurator). The conversation history is fetched and
+        passed so the decision is made IN CONTEXT — e.g. an on-topic answer to
+        the assistant's last question is a real turn, not noise. Returning
+        COMMIT makes the SDK discard the rest of the current reply and process
+        ``transcript`` as a new turn; RESUME continues from where it suspended.
+        """
+        logger.info(f"Evaluating barge-in: '{transcript[:50]}'")
+        try:
+            history = await self._fetch_conversation_history(
+                limit=self.barge_in_evaluator.history_limit
+            )
+        except Exception as e:
+            logger.warning(f"Barge-in: could not fetch history ({e}); evaluating without it")
+            history = []
+        return await self.barge_in_evaluator.evaluate(transcript, conversation_history=history)
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """Handle runtime configuration update."""

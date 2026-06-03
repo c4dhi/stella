@@ -28,7 +28,15 @@ from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.state_machine import StateMachine
 from stella_light_agent.prompts import LightPromptBuilder
+from stella_agent_sdk import prompts as sdk_prompts
 from stella_light_agent.adapters import ProgressAdapter
+
+
+# Prompt-compiler version this agent is written and tested against. Pinned on
+# purpose (not the SDK's latest) so an SDK upgrade can't silently change how this
+# agent's prompts compile. Bump deliberately when adopting a new compiler version.
+# Can be overridden per deployment via config["compiler_version"].
+PROMPT_COMPILER_VERSION = "1.0.0"
 
 
 class StellaLightAgent(BaseAgent):
@@ -105,6 +113,13 @@ class StellaLightAgent(BaseAgent):
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
+        # Configurator overrides injected via SDK config (pipeline_config), mirroring stella-v2.
+        self._custom_persona: Optional[str] = None
+        self._custom_guidelines: Optional[str] = None
+        self._history_limit: int = 20
+        # Explicit prompt-compiler version (never implicit/latest). Defaults to the
+        # version this agent was authored against; can be overridden via config.
+        self._compiler_version: str = PROMPT_COMPILER_VERSION
 
         mode_str = "tool-based" if use_tools else "legacy"
         print(f"[StellaLightAgent] Initialized ({mode_str} mode)")
@@ -123,6 +138,77 @@ class StellaLightAgent(BaseAgent):
 
         return None
 
+    def _apply_pipeline_config(self, pipeline_config: Dict[str, Any]) -> None:
+        """Apply Agent Configurator overrides injected via SDK config.
+
+        Reads the single 'response' node and the 'history_limit' threshold from the
+        pipeline_config dict (shape: { nodes: {...}, thresholds: {...} }) and applies
+        them to the LLM service and prompt builder. Mirrors stella-v2's
+        _apply_pipeline_config but for the light agent's single-LLM architecture.
+        """
+        nodes = pipeline_config.get("nodes", {}) or {}
+        thresholds = pipeline_config.get("thresholds", {}) or {}
+
+        response = nodes.get("response", {}) or {}
+        if "model" in response:
+            self.llm_service.default_config.model = response["model"]
+        if "temperature" in response:
+            self.llm_service.default_config.temperature = float(response["temperature"])
+        if "max_tokens" in response:
+            self.llm_service.default_config.max_tokens = int(response["max_tokens"])
+        if response.get("persona"):
+            self._custom_persona = response["persona"]
+        if response.get("conversation_guidelines"):
+            self._custom_guidelines = response["conversation_guidelines"]
+
+        if "history_limit" in thresholds:
+            try:
+                self._history_limit = int(thresholds["history_limit"])
+            except (TypeError, ValueError):
+                pass
+
+        print(
+            f"[StellaLightAgent] Pipeline config applied: "
+            f"model={self.llm_service.default_config.model}, "
+            f"temperature={self.llm_service.default_config.temperature}, "
+            f"max_tokens={self.llm_service.default_config.max_tokens}, "
+            f"persona={'custom' if self._custom_persona else 'default'}, "
+            f"guidelines={'custom' if self._custom_guidelines else 'default'}, "
+            f"history_limit={self._history_limit}"
+        )
+
+    def _inject_configured_prompts(
+        self,
+        sm_context: Dict[str, Any],
+        conversation_history: List[Dict[str, str]],
+        user_input: str,
+    ) -> None:
+        """Resolve {{placeholder}} tokens in configured prompts and inject them.
+
+        Mirrors stella-v2's template compilation so the Configurator's persona /
+        conversation_guidelines and the plan system prompt can reference live runtime
+        values ({{plan}}, {{current_focus}}, {{history_N}}, {{user_message}}, ...).
+        Compiled per turn because history/user-message placeholders change each turn.
+        """
+        # Resolve {{placeholder}} tokens in each configured prompt through the SDK's
+        # single compile entry point (prompt + compiler version -> final prompt).
+        def render(text: Optional[str]) -> Optional[str]:
+            return sdk_prompts.compile(
+                text,
+                version=self._compiler_version,
+                sm_context=sm_context,
+                conversation_history=conversation_history,
+                user_input=user_input,
+            )
+
+        if self._custom_persona:
+            sm_context["custom_persona"] = render(self._custom_persona)
+        if self._custom_guidelines:
+            sm_context["custom_guidelines"] = render(self._custom_guidelines)
+        # The plan system prompt may also contain placeholders.
+        if sm_context.get("plan_system_prompt"):
+            sm_context["plan_system_prompt"] = render(sm_context["plan_system_prompt"])
+
     async def on_session_start(self, session_id: str, config: Dict[str, Any]) -> None:
         """
         Initialize session with configuration.
@@ -134,6 +220,11 @@ class StellaLightAgent(BaseAgent):
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
         self._plan_system_prompt = None
+        self._custom_persona = None
+        self._custom_guidelines = None
+        self._history_limit = 20
+        # Explicit compiler version: config override, else the agent's pinned default.
+        self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
         print(f"[StellaLightAgent] Session started: {session_id}")
         print(f"[StellaLightAgent] Config keys: {list(config.keys())}")
@@ -160,6 +251,13 @@ class StellaLightAgent(BaseAgent):
                 self.llm_service.default_config.model = llm_overrides["model"]
             if "temperature" in llm_overrides:
                 self.llm_service.default_config.temperature = llm_overrides["temperature"]
+
+        # Apply pipeline configuration from the Agent Configurator (same principle as
+        # stella-v2): persona/guidelines/model/temperature/max_tokens + history_limit
+        # injected through the SDK config as pipeline_config.
+        pipeline_config = config.get("pipeline_config")
+        if pipeline_config:
+            self._apply_pipeline_config(pipeline_config)
 
     def _load_plan_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load plan configuration from config or disk."""
@@ -341,7 +439,7 @@ class StellaLightAgent(BaseAgent):
     async def _process_with_tools(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using tool-based state management."""
         # Fetch conversation history
-        conversation_history = await self._fetch_conversation_history(limit=20)
+        conversation_history = await self._fetch_conversation_history(limit=self._history_limit)
 
         # Get state machine context from external service
         sm_context = {}
@@ -413,6 +511,10 @@ class StellaLightAgent(BaseAgent):
         if self._plan_system_prompt:
             sm_context["plan_system_prompt"] = self._plan_system_prompt
             print(f"[StellaLightAgent] Using plan system prompt: {self._plan_system_prompt[:100]}...")
+
+        # Inject configured prompts, resolving {{placeholder}} variables against
+        # the live runtime context (same principle as stella-v2).
+        self._inject_configured_prompts(sm_context, conversation_history, input.text)
 
         # Build prompts
         system_prompt = self.prompt_builder.build_system_prompt(sm_context)
@@ -490,7 +592,7 @@ class StellaLightAgent(BaseAgent):
     async def _process_legacy(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """Process input using legacy text-parsing state management."""
         # Fetch conversation history
-        conversation_history = await self._fetch_conversation_history(limit=20)
+        conversation_history = await self._fetch_conversation_history(limit=self._history_limit)
 
         # Get state machine context
         sm_context = {}
@@ -500,6 +602,10 @@ class StellaLightAgent(BaseAgent):
         # Add custom system prompt from plan if available
         if self._plan_system_prompt:
             sm_context["plan_system_prompt"] = self._plan_system_prompt
+
+        # Inject configured prompts, resolving {{placeholder}} variables against
+        # the live runtime context (same principle as stella-v2).
+        self._inject_configured_prompts(sm_context, conversation_history, input.text)
 
         # Build prompts
         system_prompt = self.prompt_builder.build_system_prompt(sm_context)

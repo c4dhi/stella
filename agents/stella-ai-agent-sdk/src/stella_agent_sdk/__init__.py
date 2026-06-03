@@ -65,6 +65,7 @@ from stella_agent_sdk.messages.types import (
     StatusSubtype,
     MetadataSubtype,
     AgentState,
+    BargeInDecision,
     ChatMessage,
 )
 from stella_agent_sdk.messages.input import AgentInput
@@ -116,6 +117,7 @@ __all__ = [
     "StatusSubtype",
     "MetadataSubtype",
     "AgentState",
+    "BargeInDecision",
     "AgentInput",
     "AgentOutput",
     "ChatMessage",

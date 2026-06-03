@@ -24,7 +24,8 @@ export class CreateEnvVarTemplateDto {
   @IsNotEmpty()
   variables: Record<string, string>;
 
+  // Required: every template is scoped to exactly one agent type (no "generic").
   @IsUUID()
-  @IsOptional()
-  agentTypeId?: string;
+  @IsNotEmpty()
+  agentTypeId: string;
 }

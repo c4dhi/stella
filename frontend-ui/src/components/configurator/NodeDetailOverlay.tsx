@@ -5,7 +5,7 @@
  * for runtime-injected context, plus a SettingsGrid for model configuration.
  */
 
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { PipelineNode as PipelineNodeType, AgentConfigurationPayload } from '../../lib/api-types'
 import type { ExpertDefinition, InputGateRule } from './useConfiguratorState'
@@ -597,6 +597,58 @@ export default function NodeDetailOverlay({
     )
   }
 
+  // Generic fallback: render any stage's editable slots straight from the
+  // manifest — `text` slots as PromptComposer blocks (supporting {{variable}}
+  // placeholders), and number/select slots as a settings grid. This lets new
+  // pipeline stages (e.g. barge_in) be fully configurable without a bespoke
+  // renderer, instead of falling through to "No configuration available".
+  const renderGenericStage = () => {
+    const textSlots = node.slots.filter((s) => s.type === 'text')
+    const settingSlots = node.slots.filter((s) => s.type === 'number' || s.type === 'select')
+
+    const blocks: PromptBlock[] = textSlots.map((s) => {
+      const v = getSlotValue(s.id)
+      const isOverridden = v !== undefined && v !== null
+      return {
+        id: s.id,
+        type: 'editable' as const,
+        label: s.label,
+        headerHint: s.description,
+        value: isOverridden ? String(v) : undefined,
+        defaultValue: typeof s.default === 'string' ? s.default : '',
+        onChange: (val: string) => onUpdateNodeConfig(node.id, s.id, val || undefined),
+        onReset: () => onUpdateNodeConfig(node.id, s.id, undefined),
+        rows: 18,
+      }
+    })
+
+    return (
+      <div className="space-y-6">
+        {blocks.length > 0 && <PromptComposer blocks={blocks} isDark={isDark} />}
+        {settingSlots.length > 0 && (
+          <SettingsGrid isDark={isDark}>
+            {settingSlots.map((s) => (
+              <Fragment key={s.id}>
+                {renderSlotField(
+                  s.id,
+                  s.label,
+                  s.type === 'select' ? 'select' : 'number',
+                  {
+                    selectOptions: s.options,
+                    min: s.min,
+                    max: s.max,
+                    step: s.step,
+                    helperText: s.type === 'select' ? s.description : undefined,
+                  },
+                )}
+              </Fragment>
+            ))}
+          </SettingsGrid>
+        )}
+      </div>
+    )
+  }
+
   const stageRenderers: Record<string, () => JSX.Element> = {
     input_gate: renderInputGate,
     expert_pool: renderExpertPool,
@@ -605,7 +657,10 @@ export default function NodeDetailOverlay({
     bridge_generator: renderBridgeGenerator,
   }
 
-  const renderContent = stageRenderers[node.id]
+  // Use a bespoke renderer when one exists; otherwise fall back to the generic
+  // slot-driven renderer so every manifest-defined stage is configurable.
+  const renderContent =
+    stageRenderers[node.id] || (node.slots.length > 0 ? renderGenericStage : undefined)
 
   return (
     <motion.div

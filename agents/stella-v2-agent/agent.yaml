@@ -59,9 +59,13 @@ configSchema:
     - name: INTERRUPT_MODE
       description: "Transcript interrupt behavior: 'none' (turn-based gating, default) or 'smart' (barge-in with re-prompting)"
       default: "none"
+    - name: BARGE_IN_ENABLED
+      description: "Operator override for barge-in. This agent supports barge-in by default; set 'false' to force it off, 'true' to force on. Leave unset to follow the agent's declaration."
     - name: TTS_ENABLED
       description: "Enable text-to-speech audio output. Set to 'false' for text-only mode."
       default: "true"
+    - name: STELLA_TELEPROMPTER_ENABLED
+      description: "Live teleprompter (#241): stream the reply dimmed and light each word as it is spoken. ON BY DEFAULT — set 'false' to disable. Leave unset to keep it on."
     - name: TRANSCRIPT_DEBOUNCE_MS
       description: "Debounce window (ms) for aggregating rapid successive final transcripts. 0 to disable."
       default: "300"
@@ -275,7 +279,12 @@ pipelineSchema:
             - ALWAYS respond in the SAME LANGUAGE the user is speaking.
             - Use natural, idiomatic phrasing — do not translate literally.
 
+            {{#if isBargeIn}}
+            Barge-in: The user just interrupted you. Acknowledge it briefly and yield ("Oh, go ahead." / "Sorry, yes?"). Do not continue your previous point.
+            {{/if}}
             Output ONLY the bridge sentence. No quotes, no explanations.
+
+            Available variables: {{isBargeIn}} (yes/no — was this turn a user interruption), {{userInput}}.
         - id: model
           label: "Model"
           type: select
@@ -295,6 +304,50 @@ pipelineSchema:
           max: 100
           step: 5
           default: 30
+
+    - id: barge_in
+      label: "Barge-in Evaluator"
+      description: "Decides whether a user interruption is worth acting on (commit) or should be ignored so speech resumes (~150ms). This agent supports barge-in by default; operators can force it off with BARGE_IN_ENABLED=false."
+      icon: "✋"
+      # Sits above the main pipeline, horizontally centered (cols 0-3 → 1.5).
+      # Barge-in spans the whole turn rather than being a stage in the flow.
+      position: { row: -1, col: 1.5 }
+      slots:
+        - id: system_prompt
+          label: "System Prompt"
+          type: text
+          description: "Decides if a barge-in is a real interruption. The conversation history is provided in the message so it judges in context. Must output exactly COMMIT (act on it, discard the rest of the current reply) or RESUME (ignore it, continue speaking). Supports variables: {{bargeInTranscript}}, {{userInput}}, {{isBargeIn}}."
+          default: |
+            You decide whether a user's interruption of the assistant's speech is a real interruption that should be acted on, or just a backchannel/noise that should be ignored so the assistant keeps talking.
+
+            You are given the conversation so far and what the user just said while the assistant was speaking. JUDGE IT IN CONTEXT.
+
+            Output COMMIT if the user's words are meaningful given the conversation — a relevant answer to what the assistant just asked, a question, a correction, a new request, a clear "stop"/"wait", or a change of topic. An on-topic answer (e.g. giving their name right after being asked for it) is a real turn and must COMMIT.
+
+            Output RESUME if it was just acknowledgement, agreement, thinking-aloud, or noise that does not require the assistant to stop — e.g. "mhm", "yeah", "right", "go on", a cough, or a few filler words.
+
+            When unsure, prefer COMMIT — ignoring a real interruption is worse than briefly pausing.
+
+            Output ONLY one word: COMMIT or RESUME.
+        - id: model
+          label: "Model"
+          type: select
+          options: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"]
+          default: "gpt-4o-mini"
+        - id: temperature
+          label: "Temperature"
+          type: number
+          min: 0
+          max: 1
+          step: 0.1
+          default: 0.0
+        - id: max_tokens
+          label: "Max Tokens"
+          type: number
+          min: 1
+          max: 20
+          step: 1
+          default: 3
 
   edges:
     - source: input_gate
@@ -364,6 +417,61 @@ pipelineSchema:
       type: integer
       min: 1
       default: 1
+
+# SDK prompt-compiler version this agent resolves {{placeholder}} tokens with.
+promptCompiler:
+  version: "1.0.0"
+
+# {{placeholder}} palette offered in the Agent Configurator. Mirrors the SDK
+# placeholder compiler's resolvable set (stella_agent_sdk.prompts palette()).
+# (The legacy frontend palette also listed trigger_rules / plan_persona /
+# arbitration_directive, which the agent does not actually resolve — dropped here.)
+runtimeVariables:
+  - name: plan
+    label: plan
+    description: "Full plan: all states, tasks, deliverables"
+    preview: "States:\n  - welcome_intro (active)\nTasks:\n  - greeting (completed)"
+  - name: current_focus
+    label: current_focus
+    description: "Active task + pending deliverables with criteria"
+    preview: "Task: collect_basic_info\nPending:\n  - user_name (required)"
+  - name: pending_deliverables
+    label: pending_deliverables
+    description: "Pending deliverables with required/optional flags"
+    preview: "- user_name: User's first name [required]"
+  - name: collected_deliverables
+    label: collected_deliverables
+    description: "Already collected deliverable keys"
+    preview: "- age: 28\n- frequency: 3x per week"
+  - name: turns_without_progress
+    label: turns_without_progress
+    description: "Turns since last deliverable collected"
+    preview: "3"
+  - name: current_state
+    label: current_state
+    description: "Current state name + description"
+    preview: "welcome_intro: Greet the user and collect basic info"
+  - name: progress_percentage
+    label: progress_percentage
+    description: "Overall progress %"
+    preview: "42%"
+  - name: processing_mode
+    label: processing_mode
+    description: "Processing mode (sequential/flexible/goal)"
+    preview: "flexible (any order)"
+  - name: history
+    label: history_N
+    parametric: true
+    description: "Last N conversation messages (e.g. {{history_8}})"
+    preview: "[USER]: Hi\n[ASSISTANT]: Welcome! How can I help?"
+  - name: user_message
+    label: user_message
+    description: "The user's latest message"
+    preview: "I usually go running three times a week."
+  - name: language
+    label: language
+    description: "Resolved session language (single source of truth, #214)"
+    preview: "German"
 
 sdk:
   minVersion: "0.4.0"

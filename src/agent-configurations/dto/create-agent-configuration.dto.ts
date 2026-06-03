@@ -32,4 +32,11 @@ export class CreateAgentConfigurationDto {
   @IsOptional()
   @MaxLength(50)
   agentVersion?: string;
+
+  // Minimum SDK prompt-compiler version this config's prompts require. Defaults to
+  // the agent type's current compilerVersion at creation time when omitted.
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  minCompilerVersion?: string;
 }

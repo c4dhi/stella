@@ -12,6 +12,7 @@ from stella_v2_agent.experts.base import ExpertConfig
 def _runner() -> ExpertRunner:
     runner = ExpertRunner.__new__(ExpertRunner)
     runner._llm_service = None  # not used by _parse_verdict or _build_messages
+    runner._compiler_version = "1.0.0"  # used by _build_messages to compile prompts
     return runner
 
 

@@ -293,6 +293,29 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         agent._agent_id = agent_id
         agent._agent_icon = agent_icon
 
+        # 6a. Wire barge-in: the agent declares whether it supports barge-in
+        # (an intrinsic capability — its config depends on it). If so, enable it
+        # on the pipeline (honoring any explicit BARGE_IN_ENABLED operator
+        # override) and route the decision to the agent's on_barge_in hook.
+        if getattr(agent, "supports_barge_in", False):
+            audio_pipeline.enable_barge_in()
+            if audio_pipeline.barge_in_enabled:
+                audio_pipeline.set_barge_in_decider(
+                    lambda transcript: agent.on_barge_in(session_id, transcript)
+                )
+                logger.info("Barge-in enabled: on_barge_in wired to pipeline")
+            else:
+                logger.info(
+                    "Agent supports barge-in but BARGE_IN_ENABLED=false override "
+                    "is set — running in turn-based mode"
+                )
+
+        # 6b. Wire the teleprompter (#241): the agent declares whether it wants
+        # word-by-word speech-progress emitted (honoring any explicit
+        # STELLA_TELEPROMPTER_ENABLED operator override).
+        if getattr(agent, "supports_teleprompter", False):
+            audio_pipeline.enable_teleprompter()
+
         # 7. Create HistoryClient for chat history access
         # Generate JWT token with same claims as LiveKit token (for validation)
         now = int(time.time())
@@ -329,47 +352,20 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         await agent.on_session_start(session_id, agent_config)
         logger.info(f"Agent session started with config keys: {list(agent_config.keys())}")
 
-        # 10. Call on_ready hook to send initial outputs (e.g., progress state)
+        # 10. Call on_ready hook to send initial outputs (e.g., progress state).
+        # Side-channel outputs share the same payload mapping the audio loop uses
+        # (AgentOutput.to_data_payload) so shaping never drifts between the two.
+        agent_identity = {"agent_id": agent_id, "agent_name": agent_name, "agent_icon": agent_icon}
         async for output in agent.on_ready(session_id):
-            if output.type == OutputType.PROGRESS_UPDATE:
-                # Send progress update to frontend with agent identity metadata
-                progress_data = output.metadata.get("progress_state", {}) if output.metadata else {}
-                # Ensure metadata dict exists
-                if "metadata" not in progress_data:
-                    progress_data["metadata"] = {}
-                # Always include agent identity for proper frontend attribution
-                progress_data["metadata"]["agent_id"] = agent_id
-                progress_data["metadata"]["agent_name"] = agent_name
-                progress_data["metadata"]["agent_icon"] = agent_icon
-                progress_payload = {
-                    "type": "progress_update",
-                    "data": progress_data
-                }
-                # Store on agent for re-sending to new participants
-                agent._last_progress_payload = progress_payload
-                logger.info(f"[INITIAL PROGRESS] Publishing: {progress_payload}")
-                await audio_pipeline._room.publish_data(progress_payload)
-            elif output.type == OutputType.DEBUG:
-                # Forward debug messages
-                debug_payload = {
-                    "type": "debug",
-                    "data": {
-                        "content": output.content,
-                        "component": output.metadata.get("component", "agent") if output.metadata else "agent",
-                        "level": output.metadata.get("level", "info") if output.metadata else "info",
-                        "metadata": output.metadata or {}
-                    }
-                }
-                await audio_pipeline._room.publish_data(debug_payload)
-            elif output.type == OutputType.ANALYTICS:
-                # Forward analytics timing measurements for storage
-                analytics_payload = {
-                    "type": "analytics",
-                    "data": output.metadata or {},
-                }
-                await audio_pipeline._room.publish_data(analytics_payload)
-            else:
+            payload = output.to_data_payload(agent_identity)
+            if payload is None:
                 logger.debug(f"[ON_READY] Ignoring output type: {output.type}")
+                continue
+            if output.type == OutputType.PROGRESS_UPDATE:
+                # Store on agent for re-sending to new participants.
+                agent._last_progress_payload = payload
+                logger.info(f"[INITIAL PROGRESS] Publishing: {payload}")
+            await audio_pipeline._room.publish_data(payload)
 
         # 10b. Register agent with session-management-server (marks status as RUNNING)
         logger.info(f"Registering agent: type='{agent.agent_type}', version='{agent.agent_version}'")
