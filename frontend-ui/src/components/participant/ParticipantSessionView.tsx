@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication, RemoteParticipant, LocalTrackPublication } from 'livekit-client'
 import TranscriptOverlay from '../face/TranscriptOverlay'
+import TeleprompterOverlay from '../face/TeleprompterOverlay'
 import VisualizerGallery from '../face/VisualizerGallery'
 import VisualizerRenderer from '../face/VisualizerRenderer'
 import ParticipantChatPanel from './ParticipantChatPanel'
@@ -23,6 +24,8 @@ import SessionTimeoutOverlay from './SessionTimeoutOverlay'
 import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
+import { useTeleprompter } from '../../hooks/useTeleprompter'
+import { applyAgentAudioSilencing } from '../../lib/agentAudio'
 import type { DeliveryStatus } from '../../lib/types'
 
 // Message type for participant chat - extends basic message with delivery tracking
@@ -94,6 +97,18 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
+  // Teleprompter (#241): the shared word-by-word highlight engine, identical to
+  // the organizer chat (ChatView). We feed it agent_speech_progress + agent_text
+  // events below; it returns the live cursor used to highlight the spoken bubble
+  // and the dim backdrop for the overlay.
+  const {
+    spokenChar: teleprompterSpokenChar,
+    spokenTranscriptId: teleprompterTranscriptId,
+    frozenSpoken,
+    spokenText: teleprompterText,
+    applyProgress: applySpeechProgress,
+    noteAgentText: noteTeleprompterText,
+  } = useTeleprompter()
   const [messages, setMessages] = useState<ParticipantMessage[]>([])
   const [pendingCorrelationIds, setPendingCorrelationIds] = useState<Set<string>>(new Set())
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
@@ -430,6 +445,21 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           return
         }
 
+        // Barge-in (#15): silence the agent track the instant playback is
+        // interrupted (and un-silence on resume) so the user does not keep
+        // hearing buffered agent audio after interrupting. On its own signal,
+        // independent of the teleprompter so it works when that is disabled.
+        if (envelope.type === 'agent_playback') {
+          applyAgentAudioSilencing((envelope.data || {}).state, pendingAudioElementRef.current)
+          return
+        }
+
+        // Teleprompter (#241): word-by-word highlight progress for agent speech.
+        if (envelope.type === 'agent_speech_progress') {
+          applySpeechProgress(envelope.data || {})
+          return
+        }
+
         // Start session timer on first agent message (only if a max duration is configured)
         if (
           !sessionTimerStartedRef.current &&
@@ -585,6 +615,12 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
             // Agent response - streaming display (update existing or add new)
             const transcriptId = msgData.transcript_id || crypto.randomUUID()
 
+            // Teleprompter (#241): record the latest agent_text so the shared
+            // engine can bind/dim it ahead of the voice and recover the backdrop.
+            if (typeof text === 'string') {
+              noteTeleprompterText(transcriptId, text)
+            }
+
             setMessages(prev => {
               const existingIdx = prev.findIndex(m => m.id === transcriptId)
               if (existingIdx >= 0) {
@@ -611,7 +647,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         console.error('Error parsing data:', error)
       }
     },
-    [pendingCorrelationIds, sessionData.identity, sessionData.participantName, sessionData.maxSessionDurationSeconds]
+    [pendingCorrelationIds, sessionData.identity, sessionData.participantName, sessionData.maxSessionDurationSeconds, applySpeechProgress, noteTeleprompterText]
   )
 
   // Handle room disconnection
@@ -1232,6 +1268,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         messages={messages}
         room={room}
         participantName={sessionData.participantName}
+        spokenTranscriptId={teleprompterTranscriptId}
+        spokenChar={teleprompterSpokenChar}
+        frozenSpoken={frozenSpoken}
         isLoadingHistory={isLoadingHistory}
         hasMoreMessages={hasMoreMessages}
         isLoadingMore={isLoadingMore}
@@ -1246,6 +1285,16 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
             })
           }
         }}
+      />
+
+      {/* Teleprompter Overlay (#241): agent speech, word-by-word highlight.
+          Shown while the agent is speaking; the user's own transcript overlay
+          below takes over when they speak. */}
+      <TeleprompterOverlay
+        text={teleprompterText}
+        spokenChar={teleprompterSpokenChar}
+        theme={currentVisualizer}
+        isVisible={showSubtitles && !userTranscript.trim() && !isChatOpen}
       />
 
       {/* Transcript Overlay */}

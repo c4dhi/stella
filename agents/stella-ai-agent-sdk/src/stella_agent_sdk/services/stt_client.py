@@ -22,6 +22,9 @@ class TranscriptEvent:
     confidence: float
     timestamp_ms: int
     speech_started: bool = False
+    # True when this transcript was produced by a committed barge-in and is
+    # being injected as a new turn (set by the pipeline, not the STT service).
+    is_barge_in: bool = False
 
     @classmethod
     def from_proto(cls, proto) -> "TranscriptEvent":

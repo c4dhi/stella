@@ -2,6 +2,7 @@ import type {
   Envelope,
   Transport,
   TranscriptChunk,
+  AgentSpeechProgress,
   ProcessingMessage,
   ProcessingMessageType,
   DecisionStreamData,
@@ -16,6 +17,7 @@ import type {
 } from '../lib/types'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteAudioTrack, RemoteParticipant, DataPacket_Kind, RoomConnectOptions, ConnectionState } from 'livekit-client'
 import { getRuntimeConfig } from '../config/runtime'
+import { applyAgentAudioSilencing } from '../lib/agentAudio'
 import { generateUUID } from '../lib/uuid'
 import { determineMessageRole } from '../lib/messageUtils'
 
@@ -84,6 +86,7 @@ export class PeerTransport implements Transport {
   onError = (_err: Error) => {}
   onRemoteAudioTrack = (_track: MediaStreamTrack) => {}
   onTranscript = (_chunk: TranscriptChunk) => {}
+  onSpeechProgress = (_data: AgentSpeechProgress) => {}
   onProcessingMessage = (_message: ProcessingMessage) => {}
   onServerMessage = (_msg: unknown) => {}
   onTTSStart = () => {}
@@ -238,6 +241,21 @@ export class PeerTransport implements Transport {
           //   type: env.type,
           //   data: env.data
           // })
+
+          // Barge-in (#15): silence/un-silence the agent track on its own
+          // teleprompter-independent signal, synchronously on packet receipt so
+          // it never waits on a React re-render. Kept off agent_speech_progress
+          // so it still works when the teleprompter is disabled.
+          if (env.type === 'agent_playback') {
+            applyAgentAudioSilencing((env.data || {}).state, this.remoteAudio)
+            return
+          }
+
+          // Teleprompter (#241): word-by-word highlight progress for agent speech.
+          if (env.type === 'agent_speech_progress') {
+            this.onSpeechProgress(env.data || {})
+            return
+          }
 
           if (env.type === 'transcript' || env.type === 'transcript_chunk' || env.type === 'agent_text') {
             // Transform server transcript/agent_text format to frontend format

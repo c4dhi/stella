@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import DeliveryStatusIndicator from './DeliveryStatusIndicator'
+import SpokenMessageText from '../face/SpokenMessageText'
 import type { TranscriptChunk, DeliveryStatus } from '../../lib/types'
 
 interface MessageBubbleProps {
@@ -8,6 +9,12 @@ interface MessageBubbleProps {
   deliveryStatus?: DeliveryStatus
   isDark?: boolean
   showHeader?: boolean
+  // Teleprompter (#241): word-by-word highlight cursor from useTeleprompter.
+  // When this bubble is the transcript being spoken, its text lights up in sync
+  // with the audio; all other bubbles render as plain text.
+  spokenChar?: number
+  spokenTranscriptId?: string
+  frozenSpoken?: Record<string, number>
 }
 
 /**
@@ -22,11 +29,27 @@ export default function MessageBubble({
   deliveryStatus,
   isDark = false,
   showHeader = true,
+  spokenChar,
+  spokenTranscriptId,
+  frozenSpoken,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isOtherUser = message.role === 'other_user'
   const isPartial = message.status === 'partial'
   const isFinal = message.status === 'final'
+  const isAgent = message.role === 'assistant'
+
+  // Teleprompter highlight for the agent reply being spoken; plain text otherwise.
+  const content = (
+    <SpokenMessageText
+      text={message.text}
+      messageId={message.id}
+      isAgent={isAgent}
+      spokenChar={spokenChar}
+      spokenTranscriptId={spokenTranscriptId}
+      frozenSpoken={frozenSpoken}
+    />
+  )
 
   // Determine the display name for the header
   const displayName = message.source === 'agent_response'
@@ -109,7 +132,7 @@ export default function MessageBubble({
         {isPartial ? (
           // Partial messages - show blinking cursor
           <div className="text-body leading-relaxed opacity-85 break-words overflow-wrap-anywhere">
-            {message.text}
+            {content}
             <motion.span
               className={`ml-1 ${
                 isUser
@@ -129,7 +152,7 @@ export default function MessageBubble({
               message.role !== 'user' && isDark ? 'text-zinc-100' : ''
             }`}
           >
-            {message.text}
+            {content}
           </div>
         )}
 

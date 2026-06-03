@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator, Dict
 from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
+from stella_agent_sdk.messages.types import BargeInDecision
 
 
 class SimpleTestAgent(BaseAgent):
@@ -103,6 +104,53 @@ class TestBaseAgent:
         """Test agent initial state."""
         assert agent.session_id is None
         assert agent.is_processing is False
+
+
+class TestBargeIn:
+    """Tests for the barge-in capability and default evaluation hook."""
+
+    @pytest.fixture
+    def agent(self):
+        return SimpleTestAgent()
+
+    def test_barge_in_disabled_by_default(self, agent):
+        """Agents must opt in to barge-in."""
+        assert BaseAgent.supports_barge_in is False
+        assert agent.supports_barge_in is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "transcript,expected",
+        [
+            ("", BargeInDecision.RESUME),          # pure noise / no words
+            ("   ", BargeInDecision.RESUME),        # whitespace only
+            ("mhm", BargeInDecision.RESUME),        # single backchannel
+            ("okay.", BargeInDecision.RESUME),      # punctuation stripped
+            ("go on", BargeInDecision.RESUME),      # multi-word backchannel phrase
+            ("genau", BargeInDecision.RESUME),      # german filler
+            ("no", BargeInDecision.COMMIT),         # short but substantive
+            ("wait stop that is wrong", BargeInDecision.COMMIT),
+            ("actually change the plan", BargeInDecision.COMMIT),
+        ],
+    )
+    async def test_default_heuristic(self, agent, transcript, expected):
+        decision = await agent.on_barge_in("s", transcript)
+        assert decision == expected
+
+    @pytest.mark.asyncio
+    async def test_hook_is_overridable(self):
+        """Agents can override on_barge_in for custom evaluation."""
+
+        class AlwaysCommit(SimpleTestAgent):
+            supports_barge_in = True
+
+            async def on_barge_in(self, session_id, transcript):
+                return BargeInDecision.COMMIT
+
+        agent = AlwaysCommit()
+        assert agent.supports_barge_in is True
+        # Even a backchannel commits under the override.
+        assert await agent.on_barge_in("s", "mhm") == BargeInDecision.COMMIT
 
 
 class TestStreamingAgent:

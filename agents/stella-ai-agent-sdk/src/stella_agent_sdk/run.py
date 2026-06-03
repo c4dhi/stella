@@ -293,6 +293,29 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         agent._agent_id = agent_id
         agent._agent_icon = agent_icon
 
+        # 6a. Wire barge-in: the agent declares whether it supports barge-in
+        # (an intrinsic capability — its config depends on it). If so, enable it
+        # on the pipeline (honoring any explicit BARGE_IN_ENABLED operator
+        # override) and route the decision to the agent's on_barge_in hook.
+        if getattr(agent, "supports_barge_in", False):
+            audio_pipeline.enable_barge_in()
+            if audio_pipeline.barge_in_enabled:
+                audio_pipeline.set_barge_in_decider(
+                    lambda transcript: agent.on_barge_in(session_id, transcript)
+                )
+                logger.info("Barge-in enabled: on_barge_in wired to pipeline")
+            else:
+                logger.info(
+                    "Agent supports barge-in but BARGE_IN_ENABLED=false override "
+                    "is set — running in turn-based mode"
+                )
+
+        # 6b. Wire the teleprompter (#241): the agent declares whether it wants
+        # word-by-word speech-progress emitted (honoring any explicit
+        # STELLA_TELEPROMPTER_ENABLED operator override).
+        if getattr(agent, "supports_teleprompter", False):
+            audio_pipeline.enable_teleprompter()
+
         # 7. Create HistoryClient for chat history access
         # Generate JWT token with same claims as LiveKit token (for validation)
         now = int(time.time())

@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { generateUUID } from '../lib/uuid'
 import type {
   TranscriptChunk,
+  AgentSpeechProgress,
   Transport,
   ProcessingMessage,
   ParticipantEvent,
@@ -85,6 +86,11 @@ type ChatState = {
   showProcessingMessages: boolean
   lastAssistantMessageId?: string  // Track last assistant message ID to detect new messages
 
+  // Teleprompter (#241): latest agent_speech_progress envelope, bridged from the
+  // transport to the view that renders the word-by-word highlight. Discrete and
+  // low-frequency (a few per turn); the 60fps cursor lives in useTeleprompter.
+  lastSpeechProgress: { data: AgentSpeechProgress; seq: number } | null
+
   // Optimistic message tracking - correlationIds of messages awaiting confirmation
   pendingMessageIds: Set<string>
 
@@ -97,6 +103,7 @@ type ChatState = {
 }
 type ChatActions = {
   upsertChunk: (c: TranscriptChunk) => void
+  setSpeechProgress: (data: AgentSpeechProgress) => void
   addFinal: (role: TranscriptChunk['role'], text: string) => void
   addProcessingMessage: (message: ProcessingMessage) => void
   addParticipantEvent: (event: ParticipantEvent) => void
@@ -277,7 +284,13 @@ export const useStore = create<
   participantEvents: [],
   showProcessingMessages: true,
   lastAssistantMessageId: undefined,
+  lastSpeechProgress: null,
   pendingMessageIds: new Set<string>(),
+  // Teleprompter (#241): record the latest progress envelope with a monotonic
+  // seq so a useEffect in the consuming view applies each one exactly once.
+  setSpeechProgress: (data) => set(s => ({
+    lastSpeechProgress: { data, seq: (s.lastSpeechProgress?.seq ?? 0) + 1 },
+  })),
   upsertChunk: (c) => set(() => {
     const state = get()
     const existing = state.turns

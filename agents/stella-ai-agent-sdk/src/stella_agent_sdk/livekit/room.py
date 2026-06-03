@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
@@ -98,7 +99,6 @@ class RoomManager:
 
         # Acoustic Echo Cancellation (AEC)
         # Can be disabled via environment variable for debugging
-        import os
         aec_disabled_by_env = os.getenv("DISABLE_AEC", "false").lower() in ("true", "1", "yes")
         if aec_disabled_by_env:
             logger.info("[AEC] Disabled via DISABLE_AEC environment variable")
@@ -280,8 +280,26 @@ class RoomManager:
         if not self._room:
             return
 
-        # Create audio source (24kHz, mono, 16-bit - matches TTS output)
-        self._audio_source = rtc.AudioSource(sample_rate=24000, num_channels=1)
+        # Create audio source (24kHz, mono, 16-bit - matches TTS output).
+        #
+        # queue_size_ms bounds how far ahead of real-time playout the agent may
+        # push audio. LiveKit's default is 1000ms. For barge-in we want a small
+        # buffer so "last frame pushed" stays close to "currently heard" — that
+        # bounds both the position error and how much audible audio survives a
+        # clear_queue() on interruption. Tunable via TTS_PLAYOUT_BUFFER_MS;
+        # defaults to LiveKit's 1000ms so non-barge-in deployments are unchanged.
+        try:
+            queue_size_ms = int(os.getenv("TTS_PLAYOUT_BUFFER_MS", "1000"))
+        except ValueError:
+            queue_size_ms = 1000
+        queue_size_ms = max(10, queue_size_ms)
+        self._playout_buffer_ms = queue_size_ms
+        self._audio_source = rtc.AudioSource(
+            sample_rate=24000,
+            num_channels=1,
+            queue_size_ms=queue_size_ms,
+        )
+        logger.info(f"Audio source created with queue_size_ms={queue_size_ms}")
 
         # Create local audio track
         self._audio_track = rtc.LocalAudioTrack.create_audio_track(
@@ -512,6 +530,37 @@ class RoomManager:
         identity = packet.participant.identity if packet.participant else "unknown"
         if self._on_data_received:
             self._on_data_received(identity, packet.data)
+
+    @property
+    def queued_playout_ms(self) -> float:
+        """Milliseconds of TTS audio buffered in the output source but not yet
+        played out to the client. Used to estimate the true playout position
+        (frames pushed minus this) for barge-in. Zero if no source exists."""
+        if not self._audio_source:
+            return 0.0
+        try:
+            # livekit AudioSource exposes queued_duration in seconds.
+            return float(self._audio_source.queued_duration) * 1000.0
+        except Exception:
+            return 0.0
+
+    def clear_playout(self) -> None:
+        """Drop all TTS audio buffered in the output source that has not yet
+        played out.
+
+        This is the server-side half of a hard barge-in: it discards the
+        up-to-``queue_size_ms`` of already-captured-but-unplayed audio sitting
+        in the AudioSource so playback stops promptly instead of draining the
+        whole buffer. The client must also silence locally to drop its own
+        jitter buffer; together those stop audio without it resuming later.
+        """
+        if not self._audio_source:
+            return
+        try:
+            self._audio_source.clear_queue()
+            logger.info("[ROOM] Cleared TTS playout queue (barge-in)")
+        except Exception as e:
+            logger.error(f"[ROOM] Failed to clear playout queue: {e}")
 
     def flush_audio_queue(self) -> None:
         """Flush all buffered audio frames from the queue.

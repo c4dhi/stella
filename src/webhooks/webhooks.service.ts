@@ -192,13 +192,35 @@ export class WebhooksService {
         this.logger.log(`Human joined session ${sessionId}: ${participantIdentity}`);
       }
 
+      // Re-activate a session that was previously closed/closing when a human returns.
+      // Status only ever moves forward (ACTIVE → CLOSING → CLOSED), so without this a
+      // rejoined session stays terminal: /internal/active-sessions filters on
+      // status IN ('ACTIVE','CLOSING'), so the message recorder would never join the
+      // room and no messages would be recorded — even though a human + agent are live.
+      // Mutate the in-memory session too, so the resume guard below (which bails on
+      // status === 'CLOSED') runs for reopened sessions.
+      if (session.status === 'CLOSED' || session.status === 'CLOSING') {
+        const previousStatus = session.status;
+        await this.prisma.session.update({
+          where: { id: sessionId },
+          data: { status: 'ACTIVE', closedAt: null },
+        });
+        session.status = 'ACTIVE';
+        session.closedAt = null;
+        this.logger.log(
+          `Re-activated session ${sessionId} (was ${previousStatus}) on human rejoin: ${participantIdentity}`,
+        );
+      }
+
       // Agent spawn/resume logic:
       // - Participants (participant-*): can spawn new agents OR resume paused ones
       // - Organizers (human/user ID): can only RESUME paused agents, never spawn new ones
+      // (session.status is guaranteed ACTIVE here — any CLOSED/CLOSING session was
+      // reactivated above when the human rejoined.)
       const isParticipant = participantIdentity.startsWith('participant-');
       const hasRunningAgent = session.agents.length > 0;
 
-      if (!hasRunningAgent && session.lastAgentConfig && session.status !== 'CLOSED') {
+      if (!hasRunningAgent && session.lastAgentConfig) {
         // Check if there's a paused agent that can be resumed
         const hasPausedAgent = await this.prisma.agentInstance.findFirst({
           where: {

@@ -52,6 +52,26 @@ class InputType(str, Enum):
     """Health check request from session-management."""
 
 
+class BargeInDecision(str, Enum):
+    """Outcome of an agent's evaluation of a user barge-in.
+
+    When barge-in is enabled and the user interrupts mid-speech, the system
+    suspends playback (reversibly), transcribes the user, and hands the final
+    transcript to the agent's ``on_barge_in()`` hook. The hook returns one of
+    these values to decide what happens next.
+    """
+
+    COMMIT = "commit"
+    """The interruption is legitimate. Discard the rest of the current message,
+    truncate it to what was actually spoken, and process the new transcript as
+    a fresh turn."""
+
+    RESUME = "resume"
+    """The interruption was not worth addressing (backchannel, noise, filler).
+    Resume playback from exactly where it was suspended; the new transcript is
+    discarded."""
+
+
 class OutputType(str, Enum):
     """Types of output messages the agent can send to session-management."""
 
