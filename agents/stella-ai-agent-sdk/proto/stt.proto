@@ -42,6 +42,9 @@ message AudioChunk {
   string participant_id = 3;   // Who is speaking (for transcript attribution)
   int64 timestamp_ms = 4;      // Client timestamp for latency tracking
   int32 sample_rate = 5;       // Sample rate of audio (default: 16000)
+  string language = 6;         // Optional ISO 639-1 language hint from the agent
+                               // (the resolved/locked language). Stabilizes
+                               // transcription; detection stays independent.
 }
 
 // Transcript events sent from STT service to client
@@ -53,4 +56,7 @@ message TranscriptEvent {
   float confidence = 5;        // Confidence score (0.0-1.0)
   int64 timestamp_ms = 6;      // Server timestamp
   bool speech_started = 7;     // VAD detected speech start (for barge-in)
+  string detected_language = 8;    // ISO 639-1 language detected for this utterance
+                                   // (independent probe, final events only)
+  float language_confidence = 9;   // Detection confidence (0.0-1.0); 0 when absent
 }

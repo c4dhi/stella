@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Callable, Optional
 
 import grpc
 
@@ -22,6 +22,12 @@ class TranscriptEvent:
     confidence: float
     timestamp_ms: int
     speech_started: bool = False
+    # Independent per-utterance language detection (final events only).
+    # ``detected_language`` is "" and confidence 0.0 when STT supplies no signal
+    # (partials, short clips, typed text) — the agent then uses its text
+    # classifier as the fallback signal (RFC §8.3).
+    detected_language: str = ""
+    language_confidence: float = 0.0
     # True when this transcript was produced by a committed barge-in and is
     # being injected as a new turn (set by the pipeline, not the STT service).
     is_barge_in: bool = False
@@ -37,6 +43,8 @@ class TranscriptEvent:
             confidence=proto.confidence,
             timestamp_ms=proto.timestamp_ms,
             speech_started=proto.speech_started,
+            detected_language=getattr(proto, "detected_language", "") or "",
+            language_confidence=getattr(proto, "language_confidence", 0.0) or 0.0,
         )
 
 
@@ -185,6 +193,7 @@ class STTClient:
         session_id: str,
         participant_id: str,
         sample_rate: int = 48000,
+        language_provider: Optional["Callable[[], Optional[str]]"] = None,
     ) -> AsyncIterator[TranscriptEvent]:
         """
         Stream audio to STT and yield transcript events.
@@ -194,12 +203,17 @@ class STTClient:
             session_id: Session identifier for logging
             participant_id: Identity of the speaker
             sample_rate: Sample rate of the audio (default 48000 for LiveKit)
+            language_provider: Optional callable returning the current resolved
+                language hint (ISO 639-1) to stamp on each chunk. Read per chunk
+                so the hint tracks the live conversation language. Returning
+                None/"" leaves transcription on auto-detect.
 
         Yields:
             TranscriptEvent with:
             - text: Transcribed text
             - is_final: Whether utterance is complete
             - speech_started: VAD detected speech start (for barge-in)
+            - detected_language / language_confidence: independent detection
         """
         if not self._connected:
             raise RuntimeError("Not connected to STT service")
@@ -207,12 +221,14 @@ class STTClient:
         async def audio_chunk_generator():
             """Convert audio bytes to protobuf AudioChunk messages."""
             async for audio_data in audio_stream:
+                language = (language_provider() or "") if language_provider else ""
                 yield self._pb2.AudioChunk(
                     audio_data=audio_data,
                     session_id=session_id,
                     participant_id=participant_id,
                     timestamp_ms=int(time.time() * 1000),
                     sample_rate=sample_rate,
+                    language=language,
                 )
 
         try:

@@ -22,6 +22,7 @@ Available placeholders:
   {{processing_mode}}         Processing mode (sequential/flexible)
   {{history_N}}               Last N messages from conversation (e.g. {{history_10}})
   {{user_message}}            The current user message
+  {{language}}                Resolved session language (e.g. "German")
 
 Unknown placeholders are left as-is to avoid silently breaking prompts.
 """
@@ -275,6 +276,25 @@ def _resolve_user_message(ctx: Dict[str, Any]) -> str:
     return f"CURRENT USER MESSAGE: {user_input}"
 
 
+# Display names for the resolved-language placeholder. Kept here (not imported
+# from an agent) because the SDK must not depend on a specific agent package;
+# the v2 agent has its own canonical LANGUAGE_NAMES for its internal prompts.
+_LANGUAGE_NAMES = {"en": "English", "de": "German"}
+
+
+def _resolve_language(ctx: Dict[str, Any]) -> str:
+    """The resolved session language as a human-readable name (#214).
+
+    The agent writes the per-turn resolved language into ``sm_context["language"]``
+    (single source of truth). Unknown/``auto``/absent → a generic phrase so the
+    prompt stays grammatical when no language has been resolved.
+    """
+    lang = ctx.get("language")
+    if not lang or lang == "auto":
+        return "the user's language"
+    return _LANGUAGE_NAMES.get(lang, lang)
+
+
 
 # ---------------------------------------------------------------------------
 # Registry (simple placeholders only — history_N is handled separately)
@@ -290,6 +310,7 @@ PLACEHOLDER_REGISTRY: Dict[str, Any] = {
     "progress_percentage": _resolve_progress_percentage,
     "processing_mode": _resolve_processing_mode,
     "user_message": _resolve_user_message,
+    "language": _resolve_language,
 }
 
 
@@ -329,6 +350,9 @@ PLACEHOLDER_SPECS: List[Dict[str, Any]] = [
     {"name": "user_message", "label": "user_message", "parametric": False,
      "description": "The user's latest message",
      "preview": "I usually go running three times a week."},
+    {"name": "language", "label": "language", "parametric": False,
+     "description": "Resolved session language (single source of truth, #214)",
+     "preview": "German"},
 ]
 
 

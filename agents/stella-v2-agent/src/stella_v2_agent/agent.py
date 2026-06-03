@@ -39,6 +39,7 @@ from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
+from stella_v2_agent.pipeline.language_resolver import LanguageResolver
 from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
 from stella_v2_agent.adapters import ProgressAdapter
 from stella_v2_agent.utils import normalize_transition_priority
@@ -128,6 +129,13 @@ class StellaV2Agent(BaseAgent):
         self.response_generator = ResponseGenerator(self.llm_service)
         self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
 
+        # Single source of truth for the conversation language (RFC §8).
+        # One detection per turn, propagated to bridge + response + TTS.
+        self.language_resolver = LanguageResolver()
+        self._session_language: Optional[str] = None
+        # Per-stream TTS voice (configured, not detected). See process().
+        self._session_voice: Optional[str] = None
+
         # gRPC state machine client (initialized per session)
         self.sm_client: Optional[StateMachineClient] = None
         self.tool_registry: Optional[ToolRegistry] = None
@@ -198,6 +206,34 @@ class StellaV2Agent(BaseAgent):
             if self._plan_system_prompt:
                 sm_context["plan_system_prompt"] = self._plan_system_prompt
 
+            # Resolve the turn language BEFORE the bridge fires, so bridge,
+            # response prompt ({{language}}), and TTS all read one value and
+            # stay coherent (RFC §8 single source of truth). The plan's declared
+            # language (if any) seeds resolution; confident detection overrides it.
+            plan_language = (self._plan_config or {}).get("language")
+            self.language_resolver.set_seed(plan_language)
+            # Prefer STT's independent acoustic detection (voice); fall back to
+            # the text classifier when absent (typed input / no signal, §8.3).
+            meta = input.metadata or {}
+            detected_language = meta.get("detected_language") or None
+            language_signal = (
+                (detected_language, float(meta.get("language_confidence") or 0.0))
+                if detected_language
+                else None
+            )
+            resolved_language = self.language_resolver.resolve(input.text, signal=language_signal)
+            self._session_language = resolved_language
+            sm_context["language"] = resolved_language
+            logger.info(f"Resolved language for turn: {resolved_language}")
+
+            # Resolve the per-stream TTS voice. Unlike language there is no
+            # detection — the voice is a configured choice (plan-level), stamped
+            # on every chunk so bridge and response are spoken in one coherent
+            # voice. Providers that support voice selection honor it; others
+            # disregard it. None → provider/env default.
+            resolved_voice = (self._plan_config or {}).get("voice") or None
+            self._session_voice = resolved_voice
+
             yield AgentOutput.status(
                 input.session_id, "Processing your message...", StatusSubtype.PROCESSING
             )
@@ -209,7 +245,9 @@ class StellaV2Agent(BaseAgent):
             )
             gate_result, bridge = await asyncio.gather(
                 self.input_gate.classify(input.text, history, sm_context),
-                self.bridge_generator.generate(input.text, history, prompt_variables),
+                self.bridge_generator.generate(
+                    input.text, history, language=resolved_language, variables=prompt_variables
+                ),
             )
 
             yield AgentOutput.debug(
@@ -247,6 +285,9 @@ class StellaV2Agent(BaseAgent):
                     is_final=False,
                 )
                 bridge_output.metadata["tts_source"] = "bridge"
+                bridge_output.metadata["language"] = resolved_language
+                if resolved_voice:
+                    bridge_output.metadata["voice"] = resolved_voice
                 yield bridge_output
 
             # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
@@ -332,11 +373,17 @@ class StellaV2Agent(BaseAgent):
                 bridge=bridge,
                 transcript_id=transcript_id,
             ):
-                if not first_token_emitted and output.type.value == "text_chunk":
-                    yield AgentOutput.analytics_event(
-                        input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
-                    )
-                    first_token_emitted = True
+                if output.type.value == "text_chunk":
+                    # Stamp the resolved language so the SDK sets the TTS voice
+                    # for the main response, coherent with the bridge (RFC §8.2.1).
+                    output.metadata["language"] = resolved_language
+                    if resolved_voice:
+                        output.metadata["voice"] = resolved_voice
+                    if not first_token_emitted:
+                        yield AgentOutput.analytics_event(
+                            input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
+                        )
+                        first_token_emitted = True
                 yield output
 
             yield AgentOutput.analytics_event(
@@ -580,6 +627,10 @@ class StellaV2Agent(BaseAgent):
         self.config = config
         self._plan_system_prompt = None
         self._plan_config = None
+        # Clear any resolved language from a previous session on this instance.
+        self.language_resolver.reset()
+        self._session_language = None
+        self._session_voice = None
         # Explicit compiler version: config override, else the agent's pinned default.
         self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
@@ -708,6 +759,12 @@ class StellaV2Agent(BaseAgent):
         # Apply threshold overrides
         if "history_limit" in thresholds:
             self._custom_history_limit = int(thresholds["history_limit"])
+
+        # Apply language resolver config (supported set, default, gating thresholds).
+        language_config = pipeline_config.get("language")
+        if isinstance(language_config, dict):
+            self.language_resolver.apply_config(language_config)
+            logger.info(f"Applied language config: {language_config}")
 
         logger.info(f"Pipeline config applied: {len(nodes)} nodes, {len(thresholds)} thresholds")
 

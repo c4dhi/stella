@@ -104,5 +104,13 @@
     },
     "response_generator": {}
   },
-  "thresholds": {}
+  "thresholds": {},
+  "language": {
+    "_description": "Single source of truth for the conversation language (RFC docs/rfcs/2026-06-01_language-handling.md). Auto-detected per turn from the transcript, held with confidence-gated switching.",
+    "supported": ["de", "en"],
+    "default": "en",
+    "detect_threshold": 0.4,
+    "switch_threshold": 0.6,
+    "debounce": 1
+  }
 }

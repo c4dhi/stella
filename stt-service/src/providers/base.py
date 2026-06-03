@@ -32,6 +32,14 @@ class STTSession(ABC):
         """Reset session state for a new utterance."""
         pass
 
+    def set_language_hint(self, language: Optional[str]) -> None:
+        """Apply an optional language hint from the agent (no-op by default).
+
+        Providers that support language steering (e.g. Whisper) override this.
+        Others ignore the hint — language detection stays independent either way.
+        """
+        return None
+
 
 class STTProvider(ABC):
     """Abstract base class for STT providers.

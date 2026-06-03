@@ -648,11 +648,15 @@ class BaseAgent(ABC):
 
                 # Create AgentInput and route through process(). Forward the STT
                 # transcript_id as turn_id so audio-stage and agent-stage analytics
-                # events share a single key for downstream joins.
+                # events share a single key for downstream joins. Forward the
+                # independent language detection so the agent's resolver can use
+                # the acoustic signal (falls back to text when absent, RFC §8.3).
                 input_msg = AgentInput.text_input(
                     self._session_id or "",
                     event.text,
                     turn_id=getattr(event, "transcript_id", None),
+                    detected_language=getattr(event, "detected_language", "") or "",
+                    language_confidence=getattr(event, "language_confidence", 0.0) or 0.0,
                     is_barge_in=getattr(event, "is_barge_in", False),
                 )
 
@@ -680,6 +684,17 @@ class BaseAgent(ABC):
                             # Explicit tts_source metadata overrides prefix detection
                             if output.metadata.get("tts_source"):
                                 self._current_sentence_source = output.metadata["tts_source"]
+
+                            # Resolved conversation language → drive the TTS voice
+                            # so bridge and response are spoken coherently (RFC §8.2.1).
+                            if output.metadata.get("language"):
+                                self.audio.set_tts_language(output.metadata["language"])
+
+                            # Per-stream voice selection (same contract as
+                            # language): voice-selecting providers honor it,
+                            # others disregard it inside the provider.
+                            if output.metadata.get("voice"):
+                                self.audio.set_tts_voice(output.metadata["voice"])
 
                             # Stream text to frontend (agent sends accumulated text)
                             await self.audio.publish_text(

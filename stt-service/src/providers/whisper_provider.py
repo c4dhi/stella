@@ -111,8 +111,13 @@ class WhisperSession(STTSession):
         self.pre_buffer_samples = config.get('pre_buffer_samples', 3200)  # 200ms
         self.pre_buffer = []
 
-        # Language detection caching
-        self.detected_language = None
+        # Optional language PIN. When set (env WHISPER_LANGUAGE or an explicit
+        # per-session hint), transcription is forced to this language. Default is
+        # None → auto-detect, which yields the detection signal for free from the
+        # transcription pass (no extra model call, RFC §6). Pinning trades that
+        # free per-utterance detection away, so a pinned session is reported as
+        # that fixed language.
+        self.language_hint = None
 
         # Precompute high-pass filter coefficients (80Hz cutoff for noise removal)
         from scipy import signal
@@ -120,6 +125,28 @@ class WhisperSession(STTSession):
 
         # Processing state
         self.chunk_count = 0
+
+    def set_language_hint(self, language: Optional[str]) -> None:
+        """Pin transcription to a language (opt-in; forwarded from ``AudioChunk.language``).
+
+        Empty/``auto`` clears the pin back to auto-detection (the default). Note
+        this FORCES transcription, which suppresses the free per-utterance
+        detection — use only when a session must stay in one fixed language.
+        """
+        hint = (language or "").strip().lower()
+        hint = hint if hint and hint != "auto" else None
+        if hint != self.language_hint:
+            print(f"[WhisperSession] Language pin set to '{hint}' (was '{self.language_hint}')")
+            self.language_hint = hint
+
+    def _forced_language(self) -> Optional[str]:
+        """The pinned transcription language, or None to auto-detect (default).
+
+        Only an explicit pin forces it: per-session hint > configured env pin >
+        None. Auto-detect is the default so the detection signal comes free from
+        the transcription pass — no second model call (RFC §6).
+        """
+        return self.language_hint or (self.config.get('language') or None)
 
     def _preprocess_audio(self, audio_float: np.ndarray) -> np.ndarray:
         """Simple preprocessing: high-pass filter + normalize."""
@@ -439,9 +466,8 @@ class WhisperSession(STTSession):
             # Apply preprocessing
             audio_float = self._preprocess_audio(audio_float)
 
-            # Use cached or configured language
-            config_lang = self.config.get('language')
-            language = self.detected_language or (config_lang if config_lang else None)
+            # Force the agent-resolved / configured / cached language (stability)
+            language = self._forced_language()
 
             # Transcribe with faster-whisper
             segments, info = self.whisper_model.transcribe(
@@ -513,9 +539,8 @@ class WhisperSession(STTSession):
             # Apply preprocessing
             audio_float = self._preprocess_audio(audio_float)
 
-            # Use cached or configured language
-            config_lang = self.config.get('language')
-            language = self.detected_language or (config_lang if config_lang else None)
+            # Force the agent-resolved / configured / cached language (stability)
+            language = self._forced_language()
 
             # Final transcription
             segments, info = self.whisper_model.transcribe(
@@ -532,14 +557,26 @@ class WhisperSession(STTSession):
                 no_speech_threshold=0.6,
             )
 
-            # Cache detected language only if we have enough audio for reliable detection
-            # Require at least 2 seconds of audio to avoid locking in wrong language from short utterances
-            min_duration_for_lang_cache = 2.0  # seconds
-            if (not self.detected_language and
-                hasattr(info, 'language') and info.language and
-                audio_duration_sec >= min_duration_for_lang_cache):
-                self.detected_language = info.language
-                print(f"[WhisperSession] Detected language: {self.detected_language} (from {audio_duration_sec:.1f}s audio)")
+            # Per-utterance language signal — taken FREE from the transcription
+            # pass (RFC §6 #3), no second model call:
+            #   - pinned: transcription was forced to `language`, so the pin is
+            #     authoritative regardless of clip length — emit it even for
+            #     sub-2s utterances (no detection uncertainty to guard against).
+            #   - auto-detect (default): info carries the honest detection, but
+            #     short clips detect unreliably, so below the floor we emit no
+            #     signal and let the agent fall back to its text classifier
+            #     (RFC §8.3).
+            min_duration_for_lang = 2.0
+            detected_language, language_confidence = "", 0.0
+            if language is not None:
+                detected_language, language_confidence = language, 1.0
+            elif audio_duration_sec >= min_duration_for_lang:
+                detected_language = getattr(info, 'language', None) or ""
+                language_confidence = float(getattr(info, 'language_probability', 0.0) or 0.0)
+            if detected_language:
+                print(f"[WhisperSession] Language: {detected_language} "
+                      f"(conf={language_confidence:.2f}, "
+                      f"{'pinned' if language else 'auto'}, {audio_duration_sec:.1f}s)")
 
             final_text = ""
             for segment in segments:
@@ -567,7 +604,9 @@ class WhisperSession(STTSession):
                 transcript_id=self.transcript_id,
                 participant_id=self.participant_id,
                 confidence=0.95,
-                timestamp_ms=int(current_time * 1000)
+                timestamp_ms=int(current_time * 1000),
+                detected_language=detected_language or "",
+                language_confidence=language_confidence,
             )
 
         except Exception as e:

@@ -148,8 +148,16 @@ class AudioPipeline:
         # TTS enabled flag
         self._tts_enabled = os.getenv("TTS_ENABLED", "true").lower() != "false"
 
-        # TTS language (resolved once from env, used by all TTS paths)
+        # TTS language. Seeded from the env var for backward compatibility, but
+        # the agent overrides it per turn via set_tts_language() so the voice
+        # follows the resolved conversation language (RFC §8/§9 #9).
         self._tts_language = os.getenv("TTS_LANGUAGE", None) or None
+
+        # TTS voice. Seeded from the env var; the agent can override it per
+        # stream via set_tts_voice() so the spoken voice can change per turn.
+        # Same contract as language — passed to the provider as a hint that
+        # voice-selecting providers honor (e.g. Kokoro) and others disregard.
+        self._tts_voice = os.getenv("TTS_VOICE", None) or None
 
         # Sentence-level streaming TTS queue (tuple of sentence text + source label)
         self._speech_queue: asyncio.Queue = asyncio.Queue()
@@ -494,6 +502,10 @@ class AudioPipeline:
             session_id=self._session_id,
             participant_id=self._participant_id,
             sample_rate=sample_rate,
+            # No language hint by default: STT auto-detects, which yields the
+            # per-utterance detection signal for free (RFC §6). Pinning is an
+            # opt-in (env WHISPER_LANGUAGE or a language_provider) and trades
+            # that free detection away, so we leave it off here.
         ):
             logger.debug(f"STT event: text='{event.text[:50] if event.text else ''}...', is_final={event.is_final}, speech_started={event.speech_started}")
 
@@ -658,8 +670,16 @@ class AudioPipeline:
                 self._emit_debounced_transcript()
             )
         else:
-            # Aggregate with pending transcript
+            # Aggregate with pending transcript. Carry the language detection from
+            # whichever fragment detected more confidently, so debouncing never
+            # drops the acoustic signal.
             combined_text = f"{self._pending_transcript.text} {event.text}".strip()
+            if event.language_confidence >= self._pending_transcript.language_confidence:
+                detected_language = event.detected_language
+                language_confidence = event.language_confidence
+            else:
+                detected_language = self._pending_transcript.detected_language
+                language_confidence = self._pending_transcript.language_confidence
             self._pending_transcript = TranscriptEvent(
                 text=combined_text,
                 is_final=True,
@@ -668,6 +688,8 @@ class AudioPipeline:
                 confidence=min(self._pending_transcript.confidence, event.confidence),
                 timestamp_ms=event.timestamp_ms,
                 speech_started=False,
+                detected_language=detected_language,
+                language_confidence=language_confidence,
             )
             logger.info(f"Debounced: aggregated to '{combined_text}'")
 
@@ -983,6 +1005,9 @@ class AudioPipeline:
         # Resolve language: explicit param > instance default (from env) > None (provider default)
         if language is None:
             language = self._tts_language
+        # Resolve voice the same way (per-stream override > env seed > provider default)
+        if voice is None:
+            voice = self._tts_voice
 
         logger.info(f"[TTS] speak() called with text: {text[:50]}... lang={language}")
         self._is_speaking = True
@@ -1485,6 +1510,32 @@ class AudioPipeline:
     # Sentence-level streaming TTS
     # ─────────────────────────────────────────────────────────────────────
 
+    def set_tts_language(self, language: Optional[str]) -> None:
+        """Set the language used for subsequent TTS synthesis.
+
+        Called by the agent loop per turn from the resolved conversation
+        language so the voice follows the spoken language and stays coherent
+        with the bridge (RFC §8.2.1). ``None``/``"auto"`` is ignored, leaving the
+        current value (env seed or previously-resolved language) in place.
+        """
+        if language and language != "auto" and language != self._tts_language:
+            logger.info(f"[TTS] language set to '{language}' (was '{self._tts_language}')")
+            self._tts_language = language
+
+    def set_tts_voice(self, voice: Optional[str]) -> None:
+        """Set the voice used for subsequent TTS synthesis (per-stream).
+
+        Called by the agent loop from ``metadata["voice"]`` so the spoken voice
+        can change on a per-stream basis. The value is forwarded to the provider
+        as a hint: voice-selecting providers honor it (e.g. Kokoro tries the
+        requested voice first), the rest disregard it without erroring.
+        ``None``/``"auto"``/``"default"`` is ignored, leaving the current value
+        (env seed or previously-set voice) in place.
+        """
+        if voice and voice not in ("auto", "default") and voice != self._tts_voice:
+            logger.info(f"[TTS] voice set to '{voice}' (was '{self._tts_voice}')")
+            self._tts_voice = voice
+
     def enqueue_sentence(
         self,
         sentence: str,
@@ -1736,7 +1787,7 @@ class AudioPipeline:
                     sentence, source, meta = item
                     # No prefetch available — synthesize synchronously for this first sentence
                     chunks = await self._prefetch_sentence(
-                        sentence, language=self._tts_language
+                        sentence, voice=self._tts_voice, language=self._tts_language
                     )
 
                 if self._stop_speaking_event.is_set():
@@ -1752,7 +1803,7 @@ class AudioPipeline:
                         next_sentence, next_source, next_meta = next_item
                         prefetch_task = asyncio.create_task(
                             self._prefetch_sentence(
-                                next_sentence, language=self._tts_language
+                                next_sentence, voice=self._tts_voice, language=self._tts_language
                             )
                         )
                         prefetch_source = next_source

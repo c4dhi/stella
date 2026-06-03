@@ -74,6 +74,10 @@ configSchema:
     - name: EXPERT_TIMEOUT_MS
       description: "Timeout per expert in milliseconds"
       default: "3000"
+    - name: TTS_LANGUAGE
+      description: "Seed language for TTS (ISO 639-1, e.g. 'de'). Empty = follow the per-turn detected language; the agent overrides this each turn."
+    - name: TTS_VOICE
+      description: "Seed TTS voice, overridable per stream. Honored by voice-selecting providers (e.g. Kokoro), ignored by others. Empty = provider default."
 
 defaultConfig: {}
 
@@ -370,6 +374,50 @@ pipelineSchema:
       step: 5
       default: 20
 
+  # Single source of truth for the conversation language. Auto-detected per turn
+  # (STT acoustic signal, or the text classifier for typed input) and held with
+  # confidence-gated switching. Read from pipeline_config["language"].
+  # See docs/rfcs/2026-06-01_language-handling.md.
+  language:
+    supported:
+      label: "Supported languages"
+      description: >-
+        ISO 639-1 codes the agent resolves to; anything else is clamped to the
+        current lock. v1: en, de. NOTE: widening this set alone is not enough —
+        the language-name map and fallback bridges (language_resolver.py /
+        bridge_generator.py) and a capable TTS provider (RFC §7) only know en/de,
+        so an unlisted language falls back to English text. Add a language as a
+        deliberate, multi-part change, not via config only.
+      type: array
+      default: ["de", "en"]
+    default:
+      label: "Default language"
+      description: "Used before anything is detected, or on an ambiguous first turn."
+      type: string
+      default: "en"
+    detect_threshold:
+      label: "Detect threshold"
+      description: "Min confidence to adopt a detected language (and to override a provisional default/seed lock)."
+      type: number
+      min: 0
+      max: 1
+      step: 0.05
+      default: 0.4
+    switch_threshold:
+      label: "Switch threshold"
+      description: "Min confidence to switch an already-confirmed language (higher than detect, so a stray word can't flip it)."
+      type: number
+      min: 0
+      max: 1
+      step: 0.05
+      default: 0.6
+    debounce:
+      label: "Switch debounce"
+      description: "Consecutive confident detections required before switching language."
+      type: integer
+      min: 1
+      default: 1
+
 # SDK prompt-compiler version this agent resolves {{placeholder}} tokens with.
 promptCompiler:
   version: "1.0.0"
@@ -420,6 +468,10 @@ runtimeVariables:
     label: user_message
     description: "The user's latest message"
     preview: "I usually go running three times a week."
+  - name: language
+    label: language
+    description: "Resolved session language (single source of truth, #214)"
+    preview: "German"
 
 sdk:
   minVersion: "0.4.0"

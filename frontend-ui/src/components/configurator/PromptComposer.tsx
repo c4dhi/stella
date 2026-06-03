@@ -163,6 +163,16 @@ export const PLACEHOLDER_REGISTRY: PlaceholderDef[] = [
     dark: { text: 'text-indigo-300', bg: 'bg-indigo-500/20', chip: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/25' },
     light: { text: 'text-indigo-700', bg: 'bg-indigo-100/80', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   },
+  {
+    name: 'language',
+    label: 'language',
+    description: 'Resolved conversation language for this turn (auto-detected)',
+    preview: 'German',
+    insertToken: '{{language}}',
+    pattern: '{{language}}',
+    dark: { text: 'text-lime-300', bg: 'bg-lime-500/20', chip: 'bg-lime-500/15 text-lime-400 border-lime-500/25' },
+    light: { text: 'text-lime-700', bg: 'bg-lime-100/80', chip: 'bg-lime-50 text-lime-700 border-lime-200' },
+  },
 ]
 
 const PLACEHOLDER_MAP = new Map(
