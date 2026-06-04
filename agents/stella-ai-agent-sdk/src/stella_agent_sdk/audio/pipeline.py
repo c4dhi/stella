@@ -221,6 +221,25 @@ class AudioPipeline:
         ) / 1000
         self._barge_in_watchdog_task: Optional[asyncio.Task] = None
 
+        # ── Generation-level interrupt (text barge-in #278) ────────────────
+        # Voice barge-in (above) acts at the audio layer: it suspends/commits
+        # TTS playback while the agent is *audibly* speaking. A typed message
+        # must also interrupt a turn that is still GENERATING (and, with TTS
+        # disabled, never speaks at all). These flags let the run loop pause or
+        # halt the in-flight process() generator — but only at a yield boundary,
+        # so any tool call awaiting between yields runs to completion first and
+        # its result is preserved (never severed mid-write). See run_audio_loop.
+        #   _turn_active   — a turn is being consumed by the run loop.
+        #   _turn_suspended— generation should pause at the next yield boundary.
+        #   _turn_release  — set when a suspend ends (resume OR abort) to unblock
+        #                    the loop's wait.
+        #   _turn_abort    — the suspended/active turn is superseded; halt it.
+        self._turn_active = False
+        self._turn_suspended = False
+        self._turn_release = asyncio.Event()
+        self._turn_release.set()
+        self._turn_abort = asyncio.Event()
+
         # Teleprompter (#241): emit agent_speech_progress envelopes so the
         # frontend can light up the published agent_text exactly as it is
         # spoken (and freeze it at the playhead on barge-in). ON BY DEFAULT —
@@ -758,16 +777,46 @@ class AudioPipeline:
                         speech_started=False,
                     )
 
-                    # Queue it for processing (non-blocking)
-                    try:
-                        self._transcript_queue.put_nowait(event)
-                    except asyncio.QueueFull:
-                        logger.warning("Transcript queue full, dropping text message")
-
-                    # Echo the received text back to LiveKit so frontend shows it
-                    # Use envelope's participant_id for proper attribution
-                    # This is done in a fire-and-forget manner
+                    # Echo the received text back to LiveKit so the frontend
+                    # shows it. Done unconditionally (even if the agent later
+                    # decides to RESUME rather than react): the bubble is the
+                    # recorded user turn, exactly like a voice transcript, and
+                    # the agent's barge-in verdict is recorded alongside it.
                     asyncio.create_task(self._echo_received_text(text, envelope_participant_id, envelope_transcript_id, correlation_id))
+
+                    # Text barge-in (#278): if barge-in is enabled and a turn is
+                    # in flight (still generating or audibly speaking), interrupt
+                    # it instead of letting the message sit in the queue until the
+                    # turn ends (the deferred-processing problem, #236). Otherwise
+                    # — barge-in off, agent idle, or one already in progress —
+                    # queue it as a normal next turn. The run loop is a single
+                    # consumer, so turns never interleave (serialization, AC#3).
+                    #
+                    # _barge_in_active also covers an in-progress VOICE barge-in
+                    # (suspended, awaiting the STT final): a typed message then
+                    # queues rather than racing a second decider against the voice
+                    # resolution.
+                    if (
+                        self._barge_in_enabled
+                        and not self._barge_in_resolving
+                        and not self._barge_in_active
+                        and (self._turn_active or self._is_speaking)
+                    ):
+                        # Claim the resolution SYNCHRONOUSLY, before yielding to the
+                        # loop. _handle_data_message is a sync callback and LiveKit
+                        # can dispatch buffered data frames back-to-back in one loop
+                        # iteration; if we left the flag for the spawned task to set
+                        # (it does, too), a second frame arriving in the same tick
+                        # would pass this guard and run a concurrent decider. The
+                        # voice path claims it the same way before create_task().
+                        self._barge_in_active = True
+                        self._barge_in_resolving = True
+                        asyncio.create_task(self._handle_text_barge_in(event))
+                    else:
+                        try:
+                            self._transcript_queue.put_nowait(event)
+                        except asyncio.QueueFull:
+                            logger.warning("Transcript queue full, dropping text message")
 
         except json.JSONDecodeError:
             logger.debug(f"Received non-JSON data message from {participant_id}")
@@ -1235,6 +1284,73 @@ class AudioPipeline:
             stop_waiter.cancel()
         return not self._stop_speaking_event.is_set()
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Generation-level interrupt (text barge-in #278)
+    # ─────────────────────────────────────────────────────────────────────
+    #
+    # The audio suspend/resume/commit above stops the agent's *voice*. These
+    # mirror it one layer up, for the agent's *generation*: the run loop marks
+    # a turn active while it consumes process(), and a text barge-in can pause
+    # (suspend) or supersede (abort) that turn. The loop only observes these at
+    # a yield boundary, so an in-flight tool await always completes first.
+
+    def begin_turn(self) -> None:
+        """Mark the start of a turn the run loop is about to consume. Resets the
+        suspend/abort state so a stale flag from a prior turn can't leak in."""
+        self._turn_active = True
+        self._turn_suspended = False
+        self._turn_abort.clear()
+        self._turn_release.set()
+
+    def end_turn(self) -> None:
+        """Mark the end of a turn (generation done and TTS flushed)."""
+        self._turn_active = False
+        self._turn_suspended = False
+        self._turn_abort.clear()
+        self._turn_release.set()
+
+    @property
+    def is_turn_active(self) -> bool:
+        """Whether the run loop is currently consuming a turn (generating or
+        speaking). Used to decide whether typed input is a barge-in or a fresh
+        turn."""
+        return self._turn_active
+
+    @property
+    def is_turn_suspended(self) -> bool:
+        return self._turn_suspended
+
+    @property
+    def is_turn_aborted(self) -> bool:
+        return self._turn_abort.is_set()
+
+    def request_turn_suspend(self) -> None:
+        """Ask the run loop to pause generation at the next yield boundary.
+        No-op if no turn is active."""
+        if not self._turn_active:
+            return
+        self._turn_suspended = True
+        self._turn_release.clear()
+
+    def request_turn_resume(self) -> None:
+        """Release a generation suspend so the run loop continues the SAME turn
+        from exactly where it paused (no work is re-run)."""
+        self._turn_suspended = False
+        self._turn_release.set()
+
+    def request_turn_abort(self) -> None:
+        """Supersede the active turn: the run loop breaks out of process() at the
+        next yield boundary. Also releases any suspend so the loop observes it."""
+        self._turn_abort.set()
+        self._turn_suspended = False
+        self._turn_release.set()
+
+    async def await_turn_release(self) -> bool:
+        """Block while the turn is suspended. Returns True if it was resumed,
+        False if it was aborted (superseded) while suspended."""
+        await self._turn_release.wait()
+        return not self._turn_abort.is_set()
+
     def enable_barge_in(self) -> None:
         """Enable barge-in because the agent declares it supports it.
 
@@ -1488,23 +1604,117 @@ class AudioPipeline:
                 transcript=transcript,
             )
             self.commit_interrupt()
-            # Deliver the interruption as a new turn out-of-band. NOT via
-            # _transcript_queue: the interrupted worker's exit runs
-            # open_transcript_gate(), which drains that queue and would silently
-            # drop this turn. audio_in() picks up _pending_barge_in first.
-            self._pending_barge_in = TranscriptEvent(
-                text=transcript,
-                is_final=True,
-                transcript_id=f"bargein_{uuid.uuid4().hex[:8]}",
-                participant_id=self._current_utterance_speaker or self._participant_id,
-                confidence=1.0,
-                timestamp_ms=int(time.time() * 1000),
-                speech_started=False,
-                is_barge_in=True,
-            )
+            self._deliver_barge_in_turn(transcript)
         finally:
             self._barge_in_active = False
             self._barge_in_resolving = False
+
+    async def _handle_text_barge_in(self, event: TranscriptEvent) -> None:
+        """Resolve a typed message that arrived mid-turn (#278).
+
+        Text is a deterministic interruption channel — there is no VAD or
+        noise-vs-intent ambiguity and the full utterance is known immediately,
+        so unlike the voice path there is no transcript to wait for, no
+        min-chars gate, and no suspend watchdog. We still run the SAME decider
+        the voice path uses (the agent's on_barge_in / BargeInEvaluator) so the
+        agent decides whether to RESUME its current thought or react — matching
+        the voice-path decision behavior (AC#2).
+
+        Flow:
+          1. Suspend audio (reversible, instant) AND request a generation pause
+             at the next tool-safe yield boundary.
+          2. Run the decider on the typed text.
+          3. RESUME → resume audio + generation; the message is dropped (it was
+             judged not actionable), exactly like a voice backchannel.
+             COMMIT → commit the audio interrupt, abort the in-flight turn, and
+             deliver the text as the next turn (is_barge_in=True).
+
+        Serialized by _barge_in_active / _barge_in_resolving, which the caller
+        (_handle_data_message) claims synchronously before spawning this task, so
+        two rapid sends — even in the same event-loop tick — can't run concurrent
+        deciders. Re-set here too so direct callers (tests) are also covered.
+        """
+        self._barge_in_active = True
+        self._barge_in_resolving = True
+        try:
+            # 1. Stop the voice now (no-op if TTS is disabled or not yet audible)
+            #    and pause generation at the next yield boundary. With TTS off
+            #    there is no audio to stop, so the generation pause is what makes
+            #    the interruption block only until the answer is generated (AC#4).
+            self.suspend_speech()
+            # suspend_speech() arms the 8s STT-final watchdog (the voice path
+            # needs it because a final may never come). Text resolves right here
+            # on the decider, so disarm it: if it fired it would resume_speech()
+            # WITHOUT request_turn_resume(), un-muting audio while generation
+            # stays paused — a transient blip before a slow-decider COMMIT.
+            self._disarm_suspend_watchdog()
+            self.request_turn_suspend()
+
+            transcript = event.text
+            decider = self._barge_in_decider
+            try:
+                if decider is not None:
+                    decision = await decider(transcript)
+                else:
+                    decision = BargeInDecision.COMMIT
+            except Exception as e:
+                logger.error(f"[TEXT BARGE-IN] Decider failed: {e} — committing")
+                decision = BargeInDecision.COMMIT
+
+            if decision == BargeInDecision.RESUME:
+                logger.info(
+                    f"[TEXT BARGE-IN] RESUME — '{transcript[:40]}' was not actionable"
+                )
+                await self._emit_barge_in_debug(
+                    f"🔁 Text barge-in RESUME — judged not actionable, resuming "
+                    f"previous turn. Typed: \"{transcript[:100]}\"",
+                    decision="resume",
+                    transcript=transcript,
+                    channel="text",
+                )
+                self.resume_speech()
+                self.request_turn_resume()
+                return
+
+            logger.info(f"[TEXT BARGE-IN] COMMIT — interrupting for '{transcript[:40]}'")
+            await self._emit_barge_in_debug(
+                f"✋ Text barge-in COMMIT — interrupting and processing as a new "
+                f"turn: \"{transcript[:100]}\"",
+                decision="commit",
+                transcript=transcript,
+                channel="text",
+            )
+            # Stop the voice and halt the superseded generation, then hand the
+            # typed text to the loop as the next turn. commit_interrupt() is a
+            # no-op for audio when TTS is off; request_turn_abort() is what stops
+            # the old turn from continuing to emit (AC#5).
+            self.commit_interrupt()
+            self.request_turn_abort()
+            self._deliver_barge_in_turn(transcript, speaker=event.participant_id)
+        finally:
+            self._barge_in_active = False
+            self._barge_in_resolving = False
+
+    def _deliver_barge_in_turn(
+        self, transcript: str, speaker: Optional[str] = None
+    ) -> None:
+        """Deliver a committed interruption as the next user turn, out-of-band.
+
+        NOT via _transcript_queue: an interrupted speech worker's exit runs
+        open_transcript_gate(), which drains that queue and would silently drop
+        this turn. audio_in() picks up _pending_barge_in first. Shared by the
+        voice path (_resolve_barge_in) and the text path (_handle_text_barge_in).
+        """
+        self._pending_barge_in = TranscriptEvent(
+            text=transcript,
+            is_final=True,
+            transcript_id=f"bargein_{uuid.uuid4().hex[:8]}",
+            participant_id=speaker or self._current_utterance_speaker or self._participant_id,
+            confidence=1.0,
+            timestamp_ms=int(time.time() * 1000),
+            speech_started=False,
+            is_barge_in=True,
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Sentence-level streaming TTS

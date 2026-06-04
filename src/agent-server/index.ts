@@ -8,6 +8,5 @@
 export * from './agent-server.module';
 export * from './agent-server.service';
 export * from './agent-session-stream';
-export * from './session-orchestrator.service';
 export * from './agent-health-monitor.service';
 export * from './agent.types';
