@@ -547,14 +547,8 @@ class StellaV2Agent(BaseAgent):
             farewell = None
             if task_verdict and task_verdict.raw_output:
                 farewell = task_verdict.raw_output.get("farewell_message")
-            if not farewell and self._plan_config:
-                farewell = (
-                    self._plan_config.get("metadata", {})
-                    .get("plan_builder", {})
-                    .get("canvas", {})
-                    .get("end_node_config", {})
-                    .get("farewell_message")
-                )
+            if not farewell:
+                farewell = self._plan_farewell_message()
             if farewell:
                 yield AgentOutput.text_final(session_id, farewell)
             self._session_completed = True
@@ -567,6 +561,25 @@ class StellaV2Agent(BaseAgent):
             await self.sm_client.increment_turn()
             # Refresh state after counter update so the published progress is current.
             full_state = await self.sm_client.get_full_state()
+            # increment_turn() re-evaluates transitions (#172), so an authored
+            # turn_count_exceeded -> __end__ route can complete the session on this
+            # very turn. Re-run the fallback completion here; otherwise the farewell
+            # would only fire on the next cycle and the loop would accept a dangling
+            # turn first (this turn's reached_end_state was computed pre-increment).
+            if (
+                full_state
+                and full_state.get("current_state_id") == "__end__"
+                and not self._session_completed
+            ):
+                reached_end_state = True
+                farewell = self._plan_farewell_message()
+                if farewell:
+                    yield AgentOutput.text_final(session_id, farewell)
+                self._session_completed = True
+                logger.info(
+                    f"Session {session_id} reached __end__ via turn increment — "
+                    "fallback completion applied"
+                )
 
         # ── Analytics emissions ──
         last_transition = None
@@ -838,6 +851,23 @@ class StellaV2Agent(BaseAgent):
     # ─────────────────────────────────────────────────────────────────────
     # Helper methods
     # ─────────────────────────────────────────────────────────────────────
+
+    def _plan_farewell_message(self) -> Optional[str]:
+        """Resolve the configured farewell from plan metadata, if any.
+
+        Used by the fallback completion path when the session reaches __end__
+        without a tool payload carrying the farewell (e.g. a turn_count_exceeded
+        route firing during increment_turn).
+        """
+        if not self._plan_config:
+            return None
+        return (
+            self._plan_config.get("metadata", {})
+            .get("plan_builder", {})
+            .get("canvas", {})
+            .get("end_node_config", {})
+            .get("farewell_message")
+        )
 
     def _load_plan_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load plan configuration from config or disk."""
