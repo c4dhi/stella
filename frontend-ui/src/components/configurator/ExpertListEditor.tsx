@@ -673,7 +673,13 @@ function SortableExpertCard({
                     <label className={`text-[10px] font-medium ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                       System Prompt {overrides?.system_prompt !== undefined ? 'Override' : ''}
                     </label>
-                    {overrides?.system_prompt !== undefined && (
+                    {overrides?.system_prompt === undefined && info.defaultSystemPrompt ? (
+                      <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
+                        isDark ? 'bg-zinc-800 text-zinc-500' : 'bg-neutral-100 text-neutral-400'
+                      }`}>
+                        default
+                      </span>
+                    ) : overrides?.system_prompt !== undefined ? (
                       <button
                         onClick={() => onOverrideChange('system_prompt', undefined)}
                         className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
@@ -682,22 +688,26 @@ function SortableExpertCard({
                       >
                         Reset to default
                       </button>
-                    )}
+                    ) : null}
                   </div>
-                  {/* Single control. `undefined` = no override (default shown as a hint via
-                      placeholder, never as actual text). Typing creates an override; clearing
-                      to '' is kept as an explicit empty prompt — the default is never
-                      auto-inserted. Use "Reset to default" to inherit it again (#174). */}
+                  {/* Single control. `undefined` = no override: the default renders as editable
+                      dimmed text so the user can customize starting from it. Typing creates an
+                      override; clearing to '' is kept as an explicit empty prompt — the default is
+                      never auto-re-inserted. "Reset to default" inherits it again (#174). */}
                   <textarea
-                    value={overrides?.system_prompt ?? ''}
+                    value={overrides?.system_prompt ?? info.defaultSystemPrompt ?? ''}
                     onChange={(e) => onOverrideChange('system_prompt', e.target.value)}
                     placeholder={
                       overrides?.system_prompt === ''
                         ? 'Empty — this expert will run with no system prompt'
-                        : info.defaultSystemPrompt || 'Override system prompt...'
+                        : 'Override system prompt...'
                     }
                     rows={4}
-                    className={`${inputClass} resize-y`}
+                    className={`${inputClass} resize-y ${
+                      overrides?.system_prompt === undefined && info.defaultSystemPrompt
+                        ? isDark ? '!text-zinc-400' : '!text-neutral-400'
+                        : ''
+                    }`}
                   />
                 </div>
               </div>
