@@ -671,50 +671,46 @@ function SortableExpertCard({
                 <div>
                   <div className="flex items-center justify-between">
                     <label className={`text-[10px] font-medium ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
-                      System Prompt {overrides?.system_prompt ? 'Override' : ''}
+                      System Prompt {overrides?.system_prompt !== undefined ? 'Override' : ''}
                     </label>
-                    {overrides?.system_prompt && (
-                      <button
-                        onClick={() => onOverrideChange('system_prompt', undefined)}
-                        className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
-                          isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        Reset to default
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {info.defaultSystemPrompt && overrides?.system_prompt !== info.defaultSystemPrompt && (
+                        <button
+                          onClick={() => onOverrideChange('system_prompt', info.defaultSystemPrompt)}
+                          className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                            isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                          }`}
+                        >
+                          Insert default
+                        </button>
+                      )}
+                      {overrides?.system_prompt !== undefined && (
+                        <button
+                          onClick={() => onOverrideChange('system_prompt', undefined)}
+                          className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                            isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                          }`}
+                        >
+                          Reset to default
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {overrides?.system_prompt ? (
-                    <textarea
-                      value={overrides.system_prompt}
-                      onChange={(e) => onOverrideChange('system_prompt', e.target.value || undefined)}
-                      rows={4}
-                      className={`${inputClass} resize-y`}
-                    />
-                  ) : info.defaultSystemPrompt ? (
-                    <textarea
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) onOverrideChange('system_prompt', e.target.value)
-                      }}
-                      onFocus={(e) => {
-                        // Copy default into override on focus so user can edit
-                        onOverrideChange('system_prompt', info.defaultSystemPrompt)
-                      }}
-                      placeholder={info.defaultSystemPrompt}
-                      rows={Math.min(6, Math.max(2, Math.ceil(info.defaultSystemPrompt.length / 50)))}
-                      className={`${inputClass} resize-y ${isDark ? '!text-zinc-500' : '!text-neutral-400'}`}
-                      style={{ fontSize: '10px', lineHeight: '1.4' }}
-                    />
-                  ) : (
-                    <textarea
-                      value=""
-                      onChange={(e) => onOverrideChange('system_prompt', e.target.value || undefined)}
-                      placeholder="Override system prompt..."
-                      rows={2}
-                      className={`${inputClass} resize-y`}
-                    />
-                  )}
+                  {/* Single control. `undefined` = no override (default shown as a hint via
+                      placeholder, never as actual text). Typing creates an override; clearing
+                      to '' is kept as an explicit empty prompt and the default is never
+                      auto-inserted — use "Insert default" to pull it in deliberately (#174). */}
+                  <textarea
+                    value={overrides?.system_prompt ?? ''}
+                    onChange={(e) => onOverrideChange('system_prompt', e.target.value)}
+                    placeholder={
+                      overrides?.system_prompt === ''
+                        ? 'Empty — this expert will run with no system prompt'
+                        : info.defaultSystemPrompt || 'Override system prompt...'
+                    }
+                    rows={4}
+                    className={`${inputClass} resize-y`}
+                  />
                 </div>
               </div>
             </motion.div>
