@@ -290,10 +290,12 @@ export function buildExpertBlocks(
       id: 'prompt_template',
       type: 'editable',
       label: 'Prompt Template',
-      value: expert.systemPrompt || undefined,
+      // Pass the raw override through: `undefined` = inherit default, `''` = explicit
+      // empty (#174). Do not collapse '' to undefined or the default snaps back.
+      value: expert.systemPrompt,
       defaultValue: expert.defaultSystemPrompt || undefined,
       onChange: (v) => onUpdate({ systemPrompt: v }),
-      onReset: () => onUpdate({ systemPrompt: '' }),
+      onReset: () => onUpdate({ systemPrompt: undefined }),
       rows: 18,
       expertName: expert.name,
     },
@@ -754,6 +756,22 @@ function HighlightedEditor({
 // Fullscreen prompt modal
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve how an editable block renders from its raw override `value` and the
+ * built-in `defaultValue`. `undefined` value = no override → show the default
+ * (dimmed). An explicit `''` counts as an override and renders empty, so clearing
+ * the textarea does not snap the default back (#174).
+ */
+export function resolveBlockDisplay(
+  value: string | undefined,
+  defaultValue: string | undefined,
+): { isOverridden: boolean; showDefault: boolean; displayValue: string } {
+  const isOverridden = value !== undefined
+  const showDefault = !isOverridden && !!defaultValue
+  const displayValue = isOverridden ? value! : showDefault ? defaultValue! : ''
+  return { isOverridden, showDefault, displayValue }
+}
+
 function FullscreenPromptModal({
   block,
   isDark,
@@ -763,9 +781,7 @@ function FullscreenPromptModal({
   isDark: boolean
   onClose: () => void
 }) {
-  const isOverridden = block.value !== undefined && block.value !== ''
-  const showDefault = !isOverridden && !!block.defaultValue
-  const displayValue = isOverridden ? block.value! : showDefault ? block.defaultValue! : ''
+  const { isOverridden, showDefault, displayValue } = resolveBlockDisplay(block.value, block.defaultValue)
 
   const [showPopover, setShowPopover] = useState(false)
   const infoButtonRef = useRef<HTMLButtonElement>(null)
@@ -974,9 +990,7 @@ const TAG_COLORS: Record<string, { dark: string; light: string }> = {
 // ---------------------------------------------------------------------------
 
 function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark: boolean; compact?: boolean }) {
-  const isOverridden = block.value !== undefined && block.value !== ''
-  const showDefault = !isOverridden && !!block.defaultValue
-  const displayValue = isOverridden ? block.value! : showDefault ? block.defaultValue! : ''
+  const { isOverridden, showDefault, displayValue } = resolveBlockDisplay(block.value, block.defaultValue)
 
   const [showPopover, setShowPopover] = useState(false)
   const [showFullscreen, setShowFullscreen] = useState(false)

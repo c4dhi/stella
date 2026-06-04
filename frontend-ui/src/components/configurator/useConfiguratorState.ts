@@ -22,8 +22,9 @@ export interface ExpertDefinition {
   model: string
   temperature: number
   maxTokens: number
-  /** User-set system prompt override. Empty string means "use default". */
-  systemPrompt: string
+  /** User-set system prompt override. `undefined` means "no override, inherit default";
+   *  `''` means the user explicitly cleared the prompt (an empty prompt is intentional). */
+  systemPrompt: string | undefined
   /** Built-in default system prompt (read-only, for display). Empty for custom experts. */
   defaultSystemPrompt: string
   /** Number of conversation history messages to include. 0 = use stage default. */
@@ -349,7 +350,9 @@ export function useConfiguratorState(
         model: (ov.model as string) ?? builtin.model,
         temperature: ov.temperature !== undefined ? Number(ov.temperature) : builtin.temperature,
         maxTokens: ov.max_tokens !== undefined ? Number(ov.max_tokens) : builtin.maxTokens,
-        systemPrompt: (ov.system_prompt as string) ?? builtin.systemPrompt,
+        // Preserve override presence: a missing key inherits the default,
+        // while an explicit '' is kept as an intentional empty prompt (#174).
+        systemPrompt: ov.system_prompt !== undefined ? (ov.system_prompt as string) : undefined,
         defaultSystemPrompt: builtin.defaultSystemPrompt,
         historyLimit: ov.history_limit !== undefined ? Number(ov.history_limit) : builtin.historyLimit,
         minConfidence: ov.min_confidence !== undefined ? Number(ov.min_confidence) : builtin.minConfidence,
@@ -372,7 +375,7 @@ export function useConfiguratorState(
         model: (def.model as string) ?? 'gpt-4o-mini',
         temperature: def.temperature !== undefined ? Number(def.temperature) : 0.3,
         maxTokens: def.max_tokens !== undefined ? Number(def.max_tokens) : 200,
-        systemPrompt: (def.system_prompt as string) ?? '',
+        systemPrompt: def.system_prompt !== undefined ? (def.system_prompt as string) : undefined,
         defaultSystemPrompt: '',
         historyLimit: def.history_limit !== undefined ? Number(def.history_limit) : 0,
         minConfidence: def.min_confidence !== undefined ? Number(def.min_confidence) : 0,
@@ -460,7 +463,12 @@ export function useConfiguratorState(
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature
         if (updates.maxTokens !== undefined) existing.max_tokens = updates.maxTokens
-        if (updates.systemPrompt !== undefined) existing.system_prompt = updates.systemPrompt
+        // `systemPrompt: undefined` removes the override (inherit default);
+        // `''` keeps an explicit empty prompt (#174). A missing key = no change.
+        if ('systemPrompt' in updates) {
+          if (updates.systemPrompt === undefined) delete existing.system_prompt
+          else existing.system_prompt = updates.systemPrompt
+        }
         if (updates.historyLimit !== undefined) existing.history_limit = updates.historyLimit
         if (updates.minConfidence !== undefined) existing.min_confidence = updates.minConfidence
         if (updates.arbitrationPriority !== undefined) existing.priority = updates.arbitrationPriority
@@ -479,7 +487,10 @@ export function useConfiguratorState(
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature
         if (updates.maxTokens !== undefined) existing.max_tokens = updates.maxTokens
-        if (updates.systemPrompt !== undefined) existing.system_prompt = updates.systemPrompt
+        if ('systemPrompt' in updates) {
+          if (updates.systemPrompt === undefined) delete existing.system_prompt
+          else existing.system_prompt = updates.systemPrompt
+        }
         if (updates.historyLimit !== undefined) existing.history_limit = updates.historyLimit
         if (updates.minConfidence !== undefined) existing.min_confidence = updates.minConfidence
         if (updates.arbitrationPriority !== undefined) existing.priority = updates.arbitrationPriority
@@ -601,7 +612,9 @@ export function useConfiguratorState(
     (nodeId: string, slotId: string, value: unknown) => {
       const currentNode = { ...((configuration.nodes?.[nodeId] ?? {}) as Record<string, unknown>) }
 
-      if (value === undefined || value === null || value === '') {
+      // `undefined`/`null` removes the override (inherit default). An explicit ''
+      // is a deliberate empty value and must be persisted, not collapsed (#174).
+      if (value === undefined || value === null) {
         delete currentNode[slotId]
       } else {
         currentNode[slotId] = value

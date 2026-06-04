@@ -348,7 +348,7 @@ export default function NodeDetailOverlay({
         {type === 'textarea' ? (
           <textarea
             value={displayValue}
-            onChange={(e) => onUpdateNodeConfig(node.id, slotId, e.target.value || undefined)}
+            onChange={(e) => onUpdateNodeConfig(node.id, slotId, e.target.value)}
             placeholder={options?.emptyWhenDefault ? options?.placeholder : (typeof defaultVal === 'string' ? defaultVal : options?.placeholder)}
             rows={options?.rows ?? 6}
             className={`${inputClass} resize-y ${showDefault ? (isDark ? '!text-zinc-300' : '!text-neutral-500') : ''} ${
@@ -384,7 +384,7 @@ export default function NodeDetailOverlay({
           <input
             type="text"
             value={displayValue}
-            onChange={(e) => onUpdateNodeConfig(node.id, slotId, e.target.value || undefined)}
+            onChange={(e) => onUpdateNodeConfig(node.id, slotId, e.target.value)}
             placeholder={typeof defaultVal === 'string' ? defaultVal : options?.placeholder}
             className={`${inputClass} ${showDefault ? (isDark ? '!text-zinc-300' : '!text-neutral-500') : ''}`}
           />
@@ -430,7 +430,7 @@ export default function NodeDetailOverlay({
         label: 'Prompt Template',
         value: isOverridden ? String(systemPromptValue) : undefined,
         defaultValue: DEFAULT_INPUT_GATE_TEMPLATE,
-        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v || undefined),
+        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v),
         onReset: () => onUpdateNodeConfig(node.id, 'system_prompt', undefined),
         rows: 18,
         outputFormat: '{"experts": ["name1", "name2"]}',
@@ -541,7 +541,7 @@ export default function NodeDetailOverlay({
         headerHint: 'The bridge phrase (from Bridge Generator) is automatically prepended to every response. The model is instructed to continue naturally from it — do not repeat or re-acknowledge.',
         value: isOverridden ? String(systemPromptValue) : undefined,
         defaultValue: DEFAULT_RESPONSE_GENERATOR_TEMPLATE,
-        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v || undefined),
+        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v),
         onReset: () => onUpdateNodeConfig(node.id, 'system_prompt', undefined),
         rows: 22,
       },
@@ -571,7 +571,7 @@ export default function NodeDetailOverlay({
         label: 'Prompt Template',
         value: isOverridden ? String(systemPromptValue) : undefined,
         defaultValue: DEFAULT_BRIDGE_TEMPLATE,
-        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v || undefined),
+        onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v),
         onReset: () => onUpdateNodeConfig(node.id, 'system_prompt', undefined),
         rows: 18,
       },
@@ -616,7 +616,7 @@ export default function NodeDetailOverlay({
         headerHint: s.description,
         value: isOverridden ? String(v) : undefined,
         defaultValue: typeof s.default === 'string' ? s.default : '',
-        onChange: (val: string) => onUpdateNodeConfig(node.id, s.id, val || undefined),
+        onChange: (val: string) => onUpdateNodeConfig(node.id, s.id, val),
         onReset: () => onUpdateNodeConfig(node.id, s.id, undefined),
         rows: 18,
       }
