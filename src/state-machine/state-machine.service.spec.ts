@@ -949,6 +949,92 @@ describe('all-optional state handling (#172)', () => {
     expect(res.newStateId).toBe('state-c');
   });
 
+  // required state-a -> all-optional state-b -> all-optional state-c -> state-d.
+  // Two consecutive non-terminal all-optional states both get a turn fallback.
+  // Guards against the multi-skip regression: when the no-progress threshold is
+  // reached in state-b, the chained evaluation loop must only hop ONE state. The
+  // counter is reset in the DB on transition; it must also be reset in-memory so
+  // state-c doesn't see state-b's stale counter and fire its own fallback in the
+  // same pass — each state must get its own turn window.
+  function buildTwoOptionalPlan(): PlanData {
+    return {
+      id: 'plan-two-optional',
+      title: 'Two Optional Plan',
+      initial_state_id: 'state-a',
+      states: [
+        {
+          id: 'state-a',
+          title: 'A',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'task-a',
+              description: 'Collect route',
+              deliverables: [{ key: 'go_to_b', description: 'go', required: true, type: 'string' }],
+            },
+          ],
+          transitions: [
+            {
+              target_state_id: 'state-b',
+              condition_type: 'deliverable_exists',
+              condition_config: { key: 'go_to_b' },
+              priority: 1,
+            },
+          ],
+        },
+        {
+          id: 'state-b',
+          title: 'B',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'task-b',
+              description: 'Optional chat',
+              deliverables: [{ key: 'opt_b', description: 'optional note', required: false }],
+            },
+          ],
+        },
+        {
+          id: 'state-c',
+          title: 'C',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'task-c',
+              description: 'Optional chat',
+              deliverables: [{ key: 'opt_c', description: 'optional note', required: false }],
+            },
+          ],
+        },
+        { id: 'state-d', title: 'D', type: 'loose', tasks: [], transitions: [] },
+      ],
+    };
+  }
+
+  it('hops only one state per threshold across consecutive all-optional states', async () => {
+    const sessionId = 'session-two-optional-no-multiskip';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildTwoOptionalPlan());
+    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
+
+    // Reach the no-progress threshold (3) in state-b: it releases to state-c only.
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    const hopB = await svc.incrementTurn(sessionId);
+    expect(hopB.transitioned).toBe(true);
+    // Must land on state-c, NOT skip straight through to state-d in the same pass.
+    expect(hopB.newStateId).toBe('state-c');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-c');
+
+    // state-c gets its OWN turn window — the counter was reset on entry.
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
+    const hopC = await svc.incrementTurn(sessionId);
+    expect(hopC.transitioned).toBe(true);
+    expect(hopC.newStateId).toBe('state-d');
+  });
+
   it('isCurrentStateComplete returns false for a non-goal state with only optional work', async () => {
     const sessionId = 'session-optional-iscomplete';
     const { prisma } = createPrismaMock();

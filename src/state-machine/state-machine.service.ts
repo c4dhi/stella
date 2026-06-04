@@ -1849,6 +1849,14 @@ export class StateMachineService {
         },
       });
 
+      // Reset the in-memory counter too. The loop reuses this `state` object on
+      // subsequent iterations (it is read by evaluateTransitionCondition for the
+      // 'without_progress' scope), and we only updated the DB above. Without this,
+      // a chain of consecutive all-optional states would all see the same stale
+      // turnsWithoutProgress and fire their turn fallbacks in a single pass —
+      // multi-skipping instead of giving each state its own turn window (#172).
+      state.turnsWithoutProgress = 0;
+
       this.logger.log(
         `Session ${sessionId} transitioned from ${currentStateId} to ${matchedTargetId}`,
       );
