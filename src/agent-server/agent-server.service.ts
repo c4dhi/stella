@@ -12,7 +12,6 @@ import {
   OutputType,
   RegisterAgentRequest,
   RegisterAgentResponse,
-  ConversationTurn,
 } from './agent.types';
 
 /**
@@ -210,27 +209,6 @@ export class AgentServerService implements OnModuleDestroy {
   }
 
   /**
-   * Send text input to agent for a session.
-   */
-  async sendTextInput(
-    sessionId: string,
-    text: string,
-    history?: ConversationTurn[],
-  ): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`No agent connected for session ${sessionId}`);
-    }
-
-    if (!session.connected) {
-      throw new Error(`Agent stream not connected for session ${sessionId}`);
-    }
-
-    session.sendText(text, history);
-    this.logger.debug(`Sent text input to agent for session ${sessionId}: ${text.substring(0, 50)}...`);
-  }
-
-  /**
    * Send interrupt signal to agent (gRPC: SendInterrupt).
    */
   async sendInterrupt(sessionId: string, reason: string): Promise<{ success: boolean; wasProcessing: boolean }> {
@@ -282,31 +260,6 @@ export class AgentServerService implements OnModuleDestroy {
     }
 
     return session.requestHealthCheck();
-  }
-
-  /**
-   * Wait for agent to connect (with timeout).
-   */
-  async waitForAgentConnection(
-    sessionId: string,
-    timeoutMs: number = 30000,
-  ): Promise<AgentSessionStream> {
-    const existing = this.sessions.get(sessionId);
-    if (existing && existing.connected) {
-      return existing;
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.eventEmitter.removeAllListeners(`agent.connected.${sessionId}`);
-        reject(new Error(`Agent connection timeout for session ${sessionId}`));
-      }, timeoutMs);
-
-      this.eventEmitter.once(`agent.connected.${sessionId}`, (stream: AgentSessionStream) => {
-        clearTimeout(timeout);
-        resolve(stream);
-      });
-    });
   }
 
   /**

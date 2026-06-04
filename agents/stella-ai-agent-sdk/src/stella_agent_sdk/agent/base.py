@@ -663,12 +663,32 @@ class BaseAgent(ABC):
                 # Process and stream response
                 self._is_processing = True
                 self._messages_processed += 1
+                # Mark the turn active so a typed message (text barge-in, #278)
+                # can pause or supersede it. Cleared in the finally below.
+                self.audio.begin_turn()
 
                 try:
                     current_transcript_id = None
                     tts_buffer = ""  # Tracks last accumulated text for diffing
 
                     async for output in self.process(input_msg):
+                        # Generation-interrupt checkpoint (text barge-in, #278).
+                        # This is a tool-safe boundary: process() just yielded, so
+                        # any tool call awaiting between yields has already run to
+                        # completion (and its result is preserved). A typed message
+                        # arriving mid-turn may pause us here (suspend → resume from
+                        # exactly this point) or supersede the turn (abort → stop
+                        # emitting). With TTS disabled this is the ONLY thing that
+                        # halts the superseded turn, so the interruption blocks only
+                        # until the answer is generated, not until audio finishes.
+                        if self.audio.is_turn_suspended:
+                            if not await self.audio.await_turn_release():
+                                logger.info("[TEXT BARGE-IN] Turn superseded while suspended — halting generation")
+                                break
+                        if self.audio.is_turn_aborted:
+                            logger.info("[TEXT BARGE-IN] Turn aborted — halting generation")
+                            break
+
                         logger.info(f"[AGENT OUTPUT] type={output.type}, content={output.content[:50] if output.content else 'None'}...")
                         if output.type == OutputType.TEXT_CHUNK:
                             # Get or create transcript_id for this response stream
@@ -779,10 +799,17 @@ class BaseAgent(ABC):
                                 await self.audio._room.publish_data(payload)
 
                 finally:
-                    # Ensure all queued TTS sentences finish before accepting next input
+                    # Ensure all queued TTS sentences finish before accepting next
+                    # input. On an aborted turn (text barge-in COMMIT) the speech
+                    # queue was already drained by commit_interrupt(), so this
+                    # returns promptly and nothing from the superseded turn plays.
                     await self.audio.flush_speech_queue()
                     self._sentence_buffer = ""
                     self._is_processing = False
+                    # Turn fully done (generation halted/finished and TTS flushed):
+                    # clear the active/suspend/abort state so the next turn starts
+                    # clean and a committed barge-in turn isn't itself aborted.
+                    self.audio.end_turn()
 
                 # If the plan reached __end__ during this turn, stop accepting new input.
                 # The farewell has already been spoken; exit the loop cleanly.
