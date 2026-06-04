@@ -7,6 +7,19 @@ title: "🔊 echo-agent"
 
 A simple test agent that echoes back messages for development and debugging.
 
+:::warning Current implementation is text-only
+As of now `echo-agent` only echoes **text** — it responds with `You said: {input}`
+(see `agents/echo-agent/src/echo_agent/agent.py`). The `ECHO_MODE` variable and the
+**Audio** / **Both** modes described below are **not yet implemented**; they document the
+intended design only.
+
+If you are looking for the **round-trip audio test** on the system status page, that does
+**not** use this agent — it uses a pure LiveKit SFU loopback (publish on a publisher token,
+subscribe on a listener token in the same room) wired up in
+`frontend-ui/src/components/shared/ReadinessCheck/AudioOutputModal.tsx`. No echo-agent pod
+is involved.
+:::
+
 ## Overview
 
 `echo-agent` is a minimal agent implementation used for:
@@ -81,37 +94,31 @@ Minimal configuration required:
 | `LIVEKIT_API_KEY` | LiveKit API key | Yes |
 | `LIVEKIT_API_SECRET` | LiveKit API secret | Yes |
 | `STT_PROVIDER` | Speech-to-text provider | Optional |
-| `ECHO_MODE` | `text`, `audio`, or `both` | Optional (`text`) |
+| `ECHO_MODE` | `text`, `audio`, or `both` | **Planned — not yet implemented** |
 
 ## Echo Modes
 
-### Text Mode (Default)
+:::note
+Only **text** echo is implemented today. The audio/both modes below describe the intended
+design and are not wired up yet.
+:::
 
-Returns transcribed text via data channel only:
+### Text Mode (current behaviour)
 
-```typescript
-// Received message
-{
-  type: 'echo_response',
-  data: {
-    original: 'Hello world',
-    echoed: 'Echo: Hello world',
-    timestamp: '2024-01-15T10:30:00Z'
-  }
-}
-```
+Echoes the received text straight back as the agent's text response
+(`You said: {input}`).
 
-### Audio Mode
+### Audio Mode (planned)
 
-Echoes audio back without processing:
+Would echo audio back without processing:
 
 - Receives audio stream
 - Transmits back as-is
 - Useful for latency testing
 
-### Both Mode
+### Both Mode (planned)
 
-Transcribes, echoes text, and synthesizes audio response:
+Would transcribe, echo text, and synthesize an audio response:
 
 - Full pipeline test
 - Most comprehensive verification
