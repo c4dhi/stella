@@ -3,7 +3,7 @@ livekit==0.17.2
 livekit-api==1.0.6
 
 # HTTP client for API communication
-aiohttp==3.13.4
+aiohttp==3.14.0
 
 # Environment variable management
 python-dotenv==1.2.2
