@@ -170,6 +170,29 @@ def _resolve_current_focus(ctx: Dict[str, Any]) -> str:
                     line += f" (e.g. {', '.join(str(e) for e in examples)})"
                 parts.append(line)
 
+        # Already-collected deliverables in this state, surfaced as explicit
+        # CORRECTION targets. Once collected they drop out of the pending list
+        # above, so without this the extraction expert only sees them as "done"
+        # (✓) in {{plan}} and won't revisit them when the user corrects an
+        # earlier answer ("oh no, I like basketball" after "running"). Listing
+        # them here — with their stored value — gives the expert an actionable
+        # hook to overwrite on a correction (#278).
+        collected_in_current = [
+            d
+            for task in current_plan_state.get("tasks", [])
+            for d in task.get("deliverables", [])
+            if d.get("status") == "completed"
+        ]
+        if collected_in_current:
+            parts.append("")
+            parts.append(
+                "ALREADY COLLECTED — overwrite ONLY if the user corrects or "
+                "contradicts the stored value (re-extract the SAME key with the "
+                "new value); otherwise leave as-is:"
+            )
+            for d in collected_in_current:
+                parts.append(f"  ✓ {d['key']} = {d.get('value', '?')}")
+
         # Explicitly list task IDs to prevent using descriptions as task_id.
         no_deliverable_tasks = [
             t for t in current_plan_state.get("tasks", [])

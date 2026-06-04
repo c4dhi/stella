@@ -19,6 +19,7 @@ from stella_agent_sdk.prompts import (
 from stella_agent_sdk.prompts.placeholder_compiler import (
     PLACEHOLDER_REGISTRY,
     _compile_prompt,
+    _resolve_current_focus,
 )
 
 
@@ -153,3 +154,67 @@ def test_versioned_compile_matches_internal_resolver():
     ctx = _ctx()
     expected = _compile_prompt("{{current_state}}", {**ctx, "_conversation_history": [], "_user_input": ""})
     assert prompts.compile("{{current_state}}", COMPILER_VERSION, sm_context=ctx) == expected
+
+
+def _running_basketball_ctx():
+    """The transcript scenario: 'preferred_exercise' was collected as 'running'
+    (its task complete) and the active task has advanced to the frequency
+    question — when the user corrects themselves with 'oh no, I like basketball'."""
+    return {
+        "state": {"id": "exercise", "title": "Ask about preferred exercise"},
+        "processing_mode": "strict",
+        "current_task": {"id": "freq", "description": "Ask how often"},
+        "full_plan": [
+            {
+                "id": "exercise",
+                "title": "Ask about preferred exercise",
+                "is_current": True,
+                "tasks": [
+                    {
+                        "id": "type",
+                        "description": "Type of exercise they prefer",
+                        "status": "completed",
+                        "has_deliverables": True,
+                        "deliverables": [
+                            {"key": "preferred_exercise", "status": "completed", "value": "running"},
+                        ],
+                    },
+                    {
+                        "id": "freq",
+                        "description": "How often",
+                        "status": "pending",
+                        "has_deliverables": True,
+                        "deliverables": [
+                            {"key": "weekly_frequency", "status": "pending",
+                             "type": "string", "required": True, "description": "times per week"},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def test_current_focus_surfaces_collected_deliverables_as_correction_targets():
+    # Regression for #278: once 'preferred_exercise' is collected it drops out of
+    # the pending list, so the extraction expert used to see it only as "done"
+    # and never overwrote a correction. CURRENT FOCUS must now surface it with its
+    # stored value as an explicit, overwrite-on-correction target.
+    focus = _resolve_current_focus(_running_basketball_ctx())
+
+    assert "ALREADY COLLECTED" in focus
+    assert "preferred_exercise = running" in focus
+    assert "overwrite" in focus.lower()
+    # The still-pending deliverable is unchanged — collected items don't replace it.
+    assert "weekly_frequency" in focus
+    # And the collected one is NOT mislabelled as still-pending ("○" marker).
+    assert "○ preferred_exercise" not in focus
+
+
+def test_current_focus_omits_collected_section_when_nothing_collected():
+    ctx = _running_basketball_ctx()
+    # Mark the type deliverable pending → nothing collected yet.
+    ctx["full_plan"][0]["tasks"][0]["deliverables"][0]["status"] = "pending"
+    ctx["full_plan"][0]["tasks"][0]["status"] = "pending"
+    focus = _resolve_current_focus(ctx)
+    assert "ALREADY COLLECTED" not in focus
