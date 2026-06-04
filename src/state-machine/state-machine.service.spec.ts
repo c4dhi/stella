@@ -1069,6 +1069,113 @@ describe('all-optional state handling (#172)', () => {
 });
 
 // =============================================================================
+// Optional tasks must not be auto-completed on startup (#213)
+// getFullState() reports per-task status to the frontend. A task with zero
+// REQUIRED deliverables must surface as 'pending' on a fresh session, not
+// 'completed' — otherwise `requiredKeys.every(...)` is vacuously true and the
+// UI renders a green checkmark before the user has done anything.
+// =============================================================================
+describe('getFullState optional-task status on startup (#213)', () => {
+  // One state holding three contrasting tasks:
+  // - opt-deliverable-task: has only an optional deliverable (requiredKeys === [])
+  //                         — this is the case that actually exercised the bug.
+  // - optional-task:        the task itself is required:false. Note getFullState()'s
+  //                         STATUS computation never reads task.required; this case
+  //                         exists to pin the surfaced `.required` output flag (the
+  //                         only thing task.required drives) and to confirm a task
+  //                         whose required deliverable is uncollected stays pending.
+  // - required-task:        a normal required deliverable (positive control).
+  const buildOptionalTaskPlan = (): PlanData => ({
+    id: 'plan-optional-tasks',
+    title: 'Optional Tasks',
+    initial_state_id: 's',
+    states: [
+      {
+        id: 's',
+        title: 'S',
+        type: 'loose',
+        tasks: [
+          {
+            id: 'opt-deliverable-task',
+            description: 'task whose only deliverable is optional',
+            deliverables: [{ key: 'opt_note', description: 'optional note', required: false }],
+          },
+          {
+            id: 'optional-task',
+            description: 'task explicitly marked optional',
+            required: false,
+            deliverables: [{ key: 'maybe_field', description: 'maybe', required: true }],
+          },
+          {
+            id: 'required-task',
+            description: 'normal required task',
+            deliverables: [{ key: 'must_field', description: 'must', required: true }],
+          },
+        ],
+        transitions: [],
+      },
+    ],
+  });
+
+  it('reports tasks with no required deliverables as pending, not completed', async () => {
+    const sessionId = 'session-213-startup';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
+
+    const fullState = await svc.getFullState(sessionId);
+    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
+
+    // Core regression assertions for #213: nothing is completed before any work.
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+    expect(tasks.get('optional-task')).toBe('pending');
+    expect(tasks.get('required-task')).toBe('pending');
+
+    // The task-level `required` flag does not affect status (status is computed
+    // purely from deliverables), but it must still be surfaced correctly so the
+    // frontend can distinguish optional tasks. This is the only path task.required
+    // drives (state-machine.service.ts:1985).
+    const required = new Map(fullState?.states[0].tasks.map(t => [t.id, t.required]));
+    expect(required.get('optional-task')).toBe(false);
+    expect(required.get('opt-deliverable-task')).toBe(true);
+    expect(required.get('required-task')).toBe(true);
+  });
+
+  it('still completes a task once its required deliverable is collected', async () => {
+    const sessionId = 'session-213-collected';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
+
+    await svc.setDeliverable(sessionId, 'must_field', 'done', 'collected');
+
+    const fullState = await svc.getFullState(sessionId);
+    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
+
+    // Positive control: the guard must not block legitimate completion.
+    expect(tasks.get('required-task')).toBe('completed');
+    // Untouched optional tasks stay pending.
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+    expect(tasks.get('optional-task')).toBe('pending');
+  });
+
+  it('marks an optional-only-deliverable task in_progress once that deliverable is provided', async () => {
+    const sessionId = 'session-213-optional-progress';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
+
+    await svc.setDeliverable(sessionId, 'opt_note', 'hi', 'optional provided');
+
+    const fullState = await svc.getFullState(sessionId);
+    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
+
+    // Optional work that was actually done shows progress but never auto-completes.
+    expect(tasks.get('opt-deliverable-task')).toBe('in_progress');
+  });
+});
+
+// =============================================================================
 // deliverable_value_in
 // Fires when a deliverable's value is present in a predefined set of values.
 // Useful for enum-style routing (e.g. user picks 'option_a', 'option_b', …).
