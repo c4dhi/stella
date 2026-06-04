@@ -612,7 +612,9 @@ export function useConfiguratorState(
     (nodeId: string, slotId: string, value: unknown) => {
       const currentNode = { ...((configuration.nodes?.[nodeId] ?? {}) as Record<string, unknown>) }
 
-      if (value === undefined || value === null || value === '') {
+      // `undefined`/`null` removes the override (inherit default). An explicit ''
+      // is a deliberate empty value and must be persisted, not collapsed (#174).
+      if (value === undefined || value === null) {
         delete currentNode[slotId]
       } else {
         currentNode[slotId] = value

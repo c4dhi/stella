@@ -23,20 +23,9 @@ export default function ConfigField({ slot, value, defaultValue, onChange }: Con
   }`
 
   const handleTextChange = (newValue: string) => {
-    // If user clears the field back to empty, remove the custom value
-    if (newValue === '') {
-      onChange(undefined)
-    } else {
-      onChange(newValue)
-    }
-  }
-
-  const handleTextFocus = () => {
-    // When focusing on a field showing defaults, copy the default into the custom value
-    // so the user can edit from there
-    if (isShowingDefault && slot.type === 'text') {
-      onChange(defaultValue)
-    }
+    // Keep an explicit empty string — clearing the field stays empty and does not
+    // snap the default back. Use "Reset to default" to inherit again (#174).
+    onChange(newValue)
   }
 
   const renderField = () => {
@@ -48,7 +37,6 @@ export default function ConfigField({ slot, value, defaultValue, onChange }: Con
             <textarea
               value={displayValue}
               onChange={(e) => handleTextChange(e.target.value)}
-              onFocus={handleTextFocus}
               placeholder={`Enter ${slot.label.toLowerCase()}...`}
               rows={Math.min(12, Math.max(3, Math.ceil((displayValue?.length || 0) / 60)))}
               maxLength={slot.maxLength}
