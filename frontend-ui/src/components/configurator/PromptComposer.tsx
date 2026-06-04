@@ -290,10 +290,12 @@ export function buildExpertBlocks(
       id: 'prompt_template',
       type: 'editable',
       label: 'Prompt Template',
-      value: expert.systemPrompt || undefined,
+      // Pass the raw override through: `undefined` = inherit default, `''` = explicit
+      // empty (#174). Do not collapse '' to undefined or the default snaps back.
+      value: expert.systemPrompt,
       defaultValue: expert.defaultSystemPrompt || undefined,
       onChange: (v) => onUpdate({ systemPrompt: v }),
-      onReset: () => onUpdate({ systemPrompt: '' }),
+      onReset: () => onUpdate({ systemPrompt: undefined }),
       rows: 18,
       expertName: expert.name,
     },
@@ -754,6 +756,22 @@ function HighlightedEditor({
 // Fullscreen prompt modal
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve how an editable block renders from its raw override `value` and the
+ * built-in `defaultValue`. `undefined` value = no override → show the default
+ * (dimmed). An explicit `''` counts as an override and renders empty, so clearing
+ * the textarea does not snap the default back (#174).
+ */
+export function resolveBlockDisplay(
+  value: string | undefined,
+  defaultValue: string | undefined,
+): { isOverridden: boolean; showDefault: boolean; displayValue: string } {
+  const isOverridden = value !== undefined
+  const showDefault = !isOverridden && !!defaultValue
+  const displayValue = isOverridden ? value! : showDefault ? defaultValue! : ''
+  return { isOverridden, showDefault, displayValue }
+}
+
 function FullscreenPromptModal({
   block,
   isDark,
@@ -763,9 +781,7 @@ function FullscreenPromptModal({
   isDark: boolean
   onClose: () => void
 }) {
-  const isOverridden = block.value !== undefined && block.value !== ''
-  const showDefault = !isOverridden && !!block.defaultValue
-  const displayValue = isOverridden ? block.value! : showDefault ? block.defaultValue! : ''
+  const { isOverridden, showDefault, displayValue } = resolveBlockDisplay(block.value, block.defaultValue)
 
   const [showPopover, setShowPopover] = useState(false)
   const infoButtonRef = useRef<HTMLButtonElement>(null)
@@ -889,6 +905,16 @@ function FullscreenPromptModal({
             </div>
 
             <div className="flex items-center gap-2">
+              {block.onChange && block.defaultValue && displayValue !== block.defaultValue && (
+                <button
+                  onClick={() => block.onChange?.(block.defaultValue!)}
+                  className={`text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors ${
+                    isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                  }`}
+                >
+                  Insert default
+                </button>
+              )}
               {isOverridden && block.onReset && (
                 <button
                   onClick={block.onReset}
@@ -974,9 +1000,7 @@ const TAG_COLORS: Record<string, { dark: string; light: string }> = {
 // ---------------------------------------------------------------------------
 
 function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark: boolean; compact?: boolean }) {
-  const isOverridden = block.value !== undefined && block.value !== ''
-  const showDefault = !isOverridden && !!block.defaultValue
-  const displayValue = isOverridden ? block.value! : showDefault ? block.defaultValue! : ''
+  const { isOverridden, showDefault, displayValue } = resolveBlockDisplay(block.value, block.defaultValue)
 
   const [showPopover, setShowPopover] = useState(false)
   const [showFullscreen, setShowFullscreen] = useState(false)
@@ -1074,16 +1098,28 @@ function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark:
             </svg>
           </button>
         </div>
-        {isOverridden && block.onReset && (
-          <button
-            onClick={block.onReset}
-            className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
-              isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-            }`}
-          >
-            Reset to default
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {block.onChange && block.defaultValue && displayValue !== block.defaultValue && (
+            <button
+              onClick={() => block.onChange?.(block.defaultValue!)}
+              className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
+                isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+              }`}
+            >
+              Insert default
+            </button>
+          )}
+          {isOverridden && block.onReset && (
+            <button
+              onClick={block.onReset}
+              className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
+                isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+              }`}
+            >
+              Reset to default
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Variables popover */}
