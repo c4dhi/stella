@@ -1078,8 +1078,13 @@ describe('all-optional state handling (#172)', () => {
 describe('getFullState optional-task status on startup (#213)', () => {
   // One state holding three contrasting tasks:
   // - opt-deliverable-task: has only an optional deliverable (requiredKeys === [])
-  // - optional-task:        the task itself is required:false, with a required deliverable
-  // - required-task:        a normal required deliverable (positive control)
+  //                         — this is the case that actually exercised the bug.
+  // - optional-task:        the task itself is required:false. Note getFullState()'s
+  //                         STATUS computation never reads task.required; this case
+  //                         exists to pin the surfaced `.required` output flag (the
+  //                         only thing task.required drives) and to confirm a task
+  //                         whose required deliverable is uncollected stays pending.
+  // - required-task:        a normal required deliverable (positive control).
   const buildOptionalTaskPlan = (): PlanData => ({
     id: 'plan-optional-tasks',
     title: 'Optional Tasks',
@@ -1125,6 +1130,15 @@ describe('getFullState optional-task status on startup (#213)', () => {
     expect(tasks.get('opt-deliverable-task')).toBe('pending');
     expect(tasks.get('optional-task')).toBe('pending');
     expect(tasks.get('required-task')).toBe('pending');
+
+    // The task-level `required` flag does not affect status (status is computed
+    // purely from deliverables), but it must still be surfaced correctly so the
+    // frontend can distinguish optional tasks. This is the only path task.required
+    // drives (state-machine.service.ts:1985).
+    const required = new Map(fullState?.states[0].tasks.map(t => [t.id, t.required]));
+    expect(required.get('optional-task')).toBe(false);
+    expect(required.get('opt-deliverable-task')).toBe(true);
+    expect(required.get('required-task')).toBe(true);
   });
 
   it('still completes a task once its required deliverable is collected', async () => {
