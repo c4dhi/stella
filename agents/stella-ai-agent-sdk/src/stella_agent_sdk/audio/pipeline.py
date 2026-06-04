@@ -788,14 +788,29 @@ class AudioPipeline:
                     # in flight (still generating or audibly speaking), interrupt
                     # it instead of letting the message sit in the queue until the
                     # turn ends (the deferred-processing problem, #236). Otherwise
-                    # — barge-in off, agent idle, or one already resolving — queue
-                    # it as a normal next turn. The run loop is a single consumer,
-                    # so turns never interleave (serialization, AC#3).
+                    # — barge-in off, agent idle, or one already in progress —
+                    # queue it as a normal next turn. The run loop is a single
+                    # consumer, so turns never interleave (serialization, AC#3).
+                    #
+                    # _barge_in_active also covers an in-progress VOICE barge-in
+                    # (suspended, awaiting the STT final): a typed message then
+                    # queues rather than racing a second decider against the voice
+                    # resolution.
                     if (
                         self._barge_in_enabled
                         and not self._barge_in_resolving
+                        and not self._barge_in_active
                         and (self._turn_active or self._is_speaking)
                     ):
+                        # Claim the resolution SYNCHRONOUSLY, before yielding to the
+                        # loop. _handle_data_message is a sync callback and LiveKit
+                        # can dispatch buffered data frames back-to-back in one loop
+                        # iteration; if we left the flag for the spawned task to set
+                        # (it does, too), a second frame arriving in the same tick
+                        # would pass this guard and run a concurrent decider. The
+                        # voice path claims it the same way before create_task().
+                        self._barge_in_active = True
+                        self._barge_in_resolving = True
                         asyncio.create_task(self._handle_text_barge_in(event))
                     else:
                         try:
@@ -1614,9 +1629,10 @@ class AudioPipeline:
              COMMIT → commit the audio interrupt, abort the in-flight turn, and
              deliver the text as the next turn (is_barge_in=True).
 
-        Serialized by _barge_in_resolving: _handle_data_message only spawns this
-        when no resolution is in flight, so two rapid sends can't run concurrent
-        deciders.
+        Serialized by _barge_in_active / _barge_in_resolving, which the caller
+        (_handle_data_message) claims synchronously before spawning this task, so
+        two rapid sends — even in the same event-loop tick — can't run concurrent
+        deciders. Re-set here too so direct callers (tests) are also covered.
         """
         self._barge_in_active = True
         self._barge_in_resolving = True
@@ -1626,6 +1642,12 @@ class AudioPipeline:
             #    there is no audio to stop, so the generation pause is what makes
             #    the interruption block only until the answer is generated (AC#4).
             self.suspend_speech()
+            # suspend_speech() arms the 8s STT-final watchdog (the voice path
+            # needs it because a final may never come). Text resolves right here
+            # on the decider, so disarm it: if it fired it would resume_speech()
+            # WITHOUT request_turn_resume(), un-muting audio while generation
+            # stays paused — a transient blip before a slow-decider COMMIT.
+            self._disarm_suspend_watchdog()
             self.request_turn_suspend()
 
             transcript = event.text

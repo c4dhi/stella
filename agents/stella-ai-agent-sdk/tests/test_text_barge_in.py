@@ -323,3 +323,63 @@ async def test_rapid_sends_do_not_run_concurrent_resolutions():
 
     await asyncio.sleep(0.1)            # let the first resolution finish
     assert pipe._pending_barge_in.text == "first"
+
+
+@pytest.mark.asyncio
+async def test_rapid_sends_same_loop_iteration_single_decider():
+    """Two data frames delivered back-to-back in the SAME loop iteration (no
+    await between) must not both pass the guard. The flag is claimed
+    synchronously in _handle_data_message, so the second frame queues instead of
+    spawning a second concurrent decider (the TOCTOU the sleep(0) variant misses)."""
+    pipe, _ = make_pipeline()
+    pipe.begin_turn()
+    pipe._is_speaking = True
+
+    decider_calls = []
+
+    async def decider(t):
+        decider_calls.append(t)
+        return BargeInDecision.COMMIT
+
+    pipe.set_barge_in_decider(decider)
+
+    # Fire both synchronously — no await in between (same event-loop tick).
+    pipe._handle_data_message("alice", _user_text_envelope("first"))
+    pipe._handle_data_message("alice", _user_text_envelope("second"))
+
+    # The second was claimed-out synchronously before any task ran.
+    assert pipe._barge_in_resolving is True
+    assert pipe._transcript_queue.qsize() == 1
+    assert pipe._transcript_queue.get_nowait().text == "second"
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert len(decider_calls) == 1            # only one decider ever ran
+    assert pipe._pending_barge_in.text == "first"
+
+
+@pytest.mark.asyncio
+async def test_text_during_voice_suspend_does_not_run_concurrent_decider():
+    """A typed message arriving while a VOICE barge-in is mid-resolution
+    (_barge_in_active set, awaiting the STT final) must queue, not race a second
+    decider against the voice resolution."""
+    pipe, _ = make_pipeline()
+    pipe.begin_turn()
+    pipe._is_speaking = True
+    pipe._barge_in_active = True               # voice suspend in progress
+
+    decider_calls = []
+
+    async def decider(t):
+        decider_calls.append(t)
+        return BargeInDecision.COMMIT
+
+    pipe.set_barge_in_decider(decider)
+
+    pipe._handle_data_message("alice", _user_text_envelope("typed mid-voice"))
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert decider_calls == []                 # text decider never ran
+    assert pipe._transcript_queue.qsize() == 1
+    assert pipe._transcript_queue.get_nowait().text == "typed mid-voice"

@@ -194,7 +194,7 @@ export class AgentServerService implements OnModuleDestroy {
       return;
     }
 
-    // Emit output event for SessionOrchestrator to handle
+    // Re-emit as an agent.output.<sessionId> event for any in-process listeners.
     this.eventEmitter.emit(`agent.output.${sessionId}`, {
       sessionId,
       type: outputType,
