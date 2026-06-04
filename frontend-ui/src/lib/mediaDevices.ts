@@ -143,6 +143,18 @@ export async function getAudioOutputDevices(): Promise<MediaDeviceInfo[]> {
 }
 
 /**
+ * Pick the deviceId to use as the default output sink from an enumerated list.
+ * Prefers the entry the browser labels as 'default', otherwise the first device.
+ * Returns '' when the list is empty, which HTMLMediaElement.setSinkId treats as
+ * the system default output.
+ */
+export function pickDefaultSink(devices: MediaDeviceInfo[]): string {
+  if (!devices.length) return ''
+  const explicitDefault = devices.find((d) => d.deviceId === 'default')
+  return (explicitDefault ?? devices[0]).deviceId
+}
+
+/**
  * Get all video input devices (cameras)
  */
 export async function getVideoInputDevices(): Promise<MediaDeviceInfo[]> {

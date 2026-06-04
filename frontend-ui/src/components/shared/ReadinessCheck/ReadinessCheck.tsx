@@ -175,10 +175,26 @@ export default function ReadinessCheck({
       return wrap(result)
     }
     if (id === 'audioOutput') {
+      // The speaker test is a full publish→server→playback round-trip, so it needs
+      // a media-test session (publisher + listener tokens). Lazily create one if an
+      // earlier step (e.g. livekitPublish) didn't already, mirroring that branch.
+      let session = currentSession
+      if (!session) {
+        const start = await startMediaTestSession()
+        if (!start.ok) {
+          return wrap({
+            id: 'audioOutput',
+            status: start.skipped ? 'skipped' : 'fail',
+            detail: start.detail,
+          })
+        }
+        session = start.session
+        setMediaSession(session)
+      }
       setShowAudioOutModal(true)
       const result = await waitForInteractive()
       setShowAudioOutModal(false)
-      return wrap(result)
+      return { result, stream: currentMicStream, session }
     }
     return wrap({ id, status: 'skipped' })
   }
