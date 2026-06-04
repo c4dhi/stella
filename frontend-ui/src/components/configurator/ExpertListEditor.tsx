@@ -673,33 +673,21 @@ function SortableExpertCard({
                     <label className={`text-[10px] font-medium ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                       System Prompt {overrides?.system_prompt !== undefined ? 'Override' : ''}
                     </label>
-                    <div className="flex items-center gap-1">
-                      {info.defaultSystemPrompt && overrides?.system_prompt !== info.defaultSystemPrompt && (
-                        <button
-                          onClick={() => onOverrideChange('system_prompt', info.defaultSystemPrompt)}
-                          className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
-                            isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-                          }`}
-                        >
-                          Insert default
-                        </button>
-                      )}
-                      {overrides?.system_prompt !== undefined && (
-                        <button
-                          onClick={() => onOverrideChange('system_prompt', undefined)}
-                          className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
-                            isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-                          }`}
-                        >
-                          Reset to default
-                        </button>
-                      )}
-                    </div>
+                    {overrides?.system_prompt !== undefined && (
+                      <button
+                        onClick={() => onOverrideChange('system_prompt', undefined)}
+                        className={`text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                          isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+                        }`}
+                      >
+                        Reset to default
+                      </button>
+                    )}
                   </div>
                   {/* Single control. `undefined` = no override (default shown as a hint via
                       placeholder, never as actual text). Typing creates an override; clearing
-                      to '' is kept as an explicit empty prompt and the default is never
-                      auto-inserted — use "Insert default" to pull it in deliberately (#174). */}
+                      to '' is kept as an explicit empty prompt — the default is never
+                      auto-inserted. Use "Reset to default" to inherit it again (#174). */}
                   <textarea
                     value={overrides?.system_prompt ?? ''}
                     onChange={(e) => onOverrideChange('system_prompt', e.target.value)}

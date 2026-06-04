@@ -905,16 +905,6 @@ function FullscreenPromptModal({
             </div>
 
             <div className="flex items-center gap-2">
-              {block.onChange && block.defaultValue && displayValue !== block.defaultValue && (
-                <button
-                  onClick={() => block.onChange?.(block.defaultValue!)}
-                  className={`text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors ${
-                    isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-                  }`}
-                >
-                  Insert default
-                </button>
-              )}
               {isOverridden && block.onReset && (
                 <button
                   onClick={block.onReset}
@@ -1098,28 +1088,16 @@ function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark:
             </svg>
           </button>
         </div>
-        <div className="flex items-center gap-1">
-          {block.onChange && block.defaultValue && displayValue !== block.defaultValue && (
-            <button
-              onClick={() => block.onChange?.(block.defaultValue!)}
-              className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
-                isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-              }`}
-            >
-              Insert default
-            </button>
-          )}
-          {isOverridden && block.onReset && (
-            <button
-              onClick={block.onReset}
-              className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
-                isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
-              }`}
-            >
-              Reset to default
-            </button>
-          )}
-        </div>
+        {isOverridden && block.onReset && (
+          <button
+            onClick={block.onReset}
+            className={`text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors ${
+              isDark ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700' : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100'
+            }`}
+          >
+            Reset to default
+          </button>
+        )}
       </div>
 
       {/* Variables popover */}
