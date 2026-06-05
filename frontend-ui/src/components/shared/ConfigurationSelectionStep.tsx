@@ -8,6 +8,7 @@ import type {
   AgentConfigurationPayload,
   PipelineSchema,
   RuntimeVariable,
+  ExpertDefault,
 } from '../../lib/api-types'
 
 interface ConfigurationSelectionStepProps {
@@ -15,6 +16,10 @@ interface ConfigurationSelectionStepProps {
   pipelineSchema: PipelineSchema
   // Manifest-declared {{placeholder}} palette for this agent type (for the editor).
   runtimeVariables?: RuntimeVariable[] | null
+  // Agent-declared default experts for the Expert Module.
+  expertDefaults?: ExpertDefault[] | null
+  // Agent capabilities — gate task_extraction (plans) vs assessment pool (experts).
+  capabilities?: string[] | null
   selectedConfiguration: AgentConfiguration | null
   onSelectConfiguration: (config: AgentConfiguration | null) => void
 }
@@ -61,6 +66,8 @@ export default function ConfigurationSelectionStep({
   agentTypeId,
   pipelineSchema,
   runtimeVariables,
+  expertDefaults,
+  capabilities,
   selectedConfiguration,
   onSelectConfiguration,
 }: ConfigurationSelectionStepProps) {
@@ -83,6 +90,8 @@ export default function ConfigurationSelectionStep({
     openModal({
       pipelineSchema,
       runtimeVariables,
+      expertDefaults,
+      capabilities,
       onSave: async (name, description, configuration) => {
         try {
           const created = await apiClient.createAgentConfiguration({
@@ -105,6 +114,8 @@ export default function ConfigurationSelectionStep({
     openModal({
       pipelineSchema,
       runtimeVariables,
+      expertDefaults,
+      capabilities,
       initialConfiguration: config.configuration,
       initialName: config.name,
       initialDescription: config.description || '',

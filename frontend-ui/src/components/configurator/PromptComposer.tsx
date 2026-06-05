@@ -297,7 +297,8 @@ export function buildExpertBlocks(
       onChange: (v) => onUpdate({ systemPrompt: v }),
       onReset: () => onUpdate({ systemPrompt: undefined }),
       rows: 18,
-      expertName: expert.name,
+      // No enforced-output-format footer: the output is a generic interface and the
+      // verdict labels are configured in the Verdict Responses editor below.
     },
   ]
 }

@@ -85,6 +85,8 @@ export default function AgentConfigSection() {
     openModal({
       pipelineSchema: agentType.pipelineSchema,
       runtimeVariables: agentType.runtimeVariables,
+      expertDefaults: agentType.expertDefaults,
+      capabilities: agentType.capabilities,
       saveLabel: 'Create Configuration',
       onSave: async (name, description, configuration) => {
         try {
@@ -115,6 +117,8 @@ export default function AgentConfigSection() {
     openModal({
       pipelineSchema: schema,
       runtimeVariables: agentTypes.find((t) => t.id === config.agentTypeId)?.runtimeVariables,
+      expertDefaults: agentTypes.find((t) => t.id === config.agentTypeId)?.expertDefaults,
+      capabilities: agentTypes.find((t) => t.id === config.agentTypeId)?.capabilities,
       initialConfiguration: config.configuration,
       initialName: config.name,
       initialDescription: config.description || '',

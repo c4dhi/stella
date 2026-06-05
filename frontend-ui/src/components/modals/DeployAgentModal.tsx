@@ -721,6 +721,8 @@ export default function DeployAgentModal({
                       agentTypeId={selectedType.id}
                       pipelineSchema={selectedType.pipelineSchema}
                       runtimeVariables={selectedType.runtimeVariables}
+                      expertDefaults={selectedType.expertDefaults}
+                      capabilities={selectedType.capabilities}
                       selectedConfiguration={selectedConfiguration}
                       onSelectConfiguration={setSelectedConfiguration}
                     />

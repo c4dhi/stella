@@ -31,6 +31,7 @@ import {
 import ExpertCard from './ExpertCard'
 import type { ExpertDefinition } from './useConfiguratorState'
 import { PromptComposer, buildExpertBlocks } from './PromptComposer'
+import { useConfiguratorStore } from '../../store/configuratorStore'
 
 interface ExpertSidebarProps {
   experts: ExpertDefinition[]
@@ -71,6 +72,11 @@ export default function ExpertSidebar({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [taskExtractionExpanded, setTaskExtractionExpanded] = useState(false)
+
+  // Assessment pool (+ custom experts) is gated on the `experts` capability.
+  // When capabilities aren't provided (older flow), show everything.
+  const capabilities = useConfiguratorStore((s) => s.capabilities)
+  const hasExperts = !capabilities || capabilities.includes('experts')
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
@@ -182,16 +188,17 @@ export default function ExpertSidebar({
       {/* Header */}
       <div className={`px-5 py-4 border-b shrink-0 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
         <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
-          Experts
+          Expert Module
         </h3>
         <p className={`text-[11px] font-light mt-1 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
-          Drag to set arbitration priority (top = highest)
+          Drag to set arbitration priority (top = highest) · expand an expert to wire verdict responses
         </p>
       </div>
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
-        {/* Task Extraction Section */}
+        {/* Task Extraction Section — gated on `plans` (present iff a task_extraction default exists) */}
+        {taskExtraction && (
         <div>
           <div className="flex items-center gap-2.5 mb-3">
             <div className={`w-2.5 h-2.5 rounded-full ${isDark ? 'bg-blue-400' : 'bg-blue-500'}`} />
@@ -324,8 +331,10 @@ export default function ExpertSidebar({
             </div>
           )}
         </div>
+        )}
 
-        {/* Expert Pool Section */}
+        {/* Expert Pool Section — gated on `experts` */}
+        {hasExperts && (
         <div>
           <SectionHeader
             color={isDark ? 'bg-emerald-400' : 'bg-emerald-500'}
@@ -391,6 +400,7 @@ export default function ExpertSidebar({
             </DragOverlay>
           </DndContext>
         </div>
+        )}
 
         {/* Background experts (if any non-task_extraction) */}
         {bgExperts.filter((e) => e.name !== 'task_extraction').length > 0 && (
@@ -447,7 +457,8 @@ export default function ExpertSidebar({
           </div>
         )}
 
-        {/* Add custom expert */}
+        {/* Add custom expert — gated on `experts` */}
+        {hasExperts && (
         <AnimatePresence>
           {showAddCustom ? (
             <AddCustomExpertForm
@@ -474,6 +485,7 @@ export default function ExpertSidebar({
             </button>
           )}
         </AnimatePresence>
+        )}
       </div>
     </div>
   )
