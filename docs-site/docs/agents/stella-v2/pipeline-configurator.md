@@ -53,20 +53,22 @@ Agent behavior depends on many parameters: which experts are enabled, what promp
 
 **Design decision — always_run vs. background_experts**: These are independent flags. An expert can be always-run but blocking (its findings influence the response), or always-run and background (it runs every turn but doesn't delay the response). `task_extraction` is both: it must run every turn to capture deliverables, but its output feeds the state machine rather than the response, so it runs in the background.
 
-**When to customize**: Add custom experts for domain-specific analysis (e.g., a "compliance" expert for regulated industries). Reorder expert priority to change which expert "wins" in arbitration conflicts.
+**When to customize**: Add custom experts for domain-specific analysis (e.g., a "compliance" expert for regulated industries). Reorder expert priority to change which expert "wins" in arbitration conflicts. Wire each expert's verdicts to deterministic responses in the [Expert Module](#expert-module--verdict-responses).
 
 ### Arbitration
 
-**Purpose**: Deterministic priority-based conflict resolution. When multiple experts return verdicts, Arbitration selects the highest-priority one and determines the response tone.
+**Purpose**: Deterministic priority-based conflict resolution. When multiple experts return verdicts, Arbitration walks them in priority order and applies the winning expert's configured **verdict directive** — which can deterministically **replace, prepend to, or short-circuit** the generated response with a literature-informed template, rather than relying on the response LLM's interpretation. Verdicts without a deterministic directive feed tone/guidance into the Response Generator as before.
+
+This is the clinical-determinism knob: each expert maps each verdict to an action (`inform` / `prepend` / `override` / `short_circuit`) and a response template, edited in the [Expert Module](#expert-module--verdict-responses). The highest-priority non-`inform` directive wins.
 
 | Slot | Type | Default | Rationale |
 |------|------|---------|-----------|
-| `tone_map` | key_value | Expert → tone mapping | Maps each expert to a tone (e.g., `medical → cautious`, `probing → curious`). The winning expert's tone is injected into the Response Generator's context. |
-| `gate_failure_message` | text | "I'm sorry, I didn't quite catch that..." | Returned when `noise_detection` classifies input as unclear. A static string rather than LLM-generated to ensure consistent, fast handling of garbled audio. |
+| `tone_map` | key_value | Expert → tone mapping | Maps each expert to a tone (e.g., `medical → cautious`, `probing → curious`) used for `inform` verdicts. The winning expert's tone is injected into the Response Generator's context. |
+| `gate_failure_message` | text | "I'm sorry, I didn't quite catch that..." | Locale-aware fallback spoken when `noise_detection` returns `unclear` and its `short_circuit` directive carries no template. |
 
-**Why not LLM-based?** V1's Aggregator uses an LLM to synthesize multiple expert findings (~500ms, non-deterministic). Arbitration uses a fixed priority order (~1ms) — the expert list order defines priority. This makes conflict resolution predictable: given the same expert verdicts, the same expert always wins. The Response Generator then crafts a natural response using the winning verdict as context.
+**Why not LLM-based?** V1's Aggregator uses an LLM to synthesize multiple expert findings (~500ms, non-deterministic). Arbitration is pure Python (~1ms) — the expert list order defines priority, and the winning verdict directive is applied deterministically: given the same verdicts, the same response is produced. For `override`/`short_circuit` the response LLM is bypassed entirely; for `prepend` the template is spoken and the LLM continues from it.
 
-**When to customize**: Adjust tone_map when adding custom experts. Modify gate_failure_message for localization or brand voice.
+**When to customize**: Author per-verdict templates for safety-critical experts (medical/legal) in the Expert Module. Adjust `tone_map` for `inform` verdicts. `gate_failure_message` is the noise fallback for localization.
 
 ### Response Generator
 
@@ -98,6 +100,44 @@ Agent behavior depends on many parameters: which experts are enabled, what promp
 **Why the Bridge Generator exists**: In voice conversations, silence after the user stops speaking feels like the agent is unresponsive. The bridge fills this gap with a natural acknowledgment while the full pipeline (Input Gate → Experts → Arbitration → Response Generator) runs in parallel. This reduces **perceived** latency from ~800ms to ~100ms without affecting actual processing time. The bridge phrase is spoken as a standalone TTS segment, and the full response follows immediately after.
 
 **When to customize**: Adjust the system prompt to match your agent's personality (e.g., more formal bridges for professional domains, warmer bridges for casual ones).
+
+## Expert Module & Verdict Responses
+
+The **Expert Module** (the right-hand panel of the Configurator) is where you manage experts and wire each verdict to a response. Expand any expert to edit its prompt, model settings, and a **Verdict Responses** list.
+
+### The verdict model
+
+Each expert classifies a turn into exactly one **verdict**. A verdict is fully editable:
+
+- **Label** — the value the expert emits (e.g. `none`, `low`, `high`, `critical`). Add, rename, or remove labels freely.
+- **Explanation** — a plain-language description of what the verdict means. **The label and explanation are handed to the classifying LLM** so it knows when to pick each verdict.
+- **Action** — what the [Arbitration](#arbitration) layer does deterministically when this verdict wins: `inform`, `prepend`, `override`, or `short_circuit` (see [`verdict_directives`](./pipeline-schema.md#verdict_directives)).
+- **Template** — the literature-informed response spoken for `prepend`/`override`/`short_circuit` (supports `{{variables}}`).
+
+The output **interface** stays fixed (`{verdict, confidence, recommendation}`); only the labels, explanations, and actions are configurable — so you never hardcode an output structure in the prompt.
+
+Every verdict ships with a sensible default action and explanation. The editor shows defaults dimmed and offers **per-verdict reset** and **reset all to default**, mirroring the prompt editor.
+
+### Custom experts
+
+The **New Custom Expert** form uses the same prompt editor as the edit view (variable insertion, `{{variable}}` highlighting, fullscreen expand) and includes an **Always Triggered** toggle — when enabled, the expert runs on every turn and the Trigger Criteria field is hidden.
+
+### Unsaved-changes guard
+
+Closing the Configurator (backdrop click or the close button) while there are unsaved changes prompts a **Discard changes?** confirmation. Clean configurations close immediately.
+
+## Agent-Declared Defaults & Capability Gating
+
+Experts and their default verdicts/actions are **declared by the agent**, not hardcoded in the UI. On seed/upload the platform reads each agent's `config/experts/*.json` and publishes them on `AgentType.expertDefaults`; the Configurator renders the agent's declared experts/verdicts/actions (with a transitional fallback to built-ins until re-seeded).
+
+Which sections appear is gated by the agent's declared `capabilities`:
+
+| Capability | Unlocks |
+|------------|---------|
+| `plans` | **Task Extraction** configuration (deliverable extraction fills the plan's state machine) |
+| `experts` | the **assessment expert pool** + arbitration + custom experts + verdict directives |
+
+This is the same split the manifest validator enforces (`x-stella-requires-plan` ⟹ `plans`; expert config ⟹ `experts`). An agent receives only the configuration its capabilities expose.
 
 ## Thresholds
 
