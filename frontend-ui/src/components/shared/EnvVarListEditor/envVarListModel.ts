@@ -226,10 +226,10 @@ export function hasVariableEdits(rows: EnvVarRow[], initialKeys: string[]): bool
   for (const k of currentSet) if (!initialSet.has(k)) return true
 
   // Any value typed (preserved rows that were touched are no longer preserved).
+  // Key-set changes were already handled above, so only value edits remain to check.
   for (const row of rows) {
     if (row.key.trim() === '') continue
     if (!row.valuePreserved && row.value !== '') return true
-    if (!row.valuePreserved && !initialSet.has(row.key.trim())) return true
   }
   return false
 }

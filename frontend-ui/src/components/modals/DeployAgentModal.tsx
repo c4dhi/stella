@@ -167,9 +167,13 @@ export default function DeployAgentModal({
   const handleContinue = () => {
     // Special handling for envvars step - transition from select to edit view
     if (step === 'envvars' && envVarsView === 'select') {
-      // Seed the shared editor with the agent's declared required keys (empty). A
-      // selected template supplies the rest server-side; manual rows are overrides.
-      envVarEditor.reset({ requiredKeys: agentRequirements.requiredEnvVars, initial: {} })
+      // Only seed required keys the user still has to enter. Keys a selected template
+      // already provides are satisfied server-side (resolveAgentEnvVarsFromConfigSchema
+      // computes missingRequiredEnvVars after merging the template), so seeding them as
+      // empty required rows would wrongly block deploy. Manual rows are overrides.
+      const templateKeys = new Set(selectedEnvVarTemplate?.variableKeys ?? [])
+      const requiredToFill = agentRequirements.requiredEnvVars.filter((key) => !templateKeys.has(key))
+      envVarEditor.reset({ requiredKeys: requiredToFill, initial: {} })
       setEnvVarsView('edit')
       return
     }
@@ -228,8 +232,11 @@ export default function DeployAgentModal({
         if (envVarsView === 'select') {
           return true
         }
-        // In edit view: all required vars must be filled
-        return agentRequirements.requiredEnvVars.every(key => envVars[key]?.trim())
+        // In edit view: every required var must be satisfied — either entered manually
+        // or provided by the selected template (merged server-side on deploy).
+        return agentRequirements.requiredEnvVars.every(
+          key => envVars[key]?.trim() || selectedEnvVarTemplate?.variableKeys.includes(key)
+        )
       default:
         return true
     }

@@ -93,9 +93,11 @@ export default function EnvVarsSelectionStep({
 
   const handleGoToEdit = (template: EnvVarTemplate | null) => {
     onSelectEnvVarTemplate(template)
-    // Start from the agent's declared required keys (empty). When a template is also
-    // selected it supplies the rest server-side; manual rows are overrides/additions.
-    editor.reset({ requiredKeys: requiredEnvVars, initial: {} })
+    // Only seed required keys the user still has to enter. Keys a selected template
+    // provides are satisfied server-side, so they must not become empty required rows.
+    const templateKeys = new Set(template?.variableKeys ?? [])
+    const requiredToFill = requiredEnvVars.filter((key) => !templateKeys.has(key))
+    editor.reset({ requiredKeys: requiredToFill, initial: {} })
     onEnvVarsViewChange('edit')
   }
 
