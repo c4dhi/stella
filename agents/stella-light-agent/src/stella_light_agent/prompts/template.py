@@ -1,8 +1,8 @@
 """Lightweight prompt template rendering with variable substitution.
 
-Configurable prompts (bridge, response, barge-in, …) may reference runtime
-variables so a single edited prompt can adapt to context — most importantly
-whether the current turn is a user barge-in.
+Configurable prompts (response, barge-in, …) may reference runtime variables
+so a single edited prompt can adapt to context — most importantly whether the
+current turn is a user barge-in.
 
 Supported syntax (Handlebars-ish, intentionally minimal):
 
