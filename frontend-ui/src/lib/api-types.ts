@@ -247,6 +247,7 @@ export interface AgentType {
   configSchema?: Record<string, unknown>  // JSON Schema for config options
   pipelineSchema?: PipelineSchema | null  // Pipeline topology + configurable slots
   runtimeVariables?: RuntimeVariable[] | null  // Manifest-declared {{placeholder}} palette
+  expertDefaults?: ExpertDefault[] | null  // Agent-declared default experts (config/experts/*.json)
   compilerVersion?: string | null  // SDK prompt-compiler version this agent uses
   resourceGpu?: boolean
   authorName?: string | null
@@ -1438,10 +1439,44 @@ export interface SessionStatusItem {
 // Agent Configurator Types
 // ============================================================================
 
+/** Deterministic action an expert verdict applies to the final response.
+ *  Mirrors stella-v2 VerdictDirective.action. */
+export type VerdictAction = 'inform' | 'prepend' | 'override' | 'short_circuit'
+
+/** Per-verdict deterministic response directive (a literature-informed template
+ *  and the action it takes on the generated response). */
+export interface VerdictDirective {
+  action: VerdictAction
+  template: string
+  /** Plain-language explanation of the verdict, handed to the classifying LLM. */
+  description?: string
+}
+
+/** An agent-declared default expert, as published from config/experts/*.json
+ *  (raw snake_case shape mirroring the runtime ExpertConfig). */
+export interface ExpertDefault {
+  name: string
+  description?: string
+  priority?: number
+  enabled?: boolean
+  model?: string
+  temperature?: number
+  max_tokens?: number
+  can_call_functions?: boolean
+  system_prompt?: string
+  output_format?: string
+  output_schema?: Record<string, unknown>
+  trigger_criteria?: string
+  always_triggered?: boolean
+  history_limit?: number
+  min_confidence?: number
+  verdict_directives?: Record<string, { action?: string; template?: string; description?: string }>
+}
+
 export interface ConfigurableSlot {
   id: string
   label: string
-  type: 'text' | 'number' | 'select' | 'string_list' | 'key_value' | 'expert_list'
+  type: 'text' | 'number' | 'select' | 'string_list' | 'key_value' | 'expert_list' | 'verdict_directives'
   description?: string
   default?: unknown
   options?: string[]  // for select type

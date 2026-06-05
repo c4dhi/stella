@@ -139,6 +139,46 @@ function discoverBuiltinAgents(): BuiltinAgentInfo[] {
 }
 
 /**
+ * Read an agent's declared default experts from config/experts/*.json.
+ *
+ * Capability-gated per expert: `task_extraction` rides on the "plans" capability
+ * (its job is to fill the plan's deliverables), while the assessment experts ride
+ * on the "experts" capability. The parsed array (each file = one expert:
+ * name/model/prompt/verdict_directives/…) is stored on AgentType.expertDefaults so
+ * the Configurator's Expert Module renders the agent's declared experts/verdicts/
+ * actions instead of hardcoding them.
+ */
+function readExpertDefaults(
+  directoryPath: string,
+  capabilities: unknown,
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  const caps = Array.isArray(capabilities) ? (capabilities as string[]) : []
+  const hasExperts = caps.includes('experts')
+  const hasPlans = caps.includes('plans')
+  if (!hasExperts && !hasPlans) return Prisma.DbNull
+
+  const expertsDir = path.join(directoryPath, 'config', 'experts')
+  if (!fs.existsSync(expertsDir)) return Prisma.DbNull
+
+  const experts: Record<string, unknown>[] = []
+  // Sort by filename for a deterministic, drift-free order.
+  for (const file of fs.readdirSync(expertsDir).filter((f) => f.endsWith('.json')).sort()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(fs.readFileSync(path.join(expertsDir, file), 'utf-8'))
+    } catch (err) {
+      throw new Error(`Invalid expert config ${file} in ${directoryPath}: ${(err as Error).message}`)
+    }
+    if (!parsed || typeof parsed !== 'object') continue
+    const name = (parsed as Record<string, unknown>).name
+    const include = name === 'task_extraction' ? hasPlans : hasExperts
+    if (include) experts.push(parsed as Record<string, unknown>)
+  }
+
+  return experts.length > 0 ? (experts as Prisma.InputJsonValue) : Prisma.DbNull
+}
+
+/**
  * Map a manifest to database fields for AgentType model.
  */
 function mapManifestToDbFields(manifest: AgentManifest): Prisma.AgentTypeCreateInput {
@@ -354,14 +394,15 @@ async function main() {
   }
 
   // Upsert each agent to database
-  for (const { manifest } of agents) {
+  for (const { manifest, directoryPath } of agents) {
     const dbFields = mapManifestToDbFields(manifest)
+    const expertDefaults = readExpertDefaults(directoryPath, manifest.capabilities)
 
     // Capture the pre-upsert state so we can detect a version/schema change and
     // reconcile saved configurations ONLY when the agent type actually changed.
     const before = await prisma.agentType.findUnique({
       where: { slug: manifest.metadata.slug },
-      select: { version: true, pipelineSchemaHash: true },
+      select: { version: true, pipelineSchemaHash: true, compilerVersion: true },
     })
 
     const result = await prisma.agentType.upsert({
@@ -385,12 +426,14 @@ async function main() {
         pipelineSchema: dbFields.pipelineSchema,
         pipelineSchemaHash: dbFields.pipelineSchemaHash,
         runtimeVariables: dbFields.runtimeVariables,
+        expertDefaults,
         compilerVersion: dbFields.compilerVersion,
         sdkMinVersion: dbFields.sdkMinVersion,
         // Preserve isBuiltIn and validationStatus on update
       },
       create: {
         ...dbFields,
+        expertDefaults,
         isBuiltIn: true,
         // Use literal to avoid hard dependency on generated enum export names.
         validationStatus: 'APPROVED',
@@ -403,7 +446,11 @@ async function main() {
     // changed (or this type is brand new). Keeps the seed O(changed types).
     const versionChanged = before?.version !== result.version
     const schemaChanged = before?.pipelineSchemaHash !== result.pipelineSchemaHash
-    if (!before || versionChanged || schemaChanged) {
+    // Compatibility also depends on compilerVersion (a config can require a minimum
+    // prompt-compiler version), so a manifest that bumps ONLY promptCompiler.version
+    // must still re-flag saved configs — otherwise the deploy path trusts a stale flag.
+    const compilerChanged = before?.compilerVersion !== result.compilerVersion
+    if (!before || versionChanged || schemaChanged || compilerChanged) {
       const report = await reconcileAgentTypeConfigurations(prisma, result.id)
       if (report.total > 0) {
         console.log(

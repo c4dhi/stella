@@ -11,11 +11,17 @@ Conflict resolution rules:
 - If two experts contradict, higher priority wins
 """
 
+import logging
 import time
 from typing import List, Dict, Any, Optional
 
+from stella_agent_sdk import prompts as sdk_prompts
+
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
 from stella_v2_agent.models.arbitration_result import ArbitrationResult, ResponseDirective
+from stella_v2_agent.experts.base import ExpertConfig, VerdictDirective
+
+logger = logging.getLogger(__name__)
 
 
 # Default tone mapping: expert name → tone when that expert flags something
@@ -54,12 +60,20 @@ class Arbitration:
     noise_detection (100) > medical (95) > legal (90) > task_extraction (70) > probing (60) > timekeeper (50)
     """
 
-    def __init__(self):
+    def __init__(self, compiler_version: str = "1.0.0"):
         self._tone_map: Dict[str, str] = dict(_DEFAULT_TONE_MAP)
         self._flagging_verdicts: Dict[str, set] = {
             k: set(v) for k, v in _DEFAULT_FLAGGING_VERDICTS.items()
         }
         self._gate_failure_message = _DEFAULT_GATE_FAILURE_MESSAGE
+        # Compiler version used to resolve {{placeholders}} in verdict templates.
+        # Kept in sync with the agent's PROMPT_COMPILER_VERSION via set_compiler_version().
+        self._compiler_version = compiler_version
+
+    def set_compiler_version(self, version: str) -> None:
+        """Pin the prompt-compiler version used for verdict template resolution."""
+        if version:
+            self._compiler_version = version
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
@@ -78,11 +92,22 @@ class Arbitration:
     def gate_failure_message(self) -> str:
         return self._gate_failure_message
 
-    def resolve(self, verdicts: List[ExpertVerdict], sm_context: Optional[Dict[str, Any]] = None) -> ArbitrationResult:
+    def resolve(
+        self,
+        verdicts: List[ExpertVerdict],
+        sm_context: Optional[Dict[str, Any]] = None,
+        expert_configs: Optional[Dict[str, "ExpertConfig"]] = None,
+        user_input: str = "",
+    ) -> ArbitrationResult:
         """Resolve expert verdicts into a ResponseDirective.
 
         Args:
             verdicts: List of ExpertVerdict objects from the Expert Pool.
+            sm_context: State machine context (for redirect/template resolution).
+            expert_configs: name → ExpertConfig map, used to look up each expert's
+                per-verdict deterministic directives (verdict_directives).
+            user_input: The user's current message (for {{user_message}} resolution
+                in verdict templates).
 
         Returns:
             ArbitrationResult containing the ResponseDirective for the Response Generator.
@@ -106,22 +131,43 @@ class Arbitration:
             if v.success and self._is_flagging(v)
         ]
 
-        # 1. Short-circuit: noise_detection says "unclear" → override everything
-        noise_verdict = self._find_verdict(sorted_verdicts, "noise_detection")
-        if noise_verdict and noise_verdict.success and noise_verdict.verdict == "unclear":
-            directive.short_circuit = True
-            directive.redirect_message = self._gate_failure_message
-            directive.tone = "neutral"
-            directive.expert_summary = f"noise_detection: unclear (confidence={noise_verdict.confidence:.2f})"
-            favored_expert = "noise_detection"
+        # 1. Deterministic verdict directives (priority-ordered).
+        #    The highest-priority expert whose verdict maps to a non-"inform"
+        #    directive replaces (override / short_circuit) or augments (prepend)
+        #    the LLM-generated response with a literature-informed template.
+        #    The legacy noise_detection "unclear" short-circuit is expressed here
+        #    as a synthesized fallback so it still wins by priority when an expert
+        #    config carries no directive.
+        winner_verdict, winner_directive = self._select_directive(sorted_verdicts, expert_configs)
+        if winner_directive is not None:
+            resolved = self._resolve_template(winner_directive.template, sm_context, user_input)
+            if not resolved.strip() and winner_directive.action != "prepend":
+                # Empty/failed template on a REPLACE action (override / short_circuit,
+                # incl. the seeded noise short_circuit) → locale-aware safe default,
+                # so we never speak an empty turn. NOT applied to prepend: there an
+                # empty template must mean "add nothing before the reply", not inject
+                # the "didn't catch that" line ahead of an otherwise-normal answer.
+                resolved = self._gate_failure_message
+            directive.action = winner_directive.action
+            directive.directive_source = winner_verdict.expert_name
+            directive.resolved_response = resolved
+            directive.tone = self._tone_map.get(winner_verdict.expert_name, "neutral")
+            favored_expert = winner_verdict.expert_name
 
-            latency_ms = (time.time() - start_time) * 1000
-            return ArbitrationResult(
-                directive=directive,
-                conflicts=["noise_detection overrode all other experts"],
-                favored_expert=favored_expert,
-                latency_ms=latency_ms,
-            )
+            if winner_directive.action in ("override", "short_circuit"):
+                # Back-compat flags so existing short_circuit consumers keep working.
+                directive.short_circuit = True
+                directive.redirect_message = resolved
+                directive.expert_summary = self._build_summary(sorted_verdicts)
+                latency_ms = (time.time() - start_time) * 1000
+                return ArbitrationResult(
+                    directive=directive,
+                    conflicts=[f"{favored_expert} {winner_directive.action} replaced the response"],
+                    favored_expert=favored_expert,
+                    latency_ms=latency_ms,
+                )
+            # action == "prepend": keep going so the generated reply still gets
+            # tone / must_avoid / probing / timekeeper guidance.
 
         # 2. Build directive from active verdicts in priority order
         #    IMPORTANT: task_extraction recommendations are internal metadata
@@ -189,13 +235,7 @@ class Arbitration:
                 directive.followup_question = redirect
 
         # 5. Build expert summary
-        summary_parts = []
-        for v in sorted_verdicts:
-            if v.success:
-                summary_parts.append(
-                    f"{v.expert_name}: {v.verdict} ({v.confidence:.2f})"
-                )
-        directive.expert_summary = ", ".join(summary_parts)
+        directive.expert_summary = self._build_summary(sorted_verdicts)
 
         # 6. Detect conflicts
         conflicts = self._detect_conflicts(active_verdicts)
@@ -222,6 +262,70 @@ class Arbitration:
             if v.expert_name == expert_name:
                 return v
         return None
+
+    def _select_directive(
+        self,
+        sorted_verdicts: List[ExpertVerdict],
+        expert_configs: Optional[Dict[str, "ExpertConfig"]],
+    ):
+        """Pick the highest-priority non-"inform" verdict directive.
+
+        Precedence per verdict, in priority order:
+        1. An explicit ``verdict_directives[verdict]`` entry on the expert config
+           (an explicit "inform" entry is honored — it suppresses the fallback).
+        2. Otherwise, the legacy noise_detection "unclear" → short_circuit fallback,
+           so un-migrated configs still ask the user to repeat.
+
+        Returns (winning_verdict, VerdictDirective) or (None, None).
+        """
+        for v in sorted_verdicts:
+            if not v.success:
+                continue
+            cfg = expert_configs.get(v.expert_name) if expert_configs else None
+            vd: Optional[VerdictDirective] = None
+            if cfg is not None and v.verdict in cfg.verdict_directives:
+                vd = cfg.verdict_directives[v.verdict]
+            elif v.expert_name == "noise_detection" and v.verdict == "unclear":
+                vd = VerdictDirective(action="short_circuit", template="")
+            if vd is not None and vd.action != "inform":
+                return v, vd
+        return None, None
+
+    def _resolve_template(
+        self, template: str, sm_context: Optional[Dict[str, Any]], user_input: str
+    ) -> str:
+        """Compile a verdict template's {{placeholders}}. Never raises.
+
+        On compile failure (e.g. an unregistered compiler version, a malformed
+        context) it FAILS CLOSED — returns "" so the caller substitutes the safe
+        locale-aware default — rather than returning the raw template. Speaking a
+        literal ``{{user_name}}`` on a safety-critical override is worse than the
+        generic fallback line. ``speech_safe=True`` strips the {{placeholder}}
+        scaffolding labels (e.g. "CURRENT USER MESSAGE:") that are meant for LLM
+        system prompts, not for text spoken verbatim to the user."""
+        if not template:
+            return ""
+        try:
+            compiled = sdk_prompts.compile(
+                template,
+                version=self._compiler_version,
+                sm_context=sm_context,
+                conversation_history=None,
+                user_input=user_input,
+                speech_safe=True,
+            )
+            return compiled or ""
+        except Exception as e:  # noqa: BLE001 — arbitration must stay deterministic & crash-free
+            logger.warning(f"Verdict template compile failed ({e}); failing closed to safe default")
+            return ""
+
+    def _build_summary(self, sorted_verdicts: List[ExpertVerdict]) -> str:
+        """One-line summary of all successful verdicts (for prompt/debug injection)."""
+        return ", ".join(
+            f"{v.expert_name}: {v.verdict} ({v.confidence:.2f})"
+            for v in sorted_verdicts
+            if v.success
+        )
 
     def _detect_conflicts(self, active_verdicts: List[ExpertVerdict]) -> List[str]:
         """Detect contradictions between expert verdicts."""

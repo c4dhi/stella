@@ -125,7 +125,7 @@ class StellaV2Agent(BaseAgent):
             self.llm_service, self.expert_registry,
             compiler_version=self._compiler_version,
         )
-        self.arbitration = Arbitration()
+        self.arbitration = Arbitration(compiler_version=self._compiler_version)
         self.response_generator = ResponseGenerator(self.llm_service)
         self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
 
@@ -323,7 +323,12 @@ class StellaV2Agent(BaseAgent):
 
             # ── Stage 3: Deterministic Arbitration (original context) ──
             logger.info("Stage 3: Arbitration")
-            arb_result = self.arbitration.resolve(all_verdicts, sm_context)
+            arb_result = self.arbitration.resolve(
+                all_verdicts,
+                sm_context,
+                expert_configs=self.expert_registry.as_map(),
+                user_input=input.text,
+            )
 
             yield AgentOutput.debug(
                 input.session_id,
@@ -340,55 +345,94 @@ class StellaV2Agent(BaseAgent):
                 turn_id=turn_id,
             )
 
-            # Short-circuit: noise_detection override (ask user to repeat)
-            if arb_result.directive.short_circuit:
-                yield AgentOutput.text_chunk(
-                    input.session_id,
-                    arb_result.directive.redirect_message or self.arbitration.gate_failure_message,
-                    is_final=True,
+            # Deterministic verdict directive: a flagging expert can replace the
+            # generated response with a literature-informed template.
+            directive = arb_result.directive
+            deterministic_response = (
+                directive.resolved_response
+                or directive.redirect_message
+                or self.arbitration.gate_failure_message
+            )
+            if directive.action == "short_circuit":
+                # Replace the response AND skip downstream processing entirely
+                # (e.g. noise_detection "unclear" — nothing actionable this turn).
+                # Reuse the bridge's transcript_id so the acknowledgment bridge and
+                # the deterministic line are ONE finalized utterance — otherwise the
+                # bridge (transcript_id, is_final=False) is left dangling and the
+                # safety line is spoken as a separate, ungrouped TTS chunk.
+                logger.info(f"Arbitration short_circuit by '{directive.directive_source}'")
+                short_circuit_output = AgentOutput.text_chunk(
+                    input.session_id, deterministic_response,
+                    transcript_id=transcript_id, is_final=True,
                 )
+                short_circuit_output.metadata["language"] = resolved_language
+                if resolved_voice:
+                    short_circuit_output.metadata["voice"] = resolved_voice
+                yield short_circuit_output
                 return
+            if directive.action == "override":
+                # Replace the spoken response with the deterministic template, but
+                # still run Stage 5 post-response processing (task_extraction already
+                # mutated the state machine during Stage 2; reflect that progress).
+                # Same transcript_id as the bridge so the two are one finalized
+                # utterance (see short_circuit above).
+                logger.info(f"Arbitration override by '{directive.directive_source}'")
+                override_output = AgentOutput.text_chunk(
+                    input.session_id, deterministic_response,
+                    transcript_id=transcript_id, is_final=True,
+                )
+                override_output.metadata["language"] = resolved_language
+                if resolved_voice:
+                    override_output.metadata["voice"] = resolved_voice
+                yield override_output
 
             # ── Stage 4: Response Generator (original context + collected keys filtered) ──
-            # Pass collected keys so the response prompt filters them from "still need to collect",
-            # preventing the agent from asking about deliverables the user already provided.
-            logger.info("Stage 4: Response Generator (streaming)")
-            yield AgentOutput.status(
-                input.session_id, "Generating response...", StatusSubtype.PROCESSING
-            )
-            yield AgentOutput.analytics_event(
-                input.session_id, "response_start", turn_id, self._elapsed_ms(),
-            )
+            # Skipped on "override": the deterministic template above already replaced
+            # the spoken reply, but we still fall through to Stage 5 post-processing.
+            # On "prepend": the literature template is spoken first, then the LLM continues.
+            if directive.action != "override":
+                # Pass collected keys so the response prompt filters them from "still need to collect",
+                # preventing the agent from asking about deliverables the user already provided.
+                logger.info("Stage 4: Response Generator (streaming)")
+                yield AgentOutput.status(
+                    input.session_id, "Generating response...", StatusSubtype.PROCESSING
+                )
+                yield AgentOutput.analytics_event(
+                    input.session_id, "response_start", turn_id, self._elapsed_ms(),
+                )
 
-            sm_context["_collected_keys"] = collected_keys
+                sm_context["_collected_keys"] = collected_keys
 
-            first_token_emitted = False
-            async for output in self.response_generator.generate(
-                session_id=input.session_id,
-                user_input=input.text,
-                directive=arb_result.directive,
-                conversation_history=history,
-                sm_context=sm_context,
-                plan_system_prompt=self._plan_system_prompt,
-                bridge=bridge,
-                transcript_id=transcript_id,
-            ):
-                if output.type.value == "text_chunk":
-                    # Stamp the resolved language so the SDK sets the TTS voice
-                    # for the main response, coherent with the bridge (RFC §8.2.1).
-                    output.metadata["language"] = resolved_language
-                    if resolved_voice:
-                        output.metadata["voice"] = resolved_voice
-                    if not first_token_emitted:
-                        yield AgentOutput.analytics_event(
-                            input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
-                        )
-                        first_token_emitted = True
-                yield output
+                prepend_text = directive.resolved_response if directive.action == "prepend" else ""
 
-            yield AgentOutput.analytics_event(
-                input.session_id, "response_done", turn_id, self._elapsed_ms(),
-            )
+                first_token_emitted = False
+                async for output in self.response_generator.generate(
+                    session_id=input.session_id,
+                    user_input=input.text,
+                    directive=arb_result.directive,
+                    conversation_history=history,
+                    sm_context=sm_context,
+                    plan_system_prompt=self._plan_system_prompt,
+                    bridge=bridge,
+                    prepend=prepend_text,
+                    transcript_id=transcript_id,
+                ):
+                    if output.type.value == "text_chunk":
+                        # Stamp the resolved language so the SDK sets the TTS voice
+                        # for the main response, coherent with the bridge (RFC §8.2.1).
+                        output.metadata["language"] = resolved_language
+                        if resolved_voice:
+                            output.metadata["voice"] = resolved_voice
+                        if not first_token_emitted:
+                            yield AgentOutput.analytics_event(
+                                input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
+                            )
+                            first_token_emitted = True
+                    yield output
+
+                yield AgentOutput.analytics_event(
+                    input.session_id, "response_done", turn_id, self._elapsed_ms(),
+                )
 
             # ── Stage 5: Post-response processing ──
             # Process extraction results, auto-complete no-deliverable tasks,
@@ -695,6 +739,8 @@ class StellaV2Agent(BaseAgent):
         # Ensure the (possibly rebuilt) expert pool compiles prompts with the
         # session's resolved compiler version, honoring any config override.
         self.expert_pool.set_compiler_version(self._compiler_version)
+        # Arbitration resolves {{placeholders}} in verdict templates with the same version.
+        self.arbitration.set_compiler_version(self._compiler_version)
 
         # Apply LLM config overrides
         if "model" in config:

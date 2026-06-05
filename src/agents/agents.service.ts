@@ -1016,6 +1016,12 @@ export class AgentsService {
         livekitApiKey,
         livekitApiSecret,
         ttsProvider: this.configService.get<string>('TTS_PROVIDER', 'opensource'),
+        // Intentional asymmetry with env vars (re-resolved above): the persisted
+        // agentConfig — including the pipeline_config injected at create() by
+        // applyScopedConfiguration — is the deploy-time snapshot and is reused
+        // verbatim on restart. A config later fixed from OUTDATED is NOT picked
+        // up here; restart reproduces the original deployment, not the latest
+        // configuration. Re-deploy the agent to adopt an updated config.
         agentConfig: (agent.agentConfig as Record<string, unknown>) || {},
         agentType,
         resolvedEnvVars,

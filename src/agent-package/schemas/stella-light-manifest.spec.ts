@@ -28,8 +28,9 @@ describe('stella-light-agent manifest', () => {
     const response = schema!.nodes.find((n) => n.id === 'response');
     expect(response).toBeDefined();
     const slotIds = response!.slots.map((s) => s.id);
+    // Persona + conversation guidelines are merged into a single combined system_prompt.
     expect(slotIds).toEqual(
-      expect.arrayContaining(['persona', 'conversation_guidelines', 'model', 'temperature', 'max_tokens']),
+      expect.arrayContaining(['system_prompt', 'model', 'temperature', 'max_tokens']),
     );
 
     expect(schema!.thresholds.map((t) => t.id)).toContain('history_limit');

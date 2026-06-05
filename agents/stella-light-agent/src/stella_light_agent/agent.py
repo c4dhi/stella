@@ -18,12 +18,13 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import StatusSubtype
+from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
 
 from stella_light_agent.llm.service import LLMService
+from stella_light_agent.barge_in_evaluator import BargeInEvaluator
 from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.state_machine import StateMachine
@@ -58,6 +59,12 @@ class StellaLightAgent(BaseAgent):
     5. Emit progress update
     """
 
+    # This agent supports user barge-in: it ships a Barge-in Evaluator stage
+    # (the same COMMIT/RESUME classifier as stella-v2) whose prompt/model are
+    # editable in the Agent Configurator. Effective only when barge-in is also
+    # enabled at the deployment level (BARGE_IN_ENABLED / INTERRUPT_MODE).
+    supports_barge_in = True
+
     def __init__(
         self,
         llm_config_path: Optional[str] = None,
@@ -88,6 +95,10 @@ class StellaLightAgent(BaseAgent):
         # Initialize LLM service
         self.llm_service = LLMService(config_path=llm_config_path)
 
+        # Barge-in evaluator (COMMIT/RESUME classifier), configurable via the
+        # Agent Configurator's "Barge-in Evaluator" node — same as stella-v2.
+        self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
+
         # Initialize prompt builder with tool mode
         self.prompt_builder = LightPromptBuilder(use_tools=use_tools)
 
@@ -113,7 +124,10 @@ class StellaLightAgent(BaseAgent):
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
-        # Configurator overrides injected via SDK config (pipeline_config), mirroring stella-v2.
+        # Configurator overrides injected via SDK config (pipeline_config).
+        # Light exposes a single combined System Prompt (identity + conversational style).
+        self._custom_system_prompt: Optional[str] = None
+        # Legacy fields, still honored for configs saved before persona/guidelines were merged.
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
         self._history_limit: int = 20
@@ -156,6 +170,10 @@ class StellaLightAgent(BaseAgent):
             self.llm_service.default_config.temperature = float(response["temperature"])
         if "max_tokens" in response:
             self.llm_service.default_config.max_tokens = int(response["max_tokens"])
+        # Combined identity + conversational style (current). Legacy persona/guidelines
+        # are still read so configs saved before the merge keep working.
+        if response.get("system_prompt"):
+            self._custom_system_prompt = response["system_prompt"]
         if response.get("persona"):
             self._custom_persona = response["persona"]
         if response.get("conversation_guidelines"):
@@ -167,13 +185,17 @@ class StellaLightAgent(BaseAgent):
             except (TypeError, ValueError):
                 pass
 
+        # Barge-in Evaluator overrides (prompt/model/temperature/max_tokens).
+        barge_in = nodes.get("barge_in", {}) or {}
+        if isinstance(barge_in, dict) and barge_in:
+            self.barge_in_evaluator.apply_config(barge_in)
+
         print(
             f"[StellaLightAgent] Pipeline config applied: "
             f"model={self.llm_service.default_config.model}, "
             f"temperature={self.llm_service.default_config.temperature}, "
             f"max_tokens={self.llm_service.default_config.max_tokens}, "
-            f"persona={'custom' if self._custom_persona else 'default'}, "
-            f"guidelines={'custom' if self._custom_guidelines else 'default'}, "
+            f"system_prompt={'custom' if (self._custom_system_prompt or self._custom_persona or self._custom_guidelines) else 'default'}, "
             f"history_limit={self._history_limit}"
         )
 
@@ -201,6 +223,8 @@ class StellaLightAgent(BaseAgent):
                 user_input=user_input,
             )
 
+        if self._custom_system_prompt:
+            sm_context["custom_system_prompt"] = render(self._custom_system_prompt)
         if self._custom_persona:
             sm_context["custom_persona"] = render(self._custom_persona)
         if self._custom_guidelines:
@@ -220,6 +244,7 @@ class StellaLightAgent(BaseAgent):
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
         self._plan_system_prompt = None
+        self._custom_system_prompt = None
         self._custom_persona = None
         self._custom_guidelines = None
         self._history_limit = 20
@@ -795,6 +820,26 @@ class StellaLightAgent(BaseAgent):
         elif self.legacy_processor:
             self.legacy_processor.cancel()
         self._is_processing = False
+
+    async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+        """Evaluate a user barge-in via the configurable Barge-in Evaluator.
+
+        Delegates to the LLM-backed evaluator (whose prompt/model are editable in
+        the Agent Configurator). The conversation history is fetched and passed so
+        the decision is made IN CONTEXT — e.g. an on-topic answer to the assistant's
+        last question is a real turn, not noise. COMMIT makes the SDK discard the
+        rest of the current reply and process ``transcript`` as a new turn; RESUME
+        continues from where it suspended. Same behavior as stella-v2.
+        """
+        print(f"[StellaLightAgent] Evaluating barge-in: '{transcript[:50]}'")
+        try:
+            history = await self._fetch_conversation_history(
+                limit=self.barge_in_evaluator.history_limit
+            )
+        except Exception as e:
+            print(f"[StellaLightAgent] Barge-in: could not fetch history ({e}); evaluating without it")
+            history = []
+        return await self.barge_in_evaluator.evaluate(transcript, conversation_history=history)
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """Handle runtime configuration updates."""

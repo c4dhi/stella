@@ -928,6 +928,8 @@ export default function ProjectModal({
                     agentTypeId={selectedAgentType.id}
                     pipelineSchema={selectedAgentType.pipelineSchema}
                     runtimeVariables={selectedAgentType.runtimeVariables}
+                    expertDefaults={selectedAgentType.expertDefaults}
+                    capabilities={selectedAgentType.capabilities}
                     selectedConfiguration={selectedConfiguration}
                     onSelectConfiguration={setSelectedConfiguration}
                   />

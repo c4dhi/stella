@@ -218,3 +218,72 @@ def test_current_focus_omits_collected_section_when_nothing_collected():
     ctx["full_plan"][0]["tasks"][0]["status"] = "pending"
     focus = _resolve_current_focus(ctx)
     assert "ALREADY COLLECTED" not in focus
+
+
+# --- single-pass / speech-safe / history bounds (PR review hardening) ------------
+
+def test_history_injected_content_is_not_re_expanded():
+    """A {{placeholder}} literal inside a past user message must NOT be expanded.
+
+    Regression for the old two-pass design that re-ran the simple-placeholder
+    regex over already-resolved {{history_N}} output (input-driven injection)."""
+    ctx = _ctx()
+    ctx["_conversation_history"] = [
+        {"role": "user", "content": "my secret is {{collected_deliverables}}"},
+    ]
+    out = _compile_prompt("{{history_1}}", ctx)
+    assert "{{collected_deliverables}}" in out  # left verbatim, not expanded
+    assert "age" not in out  # the deliverable value never leaked in
+
+
+def test_history_zero_returns_no_messages():
+    """{{history_0}} means 'last 0 messages', not the whole history (history[-0:])."""
+    ctx = _ctx()
+    ctx["_conversation_history"] = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+    ]
+    out = _compile_prompt("{{history_0}}", ctx)
+    assert "first" not in out and "second" not in out
+
+
+def test_speech_safe_strips_scaffolding_labels():
+    compiler = PlaceholderPromptCompiler(
+        _ctx(),
+        conversation_history=[{"role": "user", "content": "hello there"}],
+        user_input="I feel dizzy",
+        speech_safe=True,
+    )
+    user_msg = compiler.compile("{{user_message}}")
+    history = compiler.compile("{{history_1}}")
+    assert user_msg == "I feel dizzy"  # no "CURRENT USER MESSAGE:" label
+    assert "CONVERSATION:" not in history and "[USER]" not in history
+    assert "hello there" in history
+
+
+def test_default_rendering_keeps_scaffolding_labels():
+    """Non-speech-safe (LLM system-prompt) rendering is unchanged."""
+    compiler = PlaceholderPromptCompiler(_ctx(), user_input="hi")
+    assert compiler.compile("{{user_message}}") == "CURRENT USER MESSAGE: hi"
+
+
+def test_compile_survives_malformed_progress_and_messages():
+    """A bad progress value / role-less message must not raise."""
+    ctx = _ctx()
+    ctx["progress"] = {"percentage": None}
+    ctx["_conversation_history"] = [{"content": "no role key"}]
+    # Should not raise:
+    out = _compile_prompt("{{progress_percentage}} {{history_1}}", ctx)
+    assert "Overall progress: 0%" in out
+    assert "no role key" in out
+
+
+def test_speech_safe_forwarded_through_compile_entry_point():
+    out = prompts.compile(
+        "{{user_message}}",
+        version=COMPILER_VERSION,
+        sm_context=_ctx(),
+        user_input="raw text",
+        speech_safe=True,
+    )
+    assert out == "raw text"

@@ -84,6 +84,7 @@ def compile(
     sm_context: Optional[Dict[str, Any]] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
     user_input: str = "",
+    speech_safe: bool = False,
 ) -> Optional[str]:
     """Compile a prompt with an explicitly requested compiler version.
 
@@ -92,11 +93,18 @@ def compile(
     plus the runtime context the placeholders resolve against, and get back the
     prompt to hand to the LLM. Returns the input unchanged for falsy/token-free
     prompts. Raises ValueError if no version is given, KeyError if unknown.
+
+    ``speech_safe=True`` asks the compiler to omit system-prompt scaffolding from
+    resolved placeholders so the result is safe to speak verbatim (verdict
+    templates). It is forwarded only when set, so compilers that predate the flag
+    keep their existing constructor contract.
     """
+    extra = {"speech_safe": True} if speech_safe else {}
     compiler = get_compiler(version)(
         sm_context,
         conversation_history=conversation_history,
         user_input=user_input,
+        **extra,
     )
     return compiler.compile(template)
 

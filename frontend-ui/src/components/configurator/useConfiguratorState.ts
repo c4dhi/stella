@@ -7,7 +7,8 @@
  */
 
 import { useMemo, useCallback } from 'react'
-import type { AgentConfigurationPayload, PipelineSchema } from '../../lib/api-types'
+import type { AgentConfigurationPayload, PipelineSchema, VerdictDirective, VerdictAction, ExpertDefault } from '../../lib/api-types'
+import { useConfiguratorStore } from '../../store/configuratorStore'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +37,13 @@ export interface ExpertDefinition {
   isCustom: boolean
   canCallFunctions: boolean
   outputSchema?: Record<string, unknown>
+  /** Possible verdict outcomes for this expert (e.g. ['none','low','high','critical']).
+   *  Drives one row in the verdict→response editor per outcome. */
+  verdictVocabulary: string[]
+  /** Per-verdict deterministic response directives, keyed by verdict outcome (effective: override ?? default). */
+  verdictDirectives: Record<string, VerdictDirective>
+  /** Built-in default directives (read-only), used to show defaults and reset per verdict. */
+  defaultVerdictDirectives: Record<string, VerdictDirective>
 }
 
 export interface InputGateRule {
@@ -191,7 +199,10 @@ GUIDELINES:
 
 {{user_message}}`
 
-export const BUILT_IN_EXPERTS: Omit<ExpertDefinition, 'enabled' | 'isBackground' | 'isCustom'>[] = [
+export const BUILT_IN_EXPERTS: Omit<
+  ExpertDefinition,
+  'enabled' | 'isBackground' | 'isCustom' | 'verdictVocabulary' | 'verdictDirectives' | 'defaultVerdictDirectives'
+>[] = [
   {
     name: 'noise_detection',
     description: 'Detects inaudible, garbled, or nonsensical transcription and triggers clarification',
@@ -284,9 +295,193 @@ export const BUILT_IN_EXPERTS: Omit<ExpertDefinition, 'enabled' | 'isBackground'
   },
 ]
 
-const BUILT_IN_NAMES = new Set(BUILT_IN_EXPERTS.map((e) => e.name))
 const DEFAULT_ALWAYS_RUN = new Set(['task_extraction'])
 const DEFAULT_BACKGROUND = new Set(['task_extraction'])
+
+// Unified "built-in default" shape the expert list is derived from — whether the
+// defaults come from the agent's published config/experts (preferred) or, as a
+// transitional fallback, the hardcoded constants above.
+interface BuiltInExpertDefault {
+  name: string
+  description: string
+  alwaysTriggered: boolean
+  triggerCriteria: string
+  model: string
+  temperature: number
+  maxTokens: number
+  defaultSystemPrompt: string
+  historyLimit: number
+  minConfidence: number
+  arbitrationPriority: number
+  canCallFunctions: boolean
+  outputSchema?: Record<string, unknown>
+  verdictVocabulary: string[]
+  defaultVerdictDirectives: Record<string, VerdictDirective>
+}
+
+/** Build the built-in expert defaults from the agent's published config/experts/*.json. */
+function builtInsFromPublished(published: ExpertDefault[]): BuiltInExpertDefault[] {
+  return published.map((raw) => {
+    const directives = readVerdictDirectives(raw.verdict_directives)
+    const vocab = Object.keys(directives).length
+      ? Object.keys(directives)
+      : parseVerdictVocabulary(raw.output_schema)
+    return {
+      name: raw.name,
+      description: raw.description ?? '',
+      alwaysTriggered: Boolean(raw.always_triggered),
+      triggerCriteria: raw.trigger_criteria ?? '',
+      model: raw.model ?? 'gpt-4o-mini',
+      temperature: raw.temperature ?? 0.1,
+      maxTokens: raw.max_tokens ?? 200,
+      defaultSystemPrompt: raw.system_prompt ?? '',
+      historyLimit: raw.history_limit ?? 0,
+      minConfidence: raw.min_confidence ?? 0,
+      arbitrationPriority: raw.priority ?? 50,
+      canCallFunctions: Boolean(raw.can_call_functions),
+      outputSchema: raw.output_schema,
+      verdictVocabulary: vocab,
+      defaultVerdictDirectives: directives,
+    }
+  })
+}
+
+/** Transitional fallback: derive built-in defaults from the hardcoded constants
+ *  (used only when the backend hasn't published expertDefaults yet). */
+function builtInsFallback(): BuiltInExpertDefault[] {
+  return BUILT_IN_EXPERTS.map((b) => ({
+    name: b.name,
+    description: b.description,
+    alwaysTriggered: b.alwaysTriggered,
+    triggerCriteria: b.triggerCriteria,
+    model: b.model,
+    temperature: b.temperature,
+    maxTokens: b.maxTokens,
+    defaultSystemPrompt: b.defaultSystemPrompt,
+    historyLimit: b.historyLimit,
+    minConfidence: b.minConfidence,
+    arbitrationPriority: b.arbitrationPriority,
+    canCallFunctions: b.canCallFunctions,
+    outputSchema: undefined,
+    verdictVocabulary: BUILT_IN_VERDICT_VOCAB[b.name] ?? [],
+    defaultVerdictDirectives: BUILT_IN_VERDICT_DEFAULTS[b.name] ?? {},
+  }))
+}
+
+// Verdict vocabulary per built-in expert (mirrors output_schema.verdict in
+// config/experts/*.json). Drives one row per outcome in the verdict editor.
+const BUILT_IN_VERDICT_VOCAB: Record<string, string[]> = {
+  noise_detection: ['clear', 'unclear', 'partial'],
+  medical: ['none', 'low', 'high', 'critical'],
+  legal: ['none', 'low', 'high', 'critical'],
+  task_extraction: ['tool_calls_executed'],
+  probing: ['no_probe', 'needs_clarification', 'gentle_redirect'],
+  timekeeper: ['on_track', 'slowing', 'stuck', 'force_advance'],
+}
+
+// Built-in default verdict directives (mirrors the seeded config/experts/*.json).
+// These ship as defaults and can be overridden, adjusted, and reset per verdict.
+const BUILT_IN_VERDICT_DEFAULTS: Record<string, Record<string, VerdictDirective>> = {
+  noise_detection: {
+    clear: { action: 'inform', template: '', description: 'The message has discernible meaning, even if brief.' },
+    unclear: { action: 'short_circuit', template: '', description: 'Gibberish, random characters, transcription artifacts, or nonsense syllables.' },
+    partial: { action: 'inform', template: '', description: 'Only partially intelligible.' },
+  },
+  medical: {
+    none: { action: 'inform', template: '', description: 'No health topic is present.' },
+    low: { action: 'inform', template: '', description: 'A general health or wellness topic is mentioned (e.g. exercise, sleep).' },
+    high: {
+      action: 'prepend',
+      template:
+        "I want to be careful here — I can't give medical advice, so please check anything important with a qualified professional.",
+      description: 'A specific health concern: symptoms, medication, mental health, or a request for diagnosis.',
+    },
+    critical: {
+      action: 'override',
+      template:
+        "It sounds like this could be serious. If you're in danger or this is an emergency, please contact emergency services or a medical professional right now. I'm not able to give medical advice, but I want to make sure you get the right help.",
+      description: 'A medical emergency or suicidal ideation.',
+    },
+  },
+  legal: {
+    none: { action: 'inform', template: '', description: 'No legal topic is present.' },
+    low: { action: 'inform', template: '', description: 'A general legal topic is mentioned.' },
+    high: {
+      action: 'prepend',
+      template:
+        "Just so you know, I can't give legal advice, so please confirm anything important with a qualified professional.",
+      description: 'A specific legal concern: a dispute, contract, privacy/employment matter, or a request for legal advice.',
+    },
+    critical: {
+      action: 'override',
+      template:
+        "This sounds like it could carry serious legal consequences. I'm not able to give legal advice — please reach out to a qualified legal professional or the appropriate authorities.",
+      description: 'Illegal activity or imminent danger.',
+    },
+  },
+  probing: {
+    no_probe: { action: 'inform', template: '', description: "The user's message is clear; no follow-up question is needed." },
+    needs_clarification: { action: 'inform', template: '', description: 'A specific follow-up question would help collect a pending deliverable.' },
+    gentle_redirect: { action: 'inform', template: '', description: 'The user went off-topic and should be gently steered back.' },
+  },
+  timekeeper: {
+    on_track: { action: 'inform', template: '', description: 'The conversation is progressing normally.' },
+    slowing: { action: 'inform', template: '', description: 'Some stagnation — progress is slowing.' },
+    stuck: { action: 'inform', template: '', description: 'No progress; a specific redirect toward the pending deliverable is needed.' },
+    force_advance: { action: 'inform', template: '', description: 'Stuck enough that the current state should be skipped.' },
+  },
+}
+
+/** Deep-equality for a verdict directive map (used to detect overrides vs defaults). */
+export function verdictDirectivesEqual(
+  a: Record<string, VerdictDirective>,
+  b: Record<string, VerdictDirective>,
+): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  for (const k of keys) {
+    if (
+      a[k]?.action !== b[k]?.action ||
+      a[k]?.template !== b[k]?.template ||
+      (a[k]?.description ?? '') !== (b[k]?.description ?? '')
+    )
+      return false
+  }
+  return true
+}
+
+/** Parse "none|low|high|critical" (output_schema.verdict) into an ordered vocabulary. */
+function parseVerdictVocabulary(outputSchema?: Record<string, unknown>): string[] {
+  const verdict = outputSchema?.verdict
+  if (typeof verdict !== 'string') return []
+  return verdict.split('|').map((v) => v.trim()).filter(Boolean)
+}
+
+/** Read a stored verdict_directives override blob into the typed map. */
+function readVerdictDirectives(raw: unknown): Record<string, VerdictDirective> {
+  if (!raw || typeof raw !== 'object') return {}
+  const result: Record<string, VerdictDirective> = {}
+  for (const [verdict, dir] of Object.entries(raw as Record<string, unknown>)) {
+    if (dir && typeof dir === 'object') {
+      const d = dir as Record<string, unknown>
+      const action = d.action
+      const isValidAction =
+        action === 'inform' || action === 'prepend' || action === 'override' || action === 'short_circuit'
+      if (action !== undefined && !isValidAction) {
+        // Don't silently downgrade a saved safety directive — surface the typo so
+        // it gets noticed rather than quietly becoming "inform" (see base.py).
+        console.warn(
+          `Verdict "${verdict}" has unknown action "${String(action)}" — falling back to "inform".`,
+        )
+      }
+      result[verdict] = {
+        action: isValidAction ? (action as VerdictAction) : 'inform',
+        template: typeof d.template === 'string' ? d.template : '',
+        description: typeof d.description === 'string' ? d.description : '',
+      }
+    }
+  }
+  return result
+}
 
 // ---------------------------------------------------------------------------
 // Helpers to read / write the nested configuration payload
@@ -325,6 +520,25 @@ export function useConfiguratorState(
   setConfiguration: (cfg: AgentConfigurationPayload) => void,
   _pipelineSchema: PipelineSchema,
 ) {
+  // ----- Built-in expert defaults sourced from the agent's published declaration -----
+  // The agent declares its default experts in config/experts/*.json; the backend
+  // publishes them on AgentType.expertDefaults. Fall back to the hardcoded constants
+  // only until the backend has been re-seeded.
+  const publishedExperts = useConfiguratorStore((s) => s.expertDefaults)
+  // Capability gating: task_extraction rides on `plans`, the assessment pool on
+  // `experts`. When capabilities aren't provided (older flow), show everything.
+  const capabilities = useConfiguratorStore((s) => s.capabilities)
+  const hasPlans = !capabilities || capabilities.includes('plans')
+  const hasExperts = !capabilities || capabilities.includes('experts')
+  const builtInDefaults = useMemo(() => {
+    const source =
+      publishedExperts && publishedExperts.length
+        ? builtInsFromPublished(publishedExperts)
+        : builtInsFallback()
+    return source.filter((e) => (e.name === 'task_extraction' ? hasPlans : hasExperts))
+  }, [publishedExperts, hasPlans, hasExperts])
+  const builtInNames = useMemo(() => new Set(builtInDefaults.map((e) => e.name)), [builtInDefaults])
+
   // ----- Raw reads from configuration -----
   const overrides = useMemo(() => getExpertOverrides(configuration), [configuration])
   const customs = useMemo(() => getCustomExperts(configuration), [configuration])
@@ -339,7 +553,7 @@ export function useConfiguratorState(
     const result: ExpertDefinition[] = []
 
     // Built-in experts
-    for (const builtin of BUILT_IN_EXPERTS) {
+    for (const builtin of builtInDefaults) {
       const ov = overrides[builtin.name] ?? {}
       result.push({
         name: builtin.name,
@@ -360,12 +574,18 @@ export function useConfiguratorState(
         isBackground: backgroundSet.has(builtin.name),
         isCustom: false,
         canCallFunctions: builtin.canCallFunctions,
-        outputSchema: ov.output_schema as Record<string, unknown> | undefined,
+        outputSchema: (ov.output_schema as Record<string, unknown> | undefined) ?? builtin.outputSchema,
+        verdictVocabulary: builtin.verdictVocabulary,
+        verdictDirectives:
+          ov.verdict_directives !== undefined
+            ? readVerdictDirectives(ov.verdict_directives)
+            : builtin.defaultVerdictDirectives,
+        defaultVerdictDirectives: builtin.defaultVerdictDirectives,
       })
     }
 
-    // Custom experts
-    for (const [name, def] of Object.entries(customs)) {
+    // Custom experts (assessment experts → gated on the `experts` capability)
+    for (const [name, def] of hasExperts ? Object.entries(customs) : []) {
       result.push({
         name,
         description: (def.description as string) ?? '',
@@ -384,6 +604,9 @@ export function useConfiguratorState(
         isCustom: true,
         canCallFunctions: false,
         outputSchema: def.output_schema as Record<string, unknown> | undefined,
+        verdictVocabulary: parseVerdictVocabulary(def.output_schema as Record<string, unknown> | undefined),
+        verdictDirectives: readVerdictDirectives(def.verdict_directives),
+        defaultVerdictDirectives: {},
       })
     }
 
@@ -391,7 +614,7 @@ export function useConfiguratorState(
     result.sort((a, b) => b.arbitrationPriority - a.arbitrationPriority)
 
     return result
-  }, [overrides, customs, backgroundSet])
+  }, [overrides, customs, backgroundSet, builtInDefaults, hasExperts])
 
   // ----- Derived views -----
 
@@ -453,12 +676,18 @@ export function useConfiguratorState(
   /** Update a single built-in expert's overrides */
   const updateExpert = useCallback(
     (name: string, updates: Partial<ExpertDefinition>) => {
-      if (BUILT_IN_NAMES.has(name)) {
+      if (builtInNames.has(name)) {
         const current = { ...getExpertOverrides(configuration) }
         const existing = { ...(current[name] ?? {}) }
 
         if (updates.enabled !== undefined) existing.enabled = updates.enabled
-        if (updates.alwaysTriggered !== undefined) existing.always_triggered = updates.alwaysTriggered
+        if (updates.alwaysTriggered !== undefined) {
+          existing.always_triggered = updates.alwaysTriggered
+          // Always-triggered bypasses the input gate, so trigger criteria is moot.
+          // Clear any stale rule so it isn't fed back into the input-gate prompt,
+          // matching the create path (#175).
+          if (updates.alwaysTriggered) existing.trigger_criteria = ''
+        }
         if (updates.triggerCriteria !== undefined) existing.trigger_criteria = updates.triggerCriteria
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature
@@ -473,6 +702,12 @@ export function useConfiguratorState(
         if (updates.minConfidence !== undefined) existing.min_confidence = updates.minConfidence
         if (updates.arbitrationPriority !== undefined) existing.priority = updates.arbitrationPriority
         if (updates.description !== undefined) existing.description = updates.description
+        // `verdictDirectives: undefined` clears the override (revert to shipped defaults);
+        // a map persists the full effective set. A missing key = no change.
+        if ('verdictDirectives' in updates) {
+          if (updates.verdictDirectives === undefined) delete existing.verdict_directives
+          else existing.verdict_directives = updates.verdictDirectives
+        }
 
         current[name] = existing
         patchExpertPool({ experts: current })
@@ -482,7 +717,13 @@ export function useConfiguratorState(
         const existing = { ...(current[name] ?? {}) }
 
         if (updates.enabled !== undefined) existing.enabled = updates.enabled
-        if (updates.alwaysTriggered !== undefined) existing.always_triggered = updates.alwaysTriggered
+        if (updates.alwaysTriggered !== undefined) {
+          existing.always_triggered = updates.alwaysTriggered
+          // Always-triggered bypasses the input gate, so trigger criteria is moot.
+          // Clear any stale rule so it isn't fed back into the input-gate prompt,
+          // matching the create path (#175).
+          if (updates.alwaysTriggered) existing.trigger_criteria = ''
+        }
         if (updates.triggerCriteria !== undefined) existing.trigger_criteria = updates.triggerCriteria
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature
@@ -495,12 +736,18 @@ export function useConfiguratorState(
         if (updates.minConfidence !== undefined) existing.min_confidence = updates.minConfidence
         if (updates.arbitrationPriority !== undefined) existing.priority = updates.arbitrationPriority
         if (updates.description !== undefined) existing.description = updates.description
+        // `verdictDirectives: undefined` clears the override (revert to shipped defaults);
+        // a map persists the full effective set. A missing key = no change.
+        if ('verdictDirectives' in updates) {
+          if (updates.verdictDirectives === undefined) delete existing.verdict_directives
+          else existing.verdict_directives = updates.verdictDirectives
+        }
 
         current[name] = existing
         patchExpertPool({ custom_experts: current })
       }
     },
-    [configuration, patchExpertPool],
+    [configuration, patchExpertPool, builtInNames],
   )
 
   /** Reorder experts by name array — derives priorities from position.
@@ -512,7 +759,7 @@ export function useConfiguratorState(
 
       orderedNames.forEach((name, index) => {
         const priority = 100 - index * 5
-        if (BUILT_IN_NAMES.has(name)) {
+        if (builtInNames.has(name)) {
           builtinOverrides[name] = { ...(builtinOverrides[name] ?? {}), priority }
         } else if (customDefs[name]) {
           customDefs[name] = { ...customDefs[name], priority }
@@ -521,13 +768,14 @@ export function useConfiguratorState(
 
       patchExpertPool({ experts: builtinOverrides, custom_experts: customDefs })
     },
-    [configuration, patchExpertPool],
+    [configuration, patchExpertPool, builtInNames],
   )
 
   /** Add a new custom expert */
   const addCustomExpert = useCallback(
-    (expert: { name: string; description: string; model: string; temperature: number; maxTokens: number; systemPrompt: string; triggerCriteria?: string }) => {
+    (expert: { name: string; description: string; model: string; temperature: number; maxTokens: number; systemPrompt: string; triggerCriteria?: string; alwaysTriggered?: boolean }) => {
       const current = { ...getCustomExperts(configuration) }
+      const alwaysTriggered = Boolean(expert.alwaysTriggered)
       current[expert.name] = {
         name: expert.name,
         description: expert.description,
@@ -537,9 +785,10 @@ export function useConfiguratorState(
         max_tokens: expert.maxTokens,
         system_prompt: expert.systemPrompt,
         output_format: '{"verdict":"...","confidence":0.0,"recommendation":"short"}',
-        trigger_criteria: expert.triggerCriteria ?? '',
+        // When always-triggered, the input gate ignores it, so trigger criteria is moot (#175).
+        trigger_criteria: alwaysTriggered ? '' : (expert.triggerCriteria ?? ''),
         enabled: true,
-        always_triggered: false,
+        always_triggered: alwaysTriggered,
       }
       patchExpertPool({ custom_experts: current })
     },
@@ -549,7 +798,7 @@ export function useConfiguratorState(
   /** Remove a custom expert */
   const removeExpert = useCallback(
     (name: string) => {
-      if (BUILT_IN_NAMES.has(name)) return // Cannot remove built-in experts
+      if (builtInNames.has(name)) return // Cannot remove built-in experts
 
       const current = { ...getCustomExperts(configuration) }
       delete current[name]
@@ -560,7 +809,7 @@ export function useConfiguratorState(
 
       patchExpertPool({ custom_experts: current, always_run: ar, background_experts: bg })
     },
-    [configuration, patchExpertPool],
+    [configuration, patchExpertPool, builtInNames],
   )
 
   /** Toggle task_extraction on/off */

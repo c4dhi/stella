@@ -11,7 +11,18 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { ExpertDefinition } from './useConfiguratorState'
+import { verdictDirectivesEqual } from './useConfiguratorState'
 import { PromptComposer, buildExpertBlocks } from './PromptComposer'
+import type { VerdictAction, VerdictDirective } from '../../lib/api-types'
+
+const INFORM: VerdictDirective = { action: 'inform', template: '' }
+
+const VERDICT_ACTION_OPTIONS: { value: VerdictAction; label: string; hint: string }[] = [
+  { value: 'inform', label: 'Inform (LLM writes reply)', hint: 'Default — the model writes the reply; the template is unused.' },
+  { value: 'prepend', label: 'Prepend (speak then continue)', hint: 'Speak the template first, then the generated reply.' },
+  { value: 'override', label: 'Override (replace reply)', hint: 'Speak only the template; skip the response LLM. Post-processing still runs.' },
+  { value: 'short_circuit', label: 'Short-circuit (replace + stop)', hint: 'Speak only the template and end the turn — nothing downstream runs.' },
+]
 
 interface ExpertCardProps {
   expert: ExpertDefinition
@@ -69,6 +80,274 @@ function CollapsibleSettings({ isDark, children }: { isDark: boolean; children: 
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+/**
+ * VerdictResponsesEditor — the clinical-determinism knob. For each possible
+ * verdict outcome of an expert, lets the developer wire a deterministic,
+ * literature-informed response that replaces/augments the generated reply.
+ */
+function VerdictResponsesEditor({
+  expert,
+  onUpdate,
+  isDark,
+}: {
+  expert: ExpertDefinition
+  onUpdate: (updates: Partial<ExpertDefinition>) => void
+  isDark: boolean
+}) {
+  const [newVerdict, setNewVerdict] = useState('')
+
+  // Show every known outcome plus any verdict that already has a directive or default.
+  const verdicts = Array.from(
+    new Set([
+      ...expert.verdictVocabulary,
+      ...Object.keys(expert.verdictDirectives),
+      ...Object.keys(expert.defaultVerdictDirectives),
+    ]),
+  )
+
+  const defaultFor = (verdict: string): VerdictDirective =>
+    expert.defaultVerdictDirectives[verdict] ?? INFORM
+  const effectiveFor = (verdict: string): VerdictDirective =>
+    expert.verdictDirectives[verdict] ?? INFORM
+  const isModified = (verdict: string): boolean => {
+    const eff = effectiveFor(verdict)
+    const def = defaultFor(verdict)
+    return (
+      eff.action !== def.action ||
+      eff.template !== def.template ||
+      (eff.description ?? '') !== (def.description ?? '')
+    )
+  }
+
+  // Persist the FULL effective map (runtime replaces, not merges). When the result
+  // matches the shipped defaults exactly, clear the override so the config stays clean.
+  const persist = (next: Record<string, VerdictDirective>) => {
+    if (verdictDirectivesEqual(next, expert.defaultVerdictDirectives)) {
+      onUpdate({ verdictDirectives: undefined })
+    } else {
+      onUpdate({ verdictDirectives: next })
+    }
+  }
+
+  const setDirective = (verdict: string, patch: Partial<VerdictDirective>) => {
+    const next: Record<string, VerdictDirective> = { ...expert.verdictDirectives }
+    // The verdict label stays in the list even when "inform" — the labels ARE the
+    // vocabulary fed to the LLM, so we keep every declared verdict, not just the
+    // ones with a deterministic response.
+    next[verdict] = { ...effectiveFor(verdict), ...patch }
+    persist(next)
+  }
+
+  const renameVerdict = (oldLabel: string, rawNew: string) => {
+    const newLabel = rawNew.trim()
+    if (!newLabel || newLabel === oldLabel) return
+    if (verdicts.includes(newLabel)) return // collision — ignore
+    const next: Record<string, VerdictDirective> = {}
+    for (const [k, v] of Object.entries(expert.verdictDirectives)) {
+      next[k === oldLabel ? newLabel : k] = v
+    }
+    // A default row that was never materialized still needs to carry over on rename.
+    if (!(oldLabel in expert.verdictDirectives)) next[newLabel] = effectiveFor(oldLabel)
+    persist(next)
+  }
+
+  const removeVerdict = (verdict: string) => {
+    const next: Record<string, VerdictDirective> = { ...expert.verdictDirectives }
+    delete next[verdict]
+    persist(next)
+  }
+
+  const resetVerdict = (verdict: string) => {
+    const next: Record<string, VerdictDirective> = { ...expert.verdictDirectives }
+    const def = expert.defaultVerdictDirectives[verdict]
+    if (def) next[verdict] = def
+    else delete next[verdict]
+    persist(next)
+  }
+
+  const hasOverride = !verdictDirectivesEqual(expert.verdictDirectives, expert.defaultVerdictDirectives)
+
+  const addVerdict = () => {
+    const key = newVerdict.trim()
+    if (!key || verdicts.includes(key)) return
+    setDirective(key, { action: 'inform', template: '' })
+    setNewVerdict('')
+  }
+
+  const labelClass = `text-xs font-medium mb-1.5 block ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`
+  const inputClass = `w-full px-3 py-2 rounded-lg text-[13px] font-light focus:outline-none transition-all ${
+    isDark
+      ? 'bg-zinc-800/80 border border-zinc-600/80 text-zinc-100 focus:border-zinc-400'
+      : 'bg-white border border-neutral-200 text-neutral-900 focus:border-neutral-400'
+  }`
+
+  const resetLinkClass = `text-[11px] font-medium transition-colors ${
+    isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-neutral-500 hover:text-neutral-700'
+  }`
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className={labelClass} style={{ marginBottom: 0 }}>Verdict Responses</label>
+        {hasOverride && (
+          <button type="button" onClick={() => onUpdate({ verdictDirectives: undefined })} className={resetLinkClass}>
+            Reset all to default
+          </button>
+        )}
+      </div>
+      <p className={`text-[11px] mb-2.5 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}>
+        Deterministic, literature-informed responses per verdict. Non-"inform" actions replace or
+        prepend to the generated reply, bypassing the model for safety-critical output.
+      </p>
+
+      {verdicts.length === 0 && (
+        <p className={`text-[11px] italic mb-2 ${isDark ? 'text-zinc-600' : 'text-neutral-400'}`}>
+          No verdict outcomes defined. Add one below or set an output schema for this expert.
+        </p>
+      )}
+
+      <div className="space-y-2.5">
+        {verdicts.map((verdict) => {
+          const directive = effectiveFor(verdict)
+          const def = defaultFor(verdict)
+          const modified = isModified(verdict)
+          // A label that comes from the expert's classifier vocabulary or shipped
+          // defaults can't be removed (it lives in static config, not in the
+          // editable override map), so a "rename" would leave the old row behind as
+          // a duplicate. Only user-added verdicts are truly renamable.
+          const isIntrinsic =
+            expert.verdictVocabulary.includes(verdict) || verdict in expert.defaultVerdictDirectives
+          return (
+            <div
+              key={verdict}
+              className={`rounded-lg border p-2.5 ${
+                isDark ? 'bg-zinc-800/40 border-zinc-700/50' : 'bg-neutral-50/60 border-neutral-200/50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {/* Verdict label (the vocabulary fed to the LLM). Editable only for
+                    user-added verdicts; intrinsic ones are read-only (see isIntrinsic). */}
+                <input
+                  key={verdict}
+                  defaultValue={verdict}
+                  readOnly={isIntrinsic}
+                  onBlur={isIntrinsic ? undefined : (e) => renameVerdict(verdict, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
+                  title={
+                    isIntrinsic
+                      ? 'Built-in verdict label — fixed by the expert’s classifier and cannot be renamed'
+                      : 'Verdict label — rename to change what the LLM classifies into'
+                  }
+                  className={`text-[11px] font-mono font-medium px-2 py-1 rounded w-28 focus:outline-none ${
+                    isIntrinsic ? 'cursor-default opacity-80' : ''
+                  } ${
+                    isDark
+                      ? 'bg-zinc-700/60 text-zinc-200 border border-transparent focus:border-zinc-500'
+                      : 'bg-neutral-200/70 text-neutral-700 border border-transparent focus:border-neutral-400'
+                  }`}
+                />
+                <select
+                  value={directive.action}
+                  onChange={(e) => setDirective(verdict, { action: e.target.value as VerdictAction })}
+                  className={`${inputClass} flex-1`}
+                  style={{ paddingTop: 6, paddingBottom: 6 }}
+                >
+                  {VERDICT_ACTION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {modified && (
+                  <button type="button" onClick={() => resetVerdict(verdict)} className={resetLinkClass} title="Reset this verdict to default">
+                    Reset
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeVerdict(verdict)}
+                  title="Remove verdict"
+                  className={`p-1 rounded transition-colors ${
+                    isDark ? 'text-zinc-600 hover:text-red-400 hover:bg-zinc-700/50' : 'text-neutral-300 hover:text-red-500 hover:bg-neutral-100'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Explanation handed to the LLM (label + this text tell it what the verdict means) */}
+              <input
+                type="text"
+                value={directive.description ?? ''}
+                onChange={(e) => setDirective(verdict, { description: e.target.value })}
+                placeholder="Explain to the LLM what this verdict means…"
+                title="Shown to the classifying LLM alongside the label"
+                className={`${inputClass} mt-2`}
+                style={{ paddingTop: 6, paddingBottom: 6, fontSize: '12px' }}
+              />
+
+              {directive.action !== 'inform' && (
+                <div className="mt-2">
+                  <PromptComposer
+                    blocks={[
+                      {
+                        id: `verdict_${verdict}`,
+                        type: 'editable',
+                        label: 'Response Template',
+                        // value === defaultValue → show the default dimmed (no override);
+                        // typing creates an override, onReset reverts to the default template.
+                        value: directive.template === def.template ? undefined : directive.template,
+                        defaultValue: def.template || undefined,
+                        onChange: (v) => setDirective(verdict, { template: v }),
+                        onReset: () => setDirective(verdict, { template: def.template }),
+                        rows: 4,
+                        placeholder: 'Literature-informed response spoken to the user (supports {{variables}})…',
+                      },
+                    ]}
+                    isDark={isDark}
+                    compact
+                  />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add a verdict outcome (useful for custom experts without an output schema) */}
+      <div className="flex items-center gap-2 mt-2.5">
+        <input
+          type="text"
+          value={newVerdict}
+          onChange={(e) => setNewVerdict(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addVerdict()
+            }
+          }}
+          placeholder="Add a verdict outcome…"
+          className={`${inputClass} flex-1`}
+          style={{ paddingTop: 6, paddingBottom: 6 }}
+        />
+        <button
+          type="button"
+          onClick={addVerdict}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            isDark ? 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600' : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
+          }`}
+        >
+          Add
+        </button>
+      </div>
     </div>
   )
 }
@@ -320,6 +599,9 @@ function ExpertCardInner({
                   isDark={isDark}
                   compact
                 />
+
+                {/* Deterministic verdict → response mapping */}
+                <VerdictResponsesEditor expert={expert} onUpdate={onUpdate} isDark={isDark} />
               </div>
             </motion.div>
           )}

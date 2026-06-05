@@ -18,10 +18,18 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from stella_v2_agent.experts.base import ExpertConfig
+from stella_v2_agent.experts.base import ExpertConfig, VerdictDirective
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_override_value(key: str, value: Any) -> Any:
+    """Coerce a raw override value before setattr, so structured fields
+    (e.g. verdict_directives) become their typed form instead of plain dicts."""
+    if key == "verdict_directives":
+        return VerdictDirective.coerce_map(value)
+    return value
 
 
 class ExpertRegistry:
@@ -137,7 +145,7 @@ class ExpertRegistry:
                 continue
             for key, value in overrides.items():
                 if hasattr(config, key):
-                    setattr(config, key, value)
+                    setattr(config, key, _coerce_override_value(key, value))
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator.
@@ -157,7 +165,7 @@ class ExpertRegistry:
                     continue
                 for key, value in overrides.items():
                     if hasattr(expert, key):
-                        setattr(expert, key, value)
+                        setattr(expert, key, _coerce_override_value(key, value))
 
         # Register custom experts
         custom_experts = config.get("custom_experts", {})
@@ -188,6 +196,7 @@ class ExpertRegistry:
                         output_format=expert_def.get("output_format", ""),
                         trigger_criteria=expert_def.get("trigger_criteria", ""),
                         always_triggered=bool(expert_def.get("always_triggered", False)),
+                        verdict_directives=expert_def.get("verdict_directives", {}),
                     )
                     self._experts[name] = custom_config
                     logger.info(f"Registered custom expert: {name} (priority={priority})")
@@ -200,6 +209,15 @@ class ExpertRegistry:
     def get(self, name: str) -> Optional[ExpertConfig]:
         """Get an expert config by name. Returns None if not found."""
         return self._experts.get(name)
+
+    def as_map(self) -> Dict[str, ExpertConfig]:
+        """Return the name → ExpertConfig map (used by Arbitration to read
+        per-expert verdict_directives without importing the registry).
+
+        Returns a shallow copy so callers can't mutate the registry's internal
+        dict (add/remove experts); the ExpertConfig values are shared and are
+        only read by callers."""
+        return dict(self._experts)
 
     def get_enabled(self) -> List[ExpertConfig]:
         """Get all enabled expert configs, sorted by priority (descending)."""

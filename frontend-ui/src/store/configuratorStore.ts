@@ -4,6 +4,7 @@ import type {
   AgentConfigurationPayload,
   AgentConfiguration,
   RuntimeVariable,
+  ExpertDefault,
 } from '../lib/api-types'
 
 interface ConfiguratorStore {
@@ -11,6 +12,11 @@ interface ConfiguratorStore {
   pipelineSchema: PipelineSchema | null
   // Manifest-declared {{placeholder}} palette for the agent type being configured.
   runtimeVariables: RuntimeVariable[] | null
+  // Agent-declared default experts (config/experts/*.json) for the Expert Module.
+  expertDefaults: ExpertDefault[] | null
+  // Agent capabilities (e.g. ['voice','text','plans','experts']) — gate which
+  // Configurator sections show: task_extraction ← plans, assessment pool ← experts.
+  capabilities: string[] | null
   initialConfiguration: AgentConfigurationPayload | undefined
   initialName: string
   initialDescription: string
@@ -22,6 +28,8 @@ interface ConfiguratorStore {
   openModal: (opts: {
     pipelineSchema: PipelineSchema
     runtimeVariables?: RuntimeVariable[] | null
+    expertDefaults?: ExpertDefault[] | null
+    capabilities?: string[] | null
     initialConfiguration?: AgentConfigurationPayload
     initialName?: string
     initialDescription?: string
@@ -36,6 +44,8 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
   isOpen: false,
   pipelineSchema: null,
   runtimeVariables: null,
+  expertDefaults: null,
+  capabilities: null,
   initialConfiguration: undefined,
   initialName: '',
   initialDescription: '',
@@ -48,6 +58,8 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
       isOpen: true,
       pipelineSchema: opts.pipelineSchema,
       runtimeVariables: opts.runtimeVariables ?? null,
+      expertDefaults: opts.expertDefaults ?? null,
+      capabilities: opts.capabilities ?? null,
       initialConfiguration: opts.initialConfiguration,
       initialName: opts.initialName || '',
       initialDescription: opts.initialDescription || '',
@@ -61,6 +73,8 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set) => ({
       isOpen: false,
       pipelineSchema: null,
       runtimeVariables: null,
+      expertDefaults: null,
+      capabilities: null,
       initialConfiguration: undefined,
       initialName: '',
       initialDescription: '',

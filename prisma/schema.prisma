@@ -235,6 +235,10 @@ model AgentType {
   pipelineSchemaHash String?
   // Manifest-declared {{placeholder}} palette for the Configurator (per agent type).
   runtimeVariables Json?
+  // Agent-declared default experts (parsed from the agent package's config/experts/*.json),
+  // published for the Configurator's Expert Module so the frontend renders the agent's
+  // declared experts/verdicts/actions instead of hardcoding them. Null for agents without experts.
+  expertDefaults   Json?
   // Version of the SDK prompt compiler this agent resolves prompts with. Saved
   // configurations declare a minCompilerVersion that must be <= this.
   compilerVersion  String?

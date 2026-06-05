@@ -119,6 +119,67 @@ pipelineSchema:
     expect(result.errors.join('\n')).toContain('select slots must define a non-empty options array')
   })
 
+  it('accepts a verdict_directives slot type', () => {
+    // The expert module exposes per-verdict deterministic responses via this slot type.
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Verdict Agent"
+  slug: "verdict-agent"
+  version: "1.0.0"
+  description: "Has a verdict_directives slot"
+capabilities: ["voice", "text", "experts"]
+image:
+  dockerfile: "Dockerfile"
+configSchema:
+  type: object
+  x-stella-supports-configurator: true
+  properties:
+    expert_overrides:
+      type: object
+pipelineSchema:
+  nodes:
+    - id: expert_pool
+      label: "Expert Pool"
+      position: { row: 0, col: 0 }
+      slots:
+        - id: verdict_directives
+          label: "Verdict Responses"
+          type: verdict_directives
+  edges: []
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('rejects an unknown slot type', () => {
+    const result = validator.validate(`
+version: "1.0"
+metadata:
+  name: "Bad Slot Agent"
+  slug: "bad-slot-agent"
+  version: "1.0.0"
+  description: "Unknown slot type"
+image:
+  dockerfile: "Dockerfile"
+pipelineSchema:
+  nodes:
+    - id: response
+      label: "Response"
+      position: { row: 0, col: 0 }
+      slots:
+        - id: thing
+          label: "Thing"
+          type: not_a_real_slot_type
+  edges: []
+  thresholds: []
+`)
+
+    expect(result.valid).toBe(false)
+  })
+
   it('rejects edges that reference unknown node IDs', () => {
     // Topology integrity: every edge endpoint must refer to a declared node id.
     const result = validator.validate(`

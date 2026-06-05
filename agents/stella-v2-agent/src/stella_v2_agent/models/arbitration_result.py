@@ -23,6 +23,14 @@ class ResponseDirective:
         force_redirect: If True, redirect conversation (e.g. probing agent override).
         redirect_message: Specific redirect message.
         short_circuit: If True, skip response generation and use redirect_message directly.
+        action: Deterministic verdict action chosen by arbitration —
+            "inform" (default, LLM writes the reply), "prepend", "override", or
+            "short_circuit". This is the uniform contract that the agent's
+            process() loop branches on (and the precursor to the Phase-2
+            TurnContext.directive).
+        resolved_response: The compiled, ready-to-speak literature template for the
+            winning non-inform directive (empty for "inform").
+        directive_source: Name of the expert whose verdict directive won (debug/analytics).
     """
     tone: str = "neutral"
     must_avoid: List[str] = field(default_factory=list)
@@ -34,6 +42,10 @@ class ResponseDirective:
     redirect_message: str = ""
     short_circuit: bool = False
     deliverable_signals: List[str] = field(default_factory=list)
+    # Uniform deterministic-directive contract (Phase 1).
+    action: str = "inform"
+    resolved_response: str = ""
+    directive_source: str = ""
 
     def to_prompt_section(self) -> str:
         """Render as a single coherent instruction for the response system prompt.
@@ -82,7 +94,12 @@ class ResponseDirective:
             "primary_action": self.primary_action,
             "ask_followup": self.ask_followup,
             "short_circuit": self.short_circuit,
+            "action": self.action,
         }
+        if self.directive_source:
+            result["directive_source"] = self.directive_source
+        if self.resolved_response:
+            result["resolved_response"] = self.resolved_response
         if self.deliverable_signals:
             result["deliverable_signals"] = self.deliverable_signals
         if self.must_avoid:

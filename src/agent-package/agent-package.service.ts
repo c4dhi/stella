@@ -11,6 +11,11 @@ import {
 const REQUIRED_FILES = ['agent.yaml']
 const MIN_SDK_VERSION = '0.4.0'
 
+// Mirrors VERDICT_ACTIONS in the agent's expert base.py. Validated at publish
+// time so a typo'd action can't reach runtime (where it is silently coerced to
+// "inform", downgrading a deterministic safety directive with no trace).
+const VALID_VERDICT_ACTIONS = new Set(['inform', 'prepend', 'override', 'short_circuit'])
+
 @Injectable()
 export class AgentPackageService {
   private readonly logger = new Logger(AgentPackageService.name)
@@ -242,6 +247,90 @@ export class AgentPackageService {
     }
 
     return true
+  }
+
+  /**
+   * Read the agent's declared default experts from config/experts/*.json inside the package.
+   *
+   * Capability-gated per expert: `task_extraction` rides on the "plans" capability,
+   * the assessment experts ride on "experts". Returns the parsed expert objects (each
+   * file = one expert: name/model/prompt/verdict_directives/…) for publishing onto
+   * AgentType.expertDefaults, or null when none apply. Tolerant of a top-level package
+   * folder (matches any path ending in config/experts/<name>.json).
+   */
+  readExpertDefaults(zipBuffer: Buffer, capabilities: unknown): Record<string, unknown>[] | null {
+    const caps = Array.isArray(capabilities) ? (capabilities as string[]) : []
+    const hasExperts = caps.includes('experts')
+    const hasPlans = caps.includes('plans')
+    if (!hasExperts && !hasPlans) return null
+
+    let zip: AdmZip
+    try {
+      zip = new AdmZip(zipBuffer)
+    } catch {
+      return null
+    }
+
+    const matcher = /(^|\/)config\/experts\/[^/]+\.json$/i
+    const experts: Record<string, unknown>[] = []
+    const matching = zip
+      .getEntries()
+      .filter((e) => !e.isDirectory && matcher.test(e.entryName.replace(/^\.\//, '')))
+      .sort((a, b) => a.entryName.localeCompare(b.entryName))
+
+    const seenNames = new Set<string>()
+    for (const entry of matching) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(entry.getData().toString('utf-8'))
+      } catch (err) {
+        throw new Error(`Invalid expert config ${entry.entryName}: ${(err as Error).message}`)
+      }
+      if (!parsed || typeof parsed !== 'object') continue
+      const record = parsed as Record<string, unknown>
+      const name = record.name
+
+      // A nameless expert would publish as an unnamed row and collide on React
+      // keys / arbitration lookup — reject it instead of silently shipping it.
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new Error(`Expert config ${entry.entryName} is missing a "name" field`)
+      }
+      // Two files declaring the same expert name → duplicate rows + key collisions.
+      if (seenNames.has(name)) {
+        throw new Error(
+          `Duplicate expert name "${name}" across config/experts/*.json (${entry.entryName})`,
+        )
+      }
+      seenNames.add(name)
+
+      this.validateExpertVerdictActions(record, entry.entryName)
+
+      const include = name === 'task_extraction' ? hasPlans : hasExperts
+      if (include) experts.push(record)
+    }
+
+    return experts.length > 0 ? experts : null
+  }
+
+  /**
+   * Publish-time validation of an expert's verdict_directives action enum.
+   * Rejecting here keeps a typo'd action (e.g. "overide") from reaching runtime,
+   * where it would be silently coerced to "inform" and quietly disable a
+   * deterministic safety override.
+   */
+  private validateExpertVerdictActions(expert: Record<string, unknown>, where: string): void {
+    const directives = expert.verdict_directives
+    if (!directives || typeof directives !== 'object') return
+    for (const [verdict, dir] of Object.entries(directives as Record<string, unknown>)) {
+      if (!dir || typeof dir !== 'object') continue
+      const action = (dir as Record<string, unknown>).action
+      if (action !== undefined && !VALID_VERDICT_ACTIONS.has(action as string)) {
+        throw new Error(
+          `Expert "${String(expert.name)}" verdict "${verdict}" in ${where} has invalid ` +
+            `action "${String(action)}" (valid: ${[...VALID_VERDICT_ACTIONS].join(', ')})`,
+        )
+      }
+    }
   }
 
   /**

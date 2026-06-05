@@ -8,6 +8,14 @@ import NodeDetailOverlay from './NodeDetailOverlay'
 import { useConfiguratorState } from './useConfiguratorState'
 import type { StageSummary } from './PipelineNodeCard'
 
+/** Order-independent JSON serialization for a reliable dirty check. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']'
+  const obj = value as Record<string, unknown>
+  return '{' + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}'
+}
+
 interface AgentConfiguratorModalProps {
   isOpen: boolean
   onClose: () => void
@@ -38,8 +46,25 @@ export default function AgentConfiguratorModal({
     initialConfiguration || { nodes: {}, thresholds: {} },
   )
   const [overlayNodeId, setOverlayNodeId] = useState<string | null>(null)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
 
   const state = useConfiguratorState(configuration, setConfiguration, pipelineSchema)
+
+  // Unsaved-changes guard (#177): compare current name/description/config to the
+  // values the modal opened with. Closing while dirty asks for confirmation first.
+  const isDirty = useMemo(() => {
+    const initialCfg = initialConfiguration || { nodes: {}, thresholds: {} }
+    return (
+      name !== initialName ||
+      description !== initialDescription ||
+      stableStringify(configuration) !== stableStringify(initialCfg)
+    )
+  }, [name, description, configuration, initialName, initialDescription, initialConfiguration])
+
+  const requestClose = useCallback(() => {
+    if (isDirty) setShowCloseConfirm(true)
+    else onClose()
+  }, [isDirty, onClose])
 
   const overlayNode: PipelineNodeType | null = overlayNodeId
     ? pipelineSchema.nodes.find((n) => n.id === overlayNodeId) || null
@@ -111,7 +136,7 @@ export default function AgentConfiguratorModal({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm"
-      onClick={onClose}
+      onClick={requestClose}
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -131,7 +156,7 @@ export default function AgentConfiguratorModal({
         <div className={`px-4 py-3 border-b flex items-center gap-3 ${isDark ? 'border-zinc-700/80' : 'border-neutral-200'}`}>
           {/* Close (X) button — left */}
           <motion.button
-            onClick={onClose}
+            onClick={requestClose}
             className={`p-2 rounded-xl transition-colors ${
               isDark
                 ? 'text-content-inverse-secondary hover:text-content-inverse hover:bg-surface-dark-secondary'
@@ -308,6 +333,44 @@ export default function AgentConfiguratorModal({
           )}
         </AnimatePresence>
       </motion.div>
+
+      {/* Unsaved-changes confirmation (#177) — matches the Plan Builder pattern */}
+      {showCloseConfirm && (
+        <div
+          className="absolute inset-0 z-[120] flex items-center justify-center bg-black/40"
+          onClick={(e) => { e.stopPropagation(); setShowCloseConfirm(false) }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl ${
+              isDark ? 'bg-zinc-900 border border-zinc-700' : 'bg-white border border-neutral-200'
+            }`}
+          >
+            <h4 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-neutral-800'}`}>
+              Discard changes?
+            </h4>
+            <p className={`text-[13px] mt-1.5 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
+              You have unsaved changes to this configuration. If you close now, they will be lost.
+            </p>
+            <div className="flex justify-end gap-2.5 mt-5">
+              <button
+                onClick={() => setShowCloseConfirm(false)}
+                className={`px-4 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  isDark ? 'text-zinc-300 hover:bg-zinc-800' : 'text-neutral-600 hover:bg-neutral-100'
+                }`}
+              >
+                Keep editing
+              </button>
+              <button
+                onClick={() => { setShowCloseConfirm(false); onClose() }}
+                className="px-4 py-2 rounded-lg text-xs font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
+              >
+                Discard changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }

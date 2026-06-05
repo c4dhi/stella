@@ -83,7 +83,7 @@ Slots define the individual parameters that can be configured for each node.
 |-------|------|----------|-------------|
 | `id` | string | Yes | Unique within the node. Used as key in `config.nodes[nodeId][slotId]`. |
 | `label` | string | Yes | Human-readable name |
-| `type` | string | Yes | One of: `text`, `number`, `select`, `string_list`, `key_value`, `expert_list` |
+| `type` | string | Yes | One of: `text`, `number`, `select`, `string_list`, `key_value`, `expert_list`, `verdict_directives` |
 | `description` | string | No | Help text explaining what this parameter controls |
 | `default` | any | No | Default value used when no override is specified |
 
@@ -190,6 +190,29 @@ Specialized type for managing expert configurations. Supports enable/disable, pr
 | Extra Field | Type | Description |
 |-------------|------|-------------|
 | `isCustom` | boolean | If `true`, allows defining entirely new experts rather than just configuring existing ones |
+
+Each expert's verdict labels, their LLM-facing explanations, and the deterministic action wired to each verdict are configured inline in the Expert Module — see [`verdict_directives`](#verdict_directives) and [Verdict Responses](./pipeline-configurator.md#expert-module--verdict-responses).
+
+#### `verdict_directives`
+
+Editor for an expert's **verdict → response** mapping. Each verdict an expert can emit is a row with: the **label** and a plain-language **explanation** (both handed to the classifying LLM), and the deterministic **action** + **template** applied in the arbitration layer.
+
+```yaml
+- id: verdict_directives
+  label: "Verdict Responses"
+  type: verdict_directives
+```
+
+The action is one of:
+
+| Action | Effect |
+|--------|--------|
+| `inform` | Default. The verdict influences tone/guidance; the response LLM still writes the reply. |
+| `prepend` | Speak the template first, then the generated reply. |
+| `override` | Speak only the template; the response LLM is bypassed (post-processing still runs). |
+| `short_circuit` | Speak only the template and end the turn — nothing downstream runs. |
+
+Verdict directives are stored per expert (under `nodes.expert_pool.experts[name].verdict_directives`), so no top-level slot is required for built-in experts — the Expert Module renders this editor for every expert. The output **interface** (`{verdict, confidence, recommendation}`) is fixed; only the verdict **labels/explanations/actions** are configurable.
 
 ## Edges
 

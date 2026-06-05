@@ -539,6 +539,7 @@ export default function NodeDetailOverlay({
         type: 'editable',
         label: 'Prompt Template',
         headerHint: 'The bridge phrase (from Bridge Generator) is automatically prepended to every response. The model is instructed to continue naturally from it — do not repeat or re-acknowledge.',
+        headerHintLabel: 'Bridge Phrase Injection',
         value: isOverridden ? String(systemPromptValue) : undefined,
         defaultValue: DEFAULT_RESPONSE_GENERATOR_TEMPLATE,
         onChange: (v) => onUpdateNodeConfig(node.id, 'system_prompt', v),

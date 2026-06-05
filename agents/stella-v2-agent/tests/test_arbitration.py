@@ -18,6 +18,7 @@ What we test here:
 
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
+from stella_v2_agent.experts.base import ExpertConfig, VerdictDirective
 
 
 # ---------------------------------------------------------------------------
@@ -360,3 +361,181 @@ def test_task_extraction_verdict_does_not_set_primary_action():
     # task_extraction must never set primary_action or change tone
     assert result.directive.primary_action == ""
     assert result.directive.tone == "neutral"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic verdict directives (literature-informed responses)
+# ---------------------------------------------------------------------------
+
+def _expert(name: str, priority: int, directives: dict | None = None) -> ExpertConfig:
+    """Build a minimal ExpertConfig with verdict_directives for arbitration tests."""
+    return ExpertConfig(name=name, priority=priority, verdict_directives=directives or {})
+
+
+def test_override_directive_replaces_response():
+    # A medical "critical" verdict configured as "override" must deterministically
+    # replace the generated response, set the action, and keep the back-compat
+    # short_circuit flag so existing interception consumers keep working.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"critical": VerdictDirective("override", "Please call emergency services.")})}
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "override"
+    assert result.directive.resolved_response == "Please call emergency services."
+    assert result.directive.short_circuit is True
+    assert result.directive.directive_source == "medical"
+    assert result.favored_expert == "medical"
+
+
+def test_short_circuit_directive_replaces_and_returns_early():
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"critical": VerdictDirective("short_circuit", "I can't help with that here.")})}
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "short_circuit"
+    assert result.directive.resolved_response == "I can't help with that here."
+    # Early return — none of the normal probing/timekeeper passes ran.
+    assert result.directive.ask_followup is False
+
+
+def test_prepend_directive_keeps_normal_passes():
+    # "prepend" speaks the template first but still lets the LLM write the reply,
+    # so the normal must_avoid pass must still run for medical "high".
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"high": VerdictDirective("prepend", "I can't give medical advice.")})}
+
+    result = arb.resolve([_verdict("medical", "high", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "prepend"
+    assert result.directive.resolved_response == "I can't give medical advice."
+    assert any("medical" in item for item in result.directive.must_avoid)
+    assert result.directive.short_circuit is False
+
+
+def test_empty_prepend_template_does_not_inject_gate_failure_message():
+    # An empty prepend template must mean "add nothing before the reply" — NOT
+    # speak the "didn't catch that" gate-failure line ahead of a normal answer.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"high": VerdictDirective("prepend", "")})}
+
+    result = arb.resolve([_verdict("medical", "high", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "prepend"
+    assert result.directive.resolved_response == ""
+    assert result.directive.resolved_response != arb.gate_failure_message
+
+
+def test_empty_override_template_falls_back_to_safe_default():
+    # A replace action (override/short_circuit) with an empty/failed template must
+    # fall back to the safe locale-aware line so we never speak an empty turn.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"critical": VerdictDirective("override", "")})}
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "override"
+    assert result.directive.resolved_response == arb.gate_failure_message
+
+
+def test_failed_template_compile_fails_closed_not_raw_template():
+    # An unresolvable compiler version must NOT speak the raw template (literal
+    # {{placeholders}}); it fails closed to the safe default for a replace action.
+    arb = Arbitration()
+    arb.set_compiler_version("999.0.0")  # unregistered → compile raises internally
+    configs = {
+        "medical": _expert(
+            "medical", 95, {"critical": VerdictDirective("override", "Call {{user_name}} now")}
+        )
+    }
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert "{{" not in result.directive.resolved_response
+    assert result.directive.resolved_response == arb.gate_failure_message
+
+
+def test_directive_winner_resolves_by_priority():
+    # Two experts both carry an "override" directive — the higher-priority one wins.
+    arb = Arbitration()
+    configs = {
+        "medical": _expert("medical", 95, {"high": VerdictDirective("override", "MED")}),
+        "legal": _expert("legal", 90, {"high": VerdictDirective("override", "LEG")}),
+    }
+    verdicts = [
+        _verdict("legal", "high", priority=90),
+        _verdict("medical", "high", priority=95),
+    ]
+
+    result = arb.resolve(verdicts, expert_configs=configs)
+
+    assert result.directive.directive_source == "medical"
+    assert result.directive.resolved_response == "MED"
+
+
+def test_template_placeholders_compile():
+    # Verdict templates support {{placeholders}} resolved against the live turn.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"critical": VerdictDirective("override", "Re: {{user_message}}")})}
+
+    result = arb.resolve(
+        [_verdict("medical", "critical", priority=95)],
+        expert_configs=configs,
+        user_input="my chest hurts",
+    )
+
+    assert result.directive.resolved_response == "Re: my chest hurts"
+
+
+def test_explicit_inform_directive_suppresses_noise_fallback():
+    # An explicit "inform" entry on noise_detection means the operator opted out
+    # of the legacy short-circuit — the pipeline must continue normally.
+    arb = Arbitration()
+    configs = {"noise_detection": _expert("noise_detection", 100, {"unclear": VerdictDirective("inform", "")})}
+
+    result = arb.resolve([_verdict("noise_detection", "unclear", priority=100)], expert_configs=configs)
+
+    assert result.directive.action == "inform"
+    assert result.directive.short_circuit is False
+
+
+def test_empty_directives_preserve_legacy_behavior():
+    # With an expert config that carries no directives, arbitration behaves exactly
+    # as before: tone + primary_action, action stays "inform".
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {})}
+
+    result = arb.resolve(
+        [_verdict("medical", "high", priority=95, recommendation="see a doctor")],
+        expert_configs=configs,
+    )
+
+    assert result.directive.action == "inform"
+    assert result.directive.tone == "cautious"
+    assert result.directive.primary_action == "see a doctor"
+
+
+def test_seeded_noise_short_circuit_uses_gate_failure_message():
+    # The seeded noise_detection directive ships an empty template, which resolves
+    # to the locale-aware gate failure message.
+    arb = Arbitration()
+    arb.apply_config({"gate_failure_message": "Please repeat."})
+    configs = {"noise_detection": _expert("noise_detection", 100, {"unclear": VerdictDirective("short_circuit", "")})}
+
+    result = arb.resolve([_verdict("noise_detection", "unclear", priority=100)], expert_configs=configs)
+
+    assert result.directive.resolved_response == "Please repeat."
+    assert result.directive.redirect_message == "Please repeat."
+
+
+def test_noise_fallback_without_configs_still_short_circuits():
+    # Back-compat: an un-migrated deployment (no expert_configs passed) keeps the
+    # hardcoded noise short-circuit behavior.
+    arb = Arbitration()
+
+    result = arb.resolve([_verdict("noise_detection", "unclear", priority=100)])
+
+    assert result.directive.action == "short_circuit"
+    assert result.directive.short_circuit is True
+    assert result.favored_expert == "noise_detection"

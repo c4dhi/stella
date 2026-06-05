@@ -302,17 +302,44 @@ class ExpertRunner:
         # point — resolve all {{placeholders}} against the live runtime context.
         # The compiler copies sm_context internally and layers in the per-turn
         # history / user message, so we never mutate the shared context here.
-        compiled_prompt = sdk_prompts.compile(
-            template,
-            version=self._compiler_version,
-            sm_context=sm_context,
-            conversation_history=conversation_history,
-            user_input=user_input,
-        )
+        # Guarded: a malformed sm_context (e.g. a bad progress value or a message
+        # missing role/content) must not crash the expert turn. Unlike arbitration,
+        # this path has no outer try/except, so we fall back to the raw template
+        # (placeholders unresolved) and let the expert still run.
+        try:
+            compiled_prompt = sdk_prompts.compile(
+                template,
+                version=self._compiler_version,
+                sm_context=sm_context,
+                conversation_history=conversation_history,
+                user_input=user_input,
+            )
+        except Exception as e:  # noqa: BLE001 — never let prompt compilation kill the turn
+            logger.warning(
+                "Prompt compile failed for expert '%s' (%s); using raw template",
+                config.name, e,
+            )
+            compiled_prompt = template
 
         # Append output format instruction if configured (not in tool mode)
         if append_output_format and config.output_format:
             compiled_prompt += f"\n\nRespond with compact JSON: {config.output_format}"
+
+        # Generic verdict interface: the allowed verdict LABELS + their explanations
+        # come from config (verdict_directives), not a hardcoded enum baked into the
+        # prompt. The label and explanation are handed to the LLM so it knows what
+        # each verdict means; the per-verdict ACTION is NOT shown (it is applied
+        # deterministically in the arbitration layer). Operators can add/rename
+        # verdicts and edit explanations without touching prompt text or code.
+        if append_output_format and config.verdict_directives:
+            lines = []
+            for label, directive in config.verdict_directives.items():
+                description = getattr(directive, "description", "") or ""
+                lines.append(f'- "{label}": {description}' if description else f'- "{label}"')
+            if lines:
+                compiled_prompt += (
+                    "\n\nClassify into exactly ONE of these verdicts:\n" + "\n".join(lines)
+                )
 
         messages = [LLMMessage(role="system", content=compiled_prompt)]
 

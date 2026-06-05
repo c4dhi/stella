@@ -256,6 +256,9 @@ export interface PromptBlock {
   helperText?: string
   /** Header hint rendered above the editor (like outputFormat footer, but on top) */
   headerHint?: string
+  /** Label for the header hint box. Defaults to "Note". Set e.g. "Bridge Phrase Injection"
+   *  only where that is actually true (the stella-v2 response generator). */
+  headerHintLabel?: string
   /** Expert name — used to look up the enforced output format */
   expertName?: string
   /** Direct output format override (takes precedence over expertName lookup) */
@@ -287,7 +290,11 @@ export function buildExpertBlocks(
 ): PromptBlock[] {
   return [
     {
-      id: 'prompt_template',
+      // Namespace per expert: variable insertion locates the target textarea via
+      // querySelector('[data-prompt-id="..."]'), so a shared id collides when two
+      // expert editors are open at once (e.g. task-extraction + a pool expert) and
+      // the inserted {{variable}} lands in the wrong textarea.
+      id: `prompt_template_${expert.name}`,
       type: 'editable',
       label: 'Prompt Template',
       // Pass the raw override through: `undefined` = inherit default, `''` = explicit
@@ -297,7 +304,8 @@ export function buildExpertBlocks(
       onChange: (v) => onUpdate({ systemPrompt: v }),
       onReset: () => onUpdate({ systemPrompt: undefined }),
       rows: 18,
-      expertName: expert.name,
+      // No enforced-output-format footer: the output is a generic interface and the
+      // verdict labels are configured in the Verdict Responses editor below.
     },
   ]
 }
@@ -576,6 +584,7 @@ function HighlightedEditor({
   outputFormat,
   fillHeight,
   headerHint,
+  headerHintLabel,
 }: {
   value: string
   onChange?: (value: string) => void
@@ -588,6 +597,8 @@ function HighlightedEditor({
   fillHeight?: boolean
   /** Header hint rendered above the editor */
   headerHint?: string
+  /** Label for the header hint box (defaults to "Note") */
+  headerHintLabel?: string
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -641,7 +652,7 @@ function HighlightedEditor({
             <span className={`text-[9px] font-semibold uppercase tracking-wide ${
               isDark ? 'text-zinc-500' : 'text-neutral-400'
             }`}>
-              Bridge Phrase Injection
+              {headerHintLabel || 'Note'}
             </span>
             <p className={`mt-1 text-[10px] font-mono leading-relaxed ${
               isDark ? 'text-zinc-400' : 'text-neutral-500'
@@ -954,6 +965,7 @@ function FullscreenPromptModal({
               blockId="fullscreen-editor"
               outputFormat={outputFormat}
               headerHint={block.headerHint}
+              headerHintLabel={block.headerHintLabel}
               fillHeight
             />
           </div>
@@ -1122,6 +1134,7 @@ function EditableBlock({ block, isDark, compact }: { block: PromptBlock; isDark:
         blockId={block.id}
         outputFormat={outputFormat}
         headerHint={block.headerHint}
+        headerHintLabel={block.headerHintLabel}
       />
 
       {showDefault && (

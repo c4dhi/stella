@@ -67,6 +67,25 @@ describe('reconcileAgentTypeConfigurations', () => {
     expect(updates.c2.agentVersion).toBeUndefined();
   });
 
+  it('counts a config that is pruned but still lands OUTDATED', async () => {
+    const { prisma } = createPrisma('2.0.0', schema, [
+      {
+        id: 'c4',
+        agentVersion: '2.0.0',
+        // A removed-node override (gets pruned) AND an out-of-range threshold
+        // (still fails validation → OUTDATED). The prune must be counted.
+        configuration: {
+          nodes: { planner: {}, removed: {} },
+          thresholds: { temperature: 9 },
+        },
+      },
+    ]);
+    const report = await reconcileAgentTypeConfigurations(prisma, 'type-A', NOW);
+
+    expect(report.outdated).toBe(1);
+    expect(report.pruned).toBe(1);
+  });
+
   it('marks a valid same-version config CURRENT', async () => {
     const { prisma, updates } = createPrisma('2.0.0', schema, [
       { id: 'c3', agentVersion: '2.0.0', configuration: { nodes: { planner: {} } } },
