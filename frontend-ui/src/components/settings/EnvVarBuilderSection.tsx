@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
@@ -7,6 +7,10 @@ import type { EnvVarTemplate, AgentType } from '../../lib/api-types'
 import EnvVarTemplateCard from './EnvVarTemplateCard'
 import EnvVarBuilderModal from './EnvVarBuilder/EnvVarBuilderModal'
 import ConfirmDialog from '../modals/ConfirmDialog'
+
+// Synthetic group key for templates whose agent type is missing from the type list.
+// agentTypeName() falls back to "Unknown type" for it.
+const UNKNOWN_TYPE_KEY = '__unknown__'
 
 const containerVariants = {
   hidden: {},
@@ -63,6 +67,31 @@ export default function EnvVarBuilderSection() {
 
   const agentTypeName = (id: string): string =>
     agentTypes.find((t) => t.id === id)?.name || 'Unknown type'
+
+  // Group templates by agent type, ordered to follow the agent-type list. Templates
+  // whose type is unknown collapse into a single trailing section. Mirrors
+  // AgentConfigSection's grouped layout.
+  const groupedTemplates = useMemo<Array<[string, EnvVarTemplate[]]>>(() => {
+    const knownIds = new Set(agentTypes.map((t) => t.id))
+    const groups = new Map<string, EnvVarTemplate[]>()
+    const unknown: EnvVarTemplate[] = []
+    for (const template of templates) {
+      if (!knownIds.has(template.agentTypeId)) {
+        unknown.push(template)
+        continue
+      }
+      const bucket = groups.get(template.agentTypeId)
+      if (bucket) bucket.push(template)
+      else groups.set(template.agentTypeId, [template])
+    }
+    const ordered: Array<[string, EnvVarTemplate[]]> = []
+    for (const type of agentTypes) {
+      const bucket = groups.get(type.id)
+      if (bucket) ordered.push([type.id, bucket])
+    }
+    if (unknown.length > 0) ordered.push([UNKNOWN_TYPE_KEY, unknown])
+    return ordered
+  }, [templates, agentTypes])
 
   useEffect(() => {
     loadTemplates()
@@ -255,28 +284,45 @@ export default function EnvVarBuilderSection() {
             </motion.div>
           )}
 
-          {/* Templates Grid */}
+          {/* Templates grouped by agent type */}
           {!isLoading && !error && templates.length > 0 && (
             <motion.div
               key="templates"
-              className="grid grid-cols-1 lg:grid-cols-2 gap-5"
+              className="space-y-8"
               variants={containerVariants}
               initial="hidden"
               animate="visible"
             >
-              <AnimatePresence mode="popLayout">
-                {templates.map((template, index) => (
-                  <EnvVarTemplateCard
-                    key={template.id}
-                    template={template}
-                    agentTypeName={agentTypeName(template.agentTypeId)}
-                    index={index}
-                    onEdit={() => handleEdit(template)}
-                    onDelete={() => handleDelete(template)}
-                    onDuplicate={() => handleDuplicate(template)}
-                  />
-                ))}
-              </AnimatePresence>
+              {groupedTemplates.map(([agentTypeId, group]) => (
+                <motion.div key={agentTypeId} variants={itemVariants}>
+                  {/* Agent type section header */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className={`text-xs font-medium tracking-wider uppercase ${isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'}`}>
+                      {agentTypeName(agentTypeId)}
+                    </span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${isDark ? 'bg-surface-dark-secondary text-content-inverse-secondary' : 'bg-neutral-100 text-neutral-500'}`}>
+                      {group.length}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <AnimatePresence mode="popLayout">
+                      {group.map((template, index) => (
+                        <EnvVarTemplateCard
+                          key={template.id}
+                          template={template}
+                          agentTypeName={agentTypeName(template.agentTypeId)}
+                          index={index}
+                          showAgentTypeBadge={false}
+                          onEdit={() => handleEdit(template)}
+                          onDelete={() => handleDelete(template)}
+                          onDuplicate={() => handleDuplicate(template)}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
