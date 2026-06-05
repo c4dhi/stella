@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../../store/themeStore'
 import { useToastStore } from '../../../store/toastStore'
 import { apiClient } from '../../../services/ApiClient'
-import type { EnvVarTemplate, AgentType } from '../../../lib/api-types'
+import { parseDeclaredEnvVars, type EnvVarTemplate, type AgentType } from '../../../lib/api-types'
+import { useEnvVarListEditor } from '../../shared/EnvVarListEditor/useEnvVarListEditor'
+import EnvVarListEditor from '../../shared/EnvVarListEditor/EnvVarListEditor'
 
 interface EnvVarBuilderModalProps {
   isOpen: boolean
@@ -12,12 +14,6 @@ interface EnvVarBuilderModalProps {
   agentTypes: AgentType[]
   onClose: () => void
   onSave: () => void
-}
-
-interface EnvVarEntry {
-  id: string
-  key: string
-  value: string
 }
 
 export default function EnvVarBuilderModal({
@@ -34,20 +30,27 @@ export default function EnvVarBuilderModal({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [agentTypeId, setAgentTypeId] = useState('')
-  const [entries, setEntries] = useState<EnvVarEntry[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false)
+  // Pending agent-type switch awaiting confirmation (set when it would reshuffle user content).
+  const [pendingAgentType, setPendingAgentType] = useState<{ id: string; apply: () => void } | null>(null)
 
   const isEditing = !!template
+
+  const editor = useEnvVarListEditor({
+    mode: isEditing ? 'edit' : 'create',
+    allowEmptyValues: true,
+    requireAllValuesWhenTouched: isEditing,
+  })
 
   // Check if form has content (for unsaved changes tracking)
   const hasContent = useCallback(() => {
     return name.trim() !== '' ||
       description.trim() !== '' ||
-      entries.some(e => e.key.trim() !== '' || e.value.trim() !== '')
-  }, [name, description, entries])
+      editor.rows.some(e => e.key.trim() !== '' || e.value.trim() !== '')
+  }, [name, description, editor.rows])
 
   // Request close - shows confirmation if there are unsaved changes
   const requestClose = useCallback(() => {
@@ -77,24 +80,31 @@ export default function EnvVarBuilderModal({
         setName(template.name)
         setDescription(template.description || '')
         setAgentTypeId(template.agentTypeId) // immutable; shown read-only
-        // For editing, we only have keys - values need to be re-entered
-        setEntries(
-          template.variableKeys.map((key, idx) => ({
-            id: `${idx}-${Date.now()}`,
-            key,
-            value: '', // Values are not returned from API for security
-          }))
-        )
+        // Editing: only keys are returned (values are encrypted at rest). Seed
+        // preserved rows so a rename needs no value re-entry.
+        editor.reset({
+          mode: 'edit',
+          initial: Object.fromEntries(template.variableKeys.map((key) => [key, ''])),
+        })
       } else {
         setName('')
         setDescription('')
         // Preselect when there's exactly one type; otherwise force an explicit choice.
-        setAgentTypeId(agentTypes.length === 1 ? agentTypes[0].id : '')
-        setEntries([{ id: `0-${Date.now()}`, key: '', value: '' }])
+        const preselected = agentTypes.length === 1 ? agentTypes[0].id : ''
+        setAgentTypeId(preselected)
+        const declared = preselected
+          ? parseDeclaredEnvVars(agentTypes[0].configSchema)
+          : { required: [], optional: [] }
+        editor.reset({
+          mode: 'create',
+          requiredKeys: declared.required,
+          optionalKeys: declared.optional,
+        })
       }
       setError(null)
       setHasUnsavedChanges(false)
       setShowCloseConfirmation(false)
+      setPendingAgentType(null)
     }
   }, [isOpen, template])
 
@@ -102,7 +112,9 @@ export default function EnvVarBuilderModal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        if (showCloseConfirmation) {
+        if (pendingAgentType) {
+          setPendingAgentType(null)
+        } else if (showCloseConfirmation) {
           cancelClose()
         } else {
           requestClose()
@@ -112,23 +124,28 @@ export default function EnvVarBuilderModal({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, showCloseConfirmation, requestClose, cancelClose])
+  }, [isOpen, showCloseConfirmation, pendingAgentType, requestClose, cancelClose])
 
-  const addEntry = () => {
-    setEntries([...entries, { id: `${entries.length}-${Date.now()}`, key: '', value: '' }])
-    setHasUnsavedChanges(true)
-  }
-
-  const removeEntry = (id: string) => {
-    if (entries.length > 1) {
-      setEntries(entries.filter((e) => e.id !== id))
+  // Switching agent type prefills that type's declared env vars. Reconcile keeps
+  // any value the user already typed; confirm first when content would be reshuffled.
+  const handleAgentTypeChange = (id: string) => {
+    const declared = parseDeclaredEnvVars(agentTypes.find((t) => t.id === id)?.configSchema)
+    const { hasUserContent, apply } = editor.applyAgentType(declared.required, declared.optional)
+    if (hasUserContent) {
+      setPendingAgentType({ id, apply })
+    } else {
+      setAgentTypeId(id)
+      apply()
       setHasUnsavedChanges(true)
     }
   }
 
-  const updateEntry = (id: string, field: 'key' | 'value', value: string) => {
-    setEntries(entries.map((e) => (e.id === id ? { ...e, [field]: value } : e)))
+  const confirmAgentTypeChange = () => {
+    if (!pendingAgentType) return
+    setAgentTypeId(pendingAgentType.id)
+    pendingAgentType.apply()
     setHasUnsavedChanges(true)
+    setPendingAgentType(null)
   }
 
   // Update name with change tracking
@@ -158,44 +175,30 @@ export default function EnvVarBuilderModal({
       return
     }
 
-    // Filter out empty entries
-    const validEntries = entries.filter((e) => e.key.trim())
-    if (validEntries.length === 0) {
+    // Shared editor surfaces per-row issues inline; null means something is invalid.
+    const variables = editor.toVariablesMap()
+    if (variables === null) {
+      setError(editor.variablesTouched
+        ? 'Please enter a value for every variable (existing values must be re-entered when changing variables)'
+        : 'Please fix the highlighted variables')
+      return
+    }
+
+    if (!isEditing && Object.keys(variables).length === 0) {
       setError('At least one environment variable is required')
       return
     }
-
-    // Check for duplicate keys
-    const keys = validEntries.map((e) => e.key.trim())
-    const uniqueKeys = new Set(keys)
-    if (uniqueKeys.size !== keys.length) {
-      setError('Duplicate variable keys are not allowed')
-      return
-    }
-
-    // For editing, check if any values are empty (must re-enter values)
-    if (isEditing) {
-      const emptyValues = validEntries.filter((e) => !e.value.trim())
-      if (emptyValues.length > 0) {
-        setError('Please enter values for all variables (values are not stored in browser for security)')
-        return
-      }
-    }
-
-    // Build variables object
-    const variables: Record<string, string> = {}
-    validEntries.forEach((e) => {
-      variables[e.key.trim()] = e.value
-    })
 
     setIsSaving(true)
 
     try {
       if (isEditing && template) {
+        // Untouched variables are omitted so the backend keeps the encrypted values
+        // (a rename needs no value re-entry). Touched edits send a full replacement.
         await apiClient.updateEnvVarTemplate(template.id, {
           name: name.trim(),
           description: description.trim() || undefined,
-          variables,
+          ...(editor.variablesTouched ? { variables } : {}),
         })
         addToast({ message: 'Template updated successfully', type: 'success' })
       } else {
@@ -278,7 +281,7 @@ export default function EnvVarBuilderModal({
                 </h2>
                 <p className={`text-sm mt-1 ${isDark ? 'text-zinc-400' : 'text-neutral-500'}`}>
                   {isEditing
-                    ? 'Update the template. You must re-enter all values for security.'
+                    ? 'Update the template. Existing values are kept unless you change a variable.'
                     : 'Create a reusable set of environment variables for your agents'
                   }
                 </p>
@@ -351,7 +354,7 @@ export default function EnvVarBuilderModal({
                   ) : (
                     <select
                       value={agentTypeId}
-                      onChange={(e) => { setAgentTypeId(e.target.value); setHasUnsavedChanges(true) }}
+                      onChange={(e) => handleAgentTypeChange(e.target.value)}
                       className={`
                         w-full px-4 py-3 rounded-xl text-sm
                         focus:outline-none transition-all duration-200
@@ -377,74 +380,11 @@ export default function EnvVarBuilderModal({
                   <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
                     Environment Variables <span className="text-red-500">*</span>
                   </label>
-                  <div className="space-y-3">
-                    {entries.map((entry, idx) => (
-                      <div key={entry.id} className="flex gap-2">
-                        <input
-                          type="text"
-                          value={entry.key}
-                          onChange={(e) => updateEntry(entry.id, 'key', e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                          className={`
-                            flex-1 px-3 py-2.5 rounded-lg text-sm font-mono
-                            focus:outline-none transition-all duration-200
-                            ${isDark
-                              ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
-                              : 'bg-neutral-50 border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400'
-                            }
-                          `}
-                          placeholder="KEY_NAME"
-                        />
-                        <input
-                          type="password"
-                          value={entry.value}
-                          onChange={(e) => updateEntry(entry.id, 'value', e.target.value)}
-                          className={`
-                            flex-1 px-3 py-2.5 rounded-lg text-sm
-                            focus:outline-none transition-all duration-200
-                            ${isDark
-                              ? 'bg-zinc-700/50 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
-                              : 'bg-neutral-50 border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400'
-                            }
-                          `}
-                          placeholder="Value (hidden)"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeEntry(entry.id)}
-                          disabled={entries.length === 1}
-                          className={`
-                            p-2.5 rounded-lg transition-all duration-200
-                            ${entries.length === 1
-                              ? 'opacity-30 cursor-not-allowed'
-                              : isDark
-                                ? 'text-zinc-400 hover:text-red-400 hover:bg-red-500/10'
-                                : 'text-neutral-400 hover:text-red-500 hover:bg-red-50'
-                            }
-                          `}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <path d="M18 6L6 18M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addEntry}
-                    className={`
-                      mt-3 flex items-center gap-2 text-sm font-medium transition-colors
-                      ${isDark
-                        ? 'text-primary-400 hover:text-primary-300'
-                        : 'text-primary-600 hover:text-primary-700'
-                      }
-                    `}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    Add Variable
-                  </button>
+                  <EnvVarListEditor
+                    editor={editor}
+                    isDark={isDark}
+                    onChange={() => setHasUnsavedChanges(true)}
+                  />
                 </div>
 
                 {/* Security notice */}
@@ -565,6 +505,58 @@ export default function EnvVarBuilderModal({
                         className="flex-1 py-2.5 px-4 rounded-xl text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
                       >
                         Discard Changes
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Agent-type switch confirmation (would reshuffle entered variables) */}
+            <AnimatePresence>
+              {pendingAgentType && (
+                <motion.div
+                  className="absolute inset-0 z-10 flex items-center justify-center rounded-[20px] overflow-hidden"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setPendingAgentType(null)} />
+                  <motion.div
+                    className={`relative z-10 p-6 rounded-2xl shadow-2xl max-w-sm mx-4 ${
+                      isDark ? 'bg-zinc-800 border border-zinc-700' : 'bg-white border border-neutral-200'
+                    }`}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 bg-amber-500/10`}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-amber-500">
+                        <path d="M12 9v4M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-zinc-100' : 'text-neutral-900'}`}>
+                      Switch agent type?
+                    </h3>
+                    <p className={`text-sm mb-6 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
+                      This will load the new agent type's declared variables. Values you've already entered are kept, but variables specific to the previous type will be reorganized.
+                    </p>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setPendingAgentType(null)}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-colors ${
+                          isDark
+                            ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                            : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                        }`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={confirmAgentTypeChange}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium text-white transition-colors ${isDark ? 'bg-primary-500 hover:bg-primary-400' : 'bg-neutral-900 hover:bg-neutral-800'}`}
+                      >
+                        Switch & Load
                       </button>
                     </div>
                   </motion.div>

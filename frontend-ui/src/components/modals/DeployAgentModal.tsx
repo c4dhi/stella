@@ -16,6 +16,8 @@ import type {
 } from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
 import ConfigurationSelectionStep from '../shared/ConfigurationSelectionStep'
+import { useEnvVarListEditor } from '../shared/EnvVarListEditor/useEnvVarListEditor'
+import EnvVarListEditor from '../shared/EnvVarListEditor/EnvVarListEditor'
 
 interface DeployAgentModalProps {
   isOpen: boolean
@@ -54,8 +56,7 @@ export default function DeployAgentModal({
   const [selectedEnvVarTemplate, setSelectedEnvVarTemplate] = useState<EnvVarTemplate | null>(null)
   const [isLoadingEnvVars, setIsLoadingEnvVars] = useState(false)
   const [envVarsView, setEnvVarsView] = useState<EnvVarsView>('select')
-  const [envVars, setEnvVars] = useState<Record<string, string>>({})  // Current env vars being edited
-  const [newEnvVarKey, setNewEnvVarKey] = useState('')  // For adding new variables
+  const [envVars, setEnvVars] = useState<Record<string, string>>({})  // Current env vars being edited (mirrors the shared editor)
 
   // Agent configuration state (pipeline configurator)
   const [selectedConfiguration, setSelectedConfiguration] = useState<AgentConfiguration | null>(null)
@@ -65,6 +66,13 @@ export default function DeployAgentModal({
     if (!selectedType) return { requiresPlan: false, requiredEnvVars: [] as string[], supportsConfigurator: false }
     return parseAgentRequirements(selectedType.configSchema)
   }, [selectedType])
+
+  // Shared env-var editor (manual entry). Required keys must be filled; values are
+  // mirrored back into `envVars` so canContinue + handleSubmit keep working.
+  const envVarEditor = useEnvVarListEditor({ allowEmptyValues: false })
+  useEffect(() => {
+    setEnvVars(envVarEditor.toVariablesMap() ?? {})
+  }, [envVarEditor.rows])
 
   // Determine dynamic steps based on agent requirements
   // Flow: Gallery → Configure → (Configuration if supported) → (Plan if required) → Env Vars
@@ -94,7 +102,6 @@ export default function DeployAgentModal({
       setSelectedEnvVarTemplate(null)
       setEnvVarsView('select')
       setEnvVars({})
-      setNewEnvVarKey('')
       setSelectedConfiguration(null)
 
       // Fetch agent types
@@ -134,21 +141,6 @@ export default function DeployAgentModal({
     }
   }, [step, envVarTemplates.length, selectedType?.id])
 
-  // Initialize env vars with required keys when entering edit view
-  useEffect(() => {
-    if (envVarsView === 'edit' && agentRequirements.requiredEnvVars.length > 0) {
-      setEnvVars(prev => {
-        const updated = { ...prev }
-        agentRequirements.requiredEnvVars.forEach(key => {
-          if (!(key in updated)) {
-            updated[key] = ''
-          }
-        })
-        return updated
-      })
-    }
-  }, [envVarsView, agentRequirements.requiredEnvVars])
-
   // Update icon when agent type is selected
   useEffect(() => {
     if (selectedType) {
@@ -175,28 +167,9 @@ export default function DeployAgentModal({
   const handleContinue = () => {
     // Special handling for envvars step - transition from select to edit view
     if (step === 'envvars' && envVarsView === 'select') {
-      // Prefill env vars from template if one is selected
-      if (selectedEnvVarTemplate) {
-        const prefilled: Record<string, string> = {}
-        // Initialize with template keys (values will be masked/encrypted on server)
-        selectedEnvVarTemplate.variableKeys.forEach(key => {
-          prefilled[key] = '••••••••' // Placeholder to show it's prefilled
-        })
-        // Also ensure required vars are present
-        agentRequirements.requiredEnvVars.forEach(key => {
-          if (!(key in prefilled)) {
-            prefilled[key] = ''
-          }
-        })
-        setEnvVars(prefilled)
-      } else {
-        // No template - initialize with required vars only
-        const initial: Record<string, string> = {}
-        agentRequirements.requiredEnvVars.forEach(key => {
-          initial[key] = ''
-        })
-        setEnvVars(initial)
-      }
+      // Seed the shared editor with the agent's declared required keys (empty). A
+      // selected template supplies the rest server-side; manual rows are overrides.
+      envVarEditor.reset({ requiredKeys: agentRequirements.requiredEnvVars, initial: {} })
       setEnvVarsView('edit')
       return
     }
@@ -326,36 +299,6 @@ export default function DeployAgentModal({
       setError(err instanceof Error ? err.message : 'Failed to deploy agent')
     } finally {
       setIsSubmitting(false)
-    }
-  }
-
-  const setEnvVarValue = (key: string, rawValue: string) => {
-    // Never persist newline characters in secret values (prevents accidental Enter suffixes).
-    const sanitizedValue = rawValue.replace(/[\r\n]/g, '')
-    setEnvVars(prev => ({ ...prev, [key]: sanitizedValue }))
-  }
-
-  const addNewEnvVar = () => {
-    if (newEnvVarKey && !envVars[newEnvVarKey]) {
-      setEnvVars(prev => ({ ...prev, [newEnvVarKey]: '' }))
-      setNewEnvVarKey('')
-    }
-  }
-
-  const handleEnvVarInputEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-    e.preventDefault()
-
-    // In env var edit step, Enter confirms the current step action.
-    if (isLastStep()) {
-      if (canContinue() && !isSubmitting) {
-        void handleSubmit()
-      }
-      return
-    }
-
-    if (canContinue()) {
-      handleContinue()
     }
   }
 
@@ -988,100 +931,8 @@ export default function DeployAgentModal({
                           </div>
                         )}
 
-                        <div className="space-y-3 max-h-[260px] overflow-y-auto pr-2">
-                          {/* Existing env vars */}
-                          {Object.entries(envVars).map(([key, value]) => {
-                            const isRequired = agentRequirements.requiredEnvVars.includes(key)
-                            return (
-                              <div key={key} className="flex items-start gap-2">
-                                <div className="flex-1">
-                                  <label className={`block text-xs font-mono mb-1.5 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
-                                    {key} {isRequired && <span className="text-red-500">*</span>}
-                                  </label>
-                                  <input
-                                    type="password"
-                                    value={value}
-                                    onChange={(e) => setEnvVarValue(key, e.target.value)}
-                                    onKeyDown={handleEnvVarInputEnter}
-                                    className={`
-                                      w-full px-4 py-2.5 rounded-xl text-sm font-mono
-                                      focus:outline-none transition-all duration-200
-                                      ${isDark
-                                        ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
-                                        : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
-                                      }
-                                    `}
-                                    placeholder={`Enter ${key}`}
-                                  />
-                                </div>
-                                {!isRequired && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEnvVars(prev => {
-                                        const updated = { ...prev }
-                                        delete updated[key]
-                                        return updated
-                                      })
-                                    }}
-                                    className={`
-                                      mt-6 p-2 rounded-lg transition-colors
-                                      ${isDark ? 'hover:bg-zinc-700 text-zinc-500 hover:text-red-400' : 'hover:bg-neutral-100 text-neutral-400 hover:text-red-500'}
-                                    `}
-                                    title="Remove variable"
-                                  >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                                      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-
-                          {/* Add new variable */}
-                          <div className={`
-                            p-3 rounded-xl border-2 border-dashed
-                            ${isDark ? 'border-zinc-700 bg-zinc-800/30' : 'border-neutral-200 bg-neutral-50/50'}
-                          `}>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                value={newEnvVarKey}
-                                onChange={(e) => setNewEnvVarKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                                    e.preventDefault()
-                                    addNewEnvVar()
-                                  }
-                                }}
-                                placeholder="NEW_VARIABLE_NAME"
-                                className={`
-                                  flex-1 px-3 py-2 rounded-lg text-sm font-mono
-                                  focus:outline-none transition-all duration-200
-                                  ${isDark
-                                    ? 'bg-zinc-700 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
-                                    : 'bg-white border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400'
-                                  }
-                                `}
-                              />
-                              <button
-                                type="button"
-                                onClick={addNewEnvVar}
-                                disabled={!newEnvVarKey || !!envVars[newEnvVarKey]}
-                                className={`
-                                  px-3 py-2 rounded-lg text-sm font-medium transition-all
-                                  disabled:opacity-40 disabled:cursor-not-allowed
-                                  ${isDark
-                                    ? 'bg-zinc-600 text-zinc-200 hover:bg-zinc-500'
-                                    : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
-                                  }
-                                `}
-                              >
-                                Add
-                              </button>
-                            </div>
-                          </div>
+                        <div className="max-h-[300px] overflow-y-auto pr-2">
+                          <EnvVarListEditor editor={envVarEditor} isDark={isDark} />
                         </div>
                       </motion.div>
                     )}

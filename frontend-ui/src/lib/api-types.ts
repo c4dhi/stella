@@ -953,6 +953,40 @@ export function parseAgentRequirements(
   return { requiresPlan, requiredEnvVars, supportsConfigurator }
 }
 
+/** Declared env var keys an agent type exposes, split by requiredness. */
+export interface DeclaredEnvVars {
+  required: string[]
+  optional: string[]
+}
+
+/**
+ * Parse the env var keys an agent type declares in its configSchema. Mirrors the
+ * backend extractors in src/kubernetes/utils/agent-config-injection.util.ts
+ * (extractRequiredEnvVars / extractOptionalEnvVars):
+ * - `x-stella-env-vars`          → required keys (string[])
+ * - `x-stella-optional-env-vars` → optional specs ({ name, ... }[]) → names
+ * Malformed entries are ignored defensively.
+ */
+export function parseDeclaredEnvVars(
+  configSchema: Record<string, unknown> | null | undefined
+): DeclaredEnvVars {
+  if (!configSchema) return { required: [], optional: [] }
+
+  const rawRequired = configSchema['x-stella-env-vars']
+  const required = Array.isArray(rawRequired)
+    ? rawRequired.filter((v): v is string => typeof v === 'string')
+    : []
+
+  const rawOptional = configSchema['x-stella-optional-env-vars']
+  const optional = Array.isArray(rawOptional)
+    ? rawOptional
+        .filter((v): v is { name: string } => typeof v === 'object' && v !== null && typeof (v as { name?: unknown }).name === 'string')
+        .map((v) => v.name)
+    : []
+
+  return { required, optional }
+}
+
 // ============================================================================
 // Public Project Types
 // ============================================================================

@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { apiClient } from '../../services/ApiClient'
 import type { EnvVarTemplate } from '../../lib/api-types'
+import { useEnvVarListEditor } from './EnvVarListEditor/useEnvVarListEditor'
+import EnvVarListEditor from './EnvVarListEditor/EnvVarListEditor'
 
 type EnvVarsView = 'select' | 'edit'
 
@@ -54,7 +56,27 @@ export default function EnvVarsSelectionStep({
 
   const [envVarTemplates, setEnvVarTemplates] = useState<EnvVarTemplate[]>([])
   const [isLoadingEnvVars, setIsLoadingEnvVars] = useState(false)
-  const [newEnvVarKey, setNewEnvVarKey] = useState('')
+
+  // Shared editor: required keys are declared & must be filled; user may add custom keys.
+  const editor = useEnvVarListEditor({ allowEmptyValues: false, requiredKeys: requiredEnvVars })
+
+  // Keep the parent's `envVars` map in sync with the editor rows (one source of truth
+  // for the editor; parent uses the map for canContinue + submission). Null (invalid)
+  // collapses to {} so the parent blocks Continue until the rows are valid.
+  useEffect(() => {
+    onEnvVarsChange(editor.toVariablesMap() ?? {})
+  }, [editor.rows])
+
+  // Seed the editor once if the step mounts already in edit view (e.g. returning to it).
+  const didMountSeed = useRef(false)
+  useEffect(() => {
+    if (!didMountSeed.current) {
+      didMountSeed.current = true
+      if (envVarsView === 'edit') {
+        editor.reset({ requiredKeys: requiredEnvVars, initial: envVars })
+      }
+    }
+  }, [])
 
   // Fetch env var templates on mount
   useEffect(() => {
@@ -65,46 +87,15 @@ export default function EnvVarsSelectionStep({
       .finally(() => setIsLoadingEnvVars(false))
   }, [agentTypeId])
 
-  // Initialize env vars with required keys when entering edit view
-  useEffect(() => {
-    if (envVarsView === 'edit' && requiredEnvVars.length > 0) {
-      onEnvVarsChange({
-        ...envVars,
-        ...Object.fromEntries(
-          requiredEnvVars
-            .filter(key => !(key in envVars))
-            .map(key => [key, ''])
-        ),
-      })
-    }
-  }, [envVarsView, requiredEnvVars])
-
   const handleSelectTemplate = (template: EnvVarTemplate | null) => {
     onSelectEnvVarTemplate(template)
   }
 
   const handleGoToEdit = (template: EnvVarTemplate | null) => {
-    if (template) {
-      // Prefill env vars from template
-      const prefilled: Record<string, string> = {}
-      template.variableKeys.forEach(key => {
-        prefilled[key] = '••••••••' // Placeholder to show it's prefilled
-      })
-      // Also ensure required vars are present
-      requiredEnvVars.forEach(key => {
-        if (!(key in prefilled)) {
-          prefilled[key] = ''
-        }
-      })
-      onEnvVarsChange(prefilled)
-    } else {
-      // No template - initialize with required vars only
-      const initial: Record<string, string> = {}
-      requiredEnvVars.forEach(key => {
-        initial[key] = ''
-      })
-      onEnvVarsChange(initial)
-    }
+    onSelectEnvVarTemplate(template)
+    // Start from the agent's declared required keys (empty). When a template is also
+    // selected it supplies the rest server-side; manual rows are overrides/additions.
+    editor.reset({ requiredKeys: requiredEnvVars, initial: {} })
     onEnvVarsViewChange('edit')
   }
 
@@ -329,96 +320,8 @@ export default function EnvVarsSelectionStep({
               </div>
             )}
 
-            <div className="space-y-3 max-h-[260px] overflow-y-auto pr-2">
-              {/* Existing env vars */}
-              {Object.entries(envVars).map(([key, value]) => {
-                const isRequired = requiredEnvVars.includes(key)
-                return (
-                  <div key={key} className="flex items-start gap-2">
-                    <div className="flex-1">
-                      <label className={`block text-xs font-mono mb-1.5 ${isDark ? 'text-zinc-400' : 'text-neutral-600'}`}>
-                        {key} {isRequired && <span className="text-red-500">*</span>}
-                      </label>
-                      <input
-                        type="password"
-                        value={value}
-                        onChange={(e) => onEnvVarsChange({ ...envVars, [key]: e.target.value })}
-                        className={`
-                          w-full px-4 py-2.5 rounded-xl text-sm font-mono
-                          focus:outline-none transition-all duration-200
-                          ${isDark
-                            ? 'bg-zinc-800 border border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600'
-                            : 'bg-neutral-50/50 border border-neutral-200/60 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400/60 focus:bg-white'
-                          }
-                        `}
-                        placeholder={`Enter ${key}`}
-                      />
-                    </div>
-                    {!isRequired && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = { ...envVars }
-                          delete updated[key]
-                          onEnvVarsChange(updated)
-                        }}
-                        className={`
-                          mt-6 p-2 rounded-lg transition-colors
-                          ${isDark ? 'hover:bg-zinc-700 text-zinc-500 hover:text-red-400' : 'hover:bg-neutral-100 text-neutral-400 hover:text-red-500'}
-                        `}
-                        title="Remove variable"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-
-              {/* Add new variable */}
-              <div className={`
-                p-3 rounded-xl border-2 border-dashed
-                ${isDark ? 'border-zinc-700 bg-zinc-800/30' : 'border-neutral-200 bg-neutral-50/50'}
-              `}>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={newEnvVarKey}
-                    onChange={(e) => setNewEnvVarKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                    placeholder="NEW_VARIABLE_NAME"
-                    className={`
-                      flex-1 px-3 py-2 rounded-lg text-sm font-mono
-                      focus:outline-none transition-all duration-200
-                      ${isDark
-                        ? 'bg-zinc-700 border border-zinc-600 text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-500'
-                        : 'bg-white border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400'
-                      }
-                    `}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newEnvVarKey && !envVars[newEnvVarKey]) {
-                        onEnvVarsChange({ ...envVars, [newEnvVarKey]: '' })
-                        setNewEnvVarKey('')
-                      }
-                    }}
-                    disabled={!newEnvVarKey || !!envVars[newEnvVarKey]}
-                    className={`
-                      px-3 py-2 rounded-lg text-sm font-medium transition-all
-                      disabled:opacity-40 disabled:cursor-not-allowed
-                      ${isDark
-                        ? 'bg-zinc-600 text-zinc-200 hover:bg-zinc-500'
-                        : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
-                      }
-                    `}
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
+            <div className="max-h-[300px] overflow-y-auto pr-2">
+              <EnvVarListEditor editor={editor} isDark={isDark} />
             </div>
           </motion.div>
         )}
