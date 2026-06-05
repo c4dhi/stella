@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional
 from stella_light_agent.models.state_machine import (
     Plan,
     State,
+    StateTransition,
     Task,
     Deliverable,
     DeliverableStatus,
@@ -35,7 +36,13 @@ class ExecutionState:
     """
     plan: Plan
     current_state_id: str = ""
+    # Consecutive turns in the current state without any deliverable/task progress.
+    # Resets on progress and on a state change. Feeds turn_count_exceeded
+    # (scope="without_progress"), the fallback that releases all-optional states (#291).
     turns_without_deliverable: int = 0
+    # Total turns spent in the current state (progress or not). Resets on a state
+    # change. Feeds turn_count_exceeded (scope="total").
+    total_turns: int = 0
     _deliverable_values: Dict[str, Any] = field(default_factory=dict)
     _deliverable_reasoning: Dict[str, str] = field(default_factory=dict)
     _state_just_changed: bool = False
@@ -136,20 +143,56 @@ class ExecutionState:
         """Get all collected deliverable values."""
         return dict(self._deliverable_values)
 
+    def record_turn(self, made_progress: bool) -> None:
+        """Record exactly one conversation turn spent in the current state.
+
+        This is the single source of truth for turn accounting and must be called
+        once per user turn by the engine:
+        - ``total_turns`` counts every turn in the current state (reset on a state
+          change), feeding ``turn_count_exceeded`` with ``scope="total"``.
+        - ``turns_without_deliverable`` counts only consecutive turns without
+          progress (reset on progress), feeding ``scope="without_progress"`` — the
+          fallback that releases all-optional states after a few attempts (#291).
+        """
+        self.total_turns += 1
+        if made_progress:
+            self.turns_without_deliverable = 0
+        else:
+            self.turns_without_deliverable += 1
+
     def increment_turn_counter(self) -> int:
-        """Increment and return the turn counter."""
-        self.turns_without_deliverable += 1
+        """Increment and return the no-progress turn counter.
+
+        Low-level helper retained for backward compatibility; prefer
+        :meth:`record_turn` which also tracks ``total_turns``.
+        """
+        self.record_turn(made_progress=False)
         return self.turns_without_deliverable
 
     def reset_turn_counter(self):
-        """Reset the turn counter."""
+        """Reset the no-progress turn counter (e.g. when progress is made)."""
         self.turns_without_deliverable = 0
 
     def is_current_state_complete(self) -> bool:
-        """Check if the current state is complete."""
+        """Check if the current state is complete (for ``all_tasks_complete``).
+
+        A state with NO required work must NOT be treated as vacuously complete.
+        Otherwise an ``all_tasks_complete`` transition would fire the instant the
+        state is entered and the state would be skipped without the agent doing
+        anything (#291). Such all-optional states advance via a turn-based fallback
+        instead (see ``StateMachine.ensure_transitions``), so the agent attempts the
+        optional work for a few turns, then moves on.
+        """
         state = self.current_state
         if not state:
             return True
+
+        if not state.has_required_work():
+            print(
+                f"[StateMachine] is_current_state_complete: False "
+                f"(state '{state.id}' has no required work — advances via turn fallback)"
+            )
+            return False
 
         # Debug: log task statuses
         task_statuses = [(t.id, t.required, t.status.value) for t in state.tasks]
@@ -159,9 +202,14 @@ class ExecutionState:
 
         return is_complete
 
-    def evaluate_transitions(self) -> Optional[str]:
-        """
-        Evaluate state transitions and return target state ID if any match.
+    def find_matching_transition(self) -> Optional[StateTransition]:
+        """Return the highest-priority transition whose condition is met, or None.
+
+        Transitions are evaluated in priority order (lower ``priority`` number =
+        higher precedence). This is what lets an explicit ``deliverable_value`` /
+        ``deliverable_exists`` route (low priority number) win over the auto-injected
+        ``turn_count_exceeded`` fallback (priority 1000) when the user actually
+        provides the optional information (#291).
         """
         state = self.current_state
         if not state:
@@ -173,17 +221,22 @@ class ExecutionState:
             key=lambda t: t.priority
         )
 
-        print(f"[StateMachine] evaluate_transitions: checking {len(sorted_transitions)} transitions")
+        print(f"[StateMachine] find_matching_transition: checking {len(sorted_transitions)} transitions")
 
         for transition in sorted_transitions:
             condition_met = self._evaluate_condition(transition)
             print(f"[StateMachine]   Transition to '{transition.target_state_id}' "
-                  f"(condition: {transition.condition_type}): {condition_met}")
+                  f"(condition: {transition.condition_type}, priority: {transition.priority}): {condition_met}")
             if condition_met:
-                return transition.target_state_id
+                return transition
 
         print(f"[StateMachine]   No transition conditions met")
         return None
+
+    def evaluate_transitions(self) -> Optional[str]:
+        """Evaluate transitions and return the target state ID if any match."""
+        transition = self.find_matching_transition()
+        return transition.target_state_id if transition else None
 
     def _evaluate_condition(self, transition) -> bool:
         """Evaluate a transition condition."""
@@ -200,14 +253,48 @@ class ExecutionState:
             key = transition.condition_config.get("key")
             return self.get_deliverable_value(key) is not None
 
+        if transition.condition_type == "turn_count_exceeded":
+            return self._evaluate_turn_count_exceeded(transition.condition_config or {})
+
         # Default: don't transition
         return False
 
+    def _evaluate_turn_count_exceeded(self, config: Dict[str, Any]) -> bool:
+        """Evaluate a ``turn_count_exceeded`` guardrail transition.
+
+        Two scopes (mirrors the NestJS backend and docs):
+        - ``without_progress`` (default): consecutive turns without progress.
+        - ``total``: total turns spent in the current state.
+
+        A misconfigured threshold (missing / non-numeric / negative / unknown scope)
+        never fires the transition — the state machine fails safe rather than
+        jumping unexpectedly.
+        """
+        raw_threshold = config.get("turns", config.get("value"))
+        try:
+            threshold = int(raw_threshold)
+        except (TypeError, ValueError):
+            print(f"[StateMachine]   turn_count_exceeded misconfigured: threshold '{raw_threshold}' is not a number")
+            return False
+        if threshold < 0:
+            print(f"[StateMachine]   turn_count_exceeded misconfigured: negative threshold {threshold}")
+            return False
+
+        scope = str(config.get("scope", "without_progress")).lower()
+        if scope == "without_progress":
+            return self.turns_without_deliverable >= threshold
+        if scope == "total":
+            return self.total_turns >= threshold
+
+        print(f"[StateMachine]   turn_count_exceeded misconfigured: unknown scope '{scope}'")
+        return False
+
     def advance_to_state(self, state_id: str) -> bool:
-        """Advance to a new state."""
+        """Advance to a new state, resetting per-state turn counters."""
         if self.plan.get_state(state_id):
             self.current_state_id = state_id
             self.turns_without_deliverable = 0
+            self.total_turns = 0
             self._state_just_changed = True
             return True
         return False

@@ -652,39 +652,34 @@ class StellaLightAgent(BaseAgent):
             else:
                 yield output
 
-        # Handle deliverables
-        if result and result.deliverables:
-            print(f"[StellaLightAgent] Extracted deliverables: {list(result.deliverables.keys())}")
+        # Drive the state machine for this turn. A single process_turn() call
+        # records deliverables + completed tasks, accounts the turn, and evaluates
+        # transitions (including the turn-based fallback for all-optional states),
+        # so turn counting and advancement stay consistent (#291).
+        deliverables = result.deliverables if (result and result.deliverables) else {}
+        completed_tasks = result.completed_tasks if (result and result.completed_tasks) else []
 
-            if self.state_machine.is_initialized:
-                sm_result = self.state_machine.process_deliverables(result.deliverables)
-                if sm_result.should_advance and sm_result.next_state_id:
-                    self.state_machine.advance_state()
+        if deliverables:
+            print(f"[StellaLightAgent] Extracted deliverables: {list(deliverables.keys())}")
+        if completed_tasks:
+            print(f"[StellaLightAgent] Completed tasks: {completed_tasks}")
 
-            # Emit deliverables
-            for key, data in result.deliverables.items():
-                if isinstance(data, dict):
-                    value = data.get("value")
-                else:
-                    value = data
+        if result and self.state_machine.is_initialized:
+            sm_result = self.state_machine.process_turn(
+                extracted=deliverables,
+                completed_task_ids=completed_tasks,
+            )
+            if sm_result.transitioned:
+                print(
+                    f"[StellaLightAgent] Transitioned to: {sm_result.next_state_id} "
+                    f"({sm_result.transition_reason})"
+                )
+
+        # Emit deliverables to the rest of the pipeline.
+        if deliverables:
+            for key, data in deliverables.items():
+                value = data.get("value") if isinstance(data, dict) else data
                 yield AgentOutput.deliverable(input.session_id, key=key, value=value)
-
-        # Handle explicitly completed tasks
-        if result and result.completed_tasks:
-            print(f"[StellaLightAgent] Completed tasks: {result.completed_tasks}")
-
-            if self.state_machine.is_initialized:
-                marked = self.state_machine.mark_tasks_completed(result.completed_tasks)
-                print(f"[StellaLightAgent] Marked tasks: {marked}")
-
-                sm_result = self.state_machine.process_deliverables({})
-                if sm_result.should_advance and sm_result.next_state_id:
-                    self.state_machine.advance_state()
-
-        # No progress - increment turn counter
-        if result and not result.deliverables and not result.completed_tasks:
-            if self.state_machine.is_initialized:
-                self.state_machine.increment_turn()
 
         # Emit progress update
         if self.state_machine.is_initialized and self.state_machine.execution_state:

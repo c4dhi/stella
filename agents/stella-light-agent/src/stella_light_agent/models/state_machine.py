@@ -260,11 +260,47 @@ class State:
         }
 
     def is_complete(self) -> bool:
-        """Check if all required tasks are completed."""
+        """Check if all required tasks are completed.
+
+        WARNING: This is *vacuously* True for a state with no required tasks.
+        Callers deciding whether a state should auto-advance must first consult
+        :meth:`has_required_work` — otherwise an all-optional state would be
+        skipped the instant it is entered (#291). See
+        ``ExecutionState.is_current_state_complete``.
+        """
         for task in self.tasks:
             if task.required and task.status != TaskStatus.COMPLETED:
                 return False
         return True
+
+    def has_required_work(self) -> bool:
+        """Whether this state has any *required* work that should block advancement.
+
+        Mirrors the required-work checks in ``is_complete`` so a state whose
+        tasks/deliverables are all optional is recognised as having nothing to
+        block on. Such all-optional states must NOT auto-complete (which would
+        skip them instantly via the vacuous truth of ``is_complete``); they
+        advance via a turn-based fallback instead (#291, ported from NestJS #172).
+
+        Rules (matching the backend ``stateHasRequiredWork``):
+        - An optional task never blocks.
+        - A required task with NO deliverables blocks (the agent must explicitly
+          mark it complete, e.g. "tell a joke").
+        - A required task WITH deliverables blocks only if at least one of those
+          deliverables is itself required.
+
+        Note: goal-type states are downgraded to loose states with a synthetic
+        required task in ``State.from_dict``, so no goal-specific branch is needed
+        here.
+        """
+        for task in self.tasks:
+            if not task.required:
+                continue  # optional task never blocks
+            if not task.deliverables:
+                return True  # required deliverable-less task blocks
+            if any(d.required for d in task.deliverables):
+                return True
+        return False
 
     def get_pending_tasks(self) -> List[Task]:
         """Get list of pending/in-progress tasks."""

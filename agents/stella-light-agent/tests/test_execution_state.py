@@ -56,6 +56,10 @@ def test_engine_advance_state_uses_transition_target_state_id_non_linear():
     # Engine-level check:
     # evaluate_transitions() + advance_state() must follow target_state_id directly,
     # not assume "next index" sequencing.
+    #
+    # NOTE: state-a is given a *required* task so that all_tasks_complete is a
+    # legitimate completion signal. An all-optional/empty state no longer
+    # auto-completes (#291), so it could never fire all_tasks_complete on its own.
     machine = StateMachine()
     ok = machine.initialize(
         {
@@ -67,7 +71,9 @@ def test_engine_advance_state_uses_transition_target_state_id_non_linear():
                     "id": "state-a",
                     "title": "A",
                     "type": "loose",
-                    "tasks": [],
+                    "tasks": [
+                        {"id": "t1", "description": "do it", "required": True},
+                    ],
                     "transitions": [
                         {
                             # Non-linear transition: A points directly to C.
@@ -86,6 +92,12 @@ def test_engine_advance_state_uses_transition_target_state_id_non_linear():
     # Initialization must succeed before transition checks.
     assert ok is True
     assert machine.execution_state is not None
+
+    # Before the required task is done, A must NOT be complete -> no transition.
+    assert machine.execution_state.evaluate_transitions() is None
+
+    # Complete the required task; now all_tasks_complete should fire.
+    machine.execution_state.mark_task_completed("t1")
     # Transition evaluation should return the explicit target.
     assert machine.execution_state.evaluate_transitions() == "state-c"
 
