@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
@@ -7,6 +7,10 @@ import type { EnvVarTemplate, AgentType } from '../../lib/api-types'
 import EnvVarTemplateCard from './EnvVarTemplateCard'
 import EnvVarBuilderModal from './EnvVarBuilder/EnvVarBuilderModal'
 import ConfirmDialog from '../modals/ConfirmDialog'
+
+// Synthetic group key for templates whose agent type is missing from the type list.
+// agentTypeName() falls back to "Unknown type" for it.
+const UNKNOWN_TYPE_KEY = '__unknown__'
 
 const containerVariants = {
   hidden: {},
@@ -64,11 +68,18 @@ export default function EnvVarBuilderSection() {
   const agentTypeName = (id: string): string =>
     agentTypes.find((t) => t.id === id)?.name || 'Unknown type'
 
-  // Group templates by agent type, ordered to follow the agent-type list (with any
-  // templates whose type is unknown appended last). Mirrors AgentConfigSection's layout.
-  const groupedTemplates = (() => {
+  // Group templates by agent type, ordered to follow the agent-type list. Templates
+  // whose type is unknown collapse into a single trailing section. Mirrors
+  // AgentConfigSection's grouped layout.
+  const groupedTemplates = useMemo<Array<[string, EnvVarTemplate[]]>>(() => {
+    const knownIds = new Set(agentTypes.map((t) => t.id))
     const groups = new Map<string, EnvVarTemplate[]>()
+    const unknown: EnvVarTemplate[] = []
     for (const template of templates) {
+      if (!knownIds.has(template.agentTypeId)) {
+        unknown.push(template)
+        continue
+      }
       const bucket = groups.get(template.agentTypeId)
       if (bucket) bucket.push(template)
       else groups.set(template.agentTypeId, [template])
@@ -76,14 +87,11 @@ export default function EnvVarBuilderSection() {
     const ordered: Array<[string, EnvVarTemplate[]]> = []
     for (const type of agentTypes) {
       const bucket = groups.get(type.id)
-      if (bucket) {
-        ordered.push([type.id, bucket])
-        groups.delete(type.id)
-      }
+      if (bucket) ordered.push([type.id, bucket])
     }
-    for (const entry of groups) ordered.push(entry)
+    if (unknown.length > 0) ordered.push([UNKNOWN_TYPE_KEY, unknown])
     return ordered
-  })()
+  }, [templates, agentTypes])
 
   useEffect(() => {
     loadTemplates()
