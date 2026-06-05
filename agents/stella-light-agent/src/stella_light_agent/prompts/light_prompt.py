@@ -44,15 +44,25 @@ class LightPromptBuilder:
         available_tasks = context.get("available_tasks", [])
         collected_deliverables = context.get("collected_deliverables", {})
         plan_system_prompt = context.get("plan_system_prompt")
-        # Configurator overrides injected via SDK config (pipeline_config), mirroring stella-v2.
+        # Configurator override. Light exposes a single combined System Prompt
+        # (identity + conversational style) which replaces BOTH default sections.
+        custom_system_prompt = context.get("custom_system_prompt")
+        # Legacy split fields, still honored for configs saved before the merge.
         custom_persona = context.get("custom_persona")
         custom_guidelines = context.get("custom_guidelines")
 
-        parts = [
-            self._build_identity(plan_system_prompt, custom_persona),
-            self._build_conversational_style(custom_guidelines),
-            self._build_guardrails(),
-        ]
+        if custom_system_prompt:
+            # One field replaces the default identity + conversational style.
+            parts = [
+                self._build_identity(plan_system_prompt, custom_system_prompt),
+                self._build_guardrails(),
+            ]
+        else:
+            parts = [
+                self._build_identity(plan_system_prompt, custom_persona),
+                self._build_conversational_style(custom_guidelines),
+                self._build_guardrails(),
+            ]
 
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))

@@ -124,7 +124,10 @@ class StellaLightAgent(BaseAgent):
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
-        # Configurator overrides injected via SDK config (pipeline_config), mirroring stella-v2.
+        # Configurator overrides injected via SDK config (pipeline_config).
+        # Light exposes a single combined System Prompt (identity + conversational style).
+        self._custom_system_prompt: Optional[str] = None
+        # Legacy fields, still honored for configs saved before persona/guidelines were merged.
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
         self._history_limit: int = 20
@@ -167,6 +170,10 @@ class StellaLightAgent(BaseAgent):
             self.llm_service.default_config.temperature = float(response["temperature"])
         if "max_tokens" in response:
             self.llm_service.default_config.max_tokens = int(response["max_tokens"])
+        # Combined identity + conversational style (current). Legacy persona/guidelines
+        # are still read so configs saved before the merge keep working.
+        if response.get("system_prompt"):
+            self._custom_system_prompt = response["system_prompt"]
         if response.get("persona"):
             self._custom_persona = response["persona"]
         if response.get("conversation_guidelines"):
@@ -188,8 +195,7 @@ class StellaLightAgent(BaseAgent):
             f"model={self.llm_service.default_config.model}, "
             f"temperature={self.llm_service.default_config.temperature}, "
             f"max_tokens={self.llm_service.default_config.max_tokens}, "
-            f"persona={'custom' if self._custom_persona else 'default'}, "
-            f"guidelines={'custom' if self._custom_guidelines else 'default'}, "
+            f"system_prompt={'custom' if (self._custom_system_prompt or self._custom_persona or self._custom_guidelines) else 'default'}, "
             f"history_limit={self._history_limit}"
         )
 
@@ -217,6 +223,8 @@ class StellaLightAgent(BaseAgent):
                 user_input=user_input,
             )
 
+        if self._custom_system_prompt:
+            sm_context["custom_system_prompt"] = render(self._custom_system_prompt)
         if self._custom_persona:
             sm_context["custom_persona"] = render(self._custom_persona)
         if self._custom_guidelines:
@@ -236,6 +244,7 @@ class StellaLightAgent(BaseAgent):
         self.config = config
         self._session_started_at = datetime.now(timezone.utc).isoformat()
         self._plan_system_prompt = None
+        self._custom_system_prompt = None
         self._custom_persona = None
         self._custom_guidelines = None
         self._history_limit = 20
