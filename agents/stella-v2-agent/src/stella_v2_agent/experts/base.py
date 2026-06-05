@@ -8,6 +8,62 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 
 
+# Allowed verdict-directive actions. See VerdictDirective for semantics.
+VERDICT_ACTIONS = ("inform", "prepend", "override", "short_circuit")
+
+
+@dataclass
+class VerdictDirective:
+    """What the arbitration stage does with the final response when an expert
+    returns a given verdict.
+
+    This is the clinical-determinism knob: instead of letting the response LLM
+    interpret a flagged dimension, the configured ``template`` (a literature-
+    informed, {{placeholder}}-aware string) is spoken verbatim.
+
+    action:
+      - "inform"        → default. Feed tone/guidance into the Response Generator
+                          (the LLM still writes the reply). ``template`` is ignored.
+      - "prepend"       → speak ``template`` first, then the generated response.
+      - "override"      → speak ONLY ``template``; the Response Generator is bypassed,
+                          but post-response processing (deliverables, progress) still runs.
+      - "short_circuit" → speak ONLY ``template``; bypass everything downstream.
+    template: literature-informed text (supports {{placeholders}}). Empty for "inform".
+    description: plain-language explanation of what this verdict means. The label +
+        description are handed to the classifying LLM so it knows when to pick this
+        verdict; the action/template are NOT shown to the LLM (arbitration-layer concern).
+    """
+    action: str = "inform"
+    template: str = ""
+    description: str = ""
+
+    @staticmethod
+    def coerce(value: Any) -> "VerdictDirective":
+        """Normalize a value (dict from config/JSON, or an instance) into a VerdictDirective."""
+        if isinstance(value, VerdictDirective):
+            return value
+        if isinstance(value, dict):
+            action = str(value.get("action", "inform"))
+            if action not in VERDICT_ACTIONS:
+                action = "inform"
+            return VerdictDirective(
+                action=action,
+                template=str(value.get("template", "")),
+                description=str(value.get("description", "")),
+            )
+        return VerdictDirective()
+
+    @staticmethod
+    def coerce_map(value: Any) -> Dict[str, "VerdictDirective"]:
+        """Normalize a {verdict: directive-like} mapping into {verdict: VerdictDirective}."""
+        if not isinstance(value, dict):
+            return {}
+        return {str(k): VerdictDirective.coerce(v) for k, v in value.items()}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"action": self.action, "template": self.template, "description": self.description}
+
+
 @dataclass
 class ExpertConfig:
     """Configuration for a single expert, loaded from JSON.
@@ -43,6 +99,13 @@ class ExpertConfig:
     always_triggered: bool = False
     history_limit: int = 0  # 0 = use runner default (8 for most, 10 for task_extraction)
     min_confidence: float = 0.0  # 0 = not applicable (unused with tool-calling experts)
+    # Per-verdict deterministic response directives: {verdict_value: VerdictDirective}.
+    # Drives literature-informed override/prepend/short_circuit at arbitration time.
+    verdict_directives: Dict[str, VerdictDirective] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Coerce verdict_directives whether they arrive as dicts (JSON/config) or instances.
+        self.verdict_directives = VerdictDirective.coerce_map(self.verdict_directives)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExpertConfig":
@@ -63,6 +126,7 @@ class ExpertConfig:
             always_triggered=data.get("always_triggered", False),
             history_limit=data.get("history_limit", 0),
             min_confidence=data.get("min_confidence", 0.0),
+            verdict_directives=data.get("verdict_directives", {}),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,4 +146,7 @@ class ExpertConfig:
             "always_triggered": self.always_triggered,
             "history_limit": self.history_limit,
             "min_confidence": self.min_confidence,
+            "verdict_directives": {
+                k: v.to_dict() for k, v in self.verdict_directives.items()
+            },
         }

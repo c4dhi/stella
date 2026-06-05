@@ -9,11 +9,33 @@
   "can_call_functions": false,
   "trigger_criteria": "The conversation has gone 2 or more turns without collecting a deliverable, or the user seems disengaged or confused about what to do next",
   "always_triggered": false,
-  "system_prompt": "Assess if the conversation is making progress toward its goals.\n\nConsider: turns without deliverables collected, repeated questions, user engagement.\n\n{{history_8}}\n\n{{user_message}}\n\nVerdicts:\n- \"on_track\": progressing normally\n- \"slowing\": some stagnation\n- \"stuck\": recommend specific action\n- \"force_advance\": skip current state\n\nFor stuck/force_advance, include suggested_deliverables if values can be inferred from context.\nWrite the recommendation in the SAME LANGUAGE as the user's message (German if German, English if English).\nKeep recommendation under 15 words.",
+  "system_prompt": "Assess if the conversation is making progress toward its goals.\n\nConsider: turns without deliverables collected, repeated questions, user engagement.\n\n{{history_8}}\n\n{{user_message}}\n\nFor stuck/force_advance, include suggested_deliverables if values can be inferred from context.\nWrite the recommendation in the SAME LANGUAGE as the user's message (German if German, English if English).\nKeep recommendation under 15 words.",
   "output_format": "{\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
   "output_schema": {
     "verdict": "on_track|slowing|stuck|force_advance",
     "confidence": "0.0-1.0",
     "recommendation": "string (short)"
+  },
+  "verdict_directives": {
+    "on_track": {
+      "action": "inform",
+      "template": "",
+      "description": "The conversation is progressing normally."
+    },
+    "slowing": {
+      "action": "inform",
+      "template": "",
+      "description": "Some stagnation — progress is slowing."
+    },
+    "stuck": {
+      "action": "inform",
+      "template": "",
+      "description": "No progress; a specific redirect toward the pending deliverable is needed."
+    },
+    "force_advance": {
+      "action": "inform",
+      "template": "",
+      "description": "Stuck enough that the current state should be skipped."
+    }
   }
 }

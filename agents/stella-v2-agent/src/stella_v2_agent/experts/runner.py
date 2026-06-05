@@ -314,6 +314,22 @@ class ExpertRunner:
         if append_output_format and config.output_format:
             compiled_prompt += f"\n\nRespond with compact JSON: {config.output_format}"
 
+        # Generic verdict interface: the allowed verdict LABELS + their explanations
+        # come from config (verdict_directives), not a hardcoded enum baked into the
+        # prompt. The label and explanation are handed to the LLM so it knows what
+        # each verdict means; the per-verdict ACTION is NOT shown (it is applied
+        # deterministically in the arbitration layer). Operators can add/rename
+        # verdicts and edit explanations without touching prompt text or code.
+        if append_output_format and config.verdict_directives:
+            lines = []
+            for label, directive in config.verdict_directives.items():
+                description = getattr(directive, "description", "") or ""
+                lines.append(f'- "{label}": {description}' if description else f'- "{label}"')
+            if lines:
+                compiled_prompt += (
+                    "\n\nClassify into exactly ONE of these verdicts:\n" + "\n".join(lines)
+                )
+
         messages = [LLMMessage(role="system", content=compiled_prompt)]
 
         # Build user message — only include what wasn't resolved via placeholders

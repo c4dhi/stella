@@ -92,6 +92,7 @@ class ResponseGenerator:
         sm_context: Dict[str, Any],
         plan_system_prompt: Optional[str] = None,
         bridge: str = "",
+        prepend: str = "",
         transcript_id: Optional[str] = None,
     ) -> AsyncIterator[AgentOutput]:
         """Generate a streaming response with arbitration context.
@@ -105,6 +106,9 @@ class ResponseGenerator:
             plan_system_prompt: Optional custom system prompt from the plan.
             bridge: Optional bridge phrase already emitted to TTS. The LLM
                     continues from this prefix so the response is coherent.
+            prepend: Optional deterministic, literature-informed line (from a
+                    "prepend" verdict directive) spoken verbatim before the
+                    generated reply. The LLM continues from it without repeating it.
             transcript_id: Optional transcript ID to reuse (shared with bridge chunk).
 
         Yields:
@@ -124,8 +128,31 @@ class ResponseGenerator:
             LLMMessage(role="user", content=user_message),
         ]
 
-        # If bridge is provided, add it as an assistant message so the LLM continues from it
-        if bridge:
+        # Spoken prefix already emitted to TTS that the LLM must continue from
+        # without repeating: the early acknowledgment "bridge" and/or a deterministic
+        # "prepend" safety line. They share the response transcript, so the LLM
+        # output is appended after them into one seamless utterance.
+        if prepend:
+            spoken_prefix = f"{bridge} {prepend}".strip() if bridge else prepend
+            already_said = []
+            if bridge:
+                already_said.append(f'you said "{bridge}" as a natural acknowledgment')
+            already_said.append(f'the user was told, verbatim: "{prepend}"')
+            messages.insert(1, LLMMessage(
+                role="system",
+                content=(
+                    "Before your reply, " + " and ".join(already_said) + ". "
+                    "That text has ALREADY been spoken to the user. Now continue with your "
+                    "actual response. The combined output will be spoken as one seamless "
+                    "utterance, so it MUST flow naturally as a single conversation turn.\n\n"
+                    "Rules:\n"
+                    "- Do NOT repeat, rephrase, or contradict anything already spoken above\n"
+                    "- Do NOT comment on it or add another greeting/acknowledgment\n"
+                    "- Pick up right where it left off — your continuation should feel like the same person kept talking"
+                ),
+            ))
+            messages.append(LLMMessage(role="assistant", content=spoken_prefix))
+        elif bridge:
             messages.insert(1, LLMMessage(
                 role="system",
                 content=f'You already said "{bridge}" out loud as a natural acknowledgment. Now continue with your actual response. The combined output (bridge + your continuation) will be spoken as one seamless utterance, so it MUST flow naturally as a single conversation turn.\n\nRules:\n- Do NOT repeat or rephrase anything already covered in the bridge\n- Do NOT comment on the bridge (no "I\'m glad to hear that", no "That said...")\n- Do NOT add another greeting or acknowledgment\n- Pick up right where the bridge left off — your continuation should feel like the same person kept talking\n- Example: bridge "Oh nice, okay." → you continue with "So three times a week is solid." → spoken together: "Oh nice, okay. So three times a week is solid."\n- Example: bridge "Yeah, okay, I get that, it\'s been a lot." → you continue with "Let\'s talk about what might work for you right now." → spoken together: "Yeah, okay, I get that, it\'s been a lot. Let\'s talk about what might work for you right now."',
@@ -155,8 +182,10 @@ class ResponseGenerator:
             )
         )
 
-        # Prepend bridge text so TTS speaks bridge + response as one seamless utterance
-        accumulated = (bridge + " ") if bridge else ""
+        # Prepend already-spoken prefix (bridge and/or deterministic safety line)
+        # so TTS speaks prefix + response as one seamless utterance.
+        spoken_prefix = " ".join(p for p in (bridge, prepend) if p)
+        accumulated = (spoken_prefix + " ") if spoken_prefix else ""
         try:
             while True:
                 event = await queue.get()

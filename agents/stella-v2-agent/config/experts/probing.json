@@ -16,5 +16,22 @@
     "verdict": "no_probe|needs_clarification|gentle_redirect",
     "confidence": "0.0-1.0",
     "recommendation": "string (short)"
+  },
+  "verdict_directives": {
+    "no_probe": {
+      "action": "inform",
+      "template": "",
+      "description": "The user's message is clear; no follow-up question is needed."
+    },
+    "needs_clarification": {
+      "action": "inform",
+      "template": "",
+      "description": "A specific follow-up question would help collect a pending deliverable."
+    },
+    "gentle_redirect": {
+      "action": "inform",
+      "template": "",
+      "description": "The user went off-topic and should be gently steered back."
+    }
   }
 }
