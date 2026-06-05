@@ -49,6 +49,7 @@ interface ExpertSidebarProps {
     maxTokens: number
     systemPrompt: string
     triggerCriteria?: string
+    alwaysTriggered?: boolean
   }) => void
   onRemoveExpert: (name: string) => void
   onToggleTaskExtraction: (enabled: boolean) => void
@@ -514,6 +515,7 @@ function AddCustomExpertForm({
     maxTokens: number
     systemPrompt: string
     triggerCriteria: string
+    alwaysTriggered: boolean
   }) => void
   onCancel: () => void
   existingNames: string[]
@@ -526,6 +528,7 @@ function AddCustomExpertForm({
     maxTokens: 200,
     systemPrompt: '',
     triggerCriteria: '',
+    alwaysTriggered: false,
   })
   const [error, setError] = useState('')
 
@@ -572,17 +575,44 @@ function AddCustomExpertForm({
           />
         </div>
       </div>
-      <div>
-        <label className={labelClass}>Trigger Criteria</label>
-        <textarea
-          value={form.triggerCriteria}
-          onChange={(e) => setForm({ ...form, triggerCriteria: e.target.value })}
-          placeholder="When should the input gate select this expert?"
-          rows={2}
-          className={`${inputClass} resize-y`}
-          style={{ fontSize: '12px', lineHeight: '1.6' }}
-        />
+      {/* Always Triggered toggle (#175) — when on, trigger criteria is irrelevant */}
+      <div className={`flex items-center justify-between px-3.5 py-2.5 rounded-lg ${isDark ? 'bg-zinc-800/60' : 'bg-neutral-50'}`}>
+        <div>
+          <label className={`text-xs font-medium ${isDark ? 'text-zinc-300' : 'text-neutral-600'}`}>
+            Always Triggered
+          </label>
+          <p className={`text-[10px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
+            Runs on every turn, regardless of the input gate
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setForm({ ...form, alwaysTriggered: !form.alwaysTriggered })}
+          className={`relative w-10 h-[22px] rounded-full transition-colors shrink-0 ${
+            form.alwaysTriggered ? 'bg-sky-500' : isDark ? 'bg-zinc-600' : 'bg-neutral-300'
+          }`}
+        >
+          <span
+            className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${
+              form.alwaysTriggered ? 'translate-x-[18px]' : ''
+            }`}
+          />
+        </button>
       </div>
+
+      {!form.alwaysTriggered && (
+        <div>
+          <label className={labelClass}>Trigger Criteria</label>
+          <textarea
+            value={form.triggerCriteria}
+            onChange={(e) => setForm({ ...form, triggerCriteria: e.target.value })}
+            placeholder="When should the input gate select this expert?"
+            rows={2}
+            className={`${inputClass} resize-y`}
+            style={{ fontSize: '12px', lineHeight: '1.6' }}
+          />
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass}>Model</label>
@@ -617,15 +647,24 @@ function AddCustomExpertForm({
           />
         </div>
       </div>
+      {/* Unified prompt editor (#178) — same component as the edit view, so the
+          create form gets variable insertion, highlighting, and maximize for free. */}
       <div>
         <label className={labelClass}>System Prompt</label>
-        <textarea
-          value={form.systemPrompt}
-          onChange={(e) => { setForm({ ...form, systemPrompt: e.target.value }); setError('') }}
-          placeholder="Expert system prompt..."
-          rows={4}
-          className={`${inputClass} resize-y`}
-          style={{ fontSize: '12px', lineHeight: '1.6' }}
+        <PromptComposer
+          isDark={isDark}
+          compact
+          blocks={[
+            {
+              id: 'custom_expert_prompt',
+              type: 'editable',
+              label: 'System Prompt',
+              value: form.systemPrompt,
+              onChange: (v) => { setForm({ ...form, systemPrompt: v }); setError('') },
+              rows: 8,
+              placeholder: 'Expert system prompt (supports {{variables}})…',
+            },
+          ]}
         />
       </div>
       <div className="flex gap-2.5 justify-end pt-1">

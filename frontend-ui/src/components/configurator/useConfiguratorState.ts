@@ -754,8 +754,9 @@ export function useConfiguratorState(
 
   /** Add a new custom expert */
   const addCustomExpert = useCallback(
-    (expert: { name: string; description: string; model: string; temperature: number; maxTokens: number; systemPrompt: string; triggerCriteria?: string }) => {
+    (expert: { name: string; description: string; model: string; temperature: number; maxTokens: number; systemPrompt: string; triggerCriteria?: string; alwaysTriggered?: boolean }) => {
       const current = { ...getCustomExperts(configuration) }
+      const alwaysTriggered = Boolean(expert.alwaysTriggered)
       current[expert.name] = {
         name: expert.name,
         description: expert.description,
@@ -765,9 +766,10 @@ export function useConfiguratorState(
         max_tokens: expert.maxTokens,
         system_prompt: expert.systemPrompt,
         output_format: '{"verdict":"...","confidence":0.0,"recommendation":"short"}',
-        trigger_criteria: expert.triggerCriteria ?? '',
+        // When always-triggered, the input gate ignores it, so trigger criteria is moot (#175).
+        trigger_criteria: alwaysTriggered ? '' : (expert.triggerCriteria ?? ''),
         enabled: true,
-        always_triggered: false,
+        always_triggered: alwaysTriggered,
       }
       patchExpertPool({ custom_experts: current })
     },
