@@ -273,7 +273,12 @@ def _resolve_current_state(ctx: Dict[str, Any]) -> str:
 def _resolve_progress_percentage(ctx: Dict[str, Any]) -> str:
     """Overall progress percentage."""
     pct = ctx.get("progress", {}).get("percentage", 0)
-    return f"Overall progress: {pct:.0f}%"
+    # Guard against a None/str percentage slipping in from a malformed context —
+    # ``f"{pct:.0f}"`` would otherwise raise and crash the whole compile.
+    try:
+        return f"Overall progress: {float(pct):.0f}%"
+    except (TypeError, ValueError):
+        return "Overall progress: 0%"
 
 
 def _resolve_processing_mode(ctx: Dict[str, Any]) -> str:
@@ -283,19 +288,35 @@ def _resolve_processing_mode(ctx: Dict[str, Any]) -> str:
 
 
 def _resolve_history(ctx: Dict[str, Any], count: int) -> str:
-    """Last N messages from conversation history."""
-    history = ctx.get("_conversation_history", [])
-    if not history:
-        return "CONVERSATION:\n(no messages yet)"
+    """Last N messages from conversation history.
 
-    recent = history[-count:]
-    lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
+    ``speech_safe`` (set for verdict templates spoken verbatim) drops the
+    "CONVERSATION:" header and "[ROLE]:" labels — that scaffolding is for LLM
+    system prompts, not TTS. ``count <= 0`` yields no messages (``{{history_0}}``
+    must mean "last 0", not the whole history via ``history[-0:]``).
+    """
+    history = ctx.get("_conversation_history", [])
+    speech_safe = ctx.get("_speech_safe", False)
+    recent = history[-count:] if count > 0 else []
+    if not recent:
+        return "" if speech_safe else "CONVERSATION:\n(no messages yet)"
+
+    # .get() rather than [] — a malformed message dict must not crash the compile.
+    if speech_safe:
+        return " ".join(str(msg.get("content", "")) for msg in recent).strip()
+    lines = [f"[{str(msg.get('role', '')).upper()}]: {msg.get('content', '')}" for msg in recent]
     return "CONVERSATION:\n" + "\n".join(lines)
 
 
 def _resolve_user_message(ctx: Dict[str, Any]) -> str:
-    """The current user message."""
+    """The current user message.
+
+    ``speech_safe`` returns the bare text; otherwise it carries the
+    "CURRENT USER MESSAGE:" label for LLM system-prompt context.
+    """
     user_input = ctx.get("_user_input", "")
+    if ctx.get("_speech_safe", False):
+        return user_input
     return f"CURRENT USER MESSAGE: {user_input}"
 
 
@@ -407,22 +428,23 @@ def _compile_prompt(template: str, sm_context: Optional[Dict[str, Any]] = None) 
     if not sm_context:
         return PLACEHOLDER_PATTERN.sub("[no context available]", template)
 
-    # First pass: resolve parameterized {{history_N}} placeholders
-    def history_replacer(match: re.Match) -> str:
-        count = int(match.group(1))
-        return _resolve_history(sm_context, count)
-
-    result = HISTORY_PATTERN.sub(history_replacer, template)
-
-    # Second pass: resolve simple {{name}} placeholders
-    def replacer(match: re.Match) -> str:
-        name = match.group(1)
-        resolver = PLACEHOLDER_REGISTRY.get(name)
+    # SINGLE pass over the template. Both {{history_N}} and simple {{name}} tokens
+    # are resolved in one re.sub, whose replacement text is NEVER re-scanned. This
+    # is deliberate: a previous two-pass design re-ran the simple-placeholder regex
+    # over already-resolved {{history_N}} output, so a {{collected_deliverables}}
+    # literal inside a past USER message would get expanded — input-driven
+    # placeholder injection. One pass closes that.
+    def replacer(match: "re.Match") -> str:
+        token = match.group(0)
+        history_match = HISTORY_PATTERN.fullmatch(token)
+        if history_match:
+            return _resolve_history(sm_context, int(history_match.group(1)))
+        resolver = PLACEHOLDER_REGISTRY.get(match.group(1))
         if resolver is None:
-            return match.group(0)  # Unknown placeholder — leave as-is
+            return token  # Unknown placeholder — leave as-is
         return resolver(sm_context)
 
-    return PLACEHOLDER_PATTERN.sub(replacer, result)
+    return PLACEHOLDER_PATTERN.sub(replacer, template)
 
 
 def has_user_message_placeholder(template: str) -> bool:
@@ -502,12 +524,16 @@ class PlaceholderPromptCompiler(PromptCompiler):
         sm_context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         user_input: str = "",
+        speech_safe: bool = False,
     ) -> None:
         # Copy so we never mutate the caller's context, then layer in the per-turn
         # runtime values that {{history_N}} and {{user_message}} need.
         self._ctx: Dict[str, Any] = dict(sm_context or {})
         self._ctx["_conversation_history"] = conversation_history or []
         self._ctx["_user_input"] = user_input or ""
+        # When True, placeholder resolvers omit system-prompt scaffolding labels so
+        # the output is safe to speak verbatim (used for arbitration verdict templates).
+        self._ctx["_speech_safe"] = speech_safe
 
     def compile(self, template: Optional[str]) -> Optional[str]:
         if not template:

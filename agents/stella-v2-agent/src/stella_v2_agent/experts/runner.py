@@ -302,13 +302,24 @@ class ExpertRunner:
         # point — resolve all {{placeholders}} against the live runtime context.
         # The compiler copies sm_context internally and layers in the per-turn
         # history / user message, so we never mutate the shared context here.
-        compiled_prompt = sdk_prompts.compile(
-            template,
-            version=self._compiler_version,
-            sm_context=sm_context,
-            conversation_history=conversation_history,
-            user_input=user_input,
-        )
+        # Guarded: a malformed sm_context (e.g. a bad progress value or a message
+        # missing role/content) must not crash the expert turn. Unlike arbitration,
+        # this path has no outer try/except, so we fall back to the raw template
+        # (placeholders unresolved) and let the expert still run.
+        try:
+            compiled_prompt = sdk_prompts.compile(
+                template,
+                version=self._compiler_version,
+                sm_context=sm_context,
+                conversation_history=conversation_history,
+                user_input=user_input,
+            )
+        except Exception as e:  # noqa: BLE001 — never let prompt compilation kill the turn
+            logger.warning(
+                "Prompt compile failed for expert '%s' (%s); using raw template",
+                config.name, e,
+            )
+            compiled_prompt = template
 
         # Append output format instruction if configured (not in tool mode)
         if append_output_format and config.output_format:

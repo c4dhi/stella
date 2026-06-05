@@ -141,8 +141,12 @@ class Arbitration:
         winner_verdict, winner_directive = self._select_directive(sorted_verdicts, expert_configs)
         if winner_directive is not None:
             resolved = self._resolve_template(winner_directive.template, sm_context, user_input)
-            if not resolved.strip():
-                # Empty template (e.g. the seeded noise directive) → locale-aware default.
+            if not resolved.strip() and winner_directive.action != "prepend":
+                # Empty/failed template on a REPLACE action (override / short_circuit,
+                # incl. the seeded noise short_circuit) → locale-aware safe default,
+                # so we never speak an empty turn. NOT applied to prepend: there an
+                # empty template must mean "add nothing before the reply", not inject
+                # the "didn't catch that" line ahead of an otherwise-normal answer.
                 resolved = self._gate_failure_message
             directive.action = winner_directive.action
             directive.directive_source = winner_verdict.expert_name
@@ -290,8 +294,15 @@ class Arbitration:
     def _resolve_template(
         self, template: str, sm_context: Optional[Dict[str, Any]], user_input: str
     ) -> str:
-        """Compile a verdict template's {{placeholders}}. Never raises — falls back
-        to the raw template on error so a bad template can't break the turn."""
+        """Compile a verdict template's {{placeholders}}. Never raises.
+
+        On compile failure (e.g. an unregistered compiler version, a malformed
+        context) it FAILS CLOSED — returns "" so the caller substitutes the safe
+        locale-aware default — rather than returning the raw template. Speaking a
+        literal ``{{user_name}}`` on a safety-critical override is worse than the
+        generic fallback line. ``speech_safe=True`` strips the {{placeholder}}
+        scaffolding labels (e.g. "CURRENT USER MESSAGE:") that are meant for LLM
+        system prompts, not for text spoken verbatim to the user."""
         if not template:
             return ""
         try:
@@ -301,11 +312,12 @@ class Arbitration:
                 sm_context=sm_context,
                 conversation_history=None,
                 user_input=user_input,
+                speech_safe=True,
             )
             return compiled or ""
         except Exception as e:  # noqa: BLE001 — arbitration must stay deterministic & crash-free
-            logger.warning(f"Verdict template compile failed ({e}); using raw template")
-            return template
+            logger.warning(f"Verdict template compile failed ({e}); failing closed to safe default")
+            return ""
 
     def _build_summary(self, sorted_verdicts: List[ExpertVerdict]) -> str:
         """One-line summary of all successful verdicts (for prompt/debug injection)."""

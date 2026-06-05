@@ -4,8 +4,11 @@ Defines the ExpertConfig dataclass that represents a loadable expert
 definition from a JSON file, with environment variable overrides.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Allowed verdict-directive actions. See VerdictDirective for semantics.
@@ -45,6 +48,16 @@ class VerdictDirective:
         if isinstance(value, dict):
             action = str(value.get("action", "inform"))
             if action not in VERDICT_ACTIONS:
+                # Don't fail closed silently: a typo like "overide" would otherwise
+                # downgrade a deterministic safety directive to "let the LLM decide"
+                # with no trace. Coerce (so the turn stays safe) but make it loud so
+                # the misconfiguration is caught. Publish-time validation should
+                # reject this before it ever reaches runtime.
+                logger.warning(
+                    "Unknown verdict action %r — falling back to 'inform'. "
+                    "Valid actions: %s",
+                    action, ", ".join(VERDICT_ACTIONS),
+                )
                 action = "inform"
             return VerdictDirective(
                 action=action,

@@ -75,6 +75,11 @@ export async function reconcileAgentTypeConfigurations(
       pipelineSchema,
     );
 
+    // Count the prune itself regardless of whether the sanitized config then
+    // re-validates — a config that gets pruned and still fails (→ OUTDATED) was
+    // still pruned, and the operator report should reflect that.
+    if (prunedKeys.length > 0) report.pruned += 1;
+
     try {
       // The agent's compiler must satisfy the config's required minimum.
       if (
@@ -106,7 +111,6 @@ export async function reconcileAgentTypeConfigurations(
         },
       });
 
-      if (prunedKeys.length > 0) report.pruned += 1;
       if (status === ConfigCompatibility.CURRENT) report.current += 1;
       else report.compatible += 1;
     } catch (e) {

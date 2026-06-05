@@ -414,6 +414,48 @@ def test_prepend_directive_keeps_normal_passes():
     assert result.directive.short_circuit is False
 
 
+def test_empty_prepend_template_does_not_inject_gate_failure_message():
+    # An empty prepend template must mean "add nothing before the reply" — NOT
+    # speak the "didn't catch that" gate-failure line ahead of a normal answer.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"high": VerdictDirective("prepend", "")})}
+
+    result = arb.resolve([_verdict("medical", "high", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "prepend"
+    assert result.directive.resolved_response == ""
+    assert result.directive.resolved_response != arb.gate_failure_message
+
+
+def test_empty_override_template_falls_back_to_safe_default():
+    # A replace action (override/short_circuit) with an empty/failed template must
+    # fall back to the safe locale-aware line so we never speak an empty turn.
+    arb = Arbitration()
+    configs = {"medical": _expert("medical", 95, {"critical": VerdictDirective("override", "")})}
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert result.directive.action == "override"
+    assert result.directive.resolved_response == arb.gate_failure_message
+
+
+def test_failed_template_compile_fails_closed_not_raw_template():
+    # An unresolvable compiler version must NOT speak the raw template (literal
+    # {{placeholders}}); it fails closed to the safe default for a replace action.
+    arb = Arbitration()
+    arb.set_compiler_version("999.0.0")  # unregistered → compile raises internally
+    configs = {
+        "medical": _expert(
+            "medical", 95, {"critical": VerdictDirective("override", "Call {{user_name}} now")}
+        )
+    }
+
+    result = arb.resolve([_verdict("medical", "critical", priority=95)], expert_configs=configs)
+
+    assert "{{" not in result.directive.resolved_response
+    assert result.directive.resolved_response == arb.gate_failure_message
+
+
 def test_directive_winner_resolves_by_priority():
     # Two experts both carry an "override" directive — the higher-priority one wins.
     arb = Arbitration()

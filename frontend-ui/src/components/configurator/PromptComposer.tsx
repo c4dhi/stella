@@ -290,7 +290,11 @@ export function buildExpertBlocks(
 ): PromptBlock[] {
   return [
     {
-      id: 'prompt_template',
+      // Namespace per expert: variable insertion locates the target textarea via
+      // querySelector('[data-prompt-id="..."]'), so a shared id collides when two
+      // expert editors are open at once (e.g. task-extraction + a pool expert) and
+      // the inserted {{variable}} lands in the wrong textarea.
+      id: `prompt_template_${expert.name}`,
       type: 'editable',
       label: 'Prompt Template',
       // Pass the raw override through: `undefined` = inherit default, `''` = explicit

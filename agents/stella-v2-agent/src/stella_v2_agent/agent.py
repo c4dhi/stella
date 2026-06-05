@@ -356,18 +356,30 @@ class StellaV2Agent(BaseAgent):
             if directive.action == "short_circuit":
                 # Replace the response AND skip downstream processing entirely
                 # (e.g. noise_detection "unclear" — nothing actionable this turn).
+                # Reuse the bridge's transcript_id so the acknowledgment bridge and
+                # the deterministic line are ONE finalized utterance — otherwise the
+                # bridge (transcript_id, is_final=False) is left dangling and the
+                # safety line is spoken as a separate, ungrouped TTS chunk.
                 logger.info(f"Arbitration short_circuit by '{directive.directive_source}'")
-                yield AgentOutput.text_chunk(
-                    input.session_id, deterministic_response, is_final=True,
+                short_circuit_output = AgentOutput.text_chunk(
+                    input.session_id, deterministic_response,
+                    transcript_id=transcript_id, is_final=True,
                 )
+                short_circuit_output.metadata["language"] = resolved_language
+                if resolved_voice:
+                    short_circuit_output.metadata["voice"] = resolved_voice
+                yield short_circuit_output
                 return
             if directive.action == "override":
                 # Replace the spoken response with the deterministic template, but
                 # still run Stage 5 post-response processing (task_extraction already
                 # mutated the state machine during Stage 2; reflect that progress).
+                # Same transcript_id as the bridge so the two are one finalized
+                # utterance (see short_circuit above).
                 logger.info(f"Arbitration override by '{directive.directive_source}'")
                 override_output = AgentOutput.text_chunk(
-                    input.session_id, deterministic_response, is_final=True,
+                    input.session_id, deterministic_response,
+                    transcript_id=transcript_id, is_final=True,
                 )
                 override_output.metadata["language"] = resolved_language
                 if resolved_voice:

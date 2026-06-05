@@ -7,7 +7,7 @@
  */
 
 import { useMemo, useCallback } from 'react'
-import type { AgentConfigurationPayload, PipelineSchema, VerdictDirective, ExpertDefault } from '../../lib/api-types'
+import type { AgentConfigurationPayload, PipelineSchema, VerdictDirective, VerdictAction, ExpertDefault } from '../../lib/api-types'
 import { useConfiguratorStore } from '../../store/configuratorStore'
 
 // ---------------------------------------------------------------------------
@@ -464,10 +464,17 @@ function readVerdictDirectives(raw: unknown): Record<string, VerdictDirective> {
     if (dir && typeof dir === 'object') {
       const d = dir as Record<string, unknown>
       const action = d.action
+      const isValidAction =
+        action === 'inform' || action === 'prepend' || action === 'override' || action === 'short_circuit'
+      if (action !== undefined && !isValidAction) {
+        // Don't silently downgrade a saved safety directive — surface the typo so
+        // it gets noticed rather than quietly becoming "inform" (see base.py).
+        console.warn(
+          `Verdict "${verdict}" has unknown action "${String(action)}" — falling back to "inform".`,
+        )
+      }
       result[verdict] = {
-        action: (action === 'prepend' || action === 'override' || action === 'short_circuit')
-          ? action
-          : 'inform',
+        action: isValidAction ? (action as VerdictAction) : 'inform',
         template: typeof d.template === 'string' ? d.template : '',
         description: typeof d.description === 'string' ? d.description : '',
       }
@@ -674,7 +681,13 @@ export function useConfiguratorState(
         const existing = { ...(current[name] ?? {}) }
 
         if (updates.enabled !== undefined) existing.enabled = updates.enabled
-        if (updates.alwaysTriggered !== undefined) existing.always_triggered = updates.alwaysTriggered
+        if (updates.alwaysTriggered !== undefined) {
+          existing.always_triggered = updates.alwaysTriggered
+          // Always-triggered bypasses the input gate, so trigger criteria is moot.
+          // Clear any stale rule so it isn't fed back into the input-gate prompt,
+          // matching the create path (#175).
+          if (updates.alwaysTriggered) existing.trigger_criteria = ''
+        }
         if (updates.triggerCriteria !== undefined) existing.trigger_criteria = updates.triggerCriteria
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature
@@ -704,7 +717,13 @@ export function useConfiguratorState(
         const existing = { ...(current[name] ?? {}) }
 
         if (updates.enabled !== undefined) existing.enabled = updates.enabled
-        if (updates.alwaysTriggered !== undefined) existing.always_triggered = updates.alwaysTriggered
+        if (updates.alwaysTriggered !== undefined) {
+          existing.always_triggered = updates.alwaysTriggered
+          // Always-triggered bypasses the input gate, so trigger criteria is moot.
+          // Clear any stale rule so it isn't fed back into the input-gate prompt,
+          // matching the create path (#175).
+          if (updates.alwaysTriggered) existing.trigger_criteria = ''
+        }
         if (updates.triggerCriteria !== undefined) existing.trigger_criteria = updates.triggerCriteria
         if (updates.model !== undefined) existing.model = updates.model
         if (updates.temperature !== undefined) existing.temperature = updates.temperature

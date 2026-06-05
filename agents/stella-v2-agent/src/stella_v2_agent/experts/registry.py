@@ -212,8 +212,12 @@ class ExpertRegistry:
 
     def as_map(self) -> Dict[str, ExpertConfig]:
         """Return the name → ExpertConfig map (used by Arbitration to read
-        per-expert verdict_directives without importing the registry)."""
-        return self._experts
+        per-expert verdict_directives without importing the registry).
+
+        Returns a shallow copy so callers can't mutate the registry's internal
+        dict (add/remove experts); the ExpertConfig values are shared and are
+        only read by callers."""
+        return dict(self._experts)
 
     def get_enabled(self) -> List[ExpertConfig]:
         """Get all enabled expert configs, sorted by priority (descending)."""

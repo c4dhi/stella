@@ -59,6 +59,15 @@ export interface AgentManifest {
   // Pipeline schema (topology + configurable slots for Agent Configurator)
   pipelineSchema?: Record<string, unknown>
 
+  // Per-AgentType {{placeholder}} palette for the Configurator (manifest-driven).
+  runtimeVariables?: Record<string, unknown>[]
+
+  // Version of the SDK prompt compiler this agent resolves prompts with. Saved
+  // configurations can require a minimum version, so this must be persisted.
+  promptCompiler?: {
+    version?: string
+  }
+
   sdk?: {
     minVersion?: string     // Minimum stella-ai-agent-sdk version
   }

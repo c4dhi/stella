@@ -116,7 +116,11 @@ function VerdictResponsesEditor({
   const isModified = (verdict: string): boolean => {
     const eff = effectiveFor(verdict)
     const def = defaultFor(verdict)
-    return eff.action !== def.action || eff.template !== def.template
+    return (
+      eff.action !== def.action ||
+      eff.template !== def.template ||
+      (eff.description ?? '') !== (def.description ?? '')
+    )
   }
 
   // Persist the FULL effective map (runtime replaces, not merges). When the result
@@ -211,6 +215,12 @@ function VerdictResponsesEditor({
           const directive = effectiveFor(verdict)
           const def = defaultFor(verdict)
           const modified = isModified(verdict)
+          // A label that comes from the expert's classifier vocabulary or shipped
+          // defaults can't be removed (it lives in static config, not in the
+          // editable override map), so a "rename" would leave the old row behind as
+          // a duplicate. Only user-added verdicts are truly renamable.
+          const isIntrinsic =
+            expert.verdictVocabulary.includes(verdict) || verdict in expert.defaultVerdictDirectives
           return (
             <div
               key={verdict}
@@ -219,16 +229,24 @@ function VerdictResponsesEditor({
               }`}
             >
               <div className="flex items-center gap-2">
-                {/* Editable verdict label (the vocabulary fed to the LLM) */}
+                {/* Verdict label (the vocabulary fed to the LLM). Editable only for
+                    user-added verdicts; intrinsic ones are read-only (see isIntrinsic). */}
                 <input
                   key={verdict}
                   defaultValue={verdict}
-                  onBlur={(e) => renameVerdict(verdict, e.target.value)}
+                  readOnly={isIntrinsic}
+                  onBlur={isIntrinsic ? undefined : (e) => renameVerdict(verdict, e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                   }}
-                  title="Verdict label — rename to change what the LLM classifies into"
+                  title={
+                    isIntrinsic
+                      ? 'Built-in verdict label — fixed by the expert’s classifier and cannot be renamed'
+                      : 'Verdict label — rename to change what the LLM classifies into'
+                  }
                   className={`text-[11px] font-mono font-medium px-2 py-1 rounded w-28 focus:outline-none ${
+                    isIntrinsic ? 'cursor-default opacity-80' : ''
+                  } ${
                     isDark
                       ? 'bg-zinc-700/60 text-zinc-200 border border-transparent focus:border-zinc-500'
                       : 'bg-neutral-200/70 text-neutral-700 border border-transparent focus:border-neutral-400'

@@ -20,6 +20,7 @@ import { AgentBuildService, BuildStatus } from '../agent-build/agent-build.servi
 import { StorageService } from '../storage/storage.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AgentValidationStatus, Prisma } from '@prisma/client'
+import { hashPipelineSchema } from '../agent-configurations/configuration-compat.util'
 
 interface AuthenticatedRequest extends Request {
   user?: { id: string; email: string }
@@ -120,6 +121,19 @@ export class AgentUploadController {
         configSchema: manifest.configSchema as Prisma.InputJsonValue,
         capabilities: manifest.capabilities as Prisma.InputJsonValue,
         defaultConfig: manifest.defaultConfig as Prisma.InputJsonValue,
+        // Persist the Configurator/compatibility inputs so uploaded agents behave
+        // like seeded ones: pipelineSchema drives the Configurator, its hash detects
+        // schema drift, runtimeVariables drive the {{placeholder}} palette, and
+        // compilerVersion is what saved configs' minCompilerVersion is checked against
+        // (omitting it left every config with a minCompilerVersion stuck OUTDATED).
+        pipelineSchema: manifest.pipelineSchema
+          ? (manifest.pipelineSchema as Prisma.InputJsonValue)
+          : Prisma.DbNull,
+        pipelineSchemaHash: hashPipelineSchema(manifest.pipelineSchema ?? null),
+        runtimeVariables: manifest.runtimeVariables
+          ? (manifest.runtimeVariables as Prisma.InputJsonValue)
+          : Prisma.DbNull,
+        compilerVersion: manifest.promptCompiler?.version ?? null,
         resourceMemory: manifest.resources?.memory?.limit || '512Mi',
         resourceCpu: manifest.resources?.cpu?.limit || '250m',
         resourceGpu: manifest.resources?.gpu || false,

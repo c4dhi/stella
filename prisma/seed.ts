@@ -402,7 +402,7 @@ async function main() {
     // reconcile saved configurations ONLY when the agent type actually changed.
     const before = await prisma.agentType.findUnique({
       where: { slug: manifest.metadata.slug },
-      select: { version: true, pipelineSchemaHash: true },
+      select: { version: true, pipelineSchemaHash: true, compilerVersion: true },
     })
 
     const result = await prisma.agentType.upsert({
@@ -446,7 +446,11 @@ async function main() {
     // changed (or this type is brand new). Keeps the seed O(changed types).
     const versionChanged = before?.version !== result.version
     const schemaChanged = before?.pipelineSchemaHash !== result.pipelineSchemaHash
-    if (!before || versionChanged || schemaChanged) {
+    // Compatibility also depends on compilerVersion (a config can require a minimum
+    // prompt-compiler version), so a manifest that bumps ONLY promptCompiler.version
+    // must still re-flag saved configs — otherwise the deploy path trusts a stale flag.
+    const compilerChanged = before?.compilerVersion !== result.compilerVersion
+    if (!before || versionChanged || schemaChanged || compilerChanged) {
       const report = await reconcileAgentTypeConfigurations(prisma, result.id)
       if (report.total > 0) {
         console.log(
