@@ -284,21 +284,25 @@ class StateMachine:
         extracted = extracted or {}
         completed_task_ids = completed_task_ids or []
 
-        # Snapshot tasks already complete BEFORE this turn, so we only count work
-        # done *this* turn as progress. Otherwise a task completed on an earlier
-        # turn would keep resetting the no-progress counter and the turn-based
-        # fallback would never fire (the all-optional state would get stuck) (#291).
+        # Snapshot what was already done BEFORE this turn, so we only count work
+        # done *this* turn as progress. Otherwise a task completed — or a
+        # deliverable collected — on an earlier turn would keep resetting the
+        # no-progress counter, and the turn-based fallback would never fire (the
+        # all-optional state would get stuck) (#291).
         already_completed = (
             {t.id for t in es.current_state.tasks if t.status == TaskStatus.COMPLETED}
             if es.current_state
             else set()
         )
+        previous_values = es.get_all_deliverable_values()
 
         # 1. Explicitly completed tasks (e.g. deliverable-less "tell a joke" tasks).
         for task_id in completed_task_ids:
             es.mark_task_completed(task_id)
 
         # 2. Collected deliverables (supports {key: value} and {key: {value, reasoning}}).
+        #    Only a *changed* value counts as progress — re-submitting the same
+        #    optional deliverable every turn must not keep the state alive forever.
         for key, data in extracted.items():
             if isinstance(data, dict):
                 value = data.get("value")
@@ -307,7 +311,8 @@ class StateMachine:
                 value = data
                 reasoning = ""
 
-            if es.set_deliverable_value(key, value, reasoning):
+            value_changed = key not in previous_values or previous_values[key] != value
+            if es.set_deliverable_value(key, value, reasoning) and value_changed:
                 result.updated_deliverables.append(key)
                 print(f"[StateMachine] Set deliverable: {key} = {value}")
 

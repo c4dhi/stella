@@ -226,6 +226,79 @@ class TestTurnFallbackRelease:
         assert es.turns_without_deliverable == 0
         assert es.total_turns == 0
 
+    def test_resubmitting_unchanged_optional_deliverable_still_releases(self):
+        # Regression: set_deliverable_value() returns True whenever the key exists,
+        # even if the value did not change. If that were counted as progress, the
+        # no-progress counter would reset every turn and an all-optional state with
+        # a re-extracted optional deliverable would never release (#291). Only a
+        # genuinely changed value counts as progress.
+        machine = _machine(
+            [
+                {
+                    "id": "a",
+                    "type": "loose",
+                    "tasks": [
+                        _task("t", required=False, deliverables=[_deliverable("mood", required=False)])
+                    ],
+                },
+                {"id": "b", "type": "loose", "tasks": []},
+            ]
+        )
+        es = machine.execution_state
+        # First turn collects the value (genuine progress -> counter reset).
+        machine.process_turn(extracted={"mood": "ok"})
+        assert es.current_state_id == "a"
+        assert es.turns_without_deliverable == 0
+
+        # Re-submitting the SAME value must not count as progress; after the
+        # threshold of unchanged turns the fallback releases the state.
+        for _ in range(StateMachine.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD):
+            machine.process_turn(extracted={"mood": "ok"})
+        assert es.current_state_id == "b"
+
+    def test_changed_deliverable_value_resets_no_progress_counter(self):
+        machine = _machine(
+            [
+                {
+                    "id": "a",
+                    "type": "loose",
+                    "tasks": [
+                        _task("t", required=False, deliverables=[_deliverable("mood", required=False)])
+                    ],
+                },
+                {"id": "b", "type": "loose", "tasks": []},
+            ]
+        )
+        es = machine.execution_state
+        machine.process_turn()  # no-progress: twd -> 1
+        machine.process_turn()  # no-progress: twd -> 2
+        assert es.turns_without_deliverable == 2
+        machine.process_turn(extracted={"mood": "happy"})  # genuine change -> reset
+        assert es.current_state_id == "a"
+        assert es.turns_without_deliverable == 0
+
+    def test_remarking_completed_task_does_not_reset_counter(self):
+        # Re-marking an already-completed task is not fresh progress and must not
+        # keep the no-progress counter pinned at zero.
+        machine = _machine(
+            [
+                {
+                    "id": "a",
+                    "type": "loose",
+                    # An optional task so the state stays all-optional after the
+                    # task is marked, exercising the fallback path.
+                    "tasks": [_task("greeted", required=False)],
+                },
+                {"id": "b", "type": "loose", "tasks": []},
+            ]
+        )
+        es = machine.execution_state
+        machine.process_turn(completed_task_ids=["greeted"])  # genuine: reset
+        assert es.turns_without_deliverable == 0
+        for _ in range(StateMachine.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD):
+            machine.process_turn(completed_task_ids=["greeted"])  # re-mark, no progress
+        assert es.current_state_id == "b"
+
     def test_increment_turn_wrapper_also_releases(self):
         # The legacy increment_turn() entry point must drive the fallback too.
         machine = _machine(
@@ -557,6 +630,51 @@ class TestGoalDowngrade:
         for _ in range(StateMachine.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD):
             machine.process_turn()
         assert machine.execution_state.current_state_id == "b"
+
+    def test_goal_with_no_deliverables_is_not_stuck(self):
+        # Regression: a downgraded goal with no deliverables used to keep its
+        # synthetic __goal__ task required, which (a) blocked is_current_state_complete
+        # forever and (b) suppressed the turn fallback (required work => no fallback),
+        # so the state could never advance. The synthetic task is now optional when
+        # there is nothing to collect, so the state releases via the turn fallback.
+        machine = _machine(
+            [
+                {
+                    "id": "g",
+                    "type": "goal",
+                    "title": "Goal",
+                    "goal": {"objective": "make the user feel welcome", "deliverables": []},
+                },
+                {"id": "b", "type": "loose", "tasks": []},
+            ]
+        )
+        g = machine.plan.get_state("g")
+        assert g.has_required_work() is False
+        # A turn fallback must have been injected.
+        assert any(t.condition_type == "turn_count_exceeded" for t in g.transitions)
+        for _ in range(StateMachine.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD):
+            machine.process_turn()
+        assert machine.execution_state.current_state_id == "b"
+
+    def test_terminal_goal_with_no_deliverables_stays_put(self):
+        # As the last state, a no-deliverable goal has nowhere to advance and is
+        # the natural terminal state — it must not error or jump.
+        machine = _machine(
+            [
+                {"id": "a", "type": "loose", "tasks": [_task("t", required=True)]},
+                {
+                    "id": "g",
+                    "type": "goal",
+                    "title": "Goal",
+                    "goal": {"objective": "wrap up", "deliverables": []},
+                },
+            ]
+        )
+        machine.process_turn(completed_task_ids=["t"])  # a -> g
+        assert machine.execution_state.current_state_id == "g"
+        for _ in range(10):
+            machine.process_turn()
+        assert machine.execution_state.current_state_id == "g"
 
 
 # ===========================================================================

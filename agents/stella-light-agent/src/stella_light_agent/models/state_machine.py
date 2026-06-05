@@ -52,11 +52,21 @@ def _downgrade_goal_state(data: Dict[str, Any]) -> Dict[str, Any]:
     if goal.get("boundaries"):
         context_parts.append(f"Boundaries: {goal['boundaries']}")
 
+    # The synthetic task blocks advancement only when the goal actually has
+    # deliverables to collect. A goal with no deliverables is a conversational
+    # objective with nothing concrete to capture — marking it required would make
+    # the state require a COMPLETED __goal__ task that nothing ever completes, so
+    # the state would get stuck (no required-work => no turn-based fallback either).
+    # Leaving it optional lets such a state be attempted, then released via the
+    # turn fallback — mirroring the backend treating deliverable-less goal tasks as
+    # non-blocking scaffolding (#291). When deliverables exist, has_required_work()
+    # already does the right thing (required deliverable blocks; optional-only does
+    # not), so keeping the task required there is correct.
     synthetic_task = {
         "id": "__goal__",
         "description": objective,
         "instruction": "\n".join(context_parts),
-        "required": True,
+        "required": bool(goal_deliverables),
         "deliverables": list(goal_deliverables),
     }
 
@@ -289,9 +299,11 @@ class State:
         - A required task WITH deliverables blocks only if at least one of those
           deliverables is itself required.
 
-        Note: goal-type states are downgraded to loose states with a synthetic
-        required task in ``State.from_dict``, so no goal-specific branch is needed
-        here.
+        Note: goal-type states are downgraded to loose states in
+        ``State.from_dict`` (via ``_downgrade_goal_state``, which runs first), so a
+        goal arrives here as an ordinary loose state with a synthetic ``__goal__``
+        task — required only when the goal has deliverables. That downgrade is why
+        no goal-specific branch is needed here.
         """
         for task in self.tasks:
             if not task.required:

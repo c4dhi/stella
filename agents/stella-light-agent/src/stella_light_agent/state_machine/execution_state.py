@@ -121,8 +121,12 @@ class ExecutionState:
                     self._deliverable_values[key] = value
                     self._deliverable_reasoning[key] = reasoning
 
-                    # Reset turn counter on deliverable collection
-                    self.turns_without_deliverable = 0
+                    # NOTE: turn-counter accounting is intentionally NOT done here.
+                    # record_turn() is the single source of truth — it decides
+                    # whether the turn made progress (e.g. the value actually
+                    # changed). Resetting here on every call would let a re-submitted
+                    # unchanged optional deliverable keep the no-progress counter at
+                    # 0, so an all-optional state would never release (#291).
 
                     # Update task status
                     if task.status == TaskStatus.PENDING:
@@ -371,8 +375,9 @@ class ExecutionState:
             if task.id == task_id:
                 old_status = task.status
                 task.status = TaskStatus.COMPLETED
-                # Reset turn counter since progress was made
-                self.turns_without_deliverable = 0
+                # Turn-counter accounting is left to record_turn() (single source of
+                # truth); re-marking an already-complete task is not fresh progress
+                # and must not reset the no-progress counter (#291).
                 print(f"[StateMachine] mark_task_completed('{task_id}'): SUCCESS "
                       f"({old_status.value} -> {task.status.value})")
                 return True
