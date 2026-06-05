@@ -18,12 +18,13 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 from stella_agent_sdk.agent.base import BaseAgent
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import StatusSubtype
+from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
 
 from stella_light_agent.llm.service import LLMService
+from stella_light_agent.barge_in_evaluator import BargeInEvaluator
 from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.state_machine import StateMachine
@@ -58,6 +59,12 @@ class StellaLightAgent(BaseAgent):
     5. Emit progress update
     """
 
+    # This agent supports user barge-in: it ships a Barge-in Evaluator stage
+    # (the same COMMIT/RESUME classifier as stella-v2) whose prompt/model are
+    # editable in the Agent Configurator. Effective only when barge-in is also
+    # enabled at the deployment level (BARGE_IN_ENABLED / INTERRUPT_MODE).
+    supports_barge_in = True
+
     def __init__(
         self,
         llm_config_path: Optional[str] = None,
@@ -87,6 +94,10 @@ class StellaLightAgent(BaseAgent):
 
         # Initialize LLM service
         self.llm_service = LLMService(config_path=llm_config_path)
+
+        # Barge-in evaluator (COMMIT/RESUME classifier), configurable via the
+        # Agent Configurator's "Barge-in Evaluator" node — same as stella-v2.
+        self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
 
         # Initialize prompt builder with tool mode
         self.prompt_builder = LightPromptBuilder(use_tools=use_tools)
@@ -166,6 +177,11 @@ class StellaLightAgent(BaseAgent):
                 self._history_limit = int(thresholds["history_limit"])
             except (TypeError, ValueError):
                 pass
+
+        # Barge-in Evaluator overrides (prompt/model/temperature/max_tokens).
+        barge_in = nodes.get("barge_in", {}) or {}
+        if isinstance(barge_in, dict) and barge_in:
+            self.barge_in_evaluator.apply_config(barge_in)
 
         print(
             f"[StellaLightAgent] Pipeline config applied: "
@@ -795,6 +811,26 @@ class StellaLightAgent(BaseAgent):
         elif self.legacy_processor:
             self.legacy_processor.cancel()
         self._is_processing = False
+
+    async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
+        """Evaluate a user barge-in via the configurable Barge-in Evaluator.
+
+        Delegates to the LLM-backed evaluator (whose prompt/model are editable in
+        the Agent Configurator). The conversation history is fetched and passed so
+        the decision is made IN CONTEXT — e.g. an on-topic answer to the assistant's
+        last question is a real turn, not noise. COMMIT makes the SDK discard the
+        rest of the current reply and process ``transcript`` as a new turn; RESUME
+        continues from where it suspended. Same behavior as stella-v2.
+        """
+        print(f"[StellaLightAgent] Evaluating barge-in: '{transcript[:50]}'")
+        try:
+            history = await self._fetch_conversation_history(
+                limit=self.barge_in_evaluator.history_limit
+            )
+        except Exception as e:
+            print(f"[StellaLightAgent] Barge-in: could not fetch history ({e}); evaluating without it")
+            history = []
+        return await self.barge_in_evaluator.evaluate(transcript, conversation_history=history)
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """Handle runtime configuration updates."""
