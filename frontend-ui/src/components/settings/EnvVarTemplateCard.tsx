@@ -9,6 +9,8 @@ interface EnvVarTemplateCardProps {
   onEdit: () => void
   onDelete: () => void
   onDuplicate: () => void
+  // Hidden when the card is rendered inside a per-agent-type section (header carries it).
+  showAgentTypeBadge?: boolean
 }
 
 export default function EnvVarTemplateCard({
@@ -18,6 +20,7 @@ export default function EnvVarTemplateCard({
   onEdit,
   onDelete,
   onDuplicate,
+  showAgentTypeBadge = true,
 }: EnvVarTemplateCardProps) {
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
@@ -88,12 +91,14 @@ export default function EnvVarTemplateCard({
                 }`}>
                 {template.name}
               </h3>
-              <span
-                className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-neutral-100 text-neutral-500'}`}
-                title={`Scoped to ${agentTypeName}`}
-              >
-                {agentTypeName}
-              </span>
+              {showAgentTypeBadge && (
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${isDark ? 'bg-zinc-700 text-zinc-400' : 'bg-neutral-100 text-neutral-500'}`}
+                  title={`Scoped to ${agentTypeName}`}
+                >
+                  {agentTypeName}
+                </span>
+              )}
             </div>
             {template.description ? (
               <p className={`text-body-sm mt-1 line-clamp-2 ${isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
