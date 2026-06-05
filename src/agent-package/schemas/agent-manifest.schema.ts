@@ -9,7 +9,7 @@ import {
 } from '../agent-manifest.types'
 
 const VALID_CAPABILITIES = ['voice', 'text', 'progress', 'plans', 'experts'] as const
-const VALID_SLOT_TYPES = ['text', 'number', 'select', 'string_list', 'key_value', 'expert_list'] as const
+const VALID_SLOT_TYPES = ['text', 'number', 'select', 'string_list', 'key_value', 'expert_list', 'verdict_directives'] as const
 const ENV_VAR_NAME_REGEX = /^[A-Z][A-Z0-9_]*$/
 const PLAN_CAPABILITY = 'plans'
 const EXPERTS_CAPABILITY = 'experts'

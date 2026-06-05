@@ -94,6 +94,13 @@ export class AgentUploadController {
     // Get user ID from request (if authenticated)
     const userId = req.user?.id
 
+    // Publish the agent's declared default experts (config/experts/*.json) so the
+    // Configurator's Expert Module renders them. Null for non-expert agents.
+    const expertDefaults = this.agentPackageService.readExpertDefaults(
+      file.buffer,
+      manifest.capabilities,
+    )
+
     // Create agent type record
     const agentType = await this.prisma.agentType.create({
       data: {
@@ -120,6 +127,9 @@ export class AgentUploadController {
         authorEmail: manifest.metadata.author?.email,
         tags: manifest.metadata.tags as Prisma.InputJsonValue,
         sdkMinVersion: manifest.sdk?.minVersion,
+        expertDefaults: expertDefaults
+          ? (expertDefaults as Prisma.InputJsonValue)
+          : Prisma.DbNull,
       },
     })
 

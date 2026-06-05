@@ -245,6 +245,51 @@ export class AgentPackageService {
   }
 
   /**
+   * Read the agent's declared default experts from config/experts/*.json inside the package.
+   *
+   * Capability-gated per expert: `task_extraction` rides on the "plans" capability,
+   * the assessment experts ride on "experts". Returns the parsed expert objects (each
+   * file = one expert: name/model/prompt/verdict_directives/…) for publishing onto
+   * AgentType.expertDefaults, or null when none apply. Tolerant of a top-level package
+   * folder (matches any path ending in config/experts/<name>.json).
+   */
+  readExpertDefaults(zipBuffer: Buffer, capabilities: unknown): Record<string, unknown>[] | null {
+    const caps = Array.isArray(capabilities) ? (capabilities as string[]) : []
+    const hasExperts = caps.includes('experts')
+    const hasPlans = caps.includes('plans')
+    if (!hasExperts && !hasPlans) return null
+
+    let zip: AdmZip
+    try {
+      zip = new AdmZip(zipBuffer)
+    } catch {
+      return null
+    }
+
+    const matcher = /(^|\/)config\/experts\/[^/]+\.json$/i
+    const experts: Record<string, unknown>[] = []
+    const matching = zip
+      .getEntries()
+      .filter((e) => !e.isDirectory && matcher.test(e.entryName.replace(/^\.\//, '')))
+      .sort((a, b) => a.entryName.localeCompare(b.entryName))
+
+    for (const entry of matching) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(entry.getData().toString('utf-8'))
+      } catch (err) {
+        throw new Error(`Invalid expert config ${entry.entryName}: ${(err as Error).message}`)
+      }
+      if (!parsed || typeof parsed !== 'object') continue
+      const name = (parsed as Record<string, unknown>).name
+      const include = name === 'task_extraction' ? hasPlans : hasExperts
+      if (include) experts.push(parsed as Record<string, unknown>)
+    }
+
+    return experts.length > 0 ? experts : null
+  }
+
+  /**
    * Find an entry in zip by name (case-insensitive, ignores leading ./).
    */
   private findEntry(entries: AdmZip.IZipEntry[], name: string): AdmZip.IZipEntry | undefined {
