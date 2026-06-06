@@ -52,16 +52,10 @@ def _downgrade_goal_state(data: Dict[str, Any]) -> Dict[str, Any]:
     if goal.get("boundaries"):
         context_parts.append(f"Boundaries: {goal['boundaries']}")
 
-    # The synthetic task blocks advancement only when the goal actually has
-    # deliverables to collect. A goal with no deliverables is a conversational
-    # objective with nothing concrete to capture — marking it required would make
-    # the state require a COMPLETED __goal__ task that nothing ever completes, so
-    # the state would get stuck (no required-work => no turn-based fallback either).
-    # Leaving it optional lets such a state be attempted, then released via the
-    # turn fallback — mirroring the backend treating deliverable-less goal tasks as
-    # non-blocking scaffolding (#291). When deliverables exist, has_required_work()
-    # already does the right thing (required deliverable blocks; optional-only does
-    # not), so keeping the task required there is correct.
+    # ``required`` is informational only (#291 redesign): completion is driven by
+    # the agent explicitly completing/skipping the synthetic __goal__ task, not by
+    # this flag. We mark it required when the goal has deliverables to collect and
+    # optional otherwise, purely as a hint to the agent about importance.
     synthetic_task = {
         "id": "__goal__",
         "description": objective,
@@ -270,49 +264,18 @@ class State:
         }
 
     def is_complete(self) -> bool:
-        """Check if all required tasks are completed.
+        """Whether every task has been explicitly addressed (completed or skipped).
 
-        WARNING: This is *vacuously* True for a state with no required tasks.
-        Callers deciding whether a state should auto-advance must first consult
-        :meth:`has_required_work` — otherwise an all-optional state would be
-        skipped the instant it is entered (#291). See
-        ``ExecutionState.is_current_state_complete``.
+        #291 redesign — completion is a fact the AGENT asserts via tools, never one
+        derived from ``required``/optional. A state is complete only once each of
+        its tasks is COMPLETED or SKIPPED. ``required`` is informational and does
+        not gate completion: an optional task still has to be addressed (ticked or
+        skipped). An empty state (no tasks) is vacuously complete.
         """
         for task in self.tasks:
-            if task.required and task.status != TaskStatus.COMPLETED:
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.SKIPPED):
                 return False
         return True
-
-    def has_required_work(self) -> bool:
-        """Whether this state has any *required* work that should block advancement.
-
-        Mirrors the required-work checks in ``is_complete`` so a state whose
-        tasks/deliverables are all optional is recognised as having nothing to
-        block on. Such all-optional states must NOT auto-complete (which would
-        skip them instantly via the vacuous truth of ``is_complete``); they
-        advance via a turn-based fallback instead (#291, ported from NestJS #172).
-
-        Rules (matching the backend ``stateHasRequiredWork``):
-        - An optional task never blocks.
-        - A required task with NO deliverables blocks (the agent must explicitly
-          mark it complete, e.g. "tell a joke").
-        - A required task WITH deliverables blocks only if at least one of those
-          deliverables is itself required.
-
-        Note: goal-type states are downgraded to loose states in
-        ``State.from_dict`` (via ``_downgrade_goal_state``, which runs first), so a
-        goal arrives here as an ordinary loose state with a synthetic ``__goal__``
-        task — required only when the goal has deliverables. That downgrade is why
-        no goal-specific branch is needed here.
-        """
-        for task in self.tasks:
-            if not task.required:
-                continue  # optional task never blocks
-            if not task.deliverables:
-                return True  # required deliverable-less task blocks
-            if any(d.required for d in task.deliverables):
-                return True
-        return False
 
     def get_pending_tasks(self) -> List[Task]:
         """Get list of pending/in-progress tasks."""

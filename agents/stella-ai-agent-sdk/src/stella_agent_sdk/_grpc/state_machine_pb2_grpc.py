@@ -5,7 +5,7 @@ import warnings
 
 from stella_agent_sdk._grpc import state_machine_pb2 as state__machine__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class StateMachineServiceStub(object):
+class StateMachineServiceStub:
     """StateMachineService - Service for managing conversation state machine
     Agents call this service to track conversation progress
     """
@@ -45,6 +45,16 @@ class StateMachineServiceStub(object):
                 '/stella.statemachine.v1.StateMachineService/CompleteTask',
                 request_serializer=state__machine__pb2.CompleteTaskRequest.SerializeToString,
                 response_deserializer=state__machine__pb2.CompleteTaskResponse.FromString,
+                _registered_method=True)
+        self.SkipTask = channel.unary_unary(
+                '/stella.statemachine.v1.StateMachineService/SkipTask',
+                request_serializer=state__machine__pb2.SkipTaskRequest.SerializeToString,
+                response_deserializer=state__machine__pb2.SkipTaskResponse.FromString,
+                _registered_method=True)
+        self.SkipState = channel.unary_unary(
+                '/stella.statemachine.v1.StateMachineService/SkipState',
+                request_serializer=state__machine__pb2.SkipStateRequest.SerializeToString,
+                response_deserializer=state__machine__pb2.SkipStateResponse.FromString,
                 _registered_method=True)
         self.SetDeliverable = channel.unary_unary(
                 '/stella.statemachine.v1.StateMachineService/SetDeliverable',
@@ -83,7 +93,7 @@ class StateMachineServiceStub(object):
                 _registered_method=True)
 
 
-class StateMachineServiceServicer(object):
+class StateMachineServiceServicer:
     """StateMachineService - Service for managing conversation state machine
     Agents call this service to track conversation progress
     """
@@ -97,6 +107,22 @@ class StateMachineServiceServicer(object):
 
     def CompleteTask(self, request, context):
         """Complete a task by ID
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SkipTask(self, request, context):
+        """Skip a single task by ID (agent decides it is not needed). Counts toward
+        state completion exactly like CompleteTask, but records the task as skipped.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SkipState(self, request, context):
+        """Skip the remainder of a state: mark all of its not-yet-addressed tasks as
+        skipped and advance. state_id is optional (defaults to the current state).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -164,6 +190,16 @@ def add_StateMachineServiceServicer_to_server(servicer, server):
                     request_deserializer=state__machine__pb2.CompleteTaskRequest.FromString,
                     response_serializer=state__machine__pb2.CompleteTaskResponse.SerializeToString,
             ),
+            'SkipTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.SkipTask,
+                    request_deserializer=state__machine__pb2.SkipTaskRequest.FromString,
+                    response_serializer=state__machine__pb2.SkipTaskResponse.SerializeToString,
+            ),
+            'SkipState': grpc.unary_unary_rpc_method_handler(
+                    servicer.SkipState,
+                    request_deserializer=state__machine__pb2.SkipStateRequest.FromString,
+                    response_serializer=state__machine__pb2.SkipStateResponse.SerializeToString,
+            ),
             'SetDeliverable': grpc.unary_unary_rpc_method_handler(
                     servicer.SetDeliverable,
                     request_deserializer=state__machine__pb2.SetDeliverableRequest.FromString,
@@ -207,7 +243,7 @@ def add_StateMachineServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class StateMachineService(object):
+class StateMachineService:
     """StateMachineService - Service for managing conversation state machine
     Agents call this service to track conversation progress
     """
@@ -256,6 +292,60 @@ class StateMachineService(object):
             '/stella.statemachine.v1.StateMachineService/CompleteTask',
             state__machine__pb2.CompleteTaskRequest.SerializeToString,
             state__machine__pb2.CompleteTaskResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SkipTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stella.statemachine.v1.StateMachineService/SkipTask',
+            state__machine__pb2.SkipTaskRequest.SerializeToString,
+            state__machine__pb2.SkipTaskResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SkipState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stella.statemachine.v1.StateMachineService/SkipState',
+            state__machine__pb2.SkipStateRequest.SerializeToString,
+            state__machine__pb2.SkipStateResponse.FromString,
             options,
             channel_credentials,
             insecure,

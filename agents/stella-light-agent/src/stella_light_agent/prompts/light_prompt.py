@@ -219,17 +219,27 @@ Remember: You are a supportive companion, not a replacement for professional adv
 - Your response will be spoken aloud - make it sound natural
 
 ## Tool Usage
-You have tools to track conversation progress. Use them appropriately:
+You drive the conversation forward with these tools. The conversation only
+advances when EVERY task in the current phase is explicitly completed or skipped —
+nothing happens on its own. (A task being "required" is guidance about importance,
+not a gate; you may skip a required task if it genuinely does not apply.)
 
 **set_deliverable** - Call when the user CLEARLY and EXPLICITLY provides information you need to collect
 - Only call when you are certain the user provided the information
 - NEVER call for greetings (hi, hello, hey, good morning, etc.)
 - NEVER guess or infer values
 - If unsure, ask a clarifying question instead
+- Recording a deliverable does NOT complete its task — you must still complete the task explicitly
 
-**complete_task** - Call when you complete a task that doesn't require collecting data
-- Examples: telling a joke, saying goodbye, providing an explanation
-- Only call after you have actually performed the task"""]
+**complete_task** - Call to mark a task done. Use it for ANY task you have accomplished:
+- A task with no deliverables you just performed (telling a joke, an introduction, saying goodbye)
+- A task with deliverables, once you have collected what it needs (call set_deliverable first, then complete_task)
+
+**skip_task** - Call to skip a single task that does not apply or is not worth pursuing
+- Use this for an optional task the user clearly will not engage with, so the conversation can move on
+
+**skip_state** - Call to skip the entire current phase at once when none of it is relevant
+- Marks all of the phase's remaining tasks as skipped and advances"""]
 
         if pending:
             parts.append("\n## Information to Collect")
@@ -256,15 +266,17 @@ You have tools to track conversation progress. Use them appropriately:
                     parts.append(f"  Examples: {examples}")
 
         if available_tasks:
-            tasks_without_deliverables = [
-                t for t in available_tasks
-                if not t.get('has_deliverables', True)
-            ]
-            if tasks_without_deliverables:
-                parts.append("\n## Tasks to Complete")
-                parts.append("Use complete_task after performing these:")
-                for t in tasks_without_deliverables:
-                    parts.append(f"- **{t.get('id')}**: {t.get('description', '')}")
+            parts.append("\n## Tasks in this phase")
+            parts.append(
+                "Each of these must be explicitly completed (complete_task) or skipped "
+                "(skip_task) for the conversation to advance — none complete on their own:"
+            )
+            for t in available_tasks:
+                if t.get('has_deliverables', False):
+                    hint = " — collect its deliverables, then complete_task"
+                else:
+                    hint = " — perform it, then complete_task"
+                parts.append(f"- **{t.get('id')}**: {t.get('description', '')}{hint}")
 
         return "\n".join(parts)
 
@@ -276,28 +288,39 @@ You MUST respond using this EXACT format:
 MESSAGE: [Your conversational response here - 30-50 words, max 1 question]
 DELIVERABLES: [JSON object with extracted values] or [NONE]
 COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
+SKIPPED_TASKS: ["task_id_3"] or [NONE]
 
 Example responses:
 
-Example 1 - Collecting a deliverable (user provided their name):
-MESSAGE: That's wonderful to hear, Sarah! I love how passionate you are about gardening. It sounds like such a peaceful hobby. What kinds of plants do you enjoy growing the most?
+Example 1 - Collecting a deliverable, then completing its task:
+MESSAGE: That's wonderful to hear, Sarah! What kinds of plants do you enjoy growing the most?
 DELIVERABLES: {"user_name": {"value": "Sarah", "reasoning": "User introduced herself as Sarah"}}
-COMPLETED_TASKS: [NONE]
+COMPLETED_TASKS: ["collect_name"]
+SKIPPED_TASKS: [NONE]
 
-Example 2 - No deliverables collected this turn:
-MESSAGE: Thanks for sharing that with me! I'd love to learn more about you. What do you enjoy doing in your free time?
+Example 2 - No progress this turn:
+MESSAGE: Thanks for sharing that with me! What do you enjoy doing in your free time?
 DELIVERABLES: [NONE]
 COMPLETED_TASKS: [NONE]
+SKIPPED_TASKS: [NONE]
 
 Example 3 - Completing a task that has NO deliverables (like telling a joke):
-MESSAGE: Here's one for you - Why don't scientists trust atoms? Because they make up everything! I hope that gave you a little chuckle. It was truly wonderful chatting with you today.
+MESSAGE: Here's one - Why don't scientists trust atoms? Because they make up everything! It was lovely chatting with you.
 DELIVERABLES: [NONE]
 COMPLETED_TASKS: ["tell_joke"]
+SKIPPED_TASKS: [NONE]
 
-### COMPLETED_TASKS Rules
-- Use COMPLETED_TASKS to mark tasks as done when they DON'T require data collection
-- Only mark tasks that you have actually performed in your MESSAGE
-- Tasks that collect deliverables are automatically completed when all deliverables are collected
+Example 4 - Skipping an optional task the user won't engage with:
+MESSAGE: No worries, we can leave that for now. Let's move on — what would you like to focus on next?
+DELIVERABLES: [NONE]
+COMPLETED_TASKS: [NONE]
+SKIPPED_TASKS: ["ask_optional_feedback"]
+
+### COMPLETED_TASKS / SKIPPED_TASKS Rules
+- The conversation only advances when EVERY task in the current phase is completed or skipped. Nothing completes on its own.
+- Put a task in COMPLETED_TASKS once you have accomplished it — including a task with deliverables, once you have collected what it needs (set the deliverable AND complete the task).
+- Put a task in SKIPPED_TASKS when it does not apply or the user clearly will not engage with it. "required" is only a hint about importance, not a hard gate.
+- Only mark tasks you actually addressed in your MESSAGE.
 - Format: JSON array of task IDs, e.g., ["tell_joke", "say_goodbye"]"""
 
     def _build_deliverable_rules(self, deliverables: List[Dict]) -> str:

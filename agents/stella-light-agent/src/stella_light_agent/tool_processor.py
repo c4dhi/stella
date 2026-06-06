@@ -33,6 +33,7 @@ class ToolProcessorResult:
     tool_calls_made: List[Dict[str, Any]] = field(default_factory=list)
     deliverables_set: List[str] = field(default_factory=list)
     tasks_completed: List[str] = field(default_factory=list)
+    tasks_skipped: List[str] = field(default_factory=list)
     transitioned: bool = False
     new_state_id: Optional[str] = None
 
@@ -336,3 +337,34 @@ class ToolProcessor:
                 if tool_result.data and tool_result.data.get("transitioned"):
                     result.transitioned = True
                     result.new_state_id = tool_result.data.get("new_state_id")
+
+            elif tool_call.name == "skip_task" and tool_result.success:
+                task_id = tool_call.arguments.get("task_id")
+                if task_id:
+                    result.tasks_skipped.append(task_id)
+                if tool_result.data and tool_result.data.get("transitioned"):
+                    result.transitioned = True
+                    result.new_state_id = tool_result.data.get("new_state_id")
+
+            elif tool_call.name == "skip_state" and tool_result.success:
+                # The whole state was skipped — record its tasks as skipped progress.
+                if tool_result.data:
+                    result.tasks_skipped.extend(tool_result.data.get("tasks_skipped", []))
+                    if tool_result.data.get("transitioned"):
+                        result.transitioned = True
+                        result.new_state_id = tool_result.data.get("new_state_id")
+
+            elif tool_call.name == "batch_update" and tool_result.success:
+                # batch_update bundles deliverables + completes + skips in one call.
+                data = tool_result.data or {}
+                for d in data.get("deliverables_set", []):
+                    if d.get("key"):
+                        result.deliverables_set.append(d["key"])
+                for t in data.get("tasks_completed", []):
+                    if t.get("task_id"):
+                        result.tasks_completed.append(t["task_id"])
+                for t in data.get("tasks_skipped", []):
+                    if t.get("task_id"):
+                        result.tasks_skipped.append(t["task_id"])
+                if data.get("session_completed"):
+                    result.transitioned = True

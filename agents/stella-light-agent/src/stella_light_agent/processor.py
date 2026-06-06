@@ -30,17 +30,21 @@ class ProcessorResult:
     message: str
     deliverables: Dict[str, Any]
     completed_tasks: List[str] = field(default_factory=list)
+    skipped_tasks: List[str] = field(default_factory=list)
 
 
 # Markers that indicate the end of MESSAGE section
-_MESSAGE_END_MARKERS = ["DELIVERABLES:", "COMPLETED_TASKS:"]
+_MESSAGE_END_MARKERS = ["DELIVERABLES:", "COMPLETED_TASKS:", "SKIPPED_TASKS:"]
 # Partial prefixes to buffer against
 _MESSAGE_END_PREFIXES = [
     "D", "DE", "DEL", "DELI", "DELIV", "DELIVE", "DELIVER",
     "DELIVERA", "DELIVERAB", "DELIVERABL", "DELIVERABLE", "DELIVERABLES",
     "C", "CO", "COM", "COMP", "COMPL", "COMPLE", "COMPLET", "COMPLETE",
     "COMPLETED", "COMPLETED_", "COMPLETED_T", "COMPLETED_TA", "COMPLETED_TAS",
-    "COMPLETED_TASK", "COMPLETED_TASKS"
+    "COMPLETED_TASK", "COMPLETED_TASKS",
+    "S", "SK", "SKI", "SKIP", "SKIPP", "SKIPPE", "SKIPPED",
+    "SKIPPED_", "SKIPPED_T", "SKIPPED_TA", "SKIPPED_TAS",
+    "SKIPPED_TASK", "SKIPPED_TASKS"
 ]
 
 
@@ -163,14 +167,15 @@ class LightStreamingCallback(LLMStreamingCallback):
         await self.token_queue.put(("error", str(error)))
 
     def get_parsed_content(self) -> tuple:
-        """Get the parsed message, deliverables, and completed tasks.
+        """Get the parsed message, deliverables, completed tasks, and skipped tasks.
 
         Returns:
-            (message, deliverables_dict, completed_tasks_list)
+            (message, deliverables_dict, completed_tasks_list, skipped_tasks_list)
         """
         message = self.message_content.strip()
         deliverables = {}
         completed_tasks = []
+        skipped_tasks = []
 
         # Parse DELIVERABLES section
         if "DELIVERABLES:" in self.accumulated_text:
@@ -178,7 +183,7 @@ class LightStreamingCallback(LLMStreamingCallback):
             deliv_section = self.accumulated_text[deliv_idx:].strip()
 
             # Cut off at next section marker if present
-            for marker in ["COMPLETED_TASKS:"]:
+            for marker in ["COMPLETED_TASKS:", "SKIPPED_TASKS:"]:
                 marker_pos = deliv_section.find(marker)
                 if marker_pos != -1:
                     deliv_section = deliv_section[:marker_pos].strip()
@@ -195,6 +200,11 @@ class LightStreamingCallback(LLMStreamingCallback):
             tasks_idx = self.accumulated_text.find("COMPLETED_TASKS:") + len("COMPLETED_TASKS:")
             tasks_section = self.accumulated_text[tasks_idx:].strip()
 
+            # Cut off at the SKIPPED_TASKS marker if it follows.
+            skip_pos = tasks_section.find("SKIPPED_TASKS:")
+            if skip_pos != -1:
+                tasks_section = tasks_section[:skip_pos].strip()
+
             # Check for [NONE]
             if tasks_section.upper().startswith("[NONE]"):
                 completed_tasks = []
@@ -202,7 +212,17 @@ class LightStreamingCallback(LLMStreamingCallback):
                 # Try to parse JSON array
                 completed_tasks = self._extract_json_array(tasks_section)
 
-        return message, deliverables, completed_tasks
+        # Parse SKIPPED_TASKS section
+        if "SKIPPED_TASKS:" in self.accumulated_text:
+            skip_idx = self.accumulated_text.find("SKIPPED_TASKS:") + len("SKIPPED_TASKS:")
+            skip_section = self.accumulated_text[skip_idx:].strip()
+
+            if skip_section.upper().startswith("[NONE]"):
+                skipped_tasks = []
+            else:
+                skipped_tasks = self._extract_json_array(skip_section)
+
+        return message, deliverables, completed_tasks, skipped_tasks
 
     def _extract_json_array(self, text: str) -> List[str]:
         """Extract JSON array from text."""
@@ -394,9 +414,14 @@ class LightProcessor:
             return
 
         # Get parsed result
-        message, deliverables, completed_tasks = callback.get_parsed_content()
+        message, deliverables, completed_tasks, skipped_tasks = callback.get_parsed_content()
 
         # Return result via a special output that the agent will catch
-        yield ProcessorResult(message=message, deliverables=deliverables, completed_tasks=completed_tasks)
+        yield ProcessorResult(
+            message=message,
+            deliverables=deliverables,
+            completed_tasks=completed_tasks,
+            skipped_tasks=skipped_tasks,
+        )
 
         self._current_callback = None

@@ -435,22 +435,13 @@ class StellaV2Agent(BaseAgent):
                 )
 
             # ── Stage 5: Post-response processing ──
-            # Process extraction results, auto-complete no-deliverable tasks,
-            # emit progress updates, and handle session completion.
-            # Pass original task IDs so auto-complete only fires for tasks the
-            # agent had in context (not tasks from a newly transitioned state).
-            original_task_ids = {
-                t.get("id") for t in sm_context.get("available_tasks", [])
-            }
-            # If the response prompt included a transition hint for a no-deliverable
-            # task, include it so auto-complete fires for it on this turn.
-            hinted_task_id = sm_context.get("_hinted_task_id")
-            if hinted_task_id:
-                original_task_ids.add(hinted_task_id)
-
+            # Surface the extraction expert's tool-driven state changes (deliverables
+            # set, tasks completed/skipped), emit progress updates, and handle session
+            # completion. All task/deliverable mutation is performed by the agent's
+            # explicit tool calls — there is no post-hoc auto-completion (#291).
             logger.info("Stage 5: Post-response processing")
             async for output in self._process_post_response(
-                input.session_id, all_verdicts, gate_result, original_task_ids
+                input.session_id, all_verdicts, gate_result
             ):
                 yield output
 
@@ -475,16 +466,15 @@ class StellaV2Agent(BaseAgent):
         session_id: str,
         expert_verdicts: list,
         gate_result,
-        original_task_ids: set = None,
     ) -> AsyncIterator[AgentOutput]:
         """Process expert results after response generation completes.
 
-        With tool calling, task_extraction updates the backend state machine
-        directly via set_deliverable/complete_task tools. We just need to:
-        1. Read what tools did from the verdict
+        task_extraction mutates the backend state machine directly via its tools
+        (set_deliverable / complete_task / skip_task / batch_update). Here we only:
+        1. Read what those tools did from the verdict
         2. Emit AgentOutput.deliverable() for each set deliverable
-        3. Increment turn counter if no progress
-        4. Fetch updated full state and emit progress
+        3. Increment the turn counter if no progress was made
+        4. Fetch updated full state and emit progress / handle session end
         """
         if not self.sm_client:
             return
@@ -515,6 +505,7 @@ class StellaV2Agent(BaseAgent):
 
             deliverables_set = raw.get("deliverables_set", [])
             tasks_done = raw.get("tasks_completed", [])
+            tasks_skipped = raw.get("tasks_skipped", [])
 
             if deliverables_set:
                 deliverables_found = True
@@ -532,50 +523,17 @@ class StellaV2Agent(BaseAgent):
                     value = collected.get(key)
                     yield AgentOutput.deliverable(session_id, key=key, value=value)
 
-            if tasks_done:
+            # Completing OR skipping a task is progress (the agent addressed it).
+            # All task state changes come from the agent's explicit tool calls now —
+            # the backend never auto-completes a task from deliverable presence (#291).
+            if tasks_done or tasks_skipped:
                 tasks_completed = True
                 yield AgentOutput.debug(
                     session_id,
-                    f"Completed tasks: {tasks_done}",
+                    f"Tasks addressed — completed: {tasks_done}, skipped: {tasks_skipped}",
                     component="post_response",
                     completed_task_ids=tasks_done,
                 )
-
-        # Auto-complete no-deliverable tasks after the response has been generated.
-        # The agent just performed the task instruction (either directly or via
-        # the state transition hint); mark it done so the state machine can advance.
-        # This runs even if task_extraction completed other tasks — a no-deliverable
-        # task (like Introduction) needs auto-complete regardless.
-        try:
-            pending_tasks = await self.sm_client.get_pending_tasks()
-            for task in pending_tasks:
-                # Only auto-complete tasks the agent had in its original context.
-                # Tasks from a newly transitioned state should wait until the
-                # agent has a turn to perform their instruction.
-                if original_task_ids and task.get("id") not in original_task_ids:
-                    continue
-                if not task.get("has_deliverables") and not task.get("is_preview"):
-                    result = await self.sm_client.complete_task(
-                        task["id"], "Task instruction performed by agent response"
-                    )
-                    tasks_completed = True
-                    yield AgentOutput.debug(
-                        session_id,
-                        f"Auto-completed no-deliverable task: {task.get('description', task['id'])}",
-                        component="post_response",
-                    )
-                    # Handle session completion triggered by this task
-                    if result and result.get("session_completed"):
-                        farewell = result.get("farewell_message")
-                        if farewell:
-                            yield AgentOutput.text_final(session_id, farewell)
-                        self._session_completed = True
-                        logger.info(
-                            f"Session {session_id} completed via auto-complete"
-                        )
-                    break  # one task per turn
-        except Exception as e:
-            logger.error(f"Auto-complete error: {e}")
 
         # Fetch updated state once so we can:
         # 1) detect fallback completion when backend moved to __end__

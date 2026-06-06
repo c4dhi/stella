@@ -27,6 +27,7 @@ from stella_light_agent.state_machine.execution_state import ExecutionState
 class TaskProcessingResult:
     """Result from processing tasks against user input."""
     completed_tasks: List[str] = field(default_factory=list)
+    skipped_tasks: List[str] = field(default_factory=list)
     updated_deliverables: List[str] = field(default_factory=list)
     state_complete: bool = False
     should_advance: bool = False
@@ -45,13 +46,15 @@ class StateMachine:
     - Task/deliverable processing modes (STRICT/LOOSE)
     """
 
-    # Turns-without-progress before an all-optional state releases on its own. The
-    # agent "tries" the optional work for this many turns, then advances rather
-    # than persisting the way it would for required work (#291, mirrors NestJS #172).
-    DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD = 3
     # Guard against circular transition loops within a single turn (e.g. A -> B -> A,
     # or a cascade of already-satisfied states). Bounds chained advancement per turn.
     MAX_TRANSITIONS_PER_TURN = 10
+    # Last-resort safety net (#291). Completion is agent-driven; if the agent never
+    # completes/skips a state's tasks, the state would hang forever. After this many
+    # no-progress turns in a single state, force the default forward transition so
+    # the conversation can always recover. A floor, not the primary mechanism — set
+    # high, and every firing is logged so stuck agents are visible.
+    STUCK_STATE_TURN_LIMIT = 10
 
     def __init__(self):
         self.execution_state: Optional[ExecutionState] = None
@@ -78,40 +81,15 @@ class StateMachine:
             print(f"[StateMachine] Initialization failed: {e}")
             return False
 
-    @classmethod
-    def _build_turn_fallback_transition(cls, next_state_id: str) -> StateTransition:
-        """Build the turn-based fallback used to release an all-optional state.
-
-        Low urgency (high ``priority`` number) so any explicit author condition —
-        e.g. a ``deliverable_value`` route — wins when the user actually provides
-        the optional information; this only fires when nothing else matched for
-        ``DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD`` turns without progress (#291).
-        """
-        return StateTransition(
-            target_state_id=next_state_id,
-            condition_type="turn_count_exceeded",
-            priority=1000,
-            condition_config={
-                "turns": cls.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD,
-                "scope": "without_progress",
-            },
-        )
-
     def ensure_transitions(self, plan: Plan) -> Plan:
         """Normalize a plan's transitions in place so every state can advance.
 
-        Two responsibilities (ported from the NestJS ``ensureTransitions``, #172):
-
-        1. A state with no explicit transitions gets a default transition to the
-           next state in the plan — ``all_tasks_complete`` for states with required
-           work, or a ``turn_count_exceeded`` fallback for all-optional states
-           (which can never satisfy ``all_tasks_complete`` after the #291 guard).
-        2. An all-optional, non-last state additionally gets a ``turn_count_exceeded``
-           fallback appended (unless it already has one), so it is attempted for a
-           few turns and then released instead of getting stuck forever.
-
-        The last state never receives a fallback (nowhere to advance to) — it is the
-        natural terminal state.
+        A state with no explicit transitions gets a default ``all_tasks_complete``
+        transition to the next state in plan order. #291 redesign: the engine no
+        longer auto-injects a ``turn_count_exceeded`` fallback — advancement is
+        agent-driven (the agent completes/skips every task, or skips the whole
+        state). ``turn_count_exceeded`` remains a condition a plan author may add
+        explicitly. The last state is terminal (no transition).
         """
         states = plan.states
         last_index = len(states) - 1
@@ -120,50 +98,25 @@ class StateMachine:
             is_last_state = index == last_index
             next_state_id = None if is_last_state else states[index + 1].id
 
-            has_required_work = state.has_required_work()
-            has_turn_fallback = any(
-                t.condition_type == "turn_count_exceeded" for t in state.transitions
-            )
-            needs_turn_fallback = (
-                not is_last_state
-                and not has_required_work
-                and not has_turn_fallback
-            )
-
+            # Keep authored transitions as-is.
             if state.transitions:
-                # Keep authored transitions; only add the fallback for all-optional
-                # states so they can't persist indefinitely.
-                if needs_turn_fallback and next_state_id:
-                    print(
-                        f"[StateMachine] Adding turn-based fallback for all-optional "
-                        f"state '{state.id}' -> '{next_state_id}'"
-                    )
-                    state.transitions.append(
-                        self._build_turn_fallback_transition(next_state_id)
-                    )
                 continue
 
+            # Last state: terminal, nothing to advance to.
             if is_last_state:
-                # Terminal state: nothing to advance to.
                 continue
 
-            # No authored transitions: generate a sensible default.
             print(
                 f"[StateMachine] Auto-generating transition for state "
                 f"'{state.id}' -> '{next_state_id}'"
             )
-            if needs_turn_fallback:
-                state.transitions.append(
-                    self._build_turn_fallback_transition(next_state_id)
+            state.transitions.append(
+                StateTransition(
+                    target_state_id=next_state_id,
+                    condition_type="all_tasks_complete",
+                    priority=1,
                 )
-            else:
-                state.transitions.append(
-                    StateTransition(
-                        target_state_id=next_state_id,
-                        condition_type="all_tasks_complete",
-                        priority=1,
-                    )
-                )
+            )
 
         return plan
 
@@ -258,22 +211,25 @@ class StateMachine:
         self,
         extracted: Optional[Dict[str, Any]] = None,
         completed_task_ids: Optional[List[str]] = None,
+        skipped_task_ids: Optional[List[str]] = None,
     ) -> TaskProcessingResult:
         """Apply one conversation turn and evaluate transitions.
 
         This is the single per-turn entry point. It:
-        1. marks any explicitly-completed tasks (tasks without deliverables),
+        1. marks any explicitly-completed and explicitly-skipped tasks,
         2. records collected deliverables,
         3. accounts exactly one turn (progress vs no-progress),
         4. evaluates transitions and advances the state machine.
 
-        All transition logic — including the turn-based fallback that releases
-        all-optional states (#291) — lives here, so the agent only has to call
-        this once per turn and the state machine changes correctly on its own.
+        #291 redesign: completion/skip are EXPLICIT agent actions. Setting a
+        deliverable never completes a task on its own — the agent must list the
+        task in completed_task_ids (or skipped_task_ids). The state advances once
+        every task is completed or skipped.
 
         Args:
             extracted: Dict of {key: {value: X, reasoning: Y}} or {key: value}.
             completed_task_ids: IDs of tasks the agent explicitly completed.
+            skipped_task_ids: IDs of tasks the agent explicitly skipped.
         """
         result = TaskProcessingResult()
 
@@ -283,26 +239,28 @@ class StateMachine:
         es = self.execution_state
         extracted = extracted or {}
         completed_task_ids = completed_task_ids or []
+        skipped_task_ids = skipped_task_ids or []
 
-        # Snapshot what was already done BEFORE this turn, so we only count work
-        # done *this* turn as progress. Otherwise a task completed — or a
-        # deliverable collected — on an earlier turn would keep resetting the
-        # no-progress counter, and the turn-based fallback would never fire (the
-        # all-optional state would get stuck) (#291).
-        already_completed = (
-            {t.id for t in es.current_state.tasks if t.status == TaskStatus.COMPLETED}
+        # Snapshot tasks already addressed (completed or skipped) BEFORE this turn,
+        # so only work done *this* turn counts as progress (the no-progress counter,
+        # which feeds any author turn_count_exceeded route, must not be reset by
+        # re-reporting prior completions) (#291).
+        already_addressed = (
+            {t.id for t in es.current_state.tasks
+             if t.status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED)}
             if es.current_state
             else set()
         )
         previous_values = es.get_all_deliverable_values()
 
-        # 1. Explicitly completed tasks (e.g. deliverable-less "tell a joke" tasks).
+        # 1. Explicit task completions and skips.
         for task_id in completed_task_ids:
             es.mark_task_completed(task_id)
+        for task_id in skipped_task_ids:
+            es.mark_task_skipped(task_id)
 
         # 2. Collected deliverables (supports {key: value} and {key: {value, reasoning}}).
-        #    Only a *changed* value counts as progress — re-submitting the same
-        #    optional deliverable every turn must not keep the state alive forever.
+        #    Only a *changed* value counts as progress.
         for key, data in extracted.items():
             if isinstance(data, dict):
                 value = data.get("value")
@@ -316,18 +274,24 @@ class StateMachine:
                 result.updated_deliverables.append(key)
                 print(f"[StateMachine] Set deliverable: {key} = {value}")
 
-        # 3. Report tasks that became complete THIS turn (explicit marks + side
-        #    effects of setting deliverables).
+        # 3. Report tasks addressed THIS turn (newly completed or skipped).
         if es.current_state:
             for task in es.current_state.tasks:
-                if task.status == TaskStatus.COMPLETED and task.id not in already_completed:
+                if task.id in already_addressed:
+                    continue
+                if task.status == TaskStatus.COMPLETED:
                     result.completed_tasks.append(task.id)
                     print(f"[StateMachine] Task completed: {task.id}")
+                elif task.status == TaskStatus.SKIPPED:
+                    result.skipped_tasks.append(task.id)
+                    print(f"[StateMachine] Task skipped: {task.id}")
 
-        made_progress = bool(result.updated_deliverables or result.completed_tasks)
+        made_progress = bool(
+            result.updated_deliverables or result.completed_tasks or result.skipped_tasks
+        )
 
-        # 4. Account exactly one turn BEFORE evaluating transitions, so a
-        #    turn_count_exceeded fallback sees the up-to-date counter.
+        # 4. Account exactly one turn BEFORE evaluating transitions (so an author
+        #    turn_count_exceeded route sees the up-to-date counter).
         es.record_turn(made_progress=made_progress)
 
         # 5. Evaluate transitions and advance as far as conditions dictate.
@@ -357,30 +321,61 @@ class StateMachine:
 
         for _ in range(self.MAX_TRANSITIONS_PER_TURN):
             transition = es.find_matching_transition()
+            target_id = transition.target_state_id if transition else None
+            reason = self._transition_reason(transition) if transition else None
+
+            # Safety net (#291): if no condition matched but the agent has left this
+            # state stuck for too many no-progress turns, force the default forward
+            # transition so the conversation can always recover.
             if not transition:
-                break
+                target_id = self._stuck_state_release_target()
+                if not target_id:
+                    break
+                reason = "safety_net_stuck"
+                print(
+                    f"[StateMachine] SAFETY NET: state '{es.current_state_id}' stuck for "
+                    f"{es.turns_without_deliverable} turns without progress "
+                    f"(limit {self.STUCK_STATE_TURN_LIMIT}); force-advancing to '{target_id}'."
+                )
 
             old_state = es.current_state_id
-            if not es.advance_to_state(transition.target_state_id):
+            if not es.advance_to_state(target_id):
                 print(
-                    f"[StateMachine] Transition target '{transition.target_state_id}' "
-                    f"not found; skipping"
+                    f"[StateMachine] Transition target '{target_id}' not found; skipping"
                 )
                 break
 
             result.transitioned = True
             result.should_advance = True
-            result.next_state_id = transition.target_state_id
-            result.transition_reason = self._transition_reason(transition)
+            result.next_state_id = target_id
+            result.transition_reason = reason
             print(
                 f"[StateMachine] State transition: {old_state} -> "
-                f"{transition.target_state_id} ({result.transition_reason})"
+                f"{target_id} ({reason})"
             )
         else:
             print(
                 f"[StateMachine] Max transitions per turn "
                 f"({self.MAX_TRANSITIONS_PER_TURN}) reached; stopping to avoid a loop"
             )
+
+    def _stuck_state_release_target(self) -> Optional[str]:
+        """Return the next state in plan order if the current state is stuck.
+
+        "Stuck" = ``turns_without_deliverable >= STUCK_STATE_TURN_LIMIT`` (the agent
+        never completed/skipped this state's tasks). Returns None when the threshold
+        is not reached or the current state is the last one (terminal, nowhere to go).
+        """
+        es = self.execution_state
+        if not es or es.turns_without_deliverable < self.STUCK_STATE_TURN_LIMIT:
+            return None
+        states = es.plan.states
+        for index, state in enumerate(states):
+            if state.id == es.current_state_id:
+                if index >= len(states) - 1:
+                    return None  # last state: terminal
+                return states[index + 1].id
+        return None
 
     @staticmethod
     def _transition_reason(transition: StateTransition) -> str:

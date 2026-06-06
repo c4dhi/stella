@@ -128,6 +128,9 @@ export interface StateMachineResult {
   newStateId?: string;
   newStateTitle?: string;
   taskCompleted?: string;
+  taskSkipped?: string;
+  stateSkipped?: string;
+  tasksSkipped?: string[];
   progress?: number;
   // Set when the state machine reached END_STATE_ID. Agent should stop prompting.
   sessionCompleted?: boolean;
@@ -199,7 +202,7 @@ export interface FullStateTaskInfo {
   description: string;
   instruction?: string;
   required: boolean;
-  status: 'pending' | 'in_progress' | 'completed';
+  status: 'pending' | 'in_progress' | 'completed' | 'skipped';
   deliverables: FullStateDeliverableInfo[];
 }
 
@@ -236,18 +239,28 @@ export class StateMachineService {
   private readonly logger = new Logger(StateMachineService.name);
   // Guard against circular transition loops in a single turn (e.g., A -> B -> A).
   private static readonly MAX_TRANSITIONS_PER_TURN = 10;
-  // Turns-without-progress before an all-optional state releases on its own. The
-  // agent "tries" the optional work for this many turns, then advances rather
-  // than persisting the way it would for required work (#172).
-  private static readonly DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD = 3;
   // Guard against runaway recursion in composite conditions (all_of / any_of / compound).
   private static readonly MAX_CONDITION_DEPTH = 5;
+  // Last-resort safety net (#291). Completion is agent-driven: the agent advances
+  // by completing/skipping a state's tasks. If it never does, the state would hang
+  // forever. After this many turns WITHOUT PROGRESS in a single state, force the
+  // default forward transition so the conversation can always recover. This is a
+  // floor, not the primary mechanism — set high enough that a well-behaved agent
+  // never hits it, and every firing is logged loudly so stuck agents are visible.
+  private static readonly STUCK_STATE_TURN_LIMIT = 10;
 
   constructor(private prisma: PrismaService) {}
 
   /**
    * Ensure all states have transitions defined.
-   * If a state doesn't have transitions, auto-generate a transition to the next state.
+   * If a state doesn't have transitions, auto-generate a default transition to the
+   * next state in plan order.
+   *
+   * #291 redesign: the backend no longer auto-injects a `turn_count_exceeded`
+   * fallback for all-optional states. Advancement is agent-driven (the agent
+   * completes/skips tasks, or calls skip_state). `turn_count_exceeded` remains a
+   * supported condition that a PLAN AUTHOR may add explicitly as an escape hatch,
+   * but nothing implicit is added here.
    */
   private ensureTransitions(plan: PlanData): PlanData {
     const statesWithTransitions = plan.states.map((state, index) => {
@@ -261,76 +274,32 @@ export class StateMachineService {
       const stateType = state.type || 'loose';
       const nextStateId = isLastState ? undefined : plan.states[index + 1].id;
 
-      // An all-optional non-goal state can never satisfy all_tasks_complete after
-      // the vacuous-truth fix (#172), so it needs a turn-based way out or it would
-      // get stuck. Give it one — unless it already has a turn_count_exceeded escape
-      // or is the last state (nowhere to go). This realises "try, then move on".
-      const needsTurnFallback =
-        stateType !== 'goal' &&
-        !isLastState &&
-        !this.stateHasRequiredWork(state) &&
-        !normalizedExistingTransitions.some((t) => t.condition_type === 'turn_count_exceeded');
-
-      // If state already has transitions, keep them — but add the turn fallback
-      // when the state is all-optional so it can't persist indefinitely.
+      // Keep authored transitions as-is (after goal normalization).
       if (normalizedExistingTransitions.length > 0) {
-        if (needsTurnFallback && nextStateId) {
-          this.logger.log(
-            `Adding turn-based fallback for all-optional state '${state.id}' -> '${nextStateId}'`,
-          );
-          return {
-            ...state,
-            transitions: [
-              ...normalizedExistingTransitions,
-              this.buildTurnFallbackTransition(nextStateId),
-            ],
-          };
-        }
         return { ...state, transitions: normalizedExistingTransitions };
       }
 
-      // If this is the last state, no transition needed
+      // Last state: terminal, no transition.
       if (isLastState) {
         return { ...state, transitions: [] };
       }
 
-      // Generate default transition to next state. An all-optional state advances
-      // on a turn-based fallback (all_tasks_complete would never fire for it);
-      // everything else keeps the completion/goal default.
+      // Default transition to the next state: completion-driven (goal states use
+      // goal_achieved). A state with tasks becomes "complete" once the agent has
+      // completed/skipped them all; an empty state advances immediately.
       this.logger.log(
         `Auto-generating transition for state '${state.id}' -> '${nextStateId}'`,
       );
-      const defaultTransition: StateTransition = needsTurnFallback
-        ? this.buildTurnFallbackTransition(nextStateId!)
-        : {
-            target_state_id: nextStateId!,
-            condition_type: stateType === 'goal' ? 'goal_achieved' : 'all_tasks_complete',
-            priority: 1,
-          };
+      const defaultTransition: StateTransition = {
+        target_state_id: nextStateId!,
+        condition_type: stateType === 'goal' ? 'goal_achieved' : 'all_tasks_complete',
+        priority: 1,
+      };
 
       return { ...state, transitions: [defaultTransition] };
     });
 
     return { ...plan, states: statesWithTransitions };
-  }
-
-  /**
-   * Build the turn-based fallback transition used to release an all-optional
-   * state after a few turns without progress (#172). Low urgency (high priority
-   * number) so any explicit author condition — e.g. a deliverable_value route —
-   * wins when the user actually provides the optional information; this only
-   * fires when nothing else matched for DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD turns.
-   */
-  private buildTurnFallbackTransition(nextStateId: string): StateTransition {
-    return {
-      target_state_id: nextStateId,
-      condition_type: 'turn_count_exceeded',
-      condition_config: {
-        turns: StateMachineService.DEFAULT_OPTIONAL_STATE_TURN_THRESHOLD,
-        scope: 'without_progress',
-      },
-      priority: 1000,
-    };
   }
 
   /**
@@ -422,21 +391,22 @@ export class StateMachineService {
       return { success: true, taskCompleted: taskId }; // Already done
     }
 
-    // Check if task has deliverables (shouldn't use complete_task for these)
-    if (task.deliverables && task.deliverables.length > 0) {
-      return {
-        success: false,
-        error: `Task '${taskId}' has deliverables. Use set_deliverable instead.`,
-      };
-    }
+    // Completion is an EXPLICIT agent action. The agent may complete any task —
+    // including one with deliverables — when it judges the task done; it does not
+    // matter whether every deliverable was collected. Deliverables are data the
+    // agent records via set_deliverable; ticking the task is a separate, explicit
+    // act (#291 redesign: state mutation only ever happens through agent tools,
+    // never derived from deliverable presence).
 
-    // Mark task as completed
+    // Mark task as completed (and clear any prior skip of the same id).
     const updatedCompletedTasks = [...state.completedTasks, taskId];
+    const updatedSkippedTasks = state.skippedTasks.filter(id => id !== taskId);
 
     await this.prisma.sessionState.update({
       where: { sessionId },
       data: {
         completedTasks: updatedCompletedTasks,
+        skippedTasks: updatedSkippedTasks,
         turnsWithoutProgress: 0, // Reset counter on progress
       },
     });
@@ -580,57 +550,28 @@ export class StateMachineService {
       collectedAt: new Date().toISOString(),
     };
 
-    // Check if this completes the task (or goal deliverables)
-    let updatedCompletedTasks = state.completedTasks;
-
-    if (isGoalDeliverable) {
-      // For goal-level deliverables, check if all required goal deliverables are collected
-      const goalDelKeys = (currentState.goal?.deliverables || [])
-        .filter(d => d.required !== false)
-        .map(d => d.key);
-      const goalComplete = goalDelKeys.length > 0 && goalDelKeys.every(k => k in deliverables);
-
-      if (goalComplete && !state.completedTasks.includes('__goal__')) {
-        updatedCompletedTasks = [...state.completedTasks, '__goal__'];
-        this.logger.log(`[setDeliverable] All goal deliverables collected for session ${sessionId}`);
-      }
-    } else if (foundTask) {
-      // For task-level deliverables, check task completion
-      const taskDeliverableKeys = (foundTask.deliverables || [])
-        .filter(d => d.required !== false)
-        .map(d => d.key);
-      const taskComplete = taskDeliverableKeys.length > 0 && taskDeliverableKeys.every(k => k in deliverables);
-
-      if (taskComplete && !state.completedTasks.includes(foundTask.id)) {
-        updatedCompletedTasks = [...state.completedTasks, foundTask.id];
-      }
-    }
-
+    // Setting a deliverable ONLY records data — it never auto-completes a task or
+    // goal. Completion is an explicit agent action via complete_task / skip_task
+    // (#291 redesign: no state mutation is ever derived from deliverable presence).
     await this.prisma.sessionState.update({
       where: { sessionId },
       data: {
         deliverables: deliverables as unknown as Prisma.InputJsonValue,
-        completedTasks: updatedCompletedTasks,
         turnsWithoutProgress: 0,
       },
     });
 
-    const taskId = isGoalDeliverable ? '__goal__' : foundTask?.id;
-    const taskComplete = isGoalDeliverable
-      ? updatedCompletedTasks.includes('__goal__')
-      : foundTask ? updatedCompletedTasks.includes(foundTask.id) : false;
-
     this.logger.log(`[setDeliverable] Deliverable '${key}' set for session ${sessionId}, value: ${JSON.stringify(value)}`);
-    this.logger.log(`[setDeliverable] Task '${taskId}' complete: ${taskComplete}, completedTasks: ${JSON.stringify(updatedCompletedTasks)}`);
 
-    // Check for state transitions
-    this.logger.log(`[setDeliverable] Calling evaluateAndTransition...`);
+    // Re-evaluate transitions: a deliverable can satisfy an author-defined
+    // deliverable_value / deliverable_exists route (still agent-initiated, via this
+    // tool). It can no longer fire all_tasks_complete on its own, since that now
+    // requires the agent to have completed/skipped every task.
     const transitionResult = await this.evaluateAndTransition(sessionId);
-    this.logger.log(`[setDeliverable] Transition result: ${JSON.stringify(transitionResult)}`);
 
     return {
       success: true,
-      taskCompleted: taskComplete ? taskId : undefined,
+      taskCompleted: undefined,
       transitioned: transitionResult.transitioned,
       newStateId: transitionResult.newStateId,
       newStateTitle: transitionResult.newStateTitle,
@@ -640,7 +581,140 @@ export class StateMachineService {
       progress: await this.calculateProgress(sessionId, {
         ...state,
         deliverables: deliverables as unknown as Prisma.JsonValue,
-        completedTasks: updatedCompletedTasks,
+        turnsWithoutProgress: 0,
+      } as SessionState),
+    };
+  }
+
+  /**
+   * Skip a single task. Mirrors completeTask, but records the task as *skipped*
+   * rather than completed. `required` is informational only — the agent may skip
+   * any task it judges unnecessary; skipping counts toward state completion the
+   * same way completing does (#291 redesign).
+   */
+  async skipTask(
+    sessionId: string,
+    taskId: string,
+    _reasoning: string,
+  ): Promise<StateMachineResult> {
+    const state = await this.getState(sessionId);
+    if (!state) {
+      return { success: false, error: 'State machine not initialized for this session' };
+    }
+
+    const plan = state.planData as unknown as PlanData;
+    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
+    if (!currentState) {
+      return { success: false, error: `Current state ${state.currentStateId} not found in plan` };
+    }
+
+    const task = currentState.tasks.find(t => t.id === taskId);
+    if (!task) {
+      const availableTaskIds = currentState.tasks.map(t => t.id);
+      return {
+        success: false,
+        error: `Task '${taskId}' not found in current state. Available: ${availableTaskIds.join(', ')}`,
+      };
+    }
+
+    if (state.skippedTasks.includes(taskId) || state.completedTasks.includes(taskId)) {
+      return { success: true, taskSkipped: taskId }; // Already addressed
+    }
+
+    const updatedSkippedTasks = [...state.skippedTasks, taskId];
+
+    await this.prisma.sessionState.update({
+      where: { sessionId },
+      data: {
+        skippedTasks: updatedSkippedTasks,
+        turnsWithoutProgress: 0, // Addressing a task is progress
+      },
+    });
+
+    this.logger.log(`Task ${taskId} skipped for session ${sessionId}`);
+
+    const transitionResult = await this.evaluateAndTransition(sessionId);
+
+    return {
+      success: true,
+      taskSkipped: taskId,
+      transitioned: transitionResult.transitioned,
+      newStateId: transitionResult.newStateId,
+      newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
+      progress: await this.calculateProgress(sessionId, {
+        ...state,
+        skippedTasks: updatedSkippedTasks,
+        turnsWithoutProgress: 0,
+      } as SessionState),
+    };
+  }
+
+  /**
+   * Skip the remainder of a state: mark every not-yet-addressed task as skipped,
+   * then evaluate transitions so the state advances. `stateId` is optional and
+   * defaults to the current state; skipping a non-current state is rejected to
+   * keep behavior predictable (#291 redesign).
+   */
+  async skipState(
+    sessionId: string,
+    stateId: string | undefined,
+    _reasoning: string,
+  ): Promise<StateMachineResult> {
+    const state = await this.getState(sessionId);
+    if (!state) {
+      return { success: false, error: 'State machine not initialized for this session' };
+    }
+
+    if (stateId && stateId !== state.currentStateId) {
+      return {
+        success: false,
+        error: `Cannot skip '${stateId}': only the current state ('${state.currentStateId}') can be skipped.`,
+      };
+    }
+
+    const plan = state.planData as unknown as PlanData;
+    const currentState = this.getCurrentPlanState(plan, state.currentStateId);
+    if (!currentState) {
+      return { success: false, error: `Current state ${state.currentStateId} not found in plan` };
+    }
+
+    const addressed = new Set([...state.completedTasks, ...state.skippedTasks]);
+    const newlySkipped = currentState.tasks
+      .map(t => t.id)
+      .filter(id => !addressed.has(id));
+
+    const updatedSkippedTasks = [...state.skippedTasks, ...newlySkipped];
+
+    await this.prisma.sessionState.update({
+      where: { sessionId },
+      data: {
+        skippedTasks: updatedSkippedTasks,
+        turnsWithoutProgress: 0,
+      },
+    });
+
+    this.logger.log(
+      `State ${state.currentStateId} skipped for session ${sessionId} (skipped tasks: ${JSON.stringify(newlySkipped)})`,
+    );
+
+    const transitionResult = await this.evaluateAndTransition(sessionId);
+
+    return {
+      success: true,
+      stateSkipped: currentState.id,
+      tasksSkipped: newlySkipped,
+      transitioned: transitionResult.transitioned,
+      newStateId: transitionResult.newStateId,
+      newStateTitle: transitionResult.newStateTitle,
+      sessionCompleted: transitionResult.sessionCompleted,
+      farewellMessage: transitionResult.farewellMessage,
+      summaryBehavior: transitionResult.summaryBehavior,
+      progress: await this.calculateProgress(sessionId, {
+        ...state,
+        skippedTasks: updatedSkippedTasks,
         turnsWithoutProgress: 0,
       } as SessionState),
     };
@@ -693,24 +767,15 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
     for (const task of currentState.tasks) {
-      // Skip completed tasks
+      // A task stays pending until the agent EXPLICITLY completes or skips it.
+      // Deliverable presence no longer hides a task — collecting data and ticking
+      // the task are separate, explicit agent actions (#291 redesign). `required`
+      // is surfaced for the agent's information only; it never hides a task.
       if (state.completedTasks.includes(task.id)) continue;
+      if (state.skippedTasks.includes(task.id)) continue;
 
-      // For tasks with deliverables, check if all required deliverables are collected
       const taskDeliverables = task.deliverables || [];
       const hasDeliverables = taskDeliverables.length > 0;
-
-      if (hasDeliverables) {
-        const requiredKeys = taskDeliverables
-          .filter(d => d.required !== false)
-          .map(d => d.key);
-        // Only treat as effectively complete when there is at least one required
-        // deliverable and all of them are collected — otherwise an all-optional
-        // task would be filtered out before the conversation even starts.
-        if (requiredKeys.length > 0 && requiredKeys.every(k => k in deliverables)) {
-          continue;
-        }
-      }
 
       pendingTasks.push({
         id: task.id,
@@ -789,8 +854,9 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
     for (const task of currentState.tasks) {
-      // Skip completed tasks
+      // Skip tasks the agent already addressed (completed or skipped).
       if (state.completedTasks.includes(task.id)) continue;
+      if (state.skippedTasks.includes(task.id)) continue;
 
       for (const deliverable of task.deliverables || []) {
         // Skip already collected deliverables
@@ -905,6 +971,27 @@ export class StateMachineService {
     return plan.states.find(s => s.id === stateId) || null;
   }
 
+  /**
+   * Safety-net release target (#291). Returns the next state in plan order when the
+   * current state has been stuck for STUCK_STATE_TURN_LIMIT turns without progress
+   * (the agent never completed/skipped its tasks), or undefined otherwise — including
+   * for the last state, which is terminal and has nowhere to advance to.
+   */
+  private stuckStateReleaseTarget(
+    plan: PlanData,
+    currentState: PlanState,
+    state: SessionState,
+  ): string | undefined {
+    if (state.turnsWithoutProgress < StateMachineService.STUCK_STATE_TURN_LIMIT) {
+      return undefined;
+    }
+    const index = plan.states.findIndex(s => s.id === currentState.id);
+    if (index < 0 || index >= plan.states.length - 1) {
+      return undefined; // last state / not found: nothing to release to
+    }
+    return plan.states[index + 1].id;
+  }
+
   private async calculateProgress(
     sessionId: string,
     preloadedState?: SessionState,
@@ -962,75 +1049,53 @@ export class StateMachineService {
     return Math.round((completedRequired / totalRequired) * 100);
   }
 
+  /**
+   * Whether the current (non-goal) state is complete for the `all_tasks_complete`
+   * transition.
+   *
+   * #291 redesign — completion is now a fact the AGENT asserts, never one derived
+   * from `required`/optional heuristics:
+   * - A state is complete only when EVERY task has been explicitly completed or
+   *   skipped by the agent. `required` is informational; an optional task still
+   *   has to be addressed (ticked or skipped) — it is not silently auto-satisfied.
+   * - There is no vacuous-truth case: a state with tasks is never "complete" on
+   *   entry, because no task has been addressed yet.
+   * - Goal states keep their own semantics: deliverable-less tasks are guidance
+   *   scaffolding (non-blocking) and completion is driven by `goal_achieved` /
+   *   goal-level deliverables, not task ticks.
+   */
   private isCurrentStateComplete(
     state: SessionState,
     currentState: PlanState,
   ): boolean {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
-
     const stateType = currentState.type || 'loose';
+    const addressed = new Set([...state.completedTasks, ...state.skippedTasks]);
 
     this.logger.log(
-      `[isCurrentStateComplete] Checking state '${currentState.id}' (type: ${stateType}) with ${currentState.tasks.length} tasks`,
-    );
-    this.logger.log(
-      `[isCurrentStateComplete] Collected deliverables: ${JSON.stringify(Object.keys(deliverables))}`,
-    );
-    this.logger.log(
-      `[isCurrentStateComplete] Completed tasks: ${JSON.stringify(state.completedTasks)}`,
+      `[isCurrentStateComplete] Checking state '${currentState.id}' (type: ${stateType}) — ` +
+        `completed: ${JSON.stringify(state.completedTasks)}, skipped: ${JSON.stringify(state.skippedTasks)}`,
     );
 
     for (const task of currentState.tasks) {
-      if (task.required === false) {
-        this.logger.log(`[isCurrentStateComplete] Task '${task.id}' is optional, skipping`);
+      if (addressed.has(task.id)) continue; // agent completed or skipped it
+
+      // In goal mode, deliverable-less tasks are guidance/action scaffolding and
+      // do not block; goal completion is driven by goal markers/deliverables.
+      if (stateType === 'goal' && (!task.deliverables || task.deliverables.length === 0)) {
         continue;
       }
 
-      const taskDeliverables = task.deliverables || [];
-      if (taskDeliverables.length === 0) {
-        if (stateType === 'goal') {
-          // In goal mode, deliverable-less tasks are guidance/action scaffolding.
-          // Completion is driven by goal markers/deliverables, not explicit task ticks.
-          this.logger.log(
-            `[isCurrentStateComplete] Task '${task.id}' has no deliverables — auto-complete in goal mode`,
-          );
-          continue;
-        }
-
-        // Task without deliverables - check if completed
-        if (!state.completedTasks.includes(task.id)) {
-          this.logger.log(
-            `[isCurrentStateComplete] Task '${task.id}' has no deliverables and is NOT in completedTasks - state NOT complete`,
-          );
-          return false;
-        }
-        this.logger.log(
-          `[isCurrentStateComplete] Task '${task.id}' has no deliverables but IS in completedTasks`,
-        );
-      } else {
-        // Task with deliverables - check if all required are collected
-        for (const d of taskDeliverables) {
-          if (d.required === false) {
-            this.logger.log(
-              `[isCurrentStateComplete] Deliverable '${d.key}' is optional, skipping`,
-            );
-            continue;
-          }
-          if (!(d.key in deliverables)) {
-            this.logger.log(
-              `[isCurrentStateComplete] Required deliverable '${d.key}' NOT found - state NOT complete`,
-            );
-            return false;
-          }
-          this.logger.log(
-            `[isCurrentStateComplete] Required deliverable '${d.key}' found with value: ${JSON.stringify(deliverables[d.key]?.value)}`,
-          );
-        }
-      }
+      // Any task the agent has not yet completed or skipped blocks completion —
+      // regardless of whether it is required or optional.
+      this.logger.log(
+        `[isCurrentStateComplete] Task '${task.id}' not completed/skipped — state NOT complete`,
+      );
+      return false;
     }
 
-    // For goal states, also check goal-level deliverables
-    if (currentState.type === 'goal' && currentState.goal?.deliverables) {
+    // For goal states, also require goal-level required deliverables.
+    if (stateType === 'goal' && currentState.goal?.deliverables) {
       for (const d of currentState.goal.deliverables) {
         if (d.required === false) continue;
         if (!(d.key in deliverables)) {
@@ -1042,85 +1107,33 @@ export class StateMachineService {
       }
     }
 
-    // A non-goal state with NO required work must not be treated as vacuously
-    // "complete". Otherwise an all_tasks_complete transition fires the instant the
-    // state is entered and the state is skipped without the agent doing anything
-    // (#172). Such all-optional states advance via a turn-based fallback instead
-    // (see ensureTransitions), so the agent tries the optional work, then moves on.
-    // Goal states keep their existing semantics — completion is driven by
-    // goal_achieved, and isCurrentStateComplete is not used to advance them.
-    if (stateType !== 'goal' && !this.stateHasRequiredWork(currentState)) {
-      this.logger.log(
-        `[isCurrentStateComplete] State '${currentState.id}' has no required work — NOT auto-complete (advances via turn-based fallback)`,
-      );
-      return false;
-    }
-
-    this.logger.log(`[isCurrentStateComplete] All required tasks/deliverables complete - state IS complete`);
+    this.logger.log(`[isCurrentStateComplete] All tasks addressed - state IS complete`);
     return true;
   }
 
   /**
-   * Whether a state has any *required* work that should block advancement.
+   * Whether an arbitrary plan state is complete, for the DISPLAY layer
+   * (getFullState marks per-state badges so backward jumps don't mismark states).
    *
-   * Mirrors the required-work checks in isCurrentStateComplete so a state whose
-   * tasks/deliverables are all optional is recognised as having nothing to block
-   * on. Such states must not auto-complete (which would skip them instantly);
-   * they advance on a turn-based fallback instead (#172).
-   */
-  private stateHasRequiredWork(state: PlanState): boolean {
-    const stateType = state.type || 'loose';
-
-    for (const task of state.tasks) {
-      if (task.required === false) continue; // optional task never blocks
-
-      const taskDeliverables = task.deliverables || [];
-      if (taskDeliverables.length === 0) {
-        // A required deliverable-less task blocks in non-goal states; in goal
-        // mode such tasks are auto-complete scaffolding (not blocking).
-        if (stateType !== 'goal') return true;
-        continue;
-      }
-
-      // A required task with deliverables blocks only if at least one of those
-      // deliverables is itself required.
-      if (taskDeliverables.some((d) => d.required !== false)) return true;
-    }
-
-    // Goal-level required deliverables also count as required work.
-    if (stateType === 'goal' && state.goal?.deliverables?.some((d) => d.required !== false)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Change for non-linear transitions:
-   * Determine whether an arbitrary state is complete based on actual data
-   * (completed tasks + collected deliverables), not plan array position.
-   *
-   * This is used by getFullState() so backward jumps don't incorrectly mark
-   * earlier-in-array states as completed.
+   * Must use the SAME definition as isCurrentStateComplete (#291): a state is
+   * complete only when every task has been explicitly completed or skipped by the
+   * agent. This is what fixes the on-screen bug where a future all-optional state
+   * rendered as "completed" — previously this function skipped optional tasks
+   * (`required === false`) and so returned true vacuously.
    */
   private isPlanStateComplete(state: SessionState, planState: PlanState): boolean {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
     const stateType = planState.type || 'loose';
+    const addressed = new Set([...state.completedTasks, ...state.skippedTasks]);
 
     for (const task of planState.tasks) {
-      if (task.required === false) continue;
-
-      const taskDeliverables = task.deliverables || [];
-      if (taskDeliverables.length === 0) {
-        if (stateType === 'goal') continue;
-        if (!state.completedTasks.includes(task.id)) return false;
+      if (addressed.has(task.id)) continue;
+      // Goal-mode deliverable-less tasks are non-blocking scaffolding.
+      if (stateType === 'goal' && (!task.deliverables || task.deliverables.length === 0)) {
         continue;
       }
-
-      for (const d of taskDeliverables) {
-        if (d.required === false) continue;
-        if (!(d.key in deliverables)) return false;
-      }
+      // An unaddressed task (required or optional) means the state is not complete.
+      return false;
     }
 
     if (planState.type === 'goal' && planState.goal?.deliverables) {
@@ -1825,8 +1838,26 @@ export class StateMachineService {
       }
 
       if (!matchedTargetId) {
-        this.logger.log(`[evaluateAndTransition] No transition conditions met`);
-        break;
+        // No authored/default condition matched. Before giving up, apply the
+        // last-resort safety net: if the agent has left this state stuck for too
+        // many no-progress turns, force the default forward transition so the
+        // conversation can always recover (#291). Falls through to the normal
+        // transition-application code below (cycle guard, end-state handling, etc.).
+        const stuckReleaseId = this.stuckStateReleaseTarget(plan, currentState, state);
+        if (stuckReleaseId) {
+          this.logger.warn(
+            `[evaluateAndTransition] SAFETY NET: state '${currentState.id}' stuck for ` +
+              `${state.turnsWithoutProgress} turns without progress (limit ` +
+              `${StateMachineService.STUCK_STATE_TURN_LIMIT}); the agent never completed/skipped ` +
+              `its tasks — force-advancing to '${stuckReleaseId}'.`,
+          );
+          matchedTargetId = stuckReleaseId;
+          matchedTargetTitle =
+            plan.states.find(s => s.id === stuckReleaseId)?.title ?? stuckReleaseId;
+        } else {
+          this.logger.log(`[evaluateAndTransition] No transition conditions met`);
+          break;
+        }
       }
 
       if (visitedStateIds.has(matchedTargetId)) {
@@ -1923,6 +1954,7 @@ export class StateMachineService {
     const plan = state.planData as unknown as PlanData;
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
     const completedTasks = state.completedTasks || [];
+    const skippedTasks = state.skippedTasks || [];
 
     // Change for non-linear transitions:
     // Build status per state using completion checks instead of positional
@@ -1939,27 +1971,18 @@ export class StateMachineService {
         const taskDeliverables = task.deliverables || [];
         const hasDeliverables = taskDeliverables.length > 0;
 
-        // Determine task status
-        let taskStatus: 'pending' | 'in_progress' | 'completed' = 'pending';
+        // Determine task status. Completion/skip are EXPLICIT agent actions
+        // (#291): a task is only 'completed' when the agent ticked it and only
+        // 'skipped' when the agent skipped it. Collecting deliverables (without a
+        // tick) shows as 'in_progress', never 'completed'.
+        let taskStatus: 'pending' | 'in_progress' | 'completed' | 'skipped' = 'pending';
         if (completedTasks.includes(task.id)) {
           taskStatus = 'completed';
-        } else if (hasDeliverables) {
-          // Check if all required deliverables are collected.
-          // Guard against vacuous truth: a task whose deliverables are all optional
-          // would otherwise be reported as completed before any work happens.
-          const requiredKeys = taskDeliverables
-            .filter(d => d.required !== false)
-            .map(d => d.key);
-          if (requiredKeys.length > 0) {
-            const allCollected = requiredKeys.every(k => k in deliverables);
-            if (allCollected) {
-              taskStatus = 'completed';
-            } else if (requiredKeys.some(k => k in deliverables)) {
-              taskStatus = 'in_progress';
-            }
-          } else if (taskDeliverables.some(d => d.key in deliverables)) {
-            taskStatus = 'in_progress';
-          }
+        } else if (skippedTasks.includes(task.id)) {
+          taskStatus = 'skipped';
+        } else if (hasDeliverables && taskDeliverables.some(d => d.key in deliverables)) {
+          // Some data collected but the agent has not yet ticked the task.
+          taskStatus = 'in_progress';
         }
 
         // Build deliverable info

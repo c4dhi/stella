@@ -122,19 +122,13 @@ class ExecutionState:
                     self._deliverable_reasoning[key] = reasoning
 
                     # NOTE: turn-counter accounting is intentionally NOT done here.
-                    # record_turn() is the single source of truth — it decides
-                    # whether the turn made progress (e.g. the value actually
-                    # changed). Resetting here on every call would let a re-submitted
-                    # unchanged optional deliverable keep the no-progress counter at
-                    # 0, so an all-optional state would never release (#291).
+                    # record_turn() is the single source of truth.
 
-                    # Update task status
+                    # Setting a deliverable moves the task to IN_PROGRESS but never
+                    # completes it — completion is an explicit agent action via
+                    # mark_task_completed (#291: no completion is derived from data).
                     if task.status == TaskStatus.PENDING:
                         task.status = TaskStatus.IN_PROGRESS
-
-                    # Check if task is now complete
-                    if task.is_complete():
-                        task.status = TaskStatus.COMPLETED
 
                     return True
         return False
@@ -178,28 +172,18 @@ class ExecutionState:
         self.turns_without_deliverable = 0
 
     def is_current_state_complete(self) -> bool:
-        """Check if the current state is complete (for ``all_tasks_complete``).
+        """Whether the current state is complete (for ``all_tasks_complete``).
 
-        A state with NO required work must NOT be treated as vacuously complete.
-        Otherwise an ``all_tasks_complete`` transition would fire the instant the
-        state is entered and the state would be skipped without the agent doing
-        anything (#291). Such all-optional states advance via a turn-based fallback
-        instead (see ``StateMachine.ensure_transitions``), so the agent attempts the
-        optional work for a few turns, then moves on.
+        #291 redesign: a state is complete only once every task has been explicitly
+        completed or skipped by the agent. ``required`` is informational and does not
+        gate completion, so there is no vacuous-truth case — a state with tasks is
+        never complete on entry because no task has been addressed yet.
         """
         state = self.current_state
         if not state:
             return True
 
-        if not state.has_required_work():
-            print(
-                f"[StateMachine] is_current_state_complete: False "
-                f"(state '{state.id}' has no required work — advances via turn fallback)"
-            )
-            return False
-
-        # Debug: log task statuses
-        task_statuses = [(t.id, t.required, t.status.value) for t in state.tasks]
+        task_statuses = [(t.id, t.status.value) for t in state.tasks]
         is_complete = state.is_complete()
         print(f"[StateMachine] is_current_state_complete: {is_complete}")
         print(f"[StateMachine]   Task statuses: {task_statuses}")
@@ -385,6 +369,48 @@ class ExecutionState:
         print(f"[StateMachine] mark_task_completed('{task_id}'): FAILED - task not found")
         print(f"[StateMachine]   Available task IDs in current state: {available_task_ids}")
         return False
+
+    def mark_task_skipped(self, task_id: str) -> bool:
+        """Mark a task as skipped (the agent decided it is not needed).
+
+        Skipping addresses a task just like completing it, so the state can advance
+        once every task is completed or skipped (#291).
+        """
+        state = self.current_state
+        if not state:
+            print(f"[StateMachine] mark_task_skipped('{task_id}'): FAILED - no current state")
+            return False
+
+        for task in state.tasks:
+            if task.id == task_id:
+                old_status = task.status
+                task.status = TaskStatus.SKIPPED
+                print(f"[StateMachine] mark_task_skipped('{task_id}'): SUCCESS "
+                      f"({old_status.value} -> {task.status.value})")
+                return True
+
+        available_task_ids = [t.id for t in state.tasks]
+        print(f"[StateMachine] mark_task_skipped('{task_id}'): FAILED - task not found")
+        print(f"[StateMachine]   Available task IDs in current state: {available_task_ids}")
+        return False
+
+    def skip_current_state(self) -> List[str]:
+        """Skip every not-yet-addressed task in the current state.
+
+        Returns the list of task IDs that were newly skipped, so the state becomes
+        complete and advances on the next transition evaluation (#291).
+        """
+        state = self.current_state
+        if not state:
+            return []
+        newly_skipped = []
+        for task in state.tasks:
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.SKIPPED):
+                task.status = TaskStatus.SKIPPED
+                newly_skipped.append(task.id)
+        if newly_skipped:
+            print(f"[StateMachine] skip_current_state('{state.id}'): skipped {newly_skipped}")
+        return newly_skipped
 
     def get_context_summary(self) -> Dict[str, Any]:
         """Get a summary of current execution state for logging."""

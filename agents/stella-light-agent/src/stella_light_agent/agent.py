@@ -588,11 +588,14 @@ class StellaLightAgent(BaseAgent):
                 print(f"[StellaLightAgent] Deliverables set: {result.deliverables_set}")
             if result.tasks_completed:
                 print(f"[StellaLightAgent] Tasks completed: {result.tasks_completed}")
+            if result.tasks_skipped:
+                print(f"[StellaLightAgent] Tasks skipped: {result.tasks_skipped}")
             if result.transitioned:
                 print(f"[StellaLightAgent] Transitioned to: {result.new_state_id}")
 
-        # Increment turn counter if no progress was made
-        if result and not result.deliverables_set and not result.tasks_completed:
+        # Increment turn counter only if no progress was made. Completing OR skipping
+        # a task is progress (the agent explicitly addressed it) (#291).
+        if result and not result.deliverables_set and not result.tasks_completed and not result.tasks_skipped:
             try:
                 await self.sm_client.increment_turn()
             except Exception as e:
@@ -652,22 +655,26 @@ class StellaLightAgent(BaseAgent):
             else:
                 yield output
 
-        # Drive the state machine for this turn. A single process_turn() call
-        # records deliverables + completed tasks, accounts the turn, and evaluates
-        # transitions (including the turn-based fallback for all-optional states),
-        # so turn counting and advancement stay consistent (#291).
+        # Drive the state machine for this turn. A single process_turn() call records
+        # deliverables, completed/skipped tasks, accounts the turn, and evaluates
+        # transitions. Completion and skipping are explicit agent actions — nothing
+        # auto-completes from deliverable presence (#291).
         deliverables = result.deliverables if (result and result.deliverables) else {}
         completed_tasks = result.completed_tasks if (result and result.completed_tasks) else []
+        skipped_tasks = result.skipped_tasks if (result and result.skipped_tasks) else []
 
         if deliverables:
             print(f"[StellaLightAgent] Extracted deliverables: {list(deliverables.keys())}")
         if completed_tasks:
             print(f"[StellaLightAgent] Completed tasks: {completed_tasks}")
+        if skipped_tasks:
+            print(f"[StellaLightAgent] Skipped tasks: {skipped_tasks}")
 
         if result and self.state_machine.is_initialized:
             sm_result = self.state_machine.process_turn(
                 extracted=deliverables,
                 completed_task_ids=completed_tasks,
+                skipped_task_ids=skipped_tasks,
             )
             if sm_result.transitioned:
                 print(

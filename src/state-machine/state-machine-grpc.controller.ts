@@ -92,6 +92,92 @@ export class StateMachineGrpcController {
   }
 
   /**
+   * Skip a single task by ID
+   */
+  @GrpcMethod('StateMachineService', 'SkipTask')
+  async skipTask(request: {
+    sessionId: string;
+    taskId: string;
+    reasoning: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    taskSkipped?: string;
+    transitioned?: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    progress?: number;
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
+  }> {
+    this.logger.log(`SkipTask called for session: ${request.sessionId}, task: ${request.taskId}`);
+
+    const result = await this.stateMachineService.skipTask(
+      request.sessionId,
+      request.taskId,
+      request.reasoning,
+    );
+
+    return {
+      success: result.success,
+      error: result.error,
+      taskSkipped: result.taskSkipped,
+      transitioned: result.transitioned,
+      newStateId: result.newStateId,
+      newStateTitle: result.newStateTitle,
+      progress: result.progress,
+      sessionCompleted: result.sessionCompleted,
+      farewellMessage: result.farewellMessage,
+      summaryBehavior: result.summaryBehavior,
+    };
+  }
+
+  /**
+   * Skip the remainder of a state (mark its tasks skipped and advance)
+   */
+  @GrpcMethod('StateMachineService', 'SkipState')
+  async skipState(request: {
+    sessionId: string;
+    stateId?: string;
+    reasoning: string;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    stateSkipped?: string;
+    tasksSkipped?: string[];
+    transitioned?: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    progress?: number;
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
+  }> {
+    this.logger.log(`SkipState called for session: ${request.sessionId}, state: ${request.stateId || '(current)'}`);
+
+    const result = await this.stateMachineService.skipState(
+      request.sessionId,
+      request.stateId,
+      request.reasoning,
+    );
+
+    return {
+      success: result.success,
+      error: result.error,
+      stateSkipped: result.stateSkipped,
+      tasksSkipped: result.tasksSkipped,
+      transitioned: result.transitioned,
+      newStateId: result.newStateId,
+      newStateTitle: result.newStateTitle,
+      progress: result.progress,
+      sessionCompleted: result.sessionCompleted,
+      farewellMessage: result.farewellMessage,
+      summaryBehavior: result.summaryBehavior,
+    };
+  }
+
+  /**
    * Set a deliverable value
    */
   @GrpcMethod('StateMachineService', 'SetDeliverable')

@@ -381,6 +381,10 @@ describe('StateMachineService non-linear transitions', () => {
     // after jumping backward (C -> A), statuses must reflect actual completion,
     // not state order in the plan array.
     await service.setDeliverable(sessionId, 'route_to_c', 'yes', 'Move to C');
+    // Completion is explicit (#291): collecting a deliverable no longer completes
+    // the task, so we tick task-c before jumping back to demonstrate that a
+    // genuinely-completed earlier state stays 'completed' after a backward jump.
+    await service.completeTask(sessionId, 'task-c', 'Finished C');
     const backward = await service.setDeliverable(sessionId, 'go_back', 'yes', 'Move back to A');
 
     // Backward transition should be reported explicitly.
@@ -395,8 +399,8 @@ describe('StateMachineService non-linear transitions', () => {
     // state status must come from actual completion checks, not array position.
     // After C -> A jump:
     // - A is active (current)
-    // - B remains pending (never completed)
-    // - C remains completed (its required deliverable was collected)
+    // - B remains pending (never addressed)
+    // - C is completed (its task was explicitly completed)
     const stateStatus = new Map(fullState?.states.map(s => [s.id, s.status]));
     expect(stateStatus.get('state-a')).toBe('active');
     expect(stateStatus.get('state-b')).toBe('pending');
@@ -820,19 +824,15 @@ describe('turn_count_exceeded condition', () => {
 });
 
 // =============================================================================
-// All-optional states (#172)
-// A state whose tasks/deliverables are all optional must NOT auto-complete on
-// entry (that skipped it instantly, sometimes jumping several states). Instead
-// the agent "tries" the optional work for a few turns, then the state releases
-// on a turn-based fallback — it does not persist the way required work does.
+// Agent-driven completion (#291)
+// A state is complete only once every task is explicitly completed or skipped.
+// `required` is informational; nothing auto-completes from deliverable presence,
+// and there is NO turn-based fallback — the agent advances by completing/skipping
+// tasks (or skipping the whole state).
 // =============================================================================
-describe('all-optional state handling (#172)', () => {
-  // required state-a -> all-optional state-b -> state-c.
-  // state-b has only an optional deliverable; pass stateBTransitions to give it
-  // an explicit route, otherwise it relies on the auto-injected turn fallback.
-  function buildOptionalMiddlePlan(
-    stateBTransitions?: import('./state-machine.service').StateTransition[],
-  ): PlanData {
+describe('agent-driven completion (#291)', () => {
+  // required-routed state-a -> all-optional state-b -> empty state-c.
+  function buildOptionalMiddlePlan(): PlanData {
     return {
       id: 'plan-optional-middle',
       title: 'Optional Middle Plan',
@@ -869,174 +869,131 @@ describe('all-optional state handling (#172)', () => {
               deliverables: [{ key: 'opt_note', description: 'optional note', required: false }],
             },
           ],
-          ...(stateBTransitions ? { transitions: stateBTransitions } : {}),
         },
         { id: 'state-c', title: 'C', type: 'loose', tasks: [], transitions: [] },
       ],
     };
   }
 
-  it('does not skip an all-optional state on entry', async () => {
-    const sessionId = 'session-optional-no-skip';
+  async function newServiceInStateB(sessionId: string): Promise<StateMachineService> {
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
-
-    // Enter state-b by satisfying state-a's required deliverable.
+    // state-a routes to B on the deliverable (deliverable_exists), independent of
+    // task completion — used purely to land us in the all-optional state-b.
     const enter = await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing');
-    expect(enter.transitioned).toBe(true);
     expect(enter.newStateId).toBe('state-b');
+    return svc;
+  }
 
-    // It must NOT chain straight through the all-optional state-b to state-c.
-    const state = await svc.getCurrentState(sessionId);
-    expect(state?.stateId).toBe('state-b');
+  it('does NOT auto-complete an all-optional state on entry, and does not advance during normal operation', async () => {
+    const svc = await newServiceInStateB('session-opt-no-skip');
+
+    // It must NOT chain through the all-optional state-b.
+    expect((await svc.getCurrentState('session-opt-no-skip'))?.stateId).toBe('state-b');
+
+    // There is no eager turn fallback: a handful of no-progress turns (below the
+    // last-resort safety-net limit) do not advance the state.
+    for (let i = 0; i < 6; i++) await svc.incrementTurn('session-opt-no-skip');
+    expect((await svc.getCurrentState('session-opt-no-skip'))?.stateId).toBe('state-b');
   });
 
-  it('auto-injects a turn-based fallback (not all_tasks_complete) for an all-optional state', async () => {
-    const sessionId = 'session-optional-fallback-shape';
+  it('SAFETY NET: force-advances a state the agent leaves stuck (last resort)', async () => {
+    const svc = await newServiceInStateB('session-safety-net');
+
+    // The agent never completes/skips state-b. It must eventually release on its
+    // own rather than hang forever — but only as a last resort, not eagerly.
+    let res: { transitioned: boolean; newStateId?: string } = { transitioned: false };
+    let calls = 0;
+    while (calls < 20 && !res.transitioned) {
+      res = await svc.incrementTurn('session-safety-net');
+      calls++;
+    }
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+    // Last resort, not eager: it must give the agent many turns first.
+    expect(calls).toBeGreaterThanOrEqual(5);
+  });
+
+  it('uses an all_tasks_complete default, NOT an injected turn_count_exceeded fallback', async () => {
+    const sessionId = 'session-opt-shape';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
 
     const raw = await (svc as any).getState(sessionId);
-    const states = (raw.planData as PlanData).states;
-    const stateB = states.find((s) => s.id === 'state-b');
-    expect(stateB?.transitions?.[0]?.condition_type).toBe('turn_count_exceeded');
+    const stateB = (raw.planData as PlanData).states.find((s) => s.id === 'state-b');
+    expect(stateB?.transitions?.[0]?.condition_type).toBe('all_tasks_complete');
     expect(stateB?.transitions?.[0]?.target_state_id).toBe('state-c');
-
-    // A required-work state is left untouched — no turn fallback appended.
-    const stateA = states.find((s) => s.id === 'state-a');
-    expect(stateA?.transitions?.map((t) => t.condition_type)).toEqual(['deliverable_exists']);
+    expect(stateB?.transitions?.some((t) => t.condition_type === 'turn_count_exceeded')).toBe(false);
   });
 
-  it('releases an all-optional state after the default no-progress threshold', async () => {
-    const sessionId = 'session-optional-release';
-    const { prisma } = createPrismaMock();
-    const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-
-    // Default threshold is 3 turns without progress: try for two, release on the third.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const release = await svc.incrementTurn(sessionId);
-    expect(release.transitioned).toBe(true);
-    expect(release.newStateId).toBe('state-c');
+  it('setting a deliverable does not complete its task or advance the state', async () => {
+    const svc = await newServiceInStateB('session-opt-setdeliv');
+    const res = await svc.setDeliverable('session-opt-setdeliv', 'opt_note', 'hello', 'optional');
+    expect(res.transitioned).toBe(false);
+    expect(res.taskCompleted).toBeUndefined();
+    expect((await svc.getCurrentState('session-opt-setdeliv'))?.stateId).toBe('state-b');
   });
 
-  it('takes an explicit data route immediately, keeping the turn fallback only as backup', async () => {
-    const sessionId = 'session-optional-data-route';
-    const { prisma } = createPrismaMock();
-    const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(
-      sessionId,
-      buildOptionalMiddlePlan([
-        {
-          target_state_id: 'state-c',
-          condition_type: 'deliverable_exists',
-          condition_config: { key: 'opt_note' },
-          priority: 1,
-        },
-      ]),
-    );
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-b');
-
-    // Providing the optional note wins via the explicit route (priority 1) over
-    // the injected turn fallback (priority 1000) — no need to wait out the turns.
-    const res = await svc.setDeliverable(sessionId, 'opt_note', 'hello', 'optional');
+  it('advances once the optional task is explicitly completed', async () => {
+    const svc = await newServiceInStateB('session-opt-complete');
+    const res = await svc.completeTask('session-opt-complete', 'task-b', 'done chatting');
     expect(res.transitioned).toBe(true);
     expect(res.newStateId).toBe('state-c');
   });
 
-  // required state-a -> all-optional state-b -> all-optional state-c -> state-d.
-  // Two consecutive non-terminal all-optional states both get a turn fallback.
-  // Guards against the multi-skip regression: when the no-progress threshold is
-  // reached in state-b, the chained evaluation loop must only hop ONE state. The
-  // counter is reset in the DB on transition; it must also be reset in-memory so
-  // state-c doesn't see state-b's stale counter and fire its own fallback in the
-  // same pass — each state must get its own turn window.
-  function buildTwoOptionalPlan(): PlanData {
-    return {
-      id: 'plan-two-optional',
-      title: 'Two Optional Plan',
-      initial_state_id: 'state-a',
-      states: [
-        {
-          id: 'state-a',
-          title: 'A',
-          type: 'loose',
-          tasks: [
-            {
-              id: 'task-a',
-              description: 'Collect route',
-              deliverables: [{ key: 'go_to_b', description: 'go', required: true, type: 'string' }],
-            },
-          ],
-          transitions: [
-            {
-              target_state_id: 'state-b',
-              condition_type: 'deliverable_exists',
-              condition_config: { key: 'go_to_b' },
-              priority: 1,
-            },
-          ],
-        },
-        {
-          id: 'state-b',
-          title: 'B',
-          type: 'loose',
-          tasks: [
-            {
-              id: 'task-b',
-              description: 'Optional chat',
-              deliverables: [{ key: 'opt_b', description: 'optional note', required: false }],
-            },
-          ],
-        },
-        {
-          id: 'state-c',
-          title: 'C',
-          type: 'loose',
-          tasks: [
-            {
-              id: 'task-c',
-              description: 'Optional chat',
-              deliverables: [{ key: 'opt_c', description: 'optional note', required: false }],
-            },
-          ],
-        },
-        { id: 'state-d', title: 'D', type: 'loose', tasks: [], transitions: [] },
-      ],
-    };
-  }
-
-  it('hops only one state per threshold across consecutive all-optional states', async () => {
-    const sessionId = 'session-two-optional-no-multiskip';
-    const { prisma } = createPrismaMock();
-    const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(sessionId, buildTwoOptionalPlan());
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-
-    // Reach the no-progress threshold (3) in state-b: it releases to state-c only.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const hopB = await svc.incrementTurn(sessionId);
-    expect(hopB.transitioned).toBe(true);
-    // Must land on state-c, NOT skip straight through to state-d in the same pass.
-    expect(hopB.newStateId).toBe('state-c');
-    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-c');
-
-    // state-c gets its OWN turn window — the counter was reset on entry.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const hopC = await svc.incrementTurn(sessionId);
-    expect(hopC.transitioned).toBe(true);
-    expect(hopC.newStateId).toBe('state-d');
+  it('advances once the optional task is explicitly skipped', async () => {
+    const svc = await newServiceInStateB('session-opt-skip');
+    const res = await svc.skipTask('session-opt-skip', 'task-b', 'user not interested');
+    expect(res.success).toBe(true);
+    expect(res.taskSkipped).toBe('task-b');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
   });
 
-  it('isCurrentStateComplete returns false for a non-goal state with only optional work', async () => {
-    const sessionId = 'session-optional-iscomplete';
+  it('skip_state marks all remaining tasks skipped and advances', async () => {
+    const svc = await newServiceInStateB('session-opt-skipstate');
+    const res = await svc.skipState('session-opt-skipstate', undefined, 'phase not relevant');
+    expect(res.success).toBe(true);
+    expect(res.stateSkipped).toBe('state-b');
+    expect(res.tasksSkipped).toEqual(['task-b']);
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('a required task may be skipped (required is informational)', async () => {
+    const sessionId = 'session-skip-required';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [{ id: 'req', description: 'required', required: true }],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+    const res = await svc.skipTask(sessionId, 'req', 'not applicable');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('end');
+  });
+
+  it('skipState rejects a non-current state', async () => {
+    const svc = await newServiceInStateB('session-skipstate-reject');
+    const res = await svc.skipState('session-skipstate-reject', 'state-a', 'wrong');
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('only the current state');
+  });
+
+  it('isCurrentStateComplete is false for a state with an unaddressed (even optional) task', async () => {
+    const sessionId = 'session-iscomplete';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     const plan: PlanData = {
@@ -1063,8 +1020,26 @@ describe('all-optional state handling (#172)', () => {
 
     const raw = await (svc as any).getState(sessionId);
     const planState = (raw.planData as PlanData).states[0];
-    // No required work → must not be treated as vacuously complete (#172).
+    // Task not yet completed/skipped → not complete (no vacuous truth) (#291).
     expect((svc as any).isCurrentStateComplete(raw, planState)).toBe(false);
+  });
+
+  it('DISPLAY: a future all-optional state is NOT rendered as completed (#291 on-screen bug)', async () => {
+    // The original bug: getFullState marked a not-yet-reached all-optional state
+    // as completed because isPlanStateComplete skipped optional tasks vacuously.
+    const sessionId = 'session-display-bug';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
+
+    // Fresh session: still on state-a; state-b (all-optional WITH a task, the exact
+    // shape of the on-screen bug) must render as pending, not completed. (state-c is
+    // empty — a state with no tasks is legitimately vacuously complete and is a
+    // separate, benign display quirk, so it is not asserted here.)
+    const full = await svc.getFullState(sessionId);
+    const status = new Map(full?.states.map((s) => [s.id, s.status]));
+    expect(status.get('state-a')).toBe('active');
+    expect(status.get('state-b')).toBe('pending');
   });
 });
 
@@ -1141,18 +1116,24 @@ describe('getFullState optional-task status on startup (#213)', () => {
     expect(required.get('required-task')).toBe(true);
   });
 
-  it('still completes a task once its required deliverable is collected', async () => {
+  it('does NOT auto-complete a task from its deliverable; explicit completion is required (#291)', async () => {
     const sessionId = 'session-213-collected';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
 
+    // Collecting the required deliverable shows progress but NOT completion.
     await svc.setDeliverable(sessionId, 'must_field', 'done', 'collected');
+    let tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('required-task')).toBe('in_progress');
 
-    const fullState = await svc.getFullState(sessionId);
-    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
-
-    // Positive control: the guard must not block legitimate completion.
+    // The task completes only when the agent explicitly completes it.
+    await svc.completeTask(sessionId, 'required-task', 'done');
+    tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
     expect(tasks.get('required-task')).toBe('completed');
     // Untouched optional tasks stay pending.
     expect(tasks.get('opt-deliverable-task')).toBe('pending');
