@@ -248,10 +248,41 @@ class ToolProcessor:
                 tool_choice="auto"
             )
 
+            # Align Phase 2 (extraction) with Phase 1 (speech). Previously Phase 2
+            # ran from the SAME [system, user] context as Phase 1 and never saw
+            # what Phase 1 actually said, so the two diverged: the agent could
+            # warmly acknowledge "great goal!" in speech while the tool phase
+            # failed to record it, leaving the deliverable uncollected and the
+            # conversation looping. We now feed Phase 1's reply into Phase 2 and
+            # instruct it to record everything the user has provided — including
+            # whatever the reply just acknowledged — so the model that SPEAKS
+            # informs the model that RECORDS.
+            tool_messages = list(messages)
+            if accumulated_text.strip():
+                tool_messages.append(
+                    LLMMessage(role="assistant", content=accumulated_text.strip())
+                )
+            tool_messages.append(
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "Internal bookkeeping step (the user does NOT see this and "
+                        "will NOT receive another reply now). Based on the whole "
+                        "conversation above, INCLUDING the assistant reply you just "
+                        "gave, call set_deliverable for every piece of information "
+                        "the user has actually provided but that has not been "
+                        "recorded yet — if your reply acknowledged something (e.g. "
+                        "a goal, a number, a preference), record it now. Then call "
+                        "complete_task / skip_task for any task the user has "
+                        "addressed or asked to skip. Emit ONLY tool calls; do not "
+                        "produce any conversational text."
+                    ),
+                )
+            )
+
             try:
-                # Call LLM with same conversation context to get tool decisions
                 tool_response = await self.llm_service.generate(
-                    messages=messages,
+                    messages=tool_messages,
                     config=tool_config,
                     callback=None,
                     component_name="tool_processor_tools"
