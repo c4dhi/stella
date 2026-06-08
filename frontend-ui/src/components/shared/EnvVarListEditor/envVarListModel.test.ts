@@ -47,6 +47,55 @@ describe('buildInitialRows', () => {
     })
     expect(rows[0]).toMatchObject({ key: 'API_KEY', valuePreserved: true })
   })
+
+  it('orders template keys after declared keys and before custom', () => {
+    const rows = buildInitialRows({
+      requiredKeys: ['API_KEY'],
+      optionalKeys: ['REGION'],
+      templateKeys: ['OPENAI_KEY', 'MODEL'],
+      initial: { EXTRA: 'v' },
+    })
+    expect(rows.map((r) => [r.key, r.origin])).toEqual([
+      ['API_KEY', 'required'],
+      ['REGION', 'optional'],
+      ['OPENAI_KEY', 'template'],
+      ['MODEL', 'template'],
+      ['EXTRA', 'custom'],
+    ])
+  })
+
+  it('renders template keys as preserved default rows (blank = use template value)', () => {
+    const rows = buildInitialRows({ templateKeys: ['OPENAI_KEY'] })
+    expect(rows[0]).toMatchObject({
+      key: 'OPENAI_KEY',
+      value: '',
+      origin: 'template',
+      valuePreserved: true,
+    })
+  })
+
+  it('pre-fills a saved override on a template key (no longer preserved)', () => {
+    const rows = buildInitialRows({
+      templateKeys: ['OPENAI_KEY'],
+      initial: { OPENAI_KEY: 'sk-override' },
+    })
+    expect(rows[0]).toMatchObject({
+      key: 'OPENAI_KEY',
+      value: 'sk-override',
+      origin: 'template',
+      valuePreserved: false,
+    })
+  })
+
+  it('does not duplicate a key declared as both required and template', () => {
+    const rows = buildInitialRows({
+      requiredKeys: ['SHARED'],
+      templateKeys: ['SHARED'],
+    })
+    expect(rows.filter((r) => r.key === 'SHARED')).toHaveLength(1)
+    // required wins (seeded first)
+    expect(rows[0].origin).toBe('required')
+  })
 })
 
 describe('add / update / delete row identity', () => {
@@ -127,6 +176,13 @@ describe('validateRows', () => {
     expect(v.missingValueIds.has(rows[1].id)).toBe(false) // custom empty allowed
     expect(v.isValid).toBe(false)
   })
+
+  it('never requires a value for a template row (blank = use template default)', () => {
+    const rows = [row('OPENAI_KEY', '', 'template')]
+    const v = validateRows(rows, { allowEmptyValues: false })
+    expect(v.missingValueIds.size).toBe(0)
+    expect(v.isValid).toBe(true)
+  })
 })
 
 describe('normalizeKey / fixRowKey', () => {
@@ -164,6 +220,14 @@ describe('toVariablesMap', () => {
     const changeRow = rows.find((r) => r.key === 'CHANGE')!
     rows = updateRowValue(rows, changeRow.id, 'new')
     expect(toVariablesMap(rows, { mode: 'edit' })).toEqual({ CHANGE: 'new' })
+  })
+
+  it('omits untouched template rows but includes overridden ones (create)', () => {
+    let rows = buildInitialRows({ templateKeys: ['KEEP', 'OVERRIDE'] })
+    const overrideRow = rows.find((r) => r.key === 'OVERRIDE')!
+    rows = updateRowValue(rows, overrideRow.id, 'mine')
+    // KEEP stays blank -> server uses the template value; OVERRIDE is sent.
+    expect(toVariablesMap(rows)).toEqual({ OVERRIDE: 'mine' })
   })
 })
 
