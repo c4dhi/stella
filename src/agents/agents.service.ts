@@ -266,11 +266,11 @@ export class AgentsService {
       throw new NotFoundException('Session does not have an associated room');
     }
 
-    // Determine agent type (default to stella-agent)
-    const agentType = createAgentDto.agentType || 'stella-agent';
+    // Determine agent type (default to stella-light-agent)
+    const agentType = createAgentDto.agentType || 'stella-light-agent';
 
     // Security: Validate agent type against allowed list
-    const allowedAgentTypes = ['stella-agent', 'stella-v2-agent', 'stella-light-agent', 'echo-agent'];
+    const allowedAgentTypes = ['stella-v2-agent', 'stella-light-agent'];
     if (!allowedAgentTypes.includes(agentType)) {
       throw new BadRequestException(`Invalid agent type: ${agentType}. Allowed: ${allowedAgentTypes.join(', ')}`);
     }
@@ -523,8 +523,8 @@ export class AgentsService {
       throw new Error('Session does not have an associated room');
     }
 
-    // Determine agent type (default to stella-agent)
-    const agentType = createAgentDto.agentType || 'stella-agent';
+    // Determine agent type (default to stella-light-agent)
+    const agentType = createAgentDto.agentType || 'stella-light-agent';
     // Encrypt manual env vars so standalone agents have the same restart behavior as regular agents.
     const manualEnvVarsEncrypted = this.encryptManualEnvVarsForStorage(createAgentDto.envVars);
 
@@ -927,7 +927,7 @@ export class AgentsService {
 
     // Emit SSE event so frontend updates in real-time
     if (this.sessionsService) {
-      this.sessionsService.emitAgentStarting(agent.sessionId, id, agent.name, agent.agentType || 'stella-agent');
+      this.sessionsService.emitAgentStarting(agent.sessionId, id, agent.name, agent.agentType || 'stella-light-agent');
     }
 
     // Get environment variables
@@ -961,7 +961,7 @@ export class AgentsService {
     }
 
     // Register pending session so gRPC agent registration can match
-    const agentType = agent.agentType || 'stella-agent';
+    const agentType = agent.agentType || 'stella-light-agent';
     if (this.agentServerService) {
       const config: Record<string, string> = {
         sessionId: agent.sessionId,

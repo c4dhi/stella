@@ -381,6 +381,10 @@ describe('StateMachineService non-linear transitions', () => {
     // after jumping backward (C -> A), statuses must reflect actual completion,
     // not state order in the plan array.
     await service.setDeliverable(sessionId, 'route_to_c', 'yes', 'Move to C');
+    // Completion is explicit (#291): collecting a deliverable no longer completes
+    // the task, so we tick task-c before jumping back to demonstrate that a
+    // genuinely-completed earlier state stays 'completed' after a backward jump.
+    await service.completeTask(sessionId, 'task-c', 'Finished C');
     const backward = await service.setDeliverable(sessionId, 'go_back', 'yes', 'Move back to A');
 
     // Backward transition should be reported explicitly.
@@ -395,8 +399,8 @@ describe('StateMachineService non-linear transitions', () => {
     // state status must come from actual completion checks, not array position.
     // After C -> A jump:
     // - A is active (current)
-    // - B remains pending (never completed)
-    // - C remains completed (its required deliverable was collected)
+    // - B remains pending (never addressed)
+    // - C is completed (its task was explicitly completed)
     const stateStatus = new Map(fullState?.states.map(s => [s.id, s.status]));
     expect(stateStatus.get('state-a')).toBe('active');
     expect(stateStatus.get('state-b')).toBe('pending');
@@ -480,7 +484,7 @@ describe('goal_achieved condition', () => {
     const rawState = await (svc as any).getState(sessionId);
     const goalState = (rawState?.planData as PlanData)?.states.find((state) => state.id === 'state-goal');
 
-    expect(goalState?.transitions[0]?.condition_type).toBe('goal_achieved');
+    expect(goalState?.transitions?.[0]?.condition_type).toBe('goal_achieved');
   });
 
   it('does not transition immediately in goal states without deliverables', async () => {
@@ -820,19 +824,15 @@ describe('turn_count_exceeded condition', () => {
 });
 
 // =============================================================================
-// All-optional states (#172)
-// A state whose tasks/deliverables are all optional must NOT auto-complete on
-// entry (that skipped it instantly, sometimes jumping several states). Instead
-// the agent "tries" the optional work for a few turns, then the state releases
-// on a turn-based fallback — it does not persist the way required work does.
+// Agent-driven completion (#291)
+// A state is complete only once every task is explicitly completed or skipped.
+// `required` is informational; nothing auto-completes from deliverable presence,
+// and there is NO turn-based fallback — the agent advances by completing/skipping
+// tasks (or skipping the whole state).
 // =============================================================================
-describe('all-optional state handling (#172)', () => {
-  // required state-a -> all-optional state-b -> state-c.
-  // state-b has only an optional deliverable; pass stateBTransitions to give it
-  // an explicit route, otherwise it relies on the auto-injected turn fallback.
-  function buildOptionalMiddlePlan(
-    stateBTransitions?: import('./state-machine.service').StateTransition[],
-  ): PlanData {
+describe('agent-driven completion (#291)', () => {
+  // required-routed state-a -> all-optional state-b -> empty state-c.
+  function buildOptionalMiddlePlan(): PlanData {
     return {
       id: 'plan-optional-middle',
       title: 'Optional Middle Plan',
@@ -869,174 +869,392 @@ describe('all-optional state handling (#172)', () => {
               deliverables: [{ key: 'opt_note', description: 'optional note', required: false }],
             },
           ],
-          ...(stateBTransitions ? { transitions: stateBTransitions } : {}),
         },
         { id: 'state-c', title: 'C', type: 'loose', tasks: [], transitions: [] },
       ],
     };
   }
 
-  it('does not skip an all-optional state on entry', async () => {
-    const sessionId = 'session-optional-no-skip';
+  async function newServiceInStateB(sessionId: string): Promise<StateMachineService> {
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
-
-    // Enter state-b by satisfying state-a's required deliverable.
+    // state-a routes to B on the deliverable (deliverable_exists), independent of
+    // task completion — used purely to land us in the all-optional state-b.
     const enter = await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing');
-    expect(enter.transitioned).toBe(true);
     expect(enter.newStateId).toBe('state-b');
+    return svc;
+  }
 
-    // It must NOT chain straight through the all-optional state-b to state-c.
-    const state = await svc.getCurrentState(sessionId);
-    expect(state?.stateId).toBe('state-b');
+  it('does NOT auto-complete an all-optional state on entry, and does not advance during normal operation', async () => {
+    const svc = await newServiceInStateB('session-opt-no-skip');
+
+    // It must NOT chain through the all-optional state-b.
+    expect((await svc.getCurrentState('session-opt-no-skip'))?.stateId).toBe('state-b');
+
+    // There is no eager turn fallback: a handful of no-progress turns (below the
+    // last-resort safety-net limit) do not advance the state.
+    for (let i = 0; i < 6; i++) await svc.incrementTurn('session-opt-no-skip');
+    expect((await svc.getCurrentState('session-opt-no-skip'))?.stateId).toBe('state-b');
   });
 
-  it('auto-injects a turn-based fallback (not all_tasks_complete) for an all-optional state', async () => {
-    const sessionId = 'session-optional-fallback-shape';
+  it('SAFETY NET: force-advances a state the agent leaves stuck (last resort)', async () => {
+    const svc = await newServiceInStateB('session-safety-net');
+
+    // The agent never completes/skips state-b. It must eventually release on its
+    // own rather than hang forever — but only as a last resort, not eagerly.
+    let res: { transitioned: boolean; newStateId?: string } = { transitioned: false };
+    let calls = 0;
+    while (calls < 20 && !res.transitioned) {
+      res = await svc.incrementTurn('session-safety-net');
+      calls++;
+    }
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+    // Last resort, not eager: it must give the agent many turns first.
+    expect(calls).toBeGreaterThanOrEqual(5);
+  });
+
+  it('uses an all_tasks_complete default, NOT an injected turn_count_exceeded fallback', async () => {
+    const sessionId = 'session-opt-shape';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
 
     const raw = await (svc as any).getState(sessionId);
-    const states = (raw.planData as PlanData).states;
-    const stateB = states.find((s) => s.id === 'state-b');
-    expect(stateB?.transitions?.[0]?.condition_type).toBe('turn_count_exceeded');
+    const stateB = (raw.planData as PlanData).states.find((s) => s.id === 'state-b');
+    expect(stateB?.transitions?.[0]?.condition_type).toBe('all_tasks_complete');
     expect(stateB?.transitions?.[0]?.target_state_id).toBe('state-c');
-
-    // A required-work state is left untouched — no turn fallback appended.
-    const stateA = states.find((s) => s.id === 'state-a');
-    expect(stateA?.transitions?.map((t) => t.condition_type)).toEqual(['deliverable_exists']);
+    expect(stateB?.transitions?.some((t) => t.condition_type === 'turn_count_exceeded')).toBe(false);
   });
 
-  it('releases an all-optional state after the default no-progress threshold', async () => {
-    const sessionId = 'session-optional-release';
+  it('COMPLETION FALLBACK: a single-exit gated state (authored condition -> next state) still advances once every task is addressed', async () => {
+    // state-x has tasks + an authored deliverable_value gate that targets the NEXT
+    // state in plan order and will NOT match. Because every authored transition
+    // already routes to the next state, the route-aware fallback is added, so
+    // completing every task still advances (#291 follow-up) — the state machine
+    // helps even when the author never wrote a completion transition.
+    const sessionId = 'session-completion-fallback';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-
-    // Default threshold is 3 turns without progress: try for two, release on the third.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const release = await svc.incrementTurn(sessionId);
-    expect(release.transitioned).toBe(true);
-    expect(release.newStateId).toBe('state-c');
-  });
-
-  it('takes an explicit data route immediately, keeping the turn fallback only as backup', async () => {
-    const sessionId = 'session-optional-data-route';
-    const { prisma } = createPrismaMock();
-    const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(
-      sessionId,
-      buildOptionalMiddlePlan([
-        {
-          target_state_id: 'state-c',
-          condition_type: 'deliverable_exists',
-          condition_config: { key: 'opt_note' },
-          priority: 1,
-        },
-      ]),
-    );
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-b');
-
-    // Providing the optional note wins via the explicit route (priority 1) over
-    // the injected turn fallback (priority 1000) — no need to wait out the turns.
-    const res = await svc.setDeliverable(sessionId, 'opt_note', 'hello', 'optional');
-    expect(res.transitioned).toBe(true);
-    expect(res.newStateId).toBe('state-c');
-  });
-
-  // required state-a -> all-optional state-b -> all-optional state-c -> state-d.
-  // Two consecutive non-terminal all-optional states both get a turn fallback.
-  // Guards against the multi-skip regression: when the no-progress threshold is
-  // reached in state-b, the chained evaluation loop must only hop ONE state. The
-  // counter is reset in the DB on transition; it must also be reset in-memory so
-  // state-c doesn't see state-b's stale counter and fire its own fallback in the
-  // same pass — each state must get its own turn window.
-  function buildTwoOptionalPlan(): PlanData {
-    return {
-      id: 'plan-two-optional',
-      title: 'Two Optional Plan',
-      initial_state_id: 'state-a',
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback',
+      title: 'Fallback Plan',
+      initial_state_id: 'state-x',
       states: [
         {
-          id: 'state-a',
-          title: 'A',
+          id: 'state-x',
+          title: 'X',
           type: 'loose',
-          tasks: [
-            {
-              id: 'task-a',
-              description: 'Collect route',
-              deliverables: [{ key: 'go_to_b', description: 'go', required: true, type: 'string' }],
-            },
-          ],
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
           transitions: [
             {
-              target_state_id: 'state-b',
-              condition_type: 'deliverable_exists',
-              condition_config: { key: 'go_to_b' },
+              // Gated single-exit: targets the next state, only fires if 'route' set.
+              target_state_id: 'state-next',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'go' },
               priority: 1,
             },
           ],
         },
+        // Next state in plan order; has its own task so it does not chain onwards.
         {
-          id: 'state-b',
-          title: 'B',
+          id: 'state-next',
+          title: 'Next',
           type: 'loose',
-          tasks: [
-            {
-              id: 'task-b',
-              description: 'Optional chat',
-              deliverables: [{ key: 'opt_b', description: 'optional note', required: false }],
-            },
-          ],
+          tasks: [{ id: 'task-next', description: 'more work', required: true }],
         },
-        {
-          id: 'state-c',
-          title: 'C',
-          type: 'loose',
-          tasks: [
-            {
-              id: 'task-c',
-              description: 'Optional chat',
-              deliverables: [{ key: 'opt_c', description: 'optional note', required: false }],
-            },
-          ],
-        },
-        { id: 'state-d', title: 'D', type: 'loose', tasks: [], transitions: [] },
+        { id: 'state-end', title: 'End', type: 'loose', tasks: [] },
       ],
-    };
-  }
+    });
 
-  it('hops only one state per threshold across consecutive all-optional states', async () => {
-    const sessionId = 'session-two-optional-no-multiskip';
-    const { prisma } = createPrismaMock();
-    const svc = new StateMachineService(prisma);
-    await svc.initializeForSession(sessionId, buildTwoOptionalPlan());
-    await svc.setDeliverable(sessionId, 'go_to_b', 'yes', 'routing'); // -> state-b
-
-    // Reach the no-progress threshold (3) in state-b: it releases to state-c only.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const hopB = await svc.incrementTurn(sessionId);
-    expect(hopB.transitioned).toBe(true);
-    // Must land on state-c, NOT skip straight through to state-d in the same pass.
-    expect(hopB.newStateId).toBe('state-c');
-    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-c');
-
-    // state-c gets its OWN turn window — the counter was reset on entry.
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    expect((await svc.incrementTurn(sessionId)).transitioned).toBe(false);
-    const hopC = await svc.incrementTurn(sessionId);
-    expect(hopC.transitioned).toBe(true);
-    expect(hopC.newStateId).toBe('state-d');
+    // The authored gate never matches (deliverable 'route' is never set), but the
+    // fallback to the next state in plan order fires once task-x is completed.
+    const res = await svc.completeTask(sessionId, 'task-x', 'finished');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-next');
   });
 
-  it('isCurrentStateComplete returns false for a non-goal state with only optional work', async () => {
-    const sessionId = 'session-optional-iscomplete';
+  it('COMPLETION FALLBACK: the fallback is appended at low priority so authored transitions always win the sort', async () => {
+    const sessionId = 'session-fallback-priority';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback2',
+      title: 'Fallback Plan 2',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
+          transitions: [
+            {
+              // Gated single-exit to the next state → eligible for the fallback.
+              target_state_id: 'state-next',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'go' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+        { id: 'state-end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    const authored = stateX?.transitions?.find((t) => t.condition_type === 'deliverable_value');
+    const fallback = stateX?.transitions?.find((t) => t.condition_type === 'all_tasks_complete');
+    // Both present; the synthesised fallback targets the next state in plan order
+    // and carries a strictly lower priority (larger number) than the authored gate.
+    expect(authored?.target_state_id).toBe('state-next');
+    expect(fallback?.target_state_id).toBe('state-next');
+    expect(fallback!.priority!).toBeGreaterThan(authored!.priority!);
+  });
+
+  it('COMPLETION FALLBACK: a real fork (authored branch to a non-next state) is NOT given a fallback and does not auto-advance', async () => {
+    // state-x routes to state-branch (NOT the next state in plan order) on a data
+    // condition. Route-aware: the fallback is suppressed so completing tasks cannot
+    // silently take the wrong branch — routing stays driven by the authored data
+    // condition (with the stuck-state net as the last resort).
+    const sessionId = 'session-fallback-fork';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback-fork',
+      title: 'Fallback Fork Plan',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
+          transitions: [
+            {
+              // Jumps PAST the next state → a real branch, not a single-exit gate.
+              target_state_id: 'state-branch',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'branch' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+        { id: 'state-branch', title: 'Branch', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    // No fallback synthesised: the only authored transition is a branch elsewhere.
+    expect(stateX?.transitions?.some((t) => t.condition_type === 'all_tasks_complete')).toBe(false);
+    expect(stateX?.transitions).toHaveLength(1);
+
+    // Completing the task does NOT advance: the authored branch's data isn't present,
+    // and there is no completion fallback to guess "next in order".
+    const res = await svc.completeTask(sessionId, 'task-x', 'finished');
+    expect(res.transitioned).toBe(false);
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-x');
+  });
+
+  it('COMPLETION FALLBACK: a task-less state with an authored condition is NOT given a vacuous fallback', async () => {
+    const sessionId = 'session-fallback-taskless';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback3',
+      title: 'Fallback Plan 3',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [],
+          transitions: [
+            {
+              target_state_id: 'state-branch',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'branch' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-branch', title: 'Branch', type: 'loose', tasks: [] },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    // No tasks → no all_tasks_complete fallback synthesised (would be vacuously true
+    // and would silently override the author's deliverable gate).
+    expect(stateX?.transitions?.some((t) => t.condition_type === 'all_tasks_complete')).toBe(false);
+    expect(stateX?.transitions).toHaveLength(1);
+  });
+
+  it('collecting an all-optional task\'s only deliverable completes it and advances (#291 hybrid)', async () => {
+    // task-b's single deliverable is optional. Because the task has NO required
+    // deliverable, collecting every deliverable it declares is what completes it
+    // — otherwise (plans mark everything optional) the state would only advance
+    // on a separately-timed, often turn-late complete_task. Setting the value is
+    // not vacuous: on entry nothing is collected, so the state stays put.
+    const svc = await newServiceInStateB('session-opt-setdeliv');
+    expect((await svc.getCurrentState('session-opt-setdeliv'))?.stateId).toBe('state-b');
+    const res = await svc.setDeliverable('session-opt-setdeliv', 'opt_note', 'hello', 'optional');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('advances once the optional task is explicitly completed', async () => {
+    const svc = await newServiceInStateB('session-opt-complete');
+    const res = await svc.completeTask('session-opt-complete', 'task-b', 'done chatting');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('advances once the optional task is explicitly skipped', async () => {
+    const svc = await newServiceInStateB('session-opt-skip');
+    const res = await svc.skipTask('session-opt-skip', 'task-b', 'user not interested');
+    expect(res.success).toBe(true);
+    expect(res.taskSkipped).toBe('task-b');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('skip_state marks all remaining tasks skipped and advances', async () => {
+    const svc = await newServiceInStateB('session-opt-skipstate');
+    const res = await svc.skipState('session-opt-skipstate', undefined, 'phase not relevant');
+    expect(res.success).toBe(true);
+    expect(res.stateSkipped).toBe('state-b');
+    expect(res.tasksSkipped).toEqual(['task-b']);
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
+  });
+
+  it('a required task may be skipped (required is informational)', async () => {
+    const sessionId = 'session-skip-required';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [{ id: 'req', description: 'required', required: true }],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+    const res = await svc.skipTask(sessionId, 'req', 'not applicable');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('end');
+  });
+
+  it('skipping a task cascades skipped onto its uncollected deliverables (getFullState)', async () => {
+    // Regression: skip_task marks the TASK skipped, but the live UI also reads the
+    // per-deliverable status. Before the cascade, the uncollected deliverable stayed
+    // 'pending' → rendered as an empty circle and was not counted as done.
+    const sessionId = 'session-skip-cascade';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'challenges',
+              description: 'Ask about challenges',
+              deliverables: [
+                { key: 'fitness_challenges', description: 'Challenges they encounter', required: false },
+              ],
+            },
+          ],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const res = await svc.skipTask(sessionId, 'challenges', 'user declined');
+    expect(res.taskSkipped).toBe('challenges');
+
+    const full = await svc.getFullState(sessionId);
+    const task = full?.states[0].tasks.find(t => t.id === 'challenges');
+    expect(task?.status).toBe('skipped');
+    // The uncollected deliverable now inherits the skip rather than staying pending.
+    expect(task?.deliverables[0].status).toBe('skipped');
+  });
+
+  it('getPendingTasks omits a hybrid-complete task (required deliverables collected, no explicit tick)', async () => {
+    // #291 consistency: getPendingTasks must use the same "addressed" rule as
+    // isCurrentStateComplete/getFullState. A multi-task state where one task's
+    // required deliverable is already collected should not re-surface that task
+    // as pending (which would steer the agent to re-work it).
+    const sessionId = 'session-pending-hybrid';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'goal',
+              description: 'Ask about fitness goals',
+              deliverables: [
+                { key: 'fitness_goal', description: 'Main objective', required: true },
+              ],
+            },
+            {
+              id: 'challenges',
+              description: 'Ask about challenges',
+              deliverables: [
+                { key: 'fitness_challenges', description: 'Challenges', required: true },
+              ],
+            },
+          ],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    // Collect only the first task's required deliverable.
+    await svc.setDeliverable(sessionId, 'fitness_goal', 'be more consistent', 'stated');
+
+    const pending = await svc.getPendingTasks(sessionId);
+    const ids = pending.map(t => t.id);
+    expect(ids).not.toContain('goal');      // hybrid-complete -> not pending
+    expect(ids).toContain('challenges');    // still genuinely pending
+  });
+
+  it('skipState rejects a non-current state', async () => {
+    const svc = await newServiceInStateB('session-skipstate-reject');
+    const res = await svc.skipState('session-skipstate-reject', 'state-a', 'wrong');
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('only the current state');
+  });
+
+  it('isCurrentStateComplete is false for a state with an unaddressed (even optional) task', async () => {
+    const sessionId = 'session-iscomplete';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     const plan: PlanData = {
@@ -1063,8 +1281,105 @@ describe('all-optional state handling (#172)', () => {
 
     const raw = await (svc as any).getState(sessionId);
     const planState = (raw.planData as PlanData).states[0];
-    // No required work → must not be treated as vacuously complete (#172).
+    // Task not yet completed/skipped → not complete (no vacuous truth) (#291).
     expect((svc as any).isCurrentStateComplete(raw, planState)).toBe(false);
+  });
+
+  it('DISPLAY: a future all-optional state is NOT rendered as completed (#291 on-screen bug)', async () => {
+    // The original bug: getFullState marked a not-yet-reached all-optional state
+    // as completed because isPlanStateComplete skipped optional tasks vacuously.
+    const sessionId = 'session-display-bug';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildOptionalMiddlePlan());
+
+    // Fresh session: still on state-a; state-b (all-optional WITH a task, the exact
+    // shape of the on-screen bug) must render as pending, not completed. (state-c is
+    // empty — a state with no tasks is legitimately vacuously complete and is a
+    // separate, benign display quirk, so it is not asserted here.)
+    const full = await svc.getFullState(sessionId);
+    const status = new Map(full?.states.map((s) => [s.id, s.status]));
+    expect(status.get('state-a')).toBe('active');
+    expect(status.get('state-b')).toBe('pending');
+  });
+});
+
+// =============================================================================
+// Concurrent mutations must not clobber each other (live race fix).
+// The agent completes several tasks in one turn, firing concurrent gRPC calls.
+// Each is a read-modify-write of the completedTasks array; without per-session
+// serialization they all read the same pre-update array and the last write wins,
+// so only ONE completion survives and all_tasks_complete can never be satisfied
+// (observed in production: a state with 3/3 tasks "done" in the UI that never
+// advanced). These tests fire the mutations concurrently and assert the full set
+// persists and the state advances.
+// =============================================================================
+describe('concurrent mutation race safety', () => {
+  function buildThreeTaskPlan(): PlanData {
+    return {
+      id: 'plan-3task',
+      title: 'Three Task Plan',
+      initial_state_id: 'work',
+      states: [
+        {
+          id: 'work',
+          title: 'Work',
+          type: 'loose',
+          tasks: [
+            { id: 'task-1', description: 'one', required: true },
+            { id: 'task-2', description: 'two', required: true },
+            { id: 'task-3', description: 'three', required: true },
+          ],
+        },
+        { id: 'done', title: 'Done', type: 'loose', tasks: [] },
+      ],
+    };
+  }
+
+  it('completing all tasks concurrently persists every completion and advances', async () => {
+    const sessionId = 'session-concurrent-complete';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildThreeTaskPlan());
+
+    // Fire all three completions at once, as the agent does in a single turn.
+    const results = await Promise.all([
+      svc.completeTask(sessionId, 'task-1', 'done 1'),
+      svc.completeTask(sessionId, 'task-2', 'done 2'),
+      svc.completeTask(sessionId, 'task-3', 'done 3'),
+    ]);
+
+    // No completion was lost: all three are recorded.
+    const full = await svc.getFullState(sessionId);
+    const work = full?.states.find((s) => s.id === 'work');
+    const completed = work?.tasks.filter((t) => t.status === 'completed').map((t) => t.id) ?? [];
+    expect(completed.sort()).toEqual(['task-1', 'task-2', 'task-3']);
+
+    // And exactly one of the concurrent calls observed the now-complete state and
+    // advanced (the others ran before the set was full).
+    expect(results.some((r) => r.transitioned && r.newStateId === 'done')).toBe(true);
+    expect(full?.currentStateId).toBe('done');
+  });
+
+  it('a concurrent mix of completes and skips still advances', async () => {
+    const sessionId = 'session-concurrent-mixed';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildThreeTaskPlan());
+
+    await Promise.all([
+      svc.completeTask(sessionId, 'task-1', 'done 1'),
+      svc.skipTask(sessionId, 'task-2', 'n/a'),
+      svc.completeTask(sessionId, 'task-3', 'done 3'),
+    ]);
+
+    const full = await svc.getFullState(sessionId);
+    const work = full?.states.find((s) => s.id === 'work');
+    const addressed = work?.tasks
+      .filter((t) => t.status === 'completed' || t.status === 'skipped')
+      .map((t) => t.id) ?? [];
+    expect(addressed.sort()).toEqual(['task-1', 'task-2', 'task-3']);
+    expect(full?.currentStateId).toBe('done');
   });
 });
 
@@ -1141,37 +1456,203 @@ describe('getFullState optional-task status on startup (#213)', () => {
     expect(required.get('required-task')).toBe(true);
   });
 
-  it('still completes a task once its required deliverable is collected', async () => {
+  it('HYBRID: auto-completes a deliverable-bearing task once all its required deliverables are collected (#291)', async () => {
     const sessionId = 'session-213-collected';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
 
+    // Collecting the task's single required deliverable now auto-completes the
+    // task — the agent doesn't have to also fire complete_task. This is the
+    // hybrid model that keeps progress derivable from data (a deliverable-less
+    // task would still need an explicit tick; see the next assertions).
     await svc.setDeliverable(sessionId, 'must_field', 'done', 'collected');
-
-    const fullState = await svc.getFullState(sessionId);
-    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
-
-    // Positive control: the guard must not block legitimate completion.
+    let tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
     expect(tasks.get('required-task')).toBe('completed');
-    // Untouched optional tasks stay pending.
-    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+
+    // An explicit complete_task remains valid and idempotent.
+    await svc.completeTask(sessionId, 'required-task', 'done');
+    tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('required-task')).toBe('completed');
+
+    // A task whose required deliverable is still missing stays pending, and a
+    // task with NO required deliverable is never auto-completed (no data-defined
+    // bar — it would reintroduce vacuous completion). Both await explicit work.
     expect(tasks.get('optional-task')).toBe('pending');
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
   });
 
-  it('marks an optional-only-deliverable task in_progress once that deliverable is provided', async () => {
+  it('HYBRID: a multi-deliverable task completes only when EVERY required deliverable is collected (#291)', async () => {
+    const sessionId = 'session-hybrid-multi';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-hybrid-multi',
+      title: 'Hybrid Multi',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'multi',
+              description: 'task with three required deliverables',
+              deliverables: [
+                { key: 'a', description: 'a', required: true, type: 'string' },
+                { key: 'b', description: 'b', required: true, type: 'string' },
+                { key: 'c', description: 'c', required: false, type: 'string' },
+              ],
+            },
+          ],
+          transitions: [],
+        },
+      ],
+    });
+
+    const statusOf = async () =>
+      new Map(
+        (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+      ).get('multi');
+
+    // First required deliverable: partial -> in_progress, not complete.
+    await svc.setDeliverable(sessionId, 'a', '1', 'first');
+    expect(await statusOf()).toBe('in_progress');
+
+    // Optional deliverable does not complete it either.
+    await svc.setDeliverable(sessionId, 'c', '3', 'optional');
+    expect(await statusOf()).toBe('in_progress');
+
+    // Once the LAST required deliverable lands, the task auto-completes.
+    await svc.setDeliverable(sessionId, 'b', '2', 'second');
+    expect(await statusOf()).toBe('completed');
+  });
+
+  it('HYBRID REGRESSION: collecting every task\'s deliverables advances a flexible state without any complete_task (the live stuck bug)', async () => {
+    // Reproduces the production incident: a flexible state with three
+    // deliverable-bearing tasks where the agent set all deliverables but only
+    // ticked some tasks. Under the hybrid model the state advances purely from
+    // the collected data — no complete_task required.
+    const sessionId = 'session-hybrid-advance';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-hybrid-advance',
+      title: 'Hybrid Advance',
+      initial_state_id: 'habits',
+      states: [
+        {
+          id: 'habits',
+          title: 'Exercise Habits',
+          type: 'loose',
+          tasks: [
+            { id: 't1', description: 'preferred', deliverables: [{ key: 'pref', description: 'p', required: true, type: 'string' }] },
+            { id: 't2', description: 'frequency', deliverables: [{ key: 'freq', description: 'f', required: true, type: 'string' }] },
+            { id: 't3', description: 'duration', deliverables: [{ key: 'dur', description: 'd', required: true, type: 'string' }] },
+          ],
+          transitions: [
+            { target_state_id: 'goals', condition_type: 'all_tasks_complete', priority: 1 },
+          ],
+        },
+        // Next state has its own task so it does not chain onward.
+        {
+          id: 'goals',
+          title: 'Goals and Challenges',
+          type: 'loose',
+          tasks: [{ id: 'g1', description: 'goal', deliverables: [{ key: 'goal', description: 'g', required: true, type: 'string' }] }],
+          transitions: [],
+        },
+      ],
+    });
+
+    // Agent sets all three deliverables and never calls complete_task.
+    await svc.setDeliverable(sessionId, 'pref', 'strength', 'collected');
+    await svc.setDeliverable(sessionId, 'freq', '3x', 'collected');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('habits'); // not yet
+    const last = await svc.setDeliverable(sessionId, 'dur', '45m', 'collected');
+
+    // The final deliverable satisfies all_tasks_complete and advances the state.
+    expect(last.transitioned).toBe(true);
+    expect(last.newStateId).toBe('goals');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('goals');
+  });
+
+  it('ALL-OPTIONAL REGRESSION: a state whose every deliverable is required:false still advances from data alone (the live "Goals and Challenges" lag)', async () => {
+    // Exact shape of the production plan that advanced a turn late: a flexible
+    // state with two tasks, each carrying ONE deliverable marked required:false
+    // (plan generators emit everything optional). Collecting both deliverables —
+    // with NO complete_task at all — must complete the state the same turn.
+    const sessionId = 'session-all-optional';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-all-optional',
+      title: 'All Optional',
+      initial_state_id: 'goals',
+      states: [
+        {
+          id: 'goals',
+          title: 'Goals and Challenges',
+          type: 'loose',
+          tasks: [
+            { id: 'g-goal', description: 'Ask about fitness goals', deliverables: [{ key: 'fitness_goal', description: 'goal', required: false, type: 'string' }] },
+            { id: 'g-chal', description: 'Ask about challenges', deliverables: [{ key: 'fitness_challenges', description: 'challenges', required: false, type: 'string' }] },
+          ],
+          transitions: [{ target_state_id: 'followup', condition_type: 'all_tasks_complete', priority: 1 }],
+        },
+        {
+          id: 'followup',
+          title: 'Follow-up',
+          type: 'loose',
+          tasks: [{ id: 'f-sched', description: 'Schedule follow-up', deliverables: [{ key: 'followup_schedule', description: 'sched', required: false, type: 'string' }] }],
+          transitions: [],
+        },
+      ],
+    });
+
+    // First optional deliverable: only one of two tasks is addressed -> hold.
+    await svc.setDeliverable(sessionId, 'fitness_goal', 'be more active', 'collected');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('goals');
+
+    // Second optional deliverable completes the last task -> advance, no tick.
+    const advanced = await svc.setDeliverable(sessionId, 'fitness_challenges', 'allergies', 'collected');
+    expect(advanced.transitioned).toBe(true);
+    expect(advanced.newStateId).toBe('followup');
+
+    // And the badges reflect backend truth without any complete_task call.
+    const full = await svc.getFullState(sessionId);
+    const goals = full?.states.find(s => s.id === 'goals');
+    expect(goals?.status).toBe('completed');
+    expect(new Map(goals?.tasks.map(t => [t.id, t.status])).get('g-chal')).toBe('completed');
+  });
+
+  it('completes an optional-only-deliverable task once all its deliverables are collected (#291 hybrid)', async () => {
     const sessionId = 'session-213-optional-progress';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
 
+    // On entry the task is pending — not vacuously complete.
+    let tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+
+    // opt_note is opt-deliverable-task's ONLY deliverable. Since the task has no
+    // required deliverable, collecting all it declares completes it — this is the
+    // fix for plans that mark every deliverable optional (the "advances a turn
+    // late" lag). Tasks that still have a required deliverable are unaffected.
     await svc.setDeliverable(sessionId, 'opt_note', 'hi', 'optional provided');
 
-    const fullState = await svc.getFullState(sessionId);
-    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
-
-    // Optional work that was actually done shows progress but never auto-completes.
-    expect(tasks.get('opt-deliverable-task')).toBe('in_progress');
+    tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('opt-deliverable-task')).toBe('completed');
   });
 });
 
@@ -1681,5 +2162,267 @@ describe('nested composite conditions', () => {
 
     const result = await (svc as any).evaluateAndTransition(sessionId);
     expect(result.transitioned).toBe(false);
+  });
+});
+
+// =============================================================================
+// Realistic conversation simulation (#291)
+//
+// Rather than poking one mutator at a time, these tests drive a full multi-state
+// dialogue through the exact public tools the agent calls
+// (set_deliverable / complete_task / skip_task / skip_state / a conversational
+// turn). They mirror the production "Grace" plan that surfaced the live stuck
+// bug — Greeting (sequential) -> Exercise Habits (flexible) -> Goals (goal) —
+// so the class of bug ("agent collected the data but forgot to tick the task")
+// is reproduced the way it actually happens in a conversation, and we assert the
+// state machine stays the single source of truth throughout.
+// =============================================================================
+describe('realistic conversation simulation (#291)', () => {
+  const GRACE_PLAN = (): PlanData => ({
+    id: 'plan-grace',
+    title: 'Grace',
+    initial_state_id: 'greeting',
+    states: [
+      {
+        id: 'greeting',
+        title: 'Greeting',
+        type: 'strict',
+        tasks: [
+          {
+            id: 'greet',
+            description: 'Greet and ask for name',
+            deliverables: [{ key: 'user_name', description: "user's name", required: true, type: 'string' }],
+          },
+        ],
+        transitions: [{ target_state_id: 'exercise', condition_type: 'all_tasks_complete', priority: 1 }],
+      },
+      {
+        id: 'exercise',
+        title: 'Exercise Habits',
+        type: 'loose',
+        tasks: [
+          {
+            id: 'ex-pref',
+            description: 'Ask about preferred exercise',
+            deliverables: [{ key: 'preferred_exercise', description: 'preferred exercise', required: true, type: 'string' }],
+          },
+          {
+            id: 'ex-freq',
+            description: 'Ask about workout frequency',
+            deliverables: [{ key: 'weekly_frequency', description: 'weekly frequency', required: true, type: 'string' }],
+          },
+          {
+            id: 'ex-dur',
+            description: 'Ask about workout duration',
+            deliverables: [{ key: 'session_duration_minutes', description: 'duration', required: true, type: 'string' }],
+          },
+        ],
+        transitions: [{ target_state_id: 'goals', condition_type: 'all_tasks_complete', priority: 1 }],
+      },
+      {
+        id: 'goals',
+        title: 'Goals and Challenges',
+        type: 'goal',
+        goal: {
+          objective: "Understand the user's fitness goals",
+          deliverables: [{ key: 'primary_goal', description: 'primary goal', required: true, type: 'string' }],
+        },
+        tasks: [{ id: 'goal-explore', description: 'Explore goals together' }],
+        transitions: [],
+      },
+    ],
+  });
+
+  // A tiny conversational harness so each scenario reads like a dialogue. Every
+  // method mirrors exactly one thing the agent (or the runtime) does and returns
+  // the state-machine result, so a scenario can assert on a transition at the
+  // precise tool call that should (or should not) trigger it.
+  class Grace {
+    private constructor(
+      private readonly svc: StateMachineService,
+      readonly sessionId: string,
+    ) {}
+
+    static async start(sessionId: string): Promise<Grace> {
+      const { prisma } = createPrismaMock();
+      const svc = new StateMachineService(prisma);
+      await svc.initializeForSession(sessionId, GRACE_PLAN());
+      return new Grace(svc, sessionId);
+    }
+
+    /** Agent records a piece of information the user provided (set_deliverable). */
+    collect(key: string, value: unknown) {
+      return this.svc.setDeliverable(this.sessionId, key, value, `user provided ${key}`);
+    }
+    /** Agent explicitly marks a task done (complete_task). */
+    tick(taskId: string) {
+      return this.svc.completeTask(this.sessionId, taskId, 'addressed');
+    }
+    /** Agent skips a task it judges unnecessary (skip_task). */
+    skip(taskId: string) {
+      return this.svc.skipTask(this.sessionId, taskId, 'user declined');
+    }
+    /** Agent abandons the whole current state (skip_state). */
+    leaveState() {
+      return this.svc.skipState(this.sessionId, undefined, 'agent advanced the conversation');
+    }
+    /** A conversational turn that makes no state progress (small talk). */
+    smallTalk() {
+      return this.svc.incrementTurn(this.sessionId);
+    }
+
+    async at(): Promise<string | undefined> {
+      return (await this.svc.getCurrentState(this.sessionId))?.stateId;
+    }
+    async taskStatus(stateId: string, taskId: string): Promise<string | undefined> {
+      const full = await this.svc.getFullState(this.sessionId);
+      return full?.states.find(s => s.id === stateId)?.tasks.find(t => t.id === taskId)?.status;
+    }
+    async stateBadge(stateId: string): Promise<string | undefined> {
+      const full = await this.svc.getFullState(this.sessionId);
+      return full?.states.find(s => s.id === stateId)?.status;
+    }
+  }
+
+  it('THE LIVE BUG: agent collects all three habits but forgets to tick the last task — state still advances', async () => {
+    const g = await Grace.start('sim-live-bug');
+
+    // --- Greeting -------------------------------------------------------------
+    // "Hi! I'm Grace. What's your name?" / "I'm Alex."
+    // The agent records the name. Under the hybrid model that single deliverable
+    // already satisfies the greeting task, so we advance without an explicit tick.
+    const afterName = await g.collect('user_name', 'Alex');
+    expect(afterName.transitioned).toBe(true);
+    expect(afterName.newStateId).toBe('exercise');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.stateBadge('greeting')).toBe('completed');
+
+    // --- Exercise Habits (the incident) --------------------------------------
+    // The agent asks all three questions and records every answer, but only
+    // remembers to call complete_task for the first two — exactly the tool-call
+    // sequence seen in the production logs (set_deliverable x3, complete_task x2).
+    await g.collect('preferred_exercise', 'strength workouts');
+    await g.tick('ex-pref');
+    await g.collect('weekly_frequency', '3x per week');
+    await g.tick('ex-freq');
+
+    expect(await g.at()).toBe('exercise'); // not yet — duration still open
+
+    // The agent records the duration but NEVER ticks ex-dur. Previously this hung
+    // the conversation at 3/3 deliverables forever; now the deliverable itself
+    // completes the task and the state advances.
+    const afterDuration = await g.collect('session_duration_minutes', '45');
+    expect(afterDuration.transitioned).toBe(true);
+    expect(afterDuration.newStateId).toBe('goals');
+    expect(await g.at()).toBe('goals');
+
+    // The UI badge for the un-ticked task must read 'completed', matching the
+    // backend — no more "3/3 done but stuck" divergence.
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('completed');
+    expect(await g.stateBadge('exercise')).toBe('completed');
+  });
+
+  it('STRAY TICK: a redundant complete_task issued after the auto-advance is a harmless no-op', async () => {
+    const g = await Grace.start('sim-stray-tick');
+    await g.collect('user_name', 'Sam'); // -> exercise
+
+    // The agent batches its turn as: record duration, then (redundantly) tick the
+    // other two tasks it already handled. Recording the LAST deliverable advances
+    // to 'goals' immediately, so the subsequent ticks now target a task that no
+    // longer lives in the current state. They must succeed as no-ops, not error.
+    await g.collect('preferred_exercise', 'running');
+    await g.collect('weekly_frequency', 'daily');
+    const advance = await g.collect('session_duration_minutes', '30');
+    expect(advance.newStateId).toBe('goals');
+
+    const strayPref = await g.tick('ex-pref');
+    const strayFreq = await g.tick('ex-freq');
+    expect(strayPref.success).toBe(true);
+    expect(strayFreq.success).toBe(true);
+    expect(await g.at()).toBe('goals'); // the stray ticks didn't disturb anything
+  });
+
+  it('FLEXIBLE OUT-OF-ORDER: the user volunteers answers in a different order, with zero complete_task calls', async () => {
+    const g = await Grace.start('sim-out-of-order');
+    await g.collect('user_name', 'Robin'); // -> exercise
+
+    // "Actually I usually train for about an hour." (duration first, unprompted)
+    await g.collect('session_duration_minutes', '60');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('completed');
+    expect(await g.taskStatus('exercise', 'ex-pref')).toBe('pending');
+
+    // "...mostly yoga, five days a week." (preferred + frequency, still no ticks)
+    await g.collect('preferred_exercise', 'yoga');
+    expect(await g.at()).toBe('exercise');
+    const last = await g.collect('weekly_frequency', '5x per week');
+
+    expect(last.transitioned).toBe(true);
+    expect(last.newStateId).toBe('goals');
+  });
+
+  it('USER DECLINES: the agent skips a refused question and the state still advances', async () => {
+    const g = await Grace.start('sim-decline');
+    await g.collect('user_name', 'Jordan'); // -> exercise
+
+    await g.collect('preferred_exercise', 'swimming');
+    await g.collect('weekly_frequency', '2x per week');
+
+    // "I'd rather not say how long I train." -> agent skips that task.
+    expect(await g.at()).toBe('exercise');
+    const afterSkip = await g.skip('ex-dur');
+
+    expect(afterSkip.transitioned).toBe(true);
+    expect(afterSkip.newStateId).toBe('goals');
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('skipped');
+  });
+
+  it('SMALL TALK does not advance: ordinary conversational turns with no data keep the state put', async () => {
+    const g = await Grace.start('sim-small-talk');
+    await g.collect('user_name', 'Casey'); // -> exercise
+
+    // A few back-and-forth turns where the user chats but answers nothing.
+    for (let i = 0; i < 4; i++) {
+      const r = await g.smallTalk();
+      expect(r.transitioned).toBe(false);
+    }
+    expect(await g.at()).toBe('exercise');
+
+    // Partial progress is still just partial — one answer doesn't advance.
+    await g.collect('preferred_exercise', 'cycling');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.stateBadge('exercise')).toBe('active');
+  });
+
+  it('AGENT JUMPS AHEAD: skip_state moves the conversation on mid-state', async () => {
+    const g = await Grace.start('sim-jump');
+    await g.collect('user_name', 'Lee'); // -> exercise
+
+    // The agent reads the room and decides to move on after one answer.
+    await g.collect('preferred_exercise', 'hiking');
+    expect(await g.at()).toBe('exercise');
+
+    const jumped = await g.leaveState();
+    expect(jumped.transitioned).toBe(true);
+    expect(jumped.newStateId).toBe('goals');
+    expect(await g.at()).toBe('goals');
+  });
+
+  it('GOAL STATE: deliverable-less scaffolding is non-blocking and the goal accepts its marker', async () => {
+    const g = await Grace.start('sim-goal');
+    // Fast-forward to the goal state through the normal flow.
+    await g.collect('user_name', 'Max');
+    await g.collect('preferred_exercise', 'pilates');
+    await g.collect('weekly_frequency', '4x per week');
+    await g.collect('session_duration_minutes', '50');
+    expect(await g.at()).toBe('goals');
+
+    // The deliverable-less 'goal-explore' task must NOT block the goal (it's
+    // guidance scaffolding); progress is driven by the goal deliverable.
+    expect(await g.taskStatus('goals', 'goal-explore')).toBe('pending');
+
+    // Collecting the goal deliverable records it without error in goal mode.
+    const collected = await g.collect('primary_goal', 'run a half marathon');
+    expect(collected.success).toBe(true);
   });
 });

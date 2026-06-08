@@ -11,6 +11,14 @@ service StateMachineService {
   // Complete a task by ID
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
 
+  // Skip a single task by ID (agent decides it is not needed). Counts toward
+  // state completion exactly like CompleteTask, but records the task as skipped.
+  rpc SkipTask(SkipTaskRequest) returns (SkipTaskResponse);
+
+  // Skip the remainder of a state: mark all of its not-yet-addressed tasks as
+  // skipped and advance. state_id is optional (defaults to the current state).
+  rpc SkipState(SkipStateRequest) returns (SkipStateResponse);
+
   // Set a deliverable value
   rpc SetDeliverable(SetDeliverableRequest) returns (SetDeliverableResponse);
 
@@ -66,6 +74,58 @@ message CompleteTaskResponse {
   string new_state_id = 5;
   string new_state_title = 6;
   int32 progress = 7;
+  // Set when the transition reached the __end__ sentinel; the agent should send
+  // the farewell then stop accepting new turns.
+  bool session_completed = 8;
+  string farewell_message = 9;
+  string summary_behavior = 10;
+}
+
+// ============================================================================
+// SKIP TASK
+// ============================================================================
+
+message SkipTaskRequest {
+  string session_id = 1;
+  string task_id = 2;
+  string reasoning = 3;
+}
+
+message SkipTaskResponse {
+  bool success = 1;
+  string error = 2;
+  string task_skipped = 3;
+  bool transitioned = 4;
+  string new_state_id = 5;
+  string new_state_title = 6;
+  int32 progress = 7;
+  bool session_completed = 8;
+  string farewell_message = 9;
+  string summary_behavior = 10;
+}
+
+// ============================================================================
+// SKIP STATE
+// ============================================================================
+
+message SkipStateRequest {
+  string session_id = 1;
+  string state_id = 2;  // optional; empty = current state
+  string reasoning = 3;
+}
+
+message SkipStateResponse {
+  bool success = 1;
+  string error = 2;
+  string state_skipped = 3;
+  repeated string tasks_skipped = 4;
+  bool transitioned = 5;
+  string new_state_id = 6;
+  string new_state_title = 7;
+  int32 progress = 8;
+  bool session_completed = 9;
+  string farewell_message = 10;
+  string summary_behavior = 11;
 }
 
 // ============================================================================
@@ -87,6 +147,9 @@ message SetDeliverableResponse {
   string new_state_id = 5;
   string new_state_title = 6;
   int32 progress = 7;
+  bool session_completed = 8;
+  string farewell_message = 9;
+  string summary_behavior = 10;
 }
 
 // ============================================================================
@@ -221,7 +284,7 @@ message FullStateTask {
   string description = 2;
   string instruction = 3;
   bool required = 4;
-  string status = 5;  // "pending", "in_progress", "completed"
+  string status = 5;  // "pending", "in_progress", "completed", "skipped"
   repeated FullStateDeliverable deliverables = 6;
 }
 

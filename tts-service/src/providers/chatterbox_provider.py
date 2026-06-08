@@ -459,32 +459,55 @@ class ChatterBoxProvider(TTSProvider):
 
         pause = np.zeros(int(0.05 * sr), dtype=np.int16)  # 50ms between chunks
 
-        for idx in range(len(chunks)):
-            if idx == 0:
-                audio_chunk = audio_0
-            else:
-                result = await pending  # type: ignore[arg-type]
-                pending = None
-                # Kick off the chunk AFTER this one before we yield audio
-                # for the current chunk, so the GPU is already busy on
-                # idx+1 while we stream out idx.
-                if idx + 1 < len(chunks):
-                    pending = asyncio.create_task(
-                        self._synthesize_single_chunk(chunks[idx + 1], language_id)
-                    )
-                if result is None:
-                    print(f"[ChatterBox] Warning: chunk {idx + 1}/{len(chunks)} failed (stream)")
-                    continue
-                audio_chunk, _ = result
-                # Inter-chunk pause so consecutive chunks don't sound glued.
-                yield (pause, False)
+        any_yielded = False
+        emitted_final = False
+        try:
+            for idx in range(len(chunks)):
+                if idx == 0:
+                    audio_chunk = audio_0
+                else:
+                    result = await pending  # type: ignore[arg-type]
+                    pending = None
+                    # Kick off the chunk AFTER this one before we yield audio
+                    # for the current chunk, so the GPU is already busy on
+                    # idx+1 while we stream out idx.
+                    if idx + 1 < len(chunks):
+                        pending = asyncio.create_task(
+                            self._synthesize_single_chunk(chunks[idx + 1], language_id)
+                        )
+                    if result is None:
+                        print(f"[ChatterBox] Warning: chunk {idx + 1}/{len(chunks)} failed (stream)")
+                        continue
+                    audio_chunk, _ = result
+                    # Inter-chunk pause so consecutive chunks don't sound glued.
+                    yield (pause, False)
+                    any_yielded = True
 
-            int16 = (np.clip(audio_chunk, -1.0, 1.0) * 32767).astype(np.int16)
-            is_last_chunk = (idx == len(chunks) - 1)
-            total = len(int16)
-            for i in range(0, total, chunk_size):
-                is_final = is_last_chunk and (i + chunk_size >= total)
-                yield (int16[i:i + chunk_size], is_final)
+                int16 = (np.clip(audio_chunk, -1.0, 1.0) * 32767).astype(np.int16)
+                is_last_chunk = (idx == len(chunks) - 1)
+                total = len(int16)
+                for i in range(0, total, chunk_size):
+                    is_final = is_last_chunk and (i + chunk_size >= total)
+                    yield (int16[i:i + chunk_size], is_final)
+                    any_yielded = True
+                    if is_final:
+                        emitted_final = True
+
+            # Guarantee the consumer always sees an end-of-stream marker. If the
+            # final chunk failed (continue) or synthesized to empty audio, the
+            # inner loop emits no is_final frame — without this the gRPC consumer,
+            # which keys end-of-stream off is_final, would hang. (Mirrors the
+            # empty-final-frame behavior of piper/qwen3.)
+            if any_yielded and not emitted_final:
+                yield (np.empty(0, dtype=np.int16), True)
+        finally:
+            # On barge-in (GeneratorExit) the look-ahead synth task is still
+            # running on the GPU — cancel it so we don't burn a full chunk of
+            # compute producing audio nobody will hear. Fire-and-forget cancel
+            # (no await: this finally can run during GeneratorExit, where awaiting
+            # is unsafe); the loop reaps the cancelled task.
+            if pending is not None and not pending.done():
+                pending.cancel()
 
         total_ms = (time.time() - t0) * 1000.0
         print(f"[ChatterBox] Stream completed in {total_ms:.0f}ms ({len(chunks)} chunks)")

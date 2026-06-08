@@ -8,8 +8,16 @@
  */
 import { generateUUID } from '../../../lib/uuid'
 
-/** Where a row came from. Drives lockability and badges in the UI. */
-export type EnvVarOrigin = 'required' | 'optional' | 'custom'
+/**
+ * Where a row came from. Drives lockability and badges in the UI.
+ * - `required` / `optional`: declared by the agent type's config schema.
+ * - `template`: provided by a selected env-var template. The plaintext value is
+ *   never returned to the browser (it is merged server-side at deploy), so the
+ *   row is shown as an editable default: leaving it blank keeps the template's
+ *   stored value; typing a value overrides it for this deployment.
+ * - `custom`: a free-form key the user added.
+ */
+export type EnvVarOrigin = 'required' | 'optional' | 'template' | 'custom'
 
 export interface EnvVarRow {
   id: string // stable for the lifetime of the row (never derived from index)
@@ -53,6 +61,13 @@ function makeRow(
 export interface BuildInitialRowsOptions {
   requiredKeys?: string[]
   optionalKeys?: string[]
+  /**
+   * Keys provided by a selected env-var template. Rendered as editable default
+   * rows: blank means "use the template's stored value" (merged server-side),
+   * a typed value overrides it. A matching entry in `initial` pre-fills the
+   * override (e.g. when re-opening the step after the user typed one).
+   */
+  templateKeys?: string[]
   /** Pre-existing custom key/value pairs (template prefill, or existing template keys in edit mode). */
   initial?: Record<string, string>
   mode?: EditorMode
@@ -60,13 +75,15 @@ export interface BuildInitialRowsOptions {
 
 /**
  * Build the initial ordered row list: declared required keys first, then declared
- * optional keys, then any remaining custom keys from `initial`. Declared keys take
- * their value from `initial` when present. In edit mode, rows with no provided
- * value are marked `valuePreserved` (their stored value is kept untouched).
+ * optional keys, then template-provided keys, then any remaining custom keys from
+ * `initial`. Declared keys take their value from `initial` when present. In edit
+ * mode, rows with no provided value are marked `valuePreserved` (their stored
+ * value is kept untouched); template rows are likewise preserved until overridden.
  */
 export function buildInitialRows({
   requiredKeys = [],
   optionalKeys = [],
+  templateKeys = [],
   initial = {},
   mode = 'create',
 }: BuildInitialRowsOptions): EnvVarRow[] {
@@ -83,8 +100,19 @@ export function buildInitialRows({
     rows.push(makeRow(key, value, origin, preserved))
   }
 
+  const pushTemplate = (key: string) => {
+    if (used.has(key)) return
+    used.add(key)
+    // Use a previously-entered override if one exists; otherwise show the row as a
+    // preserved template default (blank input, "use template value" until typed).
+    const override = initial[key]
+    const hasOverride = key in initial && override !== ''
+    rows.push(makeRow(key, hasOverride ? override : '', 'template', !hasOverride))
+  }
+
   requiredKeys.forEach((k) => pushDeclared(k, 'required'))
   optionalKeys.forEach((k) => pushDeclared(k, 'optional'))
+  templateKeys.forEach((k) => pushTemplate(k))
 
   // Remaining custom keys, preserving insertion order of `initial`.
   Object.keys(initial).forEach((key) => {
@@ -184,28 +212,43 @@ export function validateRows(
 export interface ToVariablesMapOptions {
   mode?: EditorMode
   allowEmptyValues?: boolean
+  /**
+   * Edit mode after the variable set was touched. The backend overwrites the
+   * whole encrypted blob (no merge), so a partial map would destroy the
+   * untouched secrets it omits. When true, the serializer enforces the
+   * full-replace invariant (every keyed row must carry a value) and returns
+   * `null` otherwise — making the unsafe submit fail closed instead of
+   * silently dropping rows.
+   */
+  requireAllValues?: boolean
 }
 
 /**
  * Serialize rows into the `Record<string,string>` the API expects.
- * Returns null when the rows are invalid.
+ * Returns null when the rows are invalid (incl. the full-replace invariant
+ * when `requireAllValues` is set).
  *
  * In edit mode, rows whose value is still preserved (untouched) are omitted so
  * the backend keeps the existing encrypted value. Callers pair this with
- * `variablesTouched` to decide whether to send `variables` at all.
+ * `variablesTouched` to decide whether to send `variables` at all — and, once
+ * touched, MUST pass `requireAllValues` so the omit-preserved path can never
+ * produce a partial overwrite.
  */
 export function toVariablesMap(
   rows: EnvVarRow[],
-  { mode = 'create', allowEmptyValues = true }: ToVariablesMapOptions = {},
+  { mode = 'create', allowEmptyValues = true, requireAllValues = false }: ToVariablesMapOptions = {},
 ): Record<string, string> | null {
-  const validation = validateRows(rows, { allowEmptyValues })
+  const validation = validateRows(rows, { allowEmptyValues, requireAllValues })
   if (!validation.isValid) return null
 
   const out: Record<string, string> = {}
   for (const row of rows) {
     const key = row.key.trim()
     if (key === '') continue
-    if (mode === 'edit' && row.valuePreserved && row.value === '') continue
+    // An untouched preserved row carries no plaintext — the server-side value is
+    // kept rather than overwritten with "". This covers edit-mode encrypted
+    // secrets and template defaults the user chose not to override (any mode).
+    if (row.valuePreserved && row.value === '') continue
     out[key] = row.value
   }
   return out

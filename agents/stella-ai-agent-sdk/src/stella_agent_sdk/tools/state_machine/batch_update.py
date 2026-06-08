@@ -24,10 +24,12 @@ class BatchUpdateTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Set multiple deliverables and/or complete multiple tasks in a single call. "
-            "Use this to submit ALL extractions at once — from the current message and "
-            "from conversation history. Each deliverable needs a key, value, and reasoning. "
-            "Each task needs a task_id and reasoning."
+            "Set multiple deliverables, complete multiple tasks, and/or skip multiple "
+            "tasks in a single call. Use this to submit ALL state changes at once — from "
+            "the current message and conversation history. Each deliverable needs a key, "
+            "value, and reasoning. Each completed/skipped task needs a task_id and reasoning. "
+            "Tasks never complete on their own: explicitly complete a task once you have "
+            "what it needs, or skip it when it does not apply."
         )
 
     @property
@@ -74,6 +76,24 @@ class BatchUpdateTool(BaseTool):
                         },
                         "required": ["task_id", "reasoning"]
                     }
+                },
+                "skip_tasks": {
+                    "type": "array",
+                    "description": "Tasks to mark as skipped — not relevant or not worth pursuing (can be empty array)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {
+                                "type": "string",
+                                "description": "The task ID to skip"
+                            },
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Why this task is being skipped"
+                            }
+                        },
+                        "required": ["task_id", "reasoning"]
+                    }
                 }
             },
             "required": ["deliverables", "tasks"]
@@ -83,16 +103,20 @@ class BatchUpdateTool(BaseTool):
         self,
         deliverables: List[Dict[str, str]] = None,
         tasks: List[Dict[str, str]] = None,
+        skip_tasks: List[Dict[str, str]] = None,
     ) -> ToolResult:
-        """Execute batch update — set deliverables and complete tasks."""
+        """Execute batch update — set deliverables, complete tasks, skip tasks."""
         deliverables = deliverables or []
         tasks = tasks or []
+        skip_tasks = skip_tasks or []
 
         results = {
             "deliverables_set": [],
             "deliverables_failed": [],
             "tasks_completed": [],
             "tasks_failed": [],
+            "tasks_skipped": [],
+            "skips_failed": [],
             # Forward end-node completion metadata so the expert runner can emit
             # farewell and stop the session cleanly.
             "session_completed": False,
@@ -155,6 +179,17 @@ class BatchUpdateTool(BaseTool):
         for description in duplicate_descriptions:
             pending_by_description.pop(description, None)
 
+        def _drop_pending(task_id: str) -> None:
+            # Keep the local pending snapshot in sync as tasks are addressed within
+            # this same batch. Without this, a task completed in the completes loop
+            # still looks "pending" to the skips loop (validated against the same
+            # stale set), so a later skip is dispatched and bounced into
+            # skips_failed — a spurious failure in combined batches.
+            pending_ids.discard(task_id)
+            for desc, tid in list(pending_by_description.items()):
+                if tid == task_id:
+                    pending_by_description.pop(desc, None)
+
         # Process tasks — skip if already transitioned
         if not transitioned:
             for i, t in enumerate(tasks):
@@ -176,6 +211,7 @@ class BatchUpdateTool(BaseTool):
                         resolved_task_id, t.get("reasoning", "")
                     )
                     if result.get("success"):
+                        _drop_pending(resolved_task_id)
                         results["tasks_completed"].append({
                             "task_id": resolved_task_id,
                             "transitioned": result.get("transitioned", False),
@@ -210,5 +246,58 @@ class BatchUpdateTool(BaseTool):
                     "error": "skipped: state transitioned during deliverable processing",
                 })
 
-        all_success = not results["deliverables_failed"] and not results["tasks_failed"]
+        # Process skips — also short-circuit once a transition has occurred.
+        for s in skip_tasks:
+            if transitioned:
+                results["skips_failed"].append({
+                    "task_id": s["task_id"],
+                    "error": "skipped: state already transitioned",
+                })
+                continue
+            try:
+                raw_task_id = s["task_id"]
+                resolved_task_id = raw_task_id
+                if resolved_task_id not in pending_ids:
+                    resolved_task_id = pending_by_description.get(raw_task_id, "")
+                    if not resolved_task_id:
+                        results["skips_failed"].append({
+                            "task_id": raw_task_id,
+                            "error": (
+                                f"invalid task_id '{raw_task_id}': use an exact pending task ID"
+                            ),
+                        })
+                        continue
+
+                result = await self._client.skip_task(
+                    resolved_task_id, s.get("reasoning", "")
+                )
+                if result.get("success"):
+                    _drop_pending(resolved_task_id)
+                    results["tasks_skipped"].append({
+                        "task_id": resolved_task_id,
+                        "transitioned": result.get("transitioned", False),
+                        "new_state_id": result.get("new_state_id"),
+                    })
+                    if result.get("session_completed"):
+                        results["session_completed"] = True
+                        results["farewell_message"] = result.get("farewell_message")
+                        results["summary_behavior"] = result.get("summary_behavior")
+                    if result.get("transitioned", False):
+                        transitioned = True
+                else:
+                    results["skips_failed"].append({
+                        "task_id": s["task_id"],
+                        "error": result.get("error", "unknown"),
+                    })
+            except Exception as e:
+                results["skips_failed"].append({
+                    "task_id": s["task_id"],
+                    "error": str(e),
+                })
+
+        all_success = (
+            not results["deliverables_failed"]
+            and not results["tasks_failed"]
+            and not results["skips_failed"]
+        )
         return ToolResult(success=all_success, data=results)

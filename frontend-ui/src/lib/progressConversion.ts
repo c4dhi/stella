@@ -64,10 +64,20 @@ export function reconstructTasksFromItems(items: ProgressItem[]) {
       }
     }
 
+    // Prefer the real task status from the state machine (#291): the backend
+    // is the single source of truth for whether a task is done. Only fall back
+    // to deriving status from deliverable fill when the agent didn't ship it
+    // (older payloads), which previously caused "3/3 done" while the state was
+    // actually stuck because a task hadn't been completed/skipped.
+    const realStatus = task.deliverables
+      .map(d => d.metadata?.task_status as TaskStatus | undefined)
+      .find(s => s != null)
+
     const allCompleted = task.deliverables.every(d => d.status === 'completed' || d.status === 'skipped')
     const anyInProgress = task.deliverables.some(d => d.status === 'in_progress')
-    const taskStatus: TaskStatus = allCompleted ? TaskStatus.COMPLETED :
-                                     anyInProgress ? TaskStatus.IN_PROGRESS : TaskStatus.PENDING
+    const taskStatus: TaskStatus = realStatus ??
+      (allCompleted ? TaskStatus.COMPLETED :
+        anyInProgress ? TaskStatus.IN_PROGRESS : TaskStatus.PENDING)
 
     return {
       id: task.id,

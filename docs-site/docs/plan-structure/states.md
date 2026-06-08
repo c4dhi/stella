@@ -109,7 +109,7 @@ The state machine supports the following `condition_type` values:
 
 | Condition Type | Purpose | Added In |
 |----------------|---------|----------|
-| `all_tasks_complete` | Transition when required tasks in the current state are complete | Existing |
+| `all_tasks_complete` | Transition once every task in the current state has been addressed (completed or skipped) | Existing |
 | `deliverable_exists` | Transition when a deliverable key has been collected | Existing |
 | `deliverable_value` | Transition when a deliverable equals a specific value | Existing |
 | `turn_count_exceeded` | Guardrail transition based on turn count | Ticket 5 |
@@ -123,7 +123,7 @@ The state machine supports the following `condition_type` values:
 
 #### `all_tasks_complete`
 
-Transitions when all required tasks in the current state are completed.
+Transitions once **every** task in the current state — required *and* optional — has been addressed (completed or skipped). A task with deliverables is addressed automatically when its required deliverables are collected (or, for an all-optional task, once every declared deliverable is collected); a deliverable-less task must be completed or skipped explicitly. A newly entered state is never vacuously complete. See [Task Completion](./tasks.md#task-completion) for the full rules.
 
 ```json
 {

@@ -92,6 +92,10 @@ class ProgressAdapter:
 
             for task in state.get("tasks", []):
                 task_deliverables = task.get("deliverables", [])
+                # Real task status from the state machine (#291 hybrid model).
+                # Shipped on each item so the frontend renders backend truth
+                # rather than inferring "done" from deliverable fill.
+                task_status = task.get("status", "pending")
                 if task_deliverables:
                     for d in task_deliverables:
                         status_str = d.get("status", "pending")
@@ -108,6 +112,7 @@ class ProgressAdapter:
                             metadata={
                                 "task_id": task.get("id"),
                                 "task_description": task.get("description"),
+                                "task_status": task_status,
                                 "deliverable_type": d.get("type", "string"),
                                 "acceptance_criteria": d.get("acceptance_criteria"),
                                 "reasoning": d.get("reasoning"),
@@ -142,12 +147,15 @@ class ProgressAdapter:
                     if is_active and task_status == "pending" and not current_item_id:
                         current_item_id = task_item_id
 
-            # Determine group status
-            all_completed = items and all(
-                i.status == ItemStatus.COMPLETED for i in items
-            )
+            # Determine group status — trust the state machine's authoritative
+            # state.status (getFullState already accounts for completed AND skipped
+            # tasks via isPlanStateComplete). This MUST mirror stella-light's
+            # _build_progress_from_full_state: a prior all-items-COMPLETED heuristic
+            # here ignored state.status and treated SKIPPED items as non-completing,
+            # so a state whose last task was skipped collapsed to PENDING and the
+            # frontend dropped it from the route ("the whole state disappeared").
             group_status_str = state.get("status", "pending")
-            if all_completed:
+            if group_status_str == "completed":
                 group_status = GroupStatus.COMPLETED
             elif group_status_str == "active" or is_active:
                 group_status = GroupStatus.IN_PROGRESS
@@ -202,7 +210,9 @@ class ProgressAdapter:
             groups=groups,
             current_group_id=current_group_id or full_state.get("current_state_id"),
             current_item_id=current_item_id,
-            progress_percentage=full_state.get("progress", 0) * 100,
+            # getFullState already returns progress as a 0-100 percentage (the light
+            # agent uses it raw). Multiplying here produced 8000%. Keep parity.
+            progress_percentage=full_state.get("progress", 0),
             elapsed_minutes=elapsed_minutes,
             started_at=started_at,
             last_updated=datetime.utcnow().isoformat() + "Z",

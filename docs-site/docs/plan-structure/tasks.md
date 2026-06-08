@@ -66,7 +66,7 @@ Whether this task must be completed before the state can transition.
 ```
 
 - `true` (default): Task must complete before transition
-- `false`: Task can be skipped; state can transition without it
+- `false`: The agent **may** skip the task — but it still has to be *addressed*. An optional task that is never collected **and** never skipped will keep the state from transitioning; `required: false` means "the agent is allowed to skip it", not "ignored automatically".
 
 ### `deliverables`
 
@@ -74,10 +74,16 @@ An array of specific pieces of information to collect during this task. See [Del
 
 ## Task Completion
 
-A task is considered **complete** when:
+A task becomes **addressed** (so it no longer blocks the state) in one of these ways:
 
-1. All **required** deliverables have been collected
-2. Optional deliverables may be skipped
+1. **Deliverable-driven (automatic).** A task that owns deliverables is completed automatically once its data is in — the agent does **not** need a separate completion call:
+   - if it has at least one **required** deliverable, once all of its required deliverables are collected (optional ones never block);
+   - if **all** of its deliverables are optional, once **every** declared deliverable has been collected.
+2. **Explicit completion/skip.** The agent can always explicitly mark a task complete or skip it. A task with **no deliverables** has no data to gate on, so it *must* be completed or skipped explicitly — it is never auto-completed.
+
+Completion is intentionally derived from collected data wherever possible, rather than relying on the agent to remember a second "mark complete" step after collecting the answer.
+
+A state's `all_tasks_complete` transition fires only once **every** task in the state — required *and* optional — has been addressed (completed or skipped). Note that a freshly entered state is never "vacuously" complete: a task with nothing collected and no explicit skip stays pending. When a task is skipped, its still-uncollected deliverables are reported as `skipped` too.
 
 In **STRICT** mode, the agent moves to the next task only after completing the current one.
 

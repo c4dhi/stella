@@ -114,11 +114,11 @@ export default function DeployAgentModal({
           console.error('Failed to fetch agent types:', err)
           setAgentTypes([
             {
-              id: 'echo-agent',
-              slug: 'echo-agent',
-              name: 'Echo Agent',
-              description: 'Simple test agent that echoes user input',
-              icon: '🔊',
+              id: 'stella-light-agent',
+              slug: 'stella-light-agent',
+              name: 'Stella Light Agent',
+              description: 'Lightweight single-LLM-call agent',
+              icon: '⚡',
               version: '1.0.0',
               isBuiltIn: true,
               capabilities: ['voice', 'text'],
@@ -167,13 +167,17 @@ export default function DeployAgentModal({
   const handleContinue = () => {
     // Special handling for envvars step - transition from select to edit view
     if (step === 'envvars' && envVarsView === 'select') {
-      // Only seed required keys the user still has to enter. Keys a selected template
-      // already provides are satisfied server-side (resolveAgentEnvVarsFromConfigSchema
-      // computes missingRequiredEnvVars after merging the template), so seeding them as
-      // empty required rows would wrongly block deploy. Manual rows are overrides.
-      const templateKeys = new Set(selectedEnvVarTemplate?.variableKeys ?? [])
-      const requiredToFill = agentRequirements.requiredEnvVars.filter((key) => !templateKeys.has(key))
-      envVarEditor.reset({ requiredKeys: requiredToFill, initial: {} })
+      // Surface ALL of a selected template's variables as editable default rows so
+      // the user can see — and override — what the template provides. Their values
+      // are never sent to the browser, so they render blank ("use template value")
+      // until typed; overrides are merged server-side at deploy. Required keys the
+      // template does NOT cover are seeded as required rows the user must fill.
+      // (resolveAgentEnvVarsFromConfigSchema computes missingRequiredEnvVars after
+      // merging the template, so template-covered required keys never block deploy.)
+      const templateKeys = selectedEnvVarTemplate?.variableKeys ?? []
+      const templateKeySet = new Set(templateKeys)
+      const requiredToFill = agentRequirements.requiredEnvVars.filter((key) => !templateKeySet.has(key))
+      envVarEditor.reset({ requiredKeys: requiredToFill, templateKeys, initial: {} })
       setEnvVarsView('edit')
       return
     }

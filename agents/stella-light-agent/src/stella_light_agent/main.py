@@ -32,23 +32,17 @@ def main():
     # Get config paths from environment
     config_path = os.environ.get("LLM_CONFIG_PATH")
 
-    # Tool mode configuration
-    # USE_TOOLS: Set to "false" or "0" to use legacy text parsing mode
-    use_tools_env = os.environ.get("USE_TOOLS", "true").lower()
-    use_tools = use_tools_env not in ("false", "0", "no")
-
-    # STATE_MACHINE_ADDRESS: gRPC address for state machine service
+    # STATE_MACHINE_ADDRESS: gRPC address for state machine service (the single
+    # source of truth; all state is managed through the SDK toolbox against it).
     state_machine_address = os.environ.get("STATE_MACHINE_ADDRESS")
 
     # Create and run agent
     agent = StellaLightAgent(
         llm_config_path=config_path,
-        use_tools=use_tools,
         state_machine_address=state_machine_address
     )
 
-    mode_str = "tool-based" if use_tools else "legacy"
-    print(f"[main] Starting Stella Light Agent ({mode_str} mode)...")
+    print("[main] Starting Stella Light Agent (tool-based state management)...")
     asyncio.run(run_agent_from_env(agent))
 
 

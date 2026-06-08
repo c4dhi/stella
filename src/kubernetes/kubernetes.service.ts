@@ -22,7 +22,7 @@ export interface AgentPodConfig {
   livekitApiSecret: string;
   ttsProvider: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
-  agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
+  agentType?: string;       // Agent type (e.g., "stella-light-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
   // Pre-resolved env vars: template vars decrypted and merged with manual overrides by the caller.
   // KubernetesService receives the final map and spreads it directly into the K8s Secret.
@@ -47,7 +47,7 @@ export class KubernetesService {
     private agentImageService: AgentImageService,
   ) {
     this.namespace = this.configService.get<string>('KUBERNETES_NAMESPACE', 'default');
-    this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'stella-agent');
+    this.defaultAgentType = this.configService.get<string>('DEFAULT_AGENT_TYPE', 'stella-light-agent');
     this.imagePullPolicy = this.configService.get<string>('AGENT_IMAGE_PULL_POLICY', 'IfNotPresent');
     // Configurable gRPC server address for agent connections
     // Allows agents to connect from anywhere (K8s, external servers, etc.)
@@ -140,7 +140,7 @@ export class KubernetesService {
     const cpuLimit = clampedCpu.value;
     const memoryLimit = clampedMemory.value;
 
-    // Determine agent type (default to stella-agent)
+    // Determine agent type (falls back to the configured default agent type)
     const agentType = config.agentType || this.defaultAgentType;
 
     // Ensure agent image exists (builds on-demand if needed)
@@ -193,7 +193,7 @@ export class KubernetesService {
               },
             },
             // Run agent module (config from environment variables)
-            // echo-agent -> echo_agent, stella-agent -> stella_agent
+            // stella-light-agent -> stella_light_agent, stella-v2-agent -> stella_v2_agent
             command: ['python', '-m', agentType.replace(/-/g, '_')],
             envFrom: [
               {

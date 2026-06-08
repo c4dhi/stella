@@ -19,6 +19,7 @@ interface EnvVarListEditorProps {
 }
 
 const PRESERVED_PLACEHOLDER = '•••••••• unchanged'
+const TEMPLATE_PLACEHOLDER = '•••••••• from template — type to override'
 
 export default function EnvVarListEditor({
   editor,
@@ -111,9 +112,17 @@ function EnvVarRowItem({
   onRemove,
   registerKeyRef,
 }: EnvVarRowItemProps) {
-  const keyLocked = showOriginBadges && (row.origin === 'required' || row.origin === 'optional')
-  const deletable = row.origin !== 'required'
+  const isDeclared = row.origin === 'required' || row.origin === 'optional' || row.origin === 'template'
+  const keyLocked = showOriginBadges && isDeclared
+  // Required keys must stay; template keys belong to the template (removing a row
+  // wouldn't drop the server-side value anyway) — both are non-deletable.
+  const deletable = row.origin !== 'required' && row.origin !== 'template'
   const keyHasError = isDuplicate || isInvalidKey || isEmptyKey
+  const valuePlaceholder = row.valuePreserved
+    ? row.origin === 'template'
+      ? TEMPLATE_PLACEHOLDER
+      : PRESERVED_PLACEHOLDER
+    : 'Value'
 
   const baseInput = `
     px-3 py-2.5 rounded-lg text-sm focus:outline-none transition-all duration-200
@@ -161,7 +170,7 @@ function EnvVarRowItem({
             value={row.value}
             onChange={(e) => onValueChange(e.target.value)}
             className={`w-full ${baseInput} ${isMissingValue ? errorRing : okRing}`}
-            placeholder={row.valuePreserved ? PRESERVED_PLACEHOLDER : 'Value'}
+            placeholder={valuePlaceholder}
           />
         </div>
 
@@ -224,6 +233,13 @@ function OriginBadge({ origin, isDark }: { origin: EnvVarRow['origin']; isDark: 
     return (
       <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${isDark ? 'bg-zinc-600/40 text-zinc-300' : 'bg-neutral-200 text-neutral-600'}`}>
         Optional
+      </span>
+    )
+  }
+  if (origin === 'template') {
+    return (
+      <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${isDark ? 'bg-primary-500/15 text-primary-300' : 'bg-primary-50 text-primary-600'}`}>
+        Template
       </span>
     )
   }

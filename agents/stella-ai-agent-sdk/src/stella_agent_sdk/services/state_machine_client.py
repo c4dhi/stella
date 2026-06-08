@@ -137,6 +137,103 @@ class StateMachineClient:
                 "error": f"gRPC error: {e.details()}",
             }
 
+    async def skip_task(
+        self,
+        task_id: str,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Skip a single task the agent judges unnecessary.
+
+        Skipping counts toward state completion exactly like completing — it is
+        one of the explicit ways the agent addresses a task. ``required`` is
+        advisory only; any task may be skipped.
+
+        Args:
+            task_id: The task ID to skip
+            reasoning: Explanation for why the task is being skipped
+
+        Returns:
+            Dict with success, error, task_skipped, transitioned, new_state_id, progress
+        """
+        self._ensure_connected()
+        logger.info(f"Skipping task {task_id} for session {self._session_id}")
+
+        try:
+            request = state_machine_pb2.SkipTaskRequest(
+                session_id=self._session_id,
+                task_id=task_id,
+                reasoning=reasoning,
+            )
+            response = await self._stub.SkipTask(request)
+
+            return {
+                "success": response.success,
+                "error": response.error or None,
+                "task_skipped": response.task_skipped or None,
+                "transitioned": response.transitioned,
+                "new_state_id": response.new_state_id or None,
+                "new_state_title": response.new_state_title or None,
+                "progress": response.progress,
+                "session_completed": response.session_completed,
+                "farewell_message": response.farewell_message or None,
+                "summary_behavior": response.summary_behavior or None,
+            }
+        except grpc.aio.AioRpcError as e:
+            logger.error(f"gRPC error during skip_task: {e.code()} - {e.details()}")
+            return {
+                "success": False,
+                "error": f"gRPC error: {e.details()}",
+            }
+
+    async def skip_state(
+        self,
+        state_id: str = "",
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Skip the remainder of a state: mark every not-yet-addressed task skipped
+        and advance to the next state.
+
+        Args:
+            state_id: Optional state to skip; empty means the current state.
+            reasoning: Explanation for skipping the state.
+
+        Returns:
+            Dict with success, error, state_skipped, tasks_skipped, transitioned,
+            new_state_id, progress
+        """
+        self._ensure_connected()
+        logger.info(f"Skipping state {state_id or '(current)'} for session {self._session_id}")
+
+        try:
+            request = state_machine_pb2.SkipStateRequest(
+                session_id=self._session_id,
+                state_id=state_id,
+                reasoning=reasoning,
+            )
+            response = await self._stub.SkipState(request)
+
+            return {
+                "success": response.success,
+                "error": response.error or None,
+                "state_skipped": response.state_skipped or None,
+                "tasks_skipped": list(response.tasks_skipped),
+                "transitioned": response.transitioned,
+                "new_state_id": response.new_state_id or None,
+                "new_state_title": response.new_state_title or None,
+                "progress": response.progress,
+                "session_completed": response.session_completed,
+                "farewell_message": response.farewell_message or None,
+                "summary_behavior": response.summary_behavior or None,
+            }
+        except grpc.aio.AioRpcError as e:
+            logger.error(f"gRPC error during skip_state: {e.code()} - {e.details()}")
+            return {
+                "success": False,
+                "error": f"gRPC error: {e.details()}",
+            }
+
     async def set_deliverable(
         self,
         key: str,

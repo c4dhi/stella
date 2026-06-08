@@ -383,6 +383,35 @@ async function verifySeedRoundTrip(agents: BuiltinAgentInfo[]): Promise<void> {
   console.log(`Round-trip verification passed for ${agents.length} agent types`)
 }
 
+/**
+ * Deactivate built-in agent types that are no longer present in agents/.
+ *
+ * Retiring an agent = removing (archiving) its directory. This flips any leftover
+ * built-in row whose slug is no longer discovered to REJECTED, so it disappears
+ * from the gallery (AgentTypeService.findAll filters to APPROVED) without deleting
+ * data — sessions and saved configurations that reference it keep their FK intact.
+ * Custom (non-built-in) agents are never touched.
+ */
+async function deactivateRetiredBuiltins(discoveredSlugs: string[]): Promise<void> {
+  const retired = await prisma.agentType.updateMany({
+    where: {
+      isBuiltIn: true,
+      slug: { notIn: discoveredSlugs },
+      // Skip already-deactivated rows so reruns stay idempotent and quiet.
+      validationStatus: { not: 'REJECTED' },
+    },
+    data: {
+      // Literal to avoid a hard dependency on generated enum export names.
+      validationStatus: 'REJECTED',
+      validationNotes: 'Retired: no longer present in the built-in agents/ registry',
+    },
+  })
+
+  if (retired.count > 0) {
+    console.log(`Deactivated ${retired.count} retired built-in agent type(s)`)
+  }
+}
+
 async function main() {
   console.log('Seeding agent types from manifests...')
 
@@ -461,6 +490,9 @@ async function main() {
       }
     }
   }
+
+  // Hide any built-in agent types that were retired (directory archived/removed).
+  await deactivateRetiredBuiltins(agents.map(({ manifest }) => manifest.metadata.slug))
 
   await verifySeedRoundTrip(agents)
 

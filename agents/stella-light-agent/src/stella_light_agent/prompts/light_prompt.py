@@ -12,16 +12,12 @@ from typing import Dict, List, Any, Optional
 
 
 class LightPromptBuilder:
-    """Builds a unified prompt with embedded guardrails for the light agent."""
+    """Builds a unified prompt with embedded guardrails for the light agent.
 
-    def __init__(self, use_tools: bool = False):
-        """Initialize the prompt builder.
-
-        Args:
-            use_tools: If True, build prompts for tool-based state management.
-                      If False, use legacy structured output format.
-        """
-        self._use_tools = use_tools
+    State is managed exclusively through the SDK toolbox, so prompts always
+    instruct the model in terms of tool calls (set_deliverable, complete_task,
+    skip_task, skip_state).
+    """
 
     def build_system_prompt(self, context: Dict[str, Any]) -> str:
         """
@@ -67,12 +63,8 @@ class LightPromptBuilder:
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
 
-        # Use different format based on mode
-        if self._use_tools:
-            parts.append(self._build_tool_instructions(deliverables, available_tasks))
-        else:
-            parts.append(self._build_response_format())
-            parts.append(self._build_deliverable_rules(deliverables))
+        # Tool-based state management instructions.
+        parts.append(self._build_tool_instructions(deliverables, available_tasks))
 
         # Add collected deliverables section (for update capability)
         collected_section = self._build_collected_section(collected_deliverables)
@@ -219,17 +211,27 @@ Remember: You are a supportive companion, not a replacement for professional adv
 - Your response will be spoken aloud - make it sound natural
 
 ## Tool Usage
-You have tools to track conversation progress. Use them appropriately:
+You drive the conversation forward with these tools. The conversation only
+advances when EVERY task in the current phase is explicitly completed or skipped —
+nothing happens on its own. (A task being "required" is guidance about importance,
+not a gate; you may skip a required task if it genuinely does not apply.)
 
 **set_deliverable** - Call when the user CLEARLY and EXPLICITLY provides information you need to collect
 - Only call when you are certain the user provided the information
 - NEVER call for greetings (hi, hello, hey, good morning, etc.)
 - NEVER guess or infer values
 - If unsure, ask a clarifying question instead
+- Recording a deliverable does NOT complete its task — you must still complete the task explicitly
 
-**complete_task** - Call when you complete a task that doesn't require collecting data
-- Examples: telling a joke, saying goodbye, providing an explanation
-- Only call after you have actually performed the task"""]
+**complete_task** - Call to mark a task done. Use it for ANY task you have accomplished:
+- A task with no deliverables you just performed (telling a joke, an introduction, saying goodbye)
+- A task with deliverables, once you have collected what it needs (call set_deliverable first, then complete_task)
+
+**skip_task** - Call to skip a single task that does not apply or is not worth pursuing
+- Use this for an optional task the user clearly will not engage with, so the conversation can move on
+
+**skip_state** - Call to skip the entire current phase at once when none of it is relevant
+- Marks all of the phase's remaining tasks as skipped and advances"""]
 
         if pending:
             parts.append("\n## Information to Collect")
@@ -256,79 +258,19 @@ You have tools to track conversation progress. Use them appropriately:
                     parts.append(f"  Examples: {examples}")
 
         if available_tasks:
-            tasks_without_deliverables = [
-                t for t in available_tasks
-                if not t.get('has_deliverables', True)
-            ]
-            if tasks_without_deliverables:
-                parts.append("\n## Tasks to Complete")
-                parts.append("Use complete_task after performing these:")
-                for t in tasks_without_deliverables:
-                    parts.append(f"- **{t.get('id')}**: {t.get('description', '')}")
+            parts.append("\n## Tasks in this phase")
+            parts.append(
+                "Each of these must be explicitly completed (complete_task) or skipped "
+                "(skip_task) for the conversation to advance — none complete on their own:"
+            )
+            for t in available_tasks:
+                if t.get('has_deliverables', False):
+                    hint = " — collect its deliverables, then complete_task"
+                else:
+                    hint = " — perform it, then complete_task"
+                parts.append(f"- **{t.get('id')}**: {t.get('description', '')}{hint}")
 
         return "\n".join(parts)
-
-    def _build_response_format(self) -> str:
-        """Build response format instructions."""
-        return """## Response Format
-You MUST respond using this EXACT format:
-
-MESSAGE: [Your conversational response here - 30-50 words, max 1 question]
-DELIVERABLES: [JSON object with extracted values] or [NONE]
-COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
-
-Example responses:
-
-Example 1 - Collecting a deliverable (user provided their name):
-MESSAGE: That's wonderful to hear, Sarah! I love how passionate you are about gardening. It sounds like such a peaceful hobby. What kinds of plants do you enjoy growing the most?
-DELIVERABLES: {"user_name": {"value": "Sarah", "reasoning": "User introduced herself as Sarah"}}
-COMPLETED_TASKS: [NONE]
-
-Example 2 - No deliverables collected this turn:
-MESSAGE: Thanks for sharing that with me! I'd love to learn more about you. What do you enjoy doing in your free time?
-DELIVERABLES: [NONE]
-COMPLETED_TASKS: [NONE]
-
-Example 3 - Completing a task that has NO deliverables (like telling a joke):
-MESSAGE: Here's one for you - Why don't scientists trust atoms? Because they make up everything! I hope that gave you a little chuckle. It was truly wonderful chatting with you today.
-DELIVERABLES: [NONE]
-COMPLETED_TASKS: ["tell_joke"]
-
-### COMPLETED_TASKS Rules
-- Use COMPLETED_TASKS to mark tasks as done when they DON'T require data collection
-- Only mark tasks that you have actually performed in your MESSAGE
-- Tasks that collect deliverables are automatically completed when all deliverables are collected
-- Format: JSON array of task IDs, e.g., ["tell_joke", "say_goodbye"]"""
-
-    def _build_deliverable_rules(self, deliverables: List[Dict]) -> str:
-        """Build deliverable extraction rules."""
-        pending = [d for d in deliverables if d.get("status") == "pending"]
-
-        if not pending:
-            return """## Deliverable Collection
-No deliverables to collect currently. Focus on natural conversation."""
-
-        rules = ["## Deliverable Collection", "Collect these pieces of information when the user provides them:"]
-
-        for d in pending:
-            required_marker = "*" if d.get("required", True) else "(optional)"
-            rules.append(f"\n**{d['key']}** {required_marker}")
-            rules.append(f"  Description: {d['description']}")
-            if d.get("acceptance_criteria"):
-                rules.append(f"  Criteria: {d['acceptance_criteria']}")
-            if d.get("examples"):
-                examples = ", ".join(str(e) for e in d['examples'][:3])
-                rules.append(f"  Examples: {examples}")
-
-        rules.append("""
-### Extraction Rules
-- Format: {"key": {"value": "extracted_value", "reasoning": "brief explanation"}}
-- Only extract when user CLEARLY and EXPLICITLY provides the information
-- NEVER extract from greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values - only extract what is directly stated
-- If unsure, use [NONE] and ask a clarifying question instead""")
-
-        return "\n".join(rules)
 
     def _build_context(
         self,

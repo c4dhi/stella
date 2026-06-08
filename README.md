@@ -30,7 +30,7 @@ You bring the agent logic. STELLA handles the audio/video streaming, orchestrati
 - 🎙️ Voice & text conversations via WebRTC (LiveKit)
 - ☸️ On-demand Kubernetes agent orchestration
 - 🐍 Python Agent SDK with built-in STT/TTS pipeline
-- 🤖 Multi-agent support (stella-agent, stella-light-agent, custom agents)
+- 🤖 Multi-agent support (stella-v2-agent, stella-light-agent, custom agents)
 - 📋 Plan-driven conversation flows with state machine
 - 🔐 Project & session management with role-based access
 - 💬 Real-time transcript & event timeline

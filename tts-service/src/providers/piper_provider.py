@@ -11,6 +11,7 @@ Optimized for TTFB:
 
 import asyncio
 import os
+import threading
 import time
 from typing import Optional, Tuple, AsyncGenerator
 import numpy as np
@@ -202,14 +203,27 @@ class PiperProvider(TTSProvider):
 
         queue: asyncio.Queue = asyncio.Queue(maxsize=32)
         loop = asyncio.get_event_loop()
+        # Set on the consumer side when it stops early (barge-in -> GeneratorExit).
+        # The producer checks it so it doesn't keep synthesizing into an abandoned
+        # queue after the listener has moved on.
+        stop_event = threading.Event()
 
         def _producer():
             try:
                 for fragment in self._voice.synthesize(text):
+                    if stop_event.is_set():
+                        break
                     # piper returns AudioChunk with audio_float_array in [-1, 1]
                     arr = fragment.audio_float_array
                     if arr is not None and len(arr):
-                        loop.call_soon_threadsafe(queue.put_nowait, arr)
+                        # Back-pressured handoff: block this worker thread until the
+                        # consumer frees a slot rather than dropping audio when the
+                        # bounded queue is full (put_nowait would raise QueueFull
+                        # inside call_soon_threadsafe and be swallowed -> silent gap).
+                        try:
+                            asyncio.run_coroutine_threadsafe(queue.put(arr), loop).result()
+                        except RuntimeError:
+                            break  # event loop gone (shutdown) — stop producing
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, e)
             finally:
@@ -223,43 +237,53 @@ class PiperProvider(TTSProvider):
         target_sr = self.OUTPUT_SAMPLE_RATE
         native_sr = self._native_sample_rate
 
-        while True:
-            item = await queue.get()
-            if isinstance(item, Exception):
-                print(f"[Piper] Streaming error: {item}")
-                break
-            if item is _PIPER_STREAM_DONE:
-                # Flush any leftover bytes as final frames.
+        try:
+            while True:
+                item = await queue.get()
+                if isinstance(item, Exception):
+                    print(f"[Piper] Streaming error: {item}")
+                    break
+                if item is _PIPER_STREAM_DONE:
+                    # Flush any leftover bytes as final frames.
+                    if len(leftover):
+                        yield (leftover, True)
+                    elif not first_yielded:
+                        return
+                    else:
+                        # Emit an empty final frame so the consumer sees is_final.
+                        yield (np.empty(0, dtype=np.int16), True)
+                    break
+
+                fragment = item
+                resampled = self._resample(fragment, native_sr, target_sr) if native_sr != target_sr else fragment
+                int16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16)
                 if len(leftover):
-                    yield (leftover, True)
-                elif not first_yielded:
-                    return
-                else:
-                    # Emit an empty final frame so the consumer sees is_final.
-                    yield (np.empty(0, dtype=np.int16), True)
-                break
+                    int16 = np.concatenate([leftover, int16])
+                    leftover = np.empty(0, dtype=np.int16)
 
-            fragment = item
-            resampled = self._resample(fragment, native_sr, target_sr) if native_sr != target_sr else fragment
-            int16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16)
-            if len(leftover):
-                int16 = np.concatenate([leftover, int16])
-                leftover = np.empty(0, dtype=np.int16)
+                if not first_yielded:
+                    print(f"[Piper] First fragment ready in {(time.time() - t0) * 1000:.0f}ms (stream)")
 
-            if not first_yielded:
-                print(f"[Piper] First fragment ready in {(time.time() - t0) * 1000:.0f}ms (stream)")
+                # Yield full-sized chunks; carry the tail to the next iteration.
+                total = len(int16)
+                full = total - (total % chunk_size)
+                for i in range(0, full, chunk_size):
+                    yield (int16[i:i + chunk_size], False)
+                    first_yielded = True
+                leftover = int16[full:]
 
-            # Yield full-sized chunks; carry the tail to the next iteration.
-            total = len(int16)
-            full = total - (total % chunk_size)
-            for i in range(0, full, chunk_size):
-                yield (int16[i:i + chunk_size], False)
-                first_yielded = True
-            leftover = int16[full:]
-
-        await producer_fut
-        if first_yielded:
-            print(f"[Piper] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
+            await producer_fut
+            if first_yielded:
+                print(f"[Piper] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
+        finally:
+            # Stop the producer and unblock it if it's parked on a full queue, so
+            # a cancelled stream doesn't leak a worker thread mid-synthesis.
+            stop_event.set()
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
     def _synthesize_raw(self, text: str) -> Tuple[Optional[np.ndarray], int]:
         """Synchronous, blocking synthesis. Returns (float32_audio, sample_rate)."""

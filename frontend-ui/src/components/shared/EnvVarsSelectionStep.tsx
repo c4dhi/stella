@@ -73,7 +73,13 @@ export default function EnvVarsSelectionStep({
     if (!didMountSeed.current) {
       didMountSeed.current = true
       if (envVarsView === 'edit') {
-        editor.reset({ requiredKeys: requiredEnvVars, initial: envVars })
+        // Re-derive the same split as handleGoToEdit so a previously-selected
+        // template's variables reappear as editable defaults (with any saved
+        // overrides), instead of collapsing into plain required rows.
+        const templateKeys = selectedEnvVarTemplate?.variableKeys ?? []
+        const templateKeySet = new Set(templateKeys)
+        const requiredToFill = requiredEnvVars.filter((key) => !templateKeySet.has(key))
+        editor.reset({ requiredKeys: requiredToFill, templateKeys, initial: envVars })
       }
     }
   }, [])
@@ -93,11 +99,13 @@ export default function EnvVarsSelectionStep({
 
   const handleGoToEdit = (template: EnvVarTemplate | null) => {
     onSelectEnvVarTemplate(template)
-    // Only seed required keys the user still has to enter. Keys a selected template
-    // provides are satisfied server-side, so they must not become empty required rows.
-    const templateKeys = new Set(template?.variableKeys ?? [])
-    const requiredToFill = requiredEnvVars.filter((key) => !templateKeys.has(key))
-    editor.reset({ requiredKeys: requiredToFill, initial: {} })
+    // Surface all of the template's variables as editable default rows (blank =
+    // use the template value, type to override; merged server-side). Required keys
+    // the template does NOT cover are seeded as required rows the user must fill.
+    const templateKeys = template?.variableKeys ?? []
+    const templateKeySet = new Set(templateKeys)
+    const requiredToFill = requiredEnvVars.filter((key) => !templateKeySet.has(key))
+    editor.reset({ requiredKeys: requiredToFill, templateKeys, initial: {} })
     onEnvVarsViewChange('edit')
   }
 

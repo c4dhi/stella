@@ -282,7 +282,7 @@ export const useStore = create<
   turns: [],
   processingMessages: [],
   participantEvents: [],
-  showProcessingMessages: true,
+  showProcessingMessages: false,
   lastAssistantMessageId: undefined,
   lastSpeechProgress: null,
   pendingMessageIds: new Set<string>(),
