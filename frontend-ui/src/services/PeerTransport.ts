@@ -1163,6 +1163,15 @@ export class PeerTransport implements Transport {
         lastSpeakingState = isSpeaking
       }
 
+      // Bail before rescheduling if the loop was torn down while we were awaiting
+      // (e.g. the modal closed during audioContext.resume()). Without this the awaited
+      // continuation would resurrect a loop stopAudioLevelMonitoring() already cancelled,
+      // reintroducing the idle burn this is meant to remove.
+      if (!this.audioAnalysisActive || !this.remoteAudioTrack) {
+        this.audioAnalysisFrame = undefined
+        return
+      }
+
       // Continue the loop (throttled above to ~30 Hz of actual work)
       this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
     }

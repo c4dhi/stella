@@ -26,21 +26,7 @@ import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-type
 import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpdateMessage, TodoList } from '../lib/types'
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 import { generateUUID } from '../lib/uuid'
-
-// Compare the fields that drive the recording indicator, so an unchanged listener-status
-// poll doesn't create a new object ref and re-render the page every 2 s. See ticket #305.
-function isSameListenerStatus(a: ListenerStatus | null, b: ListenerStatus): boolean {
-  if (!a) return false
-  return (
-    a.sessionStatus === b.sessionStatus &&
-    a.listener.isMonitoring === b.listener.isMonitoring &&
-    a.listener.isConnected === b.listener.isConnected &&
-    a.listener.roomState === b.listener.roomState &&
-    a.listener.participantIdentity === b.listener.participantIdentity &&
-    a.listener.reconnectAttempts === b.listener.reconnectAttempts &&
-    a.listener.remoteParticipants === b.listener.remoteParticipants
-  )
-}
+import { isSameListenerStatus } from '../lib/sessionPollEquality'
 
 export default function SessionView() {
   const { sessionId } = useParams<{ sessionId: string }>()
