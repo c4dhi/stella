@@ -492,6 +492,15 @@ export class StateMachineService {
     // Find the task
     const task = currentState.tasks.find(t => t.id === taskId);
     if (!task) {
+      // Hybrid auto-advance (#291) can move the state forward the instant a
+      // deliverable completes the final task, so a redundant complete_task the
+      // agent emits in the SAME turn may arrive after we've already left that
+      // task's state. If the task lives in an already-completed state, treat the
+      // tick as a harmless no-op rather than erroring — the task is done.
+      const owningState = plan.states.find(s => s.tasks?.some(t => t.id === taskId));
+      if (owningState && this.isPlanStateComplete(state, owningState)) {
+        return { success: true, taskCompleted: taskId };
+      }
       const availableTaskIds = currentState.tasks.map(t => t.id);
       return {
         success: false,
@@ -746,6 +755,12 @@ export class StateMachineService {
 
     const task = currentState.tasks.find(t => t.id === taskId);
     if (!task) {
+      // Mirror completeTask: a stray skip for a task whose state already
+      // completed (e.g. after a hybrid auto-advance) is a harmless no-op.
+      const owningState = plan.states.find(s => s.tasks?.some(t => t.id === taskId));
+      if (owningState && this.isPlanStateComplete(state, owningState)) {
+        return { success: true, taskSkipped: taskId };
+      }
       const availableTaskIds = currentState.tasks.map(t => t.id);
       return {
         success: false,
@@ -1225,6 +1240,49 @@ export class StateMachineService {
    *   scaffolding (non-blocking) and completion is driven by `goal_achieved` /
    *   goal-level deliverables, not task ticks.
    */
+  /**
+   * #291 hybrid completion. A task that OWNS deliverables is treated as
+   * addressed once EVERY required deliverable it owns has been collected — the
+   * agent does not also have to fire `complete_task`. This keeps completion
+   * derivable from data (reliable) instead of depending on the model
+   * remembering a second, redundant tool call after `set_deliverable`.
+   *
+   * A task with NO required deliverable (deliverable-less, or only optional
+   * deliverables) is NOT auto-satisfied: there is no data-defined completion
+   * bar, and auto-completing it on entry would reintroduce the vacuous-truth
+   * case #291 set out to remove. Those tasks still need an explicit
+   * `complete_task` / `skip_task`.
+   *
+   * Multi-deliverable tasks therefore only count when ALL required deliverables
+   * are present. Discovered (goal-mode) insights never satisfy a required key.
+   */
+  private deliverablesSatisfyTask(
+    task: PlanTask,
+    deliverables: Record<string, DeliverableValue>,
+  ): boolean {
+    const all = task.deliverables || [];
+    if (all.length === 0) return false; // deliverable-less -> explicit tick only
+
+    const isCollected = (d: PlanDeliverable) =>
+      d.key in deliverables && !deliverables[d.key]?.discovered;
+
+    const required = all.filter(d => d.required !== false);
+    if (required.length > 0) {
+      // Required deliverables gate completion; optional ones never block.
+      return required.every(isCollected);
+    }
+
+    // All-optional task. There is no required deliverable to gate on, but we
+    // must NOT vacuously complete it on entry (the #213/#291 on-screen bug).
+    // Plan generators routinely mark EVERY deliverable optional, so a
+    // required-only rule would mean these tasks never auto-complete and the
+    // agent's explicit complete_task — frequently issued a turn late — becomes
+    // the only way forward (the observed "advances a turn late" lag). Treat the
+    // task as addressed once every deliverable it declares has actually been
+    // collected: nothing on entry, done once the data is in.
+    return all.every(isCollected);
+  }
+
   private isCurrentStateComplete(
     state: SessionState,
     currentState: PlanState,
@@ -1247,8 +1305,16 @@ export class StateMachineService {
         continue;
       }
 
-      // Any task the agent has not yet completed or skipped blocks completion —
-      // regardless of whether it is required or optional.
+      // #291 hybrid: a deliverable-bearing task is addressed once all its
+      // required deliverables are collected, even without an explicit
+      // complete_task — so collecting the last deliverable advances the state.
+      if (this.deliverablesSatisfyTask(task, deliverables)) {
+        continue;
+      }
+
+      // Any task the agent has not yet completed/skipped (and whose required
+      // deliverables are not all collected) blocks completion — regardless of
+      // whether it is required or optional.
       this.logger.log(
         `[isCurrentStateComplete] Task '${task.id}' not completed/skipped — state NOT complete`,
       );
@@ -1291,6 +1357,11 @@ export class StateMachineService {
       if (addressed.has(task.id)) continue;
       // Goal-mode deliverable-less tasks are non-blocking scaffolding.
       if (stateType === 'goal' && (!task.deliverables || task.deliverables.length === 0)) {
+        continue;
+      }
+      // #291 hybrid: deliverable-bearing task is addressed when all its required
+      // deliverables are collected (mirrors isCurrentStateComplete).
+      if (this.deliverablesSatisfyTask(task, deliverables)) {
         continue;
       }
       // An unaddressed task (required or optional) means the state is not complete.
@@ -2132,29 +2203,41 @@ export class StateMachineService {
         const taskDeliverables = task.deliverables || [];
         const hasDeliverables = taskDeliverables.length > 0;
 
-        // Determine task status. Completion/skip are EXPLICIT agent actions
-        // (#291): a task is only 'completed' when the agent ticked it and only
-        // 'skipped' when the agent skipped it. Collecting deliverables (without a
-        // tick) shows as 'in_progress', never 'completed'.
+        // Determine task status (#291 hybrid model). An explicit tick/skip wins;
+        // otherwise a task whose required deliverables are all collected counts
+        // as 'completed' even without an explicit complete_task (this is the
+        // same rule isCurrentStateComplete uses to advance, so the UI badge and
+        // the state machine never disagree). Partial data shows 'in_progress'.
         let taskStatus: 'pending' | 'in_progress' | 'completed' | 'skipped' = 'pending';
         if (completedTasks.includes(task.id)) {
           taskStatus = 'completed';
         } else if (skippedTasks.includes(task.id)) {
           taskStatus = 'skipped';
+        } else if (this.deliverablesSatisfyTask(task, deliverables)) {
+          taskStatus = 'completed';
         } else if (hasDeliverables && taskDeliverables.some(d => d.key in deliverables)) {
-          // Some data collected but the agent has not yet ticked the task.
+          // Some data collected but not all required deliverables yet.
           taskStatus = 'in_progress';
         }
 
         // Build deliverable info
         const deliverableInfos: FullStateDeliverableInfo[] = taskDeliverables.map(d => {
           const collected = deliverables[d.key];
+          // Cascade a task skip onto its still-uncollected deliverables so the UI
+          // sub-items render as 'skipped' rather than a stale 'pending' circle.
+          // A collected deliverable keeps 'completed' even if the task was later
+          // skipped (the data was genuinely captured).
+          const deliverableStatus: 'pending' | 'completed' | 'skipped' = collected
+            ? 'completed'
+            : taskStatus === 'skipped'
+              ? 'skipped'
+              : 'pending';
           return {
             key: d.key,
             description: d.description,
             type: d.type || 'string',
             required: d.required !== false,
-            status: collected ? 'completed' : 'pending',
+            status: deliverableStatus,
             value: collected?.value,
             collectedAt: collected?.collectedAt,
             acceptanceCriteria: d.acceptance_criteria,

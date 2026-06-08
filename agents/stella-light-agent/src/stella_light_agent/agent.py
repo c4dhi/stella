@@ -626,28 +626,57 @@ class StellaLightAgent(BaseAgent):
             # Flatten: each deliverable becomes an item with task info in metadata
             items = []
             for task in state.get("tasks", []):
-                for d in task.get("deliverables", []):
-                    item = {
-                        "id": d.get("key"),
-                        "label": d.get("description"),
-                        "status": d.get("status", "pending"),
-                        "required": d.get("required", True),
-                        "value": d.get("value"),
-                        "confidence": d.get("confidence"),
-                        "collected_at": d.get("collected_at"),
+                # The state machine is the single source of truth for whether a
+                # task is done (#291 hybrid model: completed/skipped, or all
+                # required deliverables collected). Ship that real status so the
+                # frontend renders backend truth instead of inferring "done"
+                # from deliverable fill.
+                task_status = task.get("status", "pending")
+                task_deliverables = task.get("deliverables", [])
+
+                if task_deliverables:
+                    for d in task_deliverables:
+                        item = {
+                            "id": d.get("key"),
+                            "label": d.get("description"),
+                            "status": d.get("status", "pending"),
+                            "required": d.get("required", True),
+                            "value": d.get("value"),
+                            "confidence": d.get("confidence"),
+                            "collected_at": d.get("collected_at"),
+                            "metadata": {
+                                "task_id": task.get("id"),
+                                "task_description": task.get("description"),
+                                "task_status": task_status,
+                                "deliverable_type": d.get("type", "string"),
+                                "acceptance_criteria": d.get("acceptance_criteria"),
+                                "reasoning": d.get("reasoning"),
+                            }
+                        }
+                        items.append(item)
+
+                        # Track current item (first pending deliverable in active state)
+                        if state.get("status") == "active" and d.get("status") == "pending" and not current_item_id:
+                            current_item_id = d.get("key")
+                else:
+                    # Deliverable-less task: emit one task-level item so the task
+                    # is visible and carries its real completed/skipped status
+                    # (mirrors the v2 progress adapter).
+                    task_item_id = f"task_{task.get('id', 'unknown')}"
+                    items.append({
+                        "id": task_item_id,
+                        "label": task.get("description", "Task"),
+                        "status": task_status,
+                        "required": task.get("required", True),
                         "metadata": {
                             "task_id": task.get("id"),
                             "task_description": task.get("description"),
-                            "deliverable_type": d.get("type", "string"),
-                            "acceptance_criteria": d.get("acceptance_criteria"),
-                            "reasoning": d.get("reasoning"),
+                            "task_status": task_status,
+                            "is_task_item": True,
                         }
-                    }
-                    items.append(item)
-
-                    # Track current item (first pending deliverable in active state)
-                    if state.get("status") == "active" and d.get("status") == "pending" and not current_item_id:
-                        current_item_id = d.get("key")
+                    })
+                    if state.get("status") == "active" and task_status == "pending" and not current_item_id:
+                        current_item_id = task_item_id
 
             # Map state status to group status
             group_status = state.get("status", "pending")

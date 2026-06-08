@@ -1097,12 +1097,17 @@ describe('agent-driven completion (#291)', () => {
     expect(stateX?.transitions).toHaveLength(1);
   });
 
-  it('setting a deliverable does not complete its task or advance the state', async () => {
+  it('collecting an all-optional task\'s only deliverable completes it and advances (#291 hybrid)', async () => {
+    // task-b's single deliverable is optional. Because the task has NO required
+    // deliverable, collecting every deliverable it declares is what completes it
+    // — otherwise (plans mark everything optional) the state would only advance
+    // on a separately-timed, often turn-late complete_task. Setting the value is
+    // not vacuous: on entry nothing is collected, so the state stays put.
     const svc = await newServiceInStateB('session-opt-setdeliv');
-    const res = await svc.setDeliverable('session-opt-setdeliv', 'opt_note', 'hello', 'optional');
-    expect(res.transitioned).toBe(false);
-    expect(res.taskCompleted).toBeUndefined();
     expect((await svc.getCurrentState('session-opt-setdeliv'))?.stateId).toBe('state-b');
+    const res = await svc.setDeliverable('session-opt-setdeliv', 'opt_note', 'hello', 'optional');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-c');
   });
 
   it('advances once the optional task is explicitly completed', async () => {
@@ -1152,6 +1157,46 @@ describe('agent-driven completion (#291)', () => {
     const res = await svc.skipTask(sessionId, 'req', 'not applicable');
     expect(res.transitioned).toBe(true);
     expect(res.newStateId).toBe('end');
+  });
+
+  it('skipping a task cascades skipped onto its uncollected deliverables (getFullState)', async () => {
+    // Regression: skip_task marks the TASK skipped, but the live UI also reads the
+    // per-deliverable status. Before the cascade, the uncollected deliverable stayed
+    // 'pending' → rendered as an empty circle and was not counted as done.
+    const sessionId = 'session-skip-cascade';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'challenges',
+              description: 'Ask about challenges',
+              deliverables: [
+                { key: 'fitness_challenges', description: 'Challenges they encounter', required: false },
+              ],
+            },
+          ],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const res = await svc.skipTask(sessionId, 'challenges', 'user declined');
+    expect(res.taskSkipped).toBe('challenges');
+
+    const full = await svc.getFullState(sessionId);
+    const task = full?.states[0].tasks.find(t => t.id === 'challenges');
+    expect(task?.status).toBe('skipped');
+    // The uncollected deliverable now inherits the skip rather than staying pending.
+    expect(task?.deliverables[0].status).toBe('skipped');
   });
 
   it('skipState rejects a non-current state', async () => {
@@ -1364,43 +1409,203 @@ describe('getFullState optional-task status on startup (#213)', () => {
     expect(required.get('required-task')).toBe(true);
   });
 
-  it('does NOT auto-complete a task from its deliverable; explicit completion is required (#291)', async () => {
+  it('HYBRID: auto-completes a deliverable-bearing task once all its required deliverables are collected (#291)', async () => {
     const sessionId = 'session-213-collected';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
 
-    // Collecting the required deliverable shows progress but NOT completion.
+    // Collecting the task's single required deliverable now auto-completes the
+    // task — the agent doesn't have to also fire complete_task. This is the
+    // hybrid model that keeps progress derivable from data (a deliverable-less
+    // task would still need an explicit tick; see the next assertions).
     await svc.setDeliverable(sessionId, 'must_field', 'done', 'collected');
     let tasks = new Map(
       (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
     );
-    expect(tasks.get('required-task')).toBe('in_progress');
+    expect(tasks.get('required-task')).toBe('completed');
 
-    // The task completes only when the agent explicitly completes it.
+    // An explicit complete_task remains valid and idempotent.
     await svc.completeTask(sessionId, 'required-task', 'done');
     tasks = new Map(
       (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
     );
     expect(tasks.get('required-task')).toBe('completed');
-    // Untouched optional tasks stay pending.
-    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+
+    // A task whose required deliverable is still missing stays pending, and a
+    // task with NO required deliverable is never auto-completed (no data-defined
+    // bar — it would reintroduce vacuous completion). Both await explicit work.
     expect(tasks.get('optional-task')).toBe('pending');
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
   });
 
-  it('marks an optional-only-deliverable task in_progress once that deliverable is provided', async () => {
+  it('HYBRID: a multi-deliverable task completes only when EVERY required deliverable is collected (#291)', async () => {
+    const sessionId = 'session-hybrid-multi';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-hybrid-multi',
+      title: 'Hybrid Multi',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'flexible',
+          tasks: [
+            {
+              id: 'multi',
+              description: 'task with three required deliverables',
+              deliverables: [
+                { key: 'a', description: 'a', required: true, type: 'string' },
+                { key: 'b', description: 'b', required: true, type: 'string' },
+                { key: 'c', description: 'c', required: false, type: 'string' },
+              ],
+            },
+          ],
+          transitions: [],
+        },
+      ],
+    });
+
+    const statusOf = async () =>
+      new Map(
+        (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+      ).get('multi');
+
+    // First required deliverable: partial -> in_progress, not complete.
+    await svc.setDeliverable(sessionId, 'a', '1', 'first');
+    expect(await statusOf()).toBe('in_progress');
+
+    // Optional deliverable does not complete it either.
+    await svc.setDeliverable(sessionId, 'c', '3', 'optional');
+    expect(await statusOf()).toBe('in_progress');
+
+    // Once the LAST required deliverable lands, the task auto-completes.
+    await svc.setDeliverable(sessionId, 'b', '2', 'second');
+    expect(await statusOf()).toBe('completed');
+  });
+
+  it('HYBRID REGRESSION: collecting every task\'s deliverables advances a flexible state without any complete_task (the live stuck bug)', async () => {
+    // Reproduces the production incident: a flexible state with three
+    // deliverable-bearing tasks where the agent set all deliverables but only
+    // ticked some tasks. Under the hybrid model the state advances purely from
+    // the collected data — no complete_task required.
+    const sessionId = 'session-hybrid-advance';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-hybrid-advance',
+      title: 'Hybrid Advance',
+      initial_state_id: 'habits',
+      states: [
+        {
+          id: 'habits',
+          title: 'Exercise Habits',
+          type: 'flexible',
+          tasks: [
+            { id: 't1', description: 'preferred', deliverables: [{ key: 'pref', description: 'p', required: true, type: 'string' }] },
+            { id: 't2', description: 'frequency', deliverables: [{ key: 'freq', description: 'f', required: true, type: 'string' }] },
+            { id: 't3', description: 'duration', deliverables: [{ key: 'dur', description: 'd', required: true, type: 'string' }] },
+          ],
+          transitions: [
+            { target_state_id: 'goals', condition_type: 'all_tasks_complete', priority: 1 },
+          ],
+        },
+        // Next state has its own task so it does not chain onward.
+        {
+          id: 'goals',
+          title: 'Goals and Challenges',
+          type: 'flexible',
+          tasks: [{ id: 'g1', description: 'goal', deliverables: [{ key: 'goal', description: 'g', required: true, type: 'string' }] }],
+          transitions: [],
+        },
+      ],
+    });
+
+    // Agent sets all three deliverables and never calls complete_task.
+    await svc.setDeliverable(sessionId, 'pref', 'strength', 'collected');
+    await svc.setDeliverable(sessionId, 'freq', '3x', 'collected');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('habits'); // not yet
+    const last = await svc.setDeliverable(sessionId, 'dur', '45m', 'collected');
+
+    // The final deliverable satisfies all_tasks_complete and advances the state.
+    expect(last.transitioned).toBe(true);
+    expect(last.newStateId).toBe('goals');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('goals');
+  });
+
+  it('ALL-OPTIONAL REGRESSION: a state whose every deliverable is required:false still advances from data alone (the live "Goals and Challenges" lag)', async () => {
+    // Exact shape of the production plan that advanced a turn late: a flexible
+    // state with two tasks, each carrying ONE deliverable marked required:false
+    // (plan generators emit everything optional). Collecting both deliverables —
+    // with NO complete_task at all — must complete the state the same turn.
+    const sessionId = 'session-all-optional';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-all-optional',
+      title: 'All Optional',
+      initial_state_id: 'goals',
+      states: [
+        {
+          id: 'goals',
+          title: 'Goals and Challenges',
+          type: 'flexible',
+          tasks: [
+            { id: 'g-goal', description: 'Ask about fitness goals', deliverables: [{ key: 'fitness_goal', description: 'goal', required: false, type: 'string' }] },
+            { id: 'g-chal', description: 'Ask about challenges', deliverables: [{ key: 'fitness_challenges', description: 'challenges', required: false, type: 'string' }] },
+          ],
+          transitions: [{ target_state_id: 'followup', condition_type: 'all_tasks_complete', priority: 1 }],
+        },
+        {
+          id: 'followup',
+          title: 'Follow-up',
+          type: 'flexible',
+          tasks: [{ id: 'f-sched', description: 'Schedule follow-up', deliverables: [{ key: 'followup_schedule', description: 'sched', required: false, type: 'string' }] }],
+          transitions: [],
+        },
+      ],
+    });
+
+    // First optional deliverable: only one of two tasks is addressed -> hold.
+    await svc.setDeliverable(sessionId, 'fitness_goal', 'be more active', 'collected');
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('goals');
+
+    // Second optional deliverable completes the last task -> advance, no tick.
+    const advanced = await svc.setDeliverable(sessionId, 'fitness_challenges', 'allergies', 'collected');
+    expect(advanced.transitioned).toBe(true);
+    expect(advanced.newStateId).toBe('followup');
+
+    // And the badges reflect backend truth without any complete_task call.
+    const full = await svc.getFullState(sessionId);
+    const goals = full?.states.find(s => s.id === 'goals');
+    expect(goals?.status).toBe('completed');
+    expect(new Map(goals?.tasks.map(t => [t.id, t.status])).get('g-chal')).toBe('completed');
+  });
+
+  it('completes an optional-only-deliverable task once all its deliverables are collected (#291 hybrid)', async () => {
     const sessionId = 'session-213-optional-progress';
     const { prisma } = createPrismaMock();
     const svc = new StateMachineService(prisma);
     await svc.initializeForSession(sessionId, buildOptionalTaskPlan());
 
+    // On entry the task is pending — not vacuously complete.
+    let tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('opt-deliverable-task')).toBe('pending');
+
+    // opt_note is opt-deliverable-task's ONLY deliverable. Since the task has no
+    // required deliverable, collecting all it declares completes it — this is the
+    // fix for plans that mark every deliverable optional (the "advances a turn
+    // late" lag). Tasks that still have a required deliverable are unaffected.
     await svc.setDeliverable(sessionId, 'opt_note', 'hi', 'optional provided');
 
-    const fullState = await svc.getFullState(sessionId);
-    const tasks = new Map(fullState?.states[0].tasks.map(t => [t.id, t.status]));
-
-    // Optional work that was actually done shows progress but never auto-completes.
-    expect(tasks.get('opt-deliverable-task')).toBe('in_progress');
+    tasks = new Map(
+      (await svc.getFullState(sessionId))?.states[0].tasks.map(t => [t.id, t.status]),
+    );
+    expect(tasks.get('opt-deliverable-task')).toBe('completed');
   });
 });
 
@@ -1910,5 +2115,267 @@ describe('nested composite conditions', () => {
 
     const result = await (svc as any).evaluateAndTransition(sessionId);
     expect(result.transitioned).toBe(false);
+  });
+});
+
+// =============================================================================
+// Realistic conversation simulation (#291)
+//
+// Rather than poking one mutator at a time, these tests drive a full multi-state
+// dialogue through the exact public tools the agent calls
+// (set_deliverable / complete_task / skip_task / skip_state / a conversational
+// turn). They mirror the production "Grace" plan that surfaced the live stuck
+// bug — Greeting (sequential) -> Exercise Habits (flexible) -> Goals (goal) —
+// so the class of bug ("agent collected the data but forgot to tick the task")
+// is reproduced the way it actually happens in a conversation, and we assert the
+// state machine stays the single source of truth throughout.
+// =============================================================================
+describe('realistic conversation simulation (#291)', () => {
+  const GRACE_PLAN = (): PlanData => ({
+    id: 'plan-grace',
+    title: 'Grace',
+    initial_state_id: 'greeting',
+    states: [
+      {
+        id: 'greeting',
+        title: 'Greeting',
+        type: 'strict',
+        tasks: [
+          {
+            id: 'greet',
+            description: 'Greet and ask for name',
+            deliverables: [{ key: 'user_name', description: "user's name", required: true, type: 'string' }],
+          },
+        ],
+        transitions: [{ target_state_id: 'exercise', condition_type: 'all_tasks_complete', priority: 1 }],
+      },
+      {
+        id: 'exercise',
+        title: 'Exercise Habits',
+        type: 'flexible',
+        tasks: [
+          {
+            id: 'ex-pref',
+            description: 'Ask about preferred exercise',
+            deliverables: [{ key: 'preferred_exercise', description: 'preferred exercise', required: true, type: 'string' }],
+          },
+          {
+            id: 'ex-freq',
+            description: 'Ask about workout frequency',
+            deliverables: [{ key: 'weekly_frequency', description: 'weekly frequency', required: true, type: 'string' }],
+          },
+          {
+            id: 'ex-dur',
+            description: 'Ask about workout duration',
+            deliverables: [{ key: 'session_duration_minutes', description: 'duration', required: true, type: 'string' }],
+          },
+        ],
+        transitions: [{ target_state_id: 'goals', condition_type: 'all_tasks_complete', priority: 1 }],
+      },
+      {
+        id: 'goals',
+        title: 'Goals and Challenges',
+        type: 'goal',
+        goal: {
+          objective: "Understand the user's fitness goals",
+          deliverables: [{ key: 'primary_goal', description: 'primary goal', required: true, type: 'string' }],
+        },
+        tasks: [{ id: 'goal-explore', description: 'Explore goals together' }],
+        transitions: [],
+      },
+    ],
+  });
+
+  // A tiny conversational harness so each scenario reads like a dialogue. Every
+  // method mirrors exactly one thing the agent (or the runtime) does and returns
+  // the state-machine result, so a scenario can assert on a transition at the
+  // precise tool call that should (or should not) trigger it.
+  class Grace {
+    private constructor(
+      private readonly svc: StateMachineService,
+      readonly sessionId: string,
+    ) {}
+
+    static async start(sessionId: string): Promise<Grace> {
+      const { prisma } = createPrismaMock();
+      const svc = new StateMachineService(prisma);
+      await svc.initializeForSession(sessionId, GRACE_PLAN());
+      return new Grace(svc, sessionId);
+    }
+
+    /** Agent records a piece of information the user provided (set_deliverable). */
+    collect(key: string, value: unknown) {
+      return this.svc.setDeliverable(this.sessionId, key, value, `user provided ${key}`);
+    }
+    /** Agent explicitly marks a task done (complete_task). */
+    tick(taskId: string) {
+      return this.svc.completeTask(this.sessionId, taskId, 'addressed');
+    }
+    /** Agent skips a task it judges unnecessary (skip_task). */
+    skip(taskId: string) {
+      return this.svc.skipTask(this.sessionId, taskId, 'user declined');
+    }
+    /** Agent abandons the whole current state (skip_state). */
+    leaveState() {
+      return this.svc.skipState(this.sessionId, undefined, 'agent advanced the conversation');
+    }
+    /** A conversational turn that makes no state progress (small talk). */
+    smallTalk() {
+      return this.svc.incrementTurn(this.sessionId);
+    }
+
+    async at(): Promise<string | undefined> {
+      return (await this.svc.getCurrentState(this.sessionId))?.stateId;
+    }
+    async taskStatus(stateId: string, taskId: string): Promise<string | undefined> {
+      const full = await this.svc.getFullState(this.sessionId);
+      return full?.states.find(s => s.id === stateId)?.tasks.find(t => t.id === taskId)?.status;
+    }
+    async stateBadge(stateId: string): Promise<string | undefined> {
+      const full = await this.svc.getFullState(this.sessionId);
+      return full?.states.find(s => s.id === stateId)?.status;
+    }
+  }
+
+  it('THE LIVE BUG: agent collects all three habits but forgets to tick the last task — state still advances', async () => {
+    const g = await Grace.start('sim-live-bug');
+
+    // --- Greeting -------------------------------------------------------------
+    // "Hi! I'm Grace. What's your name?" / "I'm Alex."
+    // The agent records the name. Under the hybrid model that single deliverable
+    // already satisfies the greeting task, so we advance without an explicit tick.
+    const afterName = await g.collect('user_name', 'Alex');
+    expect(afterName.transitioned).toBe(true);
+    expect(afterName.newStateId).toBe('exercise');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.stateBadge('greeting')).toBe('completed');
+
+    // --- Exercise Habits (the incident) --------------------------------------
+    // The agent asks all three questions and records every answer, but only
+    // remembers to call complete_task for the first two — exactly the tool-call
+    // sequence seen in the production logs (set_deliverable x3, complete_task x2).
+    await g.collect('preferred_exercise', 'strength workouts');
+    await g.tick('ex-pref');
+    await g.collect('weekly_frequency', '3x per week');
+    await g.tick('ex-freq');
+
+    expect(await g.at()).toBe('exercise'); // not yet — duration still open
+
+    // The agent records the duration but NEVER ticks ex-dur. Previously this hung
+    // the conversation at 3/3 deliverables forever; now the deliverable itself
+    // completes the task and the state advances.
+    const afterDuration = await g.collect('session_duration_minutes', '45');
+    expect(afterDuration.transitioned).toBe(true);
+    expect(afterDuration.newStateId).toBe('goals');
+    expect(await g.at()).toBe('goals');
+
+    // The UI badge for the un-ticked task must read 'completed', matching the
+    // backend — no more "3/3 done but stuck" divergence.
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('completed');
+    expect(await g.stateBadge('exercise')).toBe('completed');
+  });
+
+  it('STRAY TICK: a redundant complete_task issued after the auto-advance is a harmless no-op', async () => {
+    const g = await Grace.start('sim-stray-tick');
+    await g.collect('user_name', 'Sam'); // -> exercise
+
+    // The agent batches its turn as: record duration, then (redundantly) tick the
+    // other two tasks it already handled. Recording the LAST deliverable advances
+    // to 'goals' immediately, so the subsequent ticks now target a task that no
+    // longer lives in the current state. They must succeed as no-ops, not error.
+    await g.collect('preferred_exercise', 'running');
+    await g.collect('weekly_frequency', 'daily');
+    const advance = await g.collect('session_duration_minutes', '30');
+    expect(advance.newStateId).toBe('goals');
+
+    const strayPref = await g.tick('ex-pref');
+    const strayFreq = await g.tick('ex-freq');
+    expect(strayPref.success).toBe(true);
+    expect(strayFreq.success).toBe(true);
+    expect(await g.at()).toBe('goals'); // the stray ticks didn't disturb anything
+  });
+
+  it('FLEXIBLE OUT-OF-ORDER: the user volunteers answers in a different order, with zero complete_task calls', async () => {
+    const g = await Grace.start('sim-out-of-order');
+    await g.collect('user_name', 'Robin'); // -> exercise
+
+    // "Actually I usually train for about an hour." (duration first, unprompted)
+    await g.collect('session_duration_minutes', '60');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('completed');
+    expect(await g.taskStatus('exercise', 'ex-pref')).toBe('pending');
+
+    // "...mostly yoga, five days a week." (preferred + frequency, still no ticks)
+    await g.collect('preferred_exercise', 'yoga');
+    expect(await g.at()).toBe('exercise');
+    const last = await g.collect('weekly_frequency', '5x per week');
+
+    expect(last.transitioned).toBe(true);
+    expect(last.newStateId).toBe('goals');
+  });
+
+  it('USER DECLINES: the agent skips a refused question and the state still advances', async () => {
+    const g = await Grace.start('sim-decline');
+    await g.collect('user_name', 'Jordan'); // -> exercise
+
+    await g.collect('preferred_exercise', 'swimming');
+    await g.collect('weekly_frequency', '2x per week');
+
+    // "I'd rather not say how long I train." -> agent skips that task.
+    expect(await g.at()).toBe('exercise');
+    const afterSkip = await g.skip('ex-dur');
+
+    expect(afterSkip.transitioned).toBe(true);
+    expect(afterSkip.newStateId).toBe('goals');
+    expect(await g.taskStatus('exercise', 'ex-dur')).toBe('skipped');
+  });
+
+  it('SMALL TALK does not advance: ordinary conversational turns with no data keep the state put', async () => {
+    const g = await Grace.start('sim-small-talk');
+    await g.collect('user_name', 'Casey'); // -> exercise
+
+    // A few back-and-forth turns where the user chats but answers nothing.
+    for (let i = 0; i < 4; i++) {
+      const r = await g.smallTalk();
+      expect(r.transitioned).toBe(false);
+    }
+    expect(await g.at()).toBe('exercise');
+
+    // Partial progress is still just partial — one answer doesn't advance.
+    await g.collect('preferred_exercise', 'cycling');
+    expect(await g.at()).toBe('exercise');
+    expect(await g.stateBadge('exercise')).toBe('active');
+  });
+
+  it('AGENT JUMPS AHEAD: skip_state moves the conversation on mid-state', async () => {
+    const g = await Grace.start('sim-jump');
+    await g.collect('user_name', 'Lee'); // -> exercise
+
+    // The agent reads the room and decides to move on after one answer.
+    await g.collect('preferred_exercise', 'hiking');
+    expect(await g.at()).toBe('exercise');
+
+    const jumped = await g.leaveState();
+    expect(jumped.transitioned).toBe(true);
+    expect(jumped.newStateId).toBe('goals');
+    expect(await g.at()).toBe('goals');
+  });
+
+  it('GOAL STATE: deliverable-less scaffolding is non-blocking and the goal accepts its marker', async () => {
+    const g = await Grace.start('sim-goal');
+    // Fast-forward to the goal state through the normal flow.
+    await g.collect('user_name', 'Max');
+    await g.collect('preferred_exercise', 'pilates');
+    await g.collect('weekly_frequency', '4x per week');
+    await g.collect('session_duration_minutes', '50');
+    expect(await g.at()).toBe('goals');
+
+    // The deliverable-less 'goal-explore' task must NOT block the goal (it's
+    // guidance scaffolding); progress is driven by the goal deliverable.
+    expect(await g.taskStatus('goals', 'goal-explore')).toBe('pending');
+
+    // Collecting the goal deliverable records it without error in goal mode.
+    const collected = await g.collect('primary_goal', 'run a half marathon');
+    expect(collected.success).toBe(true);
   });
 });
