@@ -23,12 +23,12 @@ metadata:
     app: tts-service
 spec:
   replicas: 1
-  # Recreate (NOT the default RollingUpdate): this pod pins a single GPU and
-  # requests 16Gi RAM, so a second copy can never co-schedule on the node — a
-  # rolling update leaves the new pod Pending ("Insufficient memory") forever
-  # while the old pod keeps the GPU, wedging the rollout. Recreate tears the old
-  # pod down first, which also guarantees each start gets a clean GPU (no VRAM
-  # left leaked by an overlapping previous instance).
+  # Recreate (NOT the default RollingUpdate): this pod shares one node GPU via
+  # runtimeClassName (no exclusive nvidia.com/gpu request), so a rolling update
+  # would briefly run two TTS pods both loading the model into the same VRAM —
+  # risking CUDA OOM and leaving the rollout flapping. Recreate tears the old
+  # pod down first, guaranteeing each start gets a clean GPU/VRAM with no
+  # overlapping instance.
   strategy:
     type: Recreate
   selector:
@@ -275,11 +275,16 @@ spec:
         # QWEN3:       optional: true
         resources:
           requests:
-            memory: "2Gi"
+            # qwen3 loads a multi-GB model in-process; give it more headroom than
+            # the lighter providers (piper/kokoro/chatterbox). Split via the same
+            # QWEN3/QWEN3_DISABLE marker convention the deploy uses elsewhere.
+            # QWEN3_DISABLE: memory: "2Gi"
+            # QWEN3: memory: "4Gi"
             cpu: "250m"
             # GPU: nvidia.com/gpu: "1"
           limits:
-            memory: "6Gi"
+            # QWEN3_DISABLE: memory: "6Gi"
+            # QWEN3: memory: "12Gi"
             cpu: "2000m"
             # GPU: nvidia.com/gpu: "1"
         readinessProbe:

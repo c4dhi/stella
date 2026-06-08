@@ -9,7 +9,7 @@
 #
 # Build args:
 #   ENABLE_GPU=true       -> CUDA base image + CUDA-enabled wheels
-#   TTS_PROVIDER=<name>   -> piper | kokoro | chatterbox | qwen3 | elevenlabs
+#   TTS_PROVIDER=<name>   -> piper | kokoro | chatterbox | qwen3
 #                            (also accepts `auto`, which installs the
 #                             CPU-friendly fallback chain: piper + kokoro)
 #

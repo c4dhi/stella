@@ -29,6 +29,7 @@ LICENSE NOTES
 
 import asyncio
 import os
+import threading
 import time
 from typing import Optional, Tuple, AsyncGenerator
 
@@ -339,8 +340,11 @@ class Qwen3Provider(TTSProvider):
 
         for attempt_idx, attempt_lang in enumerate(attempts):
             queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+            # Set on early consumer exit (barge-in -> GeneratorExit) so the worker
+            # thread stops synthesizing into an abandoned queue.
+            stop_event = threading.Event()
 
-            def _producer(attempt_lang=attempt_lang):
+            def _producer(attempt_lang=attempt_lang, queue=queue, stop_event=stop_event):
                 try:
                     for audio_chunk, _sr, _timing in self._model.generate_voice_clone_streaming(
                         text=text,
@@ -349,7 +353,16 @@ class Qwen3Provider(TTSProvider):
                         ref_text=self._ref_text,
                         chunk_size=codec_chunk,
                     ):
-                        loop.call_soon_threadsafe(queue.put_nowait, audio_chunk)
+                        if stop_event.is_set():
+                            break
+                        # Back-pressured handoff: block this worker thread until the
+                        # consumer frees a slot rather than dropping audio when the
+                        # bounded queue is full (put_nowait would raise QueueFull
+                        # inside call_soon_threadsafe and be swallowed -> silent gap).
+                        try:
+                            asyncio.run_coroutine_threadsafe(queue.put(audio_chunk), loop).result()
+                        except RuntimeError:
+                            break  # event loop gone (shutdown) — stop producing
                 except Exception as e:
                     loop.call_soon_threadsafe(queue.put_nowait, e)
                 finally:
@@ -362,34 +375,44 @@ class Qwen3Provider(TTSProvider):
             errored = False
             leftover = np.empty(0, dtype=np.int16)
 
-            while True:
-                item = await queue.get()
-                if isinstance(item, Exception):
-                    errored = True
-                    print(f"[Qwen3] Streaming error (language={attempt_lang!r}): {item}")
-                    break
-                if item is _QWEN3_STREAM_DONE:
+            try:
+                while True:
+                    item = await queue.get()
+                    if isinstance(item, Exception):
+                        errored = True
+                        print(f"[Qwen3] Streaming error (language={attempt_lang!r}): {item}")
+                        break
+                    if item is _QWEN3_STREAM_DONE:
+                        if len(leftover):
+                            yield (leftover, True)
+                        elif first_yielded:
+                            yield (np.empty(0, dtype=np.int16), True)
+                        break
+
+                    int16 = self._to_int16_numpy(item)
                     if len(leftover):
-                        yield (leftover, True)
-                    elif first_yielded:
-                        yield (np.empty(0, dtype=np.int16), True)
-                    break
+                        int16 = np.concatenate([leftover, int16])
 
-                int16 = self._to_int16_numpy(item)
-                if len(leftover):
-                    int16 = np.concatenate([leftover, int16])
+                    if not first_yielded:
+                        print(f"[Qwen3] First audio in {(time.time() - t0) * 1000:.0f}ms (stream)")
 
-                if not first_yielded:
-                    print(f"[Qwen3] First audio in {(time.time() - t0) * 1000:.0f}ms (stream)")
+                    total = len(int16)
+                    full = total - (total % chunk_size)
+                    for i in range(0, full, chunk_size):
+                        yield (int16[i:i + chunk_size], False)
+                        first_yielded = True
+                    leftover = int16[full:]
 
-                total = len(int16)
-                full = total - (total % chunk_size)
-                for i in range(0, full, chunk_size):
-                    yield (int16[i:i + chunk_size], False)
-                    first_yielded = True
-                leftover = int16[full:]
-
-            await producer_fut
+                await producer_fut
+            finally:
+                # Stop + unblock the producer so a cancelled stream doesn't leak a
+                # worker thread mid-synthesis (parked on a full queue).
+                stop_event.set()
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
             if first_yielded:
                 print(f"[Qwen3] Stream completed in {(time.time() - t0) * 1000:.0f}ms")
