@@ -212,21 +212,33 @@ export function validateRows(
 export interface ToVariablesMapOptions {
   mode?: EditorMode
   allowEmptyValues?: boolean
+  /**
+   * Edit mode after the variable set was touched. The backend overwrites the
+   * whole encrypted blob (no merge), so a partial map would destroy the
+   * untouched secrets it omits. When true, the serializer enforces the
+   * full-replace invariant (every keyed row must carry a value) and returns
+   * `null` otherwise — making the unsafe submit fail closed instead of
+   * silently dropping rows.
+   */
+  requireAllValues?: boolean
 }
 
 /**
  * Serialize rows into the `Record<string,string>` the API expects.
- * Returns null when the rows are invalid.
+ * Returns null when the rows are invalid (incl. the full-replace invariant
+ * when `requireAllValues` is set).
  *
  * In edit mode, rows whose value is still preserved (untouched) are omitted so
  * the backend keeps the existing encrypted value. Callers pair this with
- * `variablesTouched` to decide whether to send `variables` at all.
+ * `variablesTouched` to decide whether to send `variables` at all — and, once
+ * touched, MUST pass `requireAllValues` so the omit-preserved path can never
+ * produce a partial overwrite.
  */
 export function toVariablesMap(
   rows: EnvVarRow[],
-  { mode = 'create', allowEmptyValues = true }: ToVariablesMapOptions = {},
+  { mode = 'create', allowEmptyValues = true, requireAllValues = false }: ToVariablesMapOptions = {},
 ): Record<string, string> | null {
-  const validation = validateRows(rows, { allowEmptyValues })
+  const validation = validateRows(rows, { allowEmptyValues, requireAllValues })
   if (!validation.isValid) return null
 
   const out: Record<string, string> = {}

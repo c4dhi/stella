@@ -121,8 +121,11 @@ export function useEnvVarListEditor(options: UseEnvVarListEditorOptions = {}): E
   }, [mode])
 
   const toMap = useCallback(
-    () => toVariablesMap(rows, { mode, allowEmptyValues }),
-    [rows, mode, allowEmptyValues],
+    // requireAllValues is forwarded so a touched edit can't serialize a partial
+    // map that would overwrite (destroy) the untouched encrypted secrets the
+    // backend keeps — it returns null instead, and submit fails closed.
+    () => toVariablesMap(rows, { mode, allowEmptyValues, requireAllValues }),
+    [rows, mode, allowEmptyValues, requireAllValues],
   )
 
   return {

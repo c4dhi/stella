@@ -215,11 +215,33 @@ describe('toVariablesMap', () => {
     expect(toVariablesMap(rows)).toEqual({ A: '1' })
   })
 
-  it('edit mode omits untouched preserved rows', () => {
+  it('edit mode omits untouched preserved rows (no requireAllValues)', () => {
     let rows = buildInitialRows({ initial: { KEEP: '', CHANGE: '' }, mode: 'edit' })
     const changeRow = rows.find((r) => r.key === 'CHANGE')!
     rows = updateRowValue(rows, changeRow.id, 'new')
     expect(toVariablesMap(rows, { mode: 'edit' })).toEqual({ CHANGE: 'new' })
+  })
+
+  it('requireAllValues returns null when an untouched secret would be dropped (data-loss guard)', () => {
+    // Edit a template with two secrets, change only one. The backend overwrites
+    // the whole blob, so emitting { CHANGE } would destroy KEEP. The serializer
+    // must fail closed rather than return a partial map.
+    let rows = buildInitialRows({ initial: { KEEP: '', CHANGE: '' }, mode: 'edit' })
+    const changeRow = rows.find((r) => r.key === 'CHANGE')!
+    rows = updateRowValue(rows, changeRow.id, 'new')
+    expect(toVariablesMap(rows, { mode: 'edit', requireAllValues: true })).toBeNull()
+  })
+
+  it('requireAllValues serializes the full map once every value is re-entered', () => {
+    let rows = buildInitialRows({ initial: { KEEP: '', CHANGE: '' }, mode: 'edit' })
+    const keepRow = rows.find((r) => r.key === 'KEEP')!
+    const changeRow = rows.find((r) => r.key === 'CHANGE')!
+    rows = updateRowValue(rows, keepRow.id, 'kept')
+    rows = updateRowValue(rows, changeRow.id, 'new')
+    expect(toVariablesMap(rows, { mode: 'edit', requireAllValues: true })).toEqual({
+      KEEP: 'kept',
+      CHANGE: 'new',
+    })
   })
 
   it('omits untouched template rows but includes overridden ones (create)', () => {
