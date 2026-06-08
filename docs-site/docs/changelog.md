@@ -29,6 +29,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 **Stella Light**
 - **Barge-in support** at parity with stella-v2: a configurable Barge-in Evaluator (COMMIT/RESUME classifier) with an editable prompt/model in the Configurator, plus `BARGE_IN_ENABLED` / `BARGE_IN_EVAL_TIMEOUT_MS` env controls
 
+### Changed
+
+**State machine — task completion (#291)**
+- Task completion is now derived from collected data: a task with deliverables is addressed automatically once its **required** deliverables are collected (or, for an all-optional task, once **every** declared deliverable is in), with no separate "mark complete" step. Deliverable-less tasks still require an explicit complete/skip. A state advances only once **every** task (required *and* optional) is addressed, and is never vacuously complete on entry.
+
+### Fixed
+
+**Progress / to-do rendering (#291)**
+- A skipped task no longer renders as pending — it shows as skipped and counts toward "tasks done". Skipping a task now also marks its uncollected deliverables `skipped`.
+- **stella-v2:** skipping a task no longer makes the whole state disappear from the route view (group status now follows the state machine's authoritative status), and the progress percentage is no longer mis-scaled.
+- Live and historical-replay views now share one progress→to-do conversion, so they can't disagree about task status.
+- Follow-up #310 will consolidate the shared `full_state → progress` transform into the SDK so the agents stop drifting.
+
 ---
 
 ## [0.3.0] - 2025-01-29
