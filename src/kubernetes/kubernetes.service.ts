@@ -22,7 +22,7 @@ export interface AgentPodConfig {
   livekitApiSecret: string;
   ttsProvider: string;
   agentConfig?: Record<string, unknown>;  // Agent-specific config (passed as AGENT_CONFIG env var)
-  agentType?: string;       // Agent type (e.g., "stella-agent") - determines which image to use
+  agentType?: string;       // Agent type (e.g., "stella-light-agent") - determines which image to use
   forceRebuild?: boolean;   // Force rebuild the agent image
   // Pre-resolved env vars: template vars decrypted and merged with manual overrides by the caller.
   // KubernetesService receives the final map and spreads it directly into the K8s Secret.

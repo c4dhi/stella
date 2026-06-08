@@ -179,6 +179,17 @@ class BatchUpdateTool(BaseTool):
         for description in duplicate_descriptions:
             pending_by_description.pop(description, None)
 
+        def _drop_pending(task_id: str) -> None:
+            # Keep the local pending snapshot in sync as tasks are addressed within
+            # this same batch. Without this, a task completed in the completes loop
+            # still looks "pending" to the skips loop (validated against the same
+            # stale set), so a later skip is dispatched and bounced into
+            # skips_failed — a spurious failure in combined batches.
+            pending_ids.discard(task_id)
+            for desc, tid in list(pending_by_description.items()):
+                if tid == task_id:
+                    pending_by_description.pop(desc, None)
+
         # Process tasks — skip if already transitioned
         if not transitioned:
             for i, t in enumerate(tasks):
@@ -200,6 +211,7 @@ class BatchUpdateTool(BaseTool):
                         resolved_task_id, t.get("reasoning", "")
                     )
                     if result.get("success"):
+                        _drop_pending(resolved_task_id)
                         results["tasks_completed"].append({
                             "task_id": resolved_task_id,
                             "transitioned": result.get("transitioned", False),
@@ -260,6 +272,7 @@ class BatchUpdateTool(BaseTool):
                     resolved_task_id, s.get("reasoning", "")
                 )
                 if result.get("success"):
+                    _drop_pending(resolved_task_id)
                     results["tasks_skipped"].append({
                         "task_id": resolved_task_id,
                         "transitioned": result.get("transitioned", False),
