@@ -248,47 +248,18 @@ class ToolProcessor:
                 tool_choice="auto"
             )
 
-            # Align Phase 2 (extraction) with Phase 1 (speech). Previously Phase 2
-            # ran from the SAME [system, user] context as Phase 1 and never saw
-            # what Phase 1 actually said, so the two diverged: the agent could
-            # warmly acknowledge "great goal!" in speech while the tool phase
-            # failed to record it, leaving the deliverable uncollected and the
-            # conversation looping. We now feed Phase 1's reply into Phase 2 and
-            # instruct it to record everything the user has provided — including
-            # whatever the reply just acknowledged — so the model that SPEAKS
-            # informs the model that RECORDS.
-            tool_messages = list(messages)
-            if accumulated_text.strip():
-                tool_messages.append(
-                    LLMMessage(role="assistant", content=accumulated_text.strip())
-                )
-            tool_messages.append(
-                LLMMessage(
-                    role="user",
-                    content=(
-                        "Internal bookkeeping step — the user does NOT see this and "
-                        "will NOT get another reply now. Looking at the conversation "
-                        "above, INCLUDING the reply you just gave: if the user has "
-                        "actually stated a concrete value for a deliverable (a name, "
-                        "a number, a preference, etc.) that isn't recorded yet, call "
-                        "set_deliverable with that EXACT value — and if your reply "
-                        "just acknowledged such a value, record it now. "
-                        "STRICT RULES: never record an empty, blank, guessed, or "
-                        "placeholder value; never set a deliverable the user has not "
-                        "actually provided. Do NOT skip or complete a task because "
-                        "its information is still missing or to move things along — "
-                        "only call skip_task when the user EXPLICITLY asked to skip, "
-                        "and only call complete_task for a task that has no "
-                        "deliverables and that you actually carried out. If there is "
-                        "nothing concrete to record and no explicit skip request, "
-                        "make NO tool calls at all."
-                    ),
-                )
-            )
-
             try:
+                # Extraction runs from the plain [system, user] context. We do NOT
+                # feed Phase 1's spoken reply into this pass: an earlier attempt to
+                # do so (plus an explicit "record what you acknowledged" directive)
+                # backfired badly — because the reply asks the NEXT question, the
+                # extractor keyed off the wrong deliverable (recorded a placeholder
+                # into preferred_exercise when the user only gave their name) and
+                # skipped tasks for missing info. Mapping the user's latest message
+                # to deliverables is the reliable baseline; improving recall of
+                # already-stated answers belongs in the prompt/steering work (#306).
                 tool_response = await self.llm_service.generate(
-                    messages=tool_messages,
+                    messages=messages,
                     config=tool_config,
                     callback=None,
                     component_name="tool_processor_tools"
