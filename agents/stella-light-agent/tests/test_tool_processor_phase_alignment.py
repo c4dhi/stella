@@ -113,12 +113,16 @@ def test_phase2_receives_phase1_reply_and_extraction_directive():
         "Phase 2 context must contain Phase 1's spoken reply"
     )
 
-    # And an explicit directive to record what was provided/acknowledged.
+    # A directive to record what was provided/acknowledged — but CONSERVATIVELY.
     directive = contents[-1].lower()
     assert "set_deliverable" in directive
     assert "record" in directive
-    # It must stay silent (internal bookkeeping, no second spoken turn).
-    assert "only tool calls" in directive or "do not produce" in directive
+    # Guards against the regression where the directive made the model tool-spam:
+    # no empty/placeholder values, no skipping tasks just because info is missing,
+    # and a no-op path when there's nothing concrete to record.
+    assert "empty" in directive, "must forbid recording empty/placeholder values"
+    assert "explicitly" in directive, "skip_task only on an explicit user request"
+    assert "no tool calls" in directive, "must allow making no tool calls"
 
 
 def test_phase2_extracts_the_acknowledged_deliverable():

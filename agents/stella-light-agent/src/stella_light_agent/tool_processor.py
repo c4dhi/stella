@@ -266,16 +266,22 @@ class ToolProcessor:
                 LLMMessage(
                     role="user",
                     content=(
-                        "Internal bookkeeping step (the user does NOT see this and "
-                        "will NOT receive another reply now). Based on the whole "
-                        "conversation above, INCLUDING the assistant reply you just "
-                        "gave, call set_deliverable for every piece of information "
-                        "the user has actually provided but that has not been "
-                        "recorded yet — if your reply acknowledged something (e.g. "
-                        "a goal, a number, a preference), record it now. Then call "
-                        "complete_task / skip_task for any task the user has "
-                        "addressed or asked to skip. Emit ONLY tool calls; do not "
-                        "produce any conversational text."
+                        "Internal bookkeeping step — the user does NOT see this and "
+                        "will NOT get another reply now. Looking at the conversation "
+                        "above, INCLUDING the reply you just gave: if the user has "
+                        "actually stated a concrete value for a deliverable (a name, "
+                        "a number, a preference, etc.) that isn't recorded yet, call "
+                        "set_deliverable with that EXACT value — and if your reply "
+                        "just acknowledged such a value, record it now. "
+                        "STRICT RULES: never record an empty, blank, guessed, or "
+                        "placeholder value; never set a deliverable the user has not "
+                        "actually provided. Do NOT skip or complete a task because "
+                        "its information is still missing or to move things along — "
+                        "only call skip_task when the user EXPLICITLY asked to skip, "
+                        "and only call complete_task for a task that has no "
+                        "deliverables and that you actually carried out. If there is "
+                        "nothing concrete to record and no explicit skip request, "
+                        "make NO tool calls at all."
                     ),
                 )
             )
