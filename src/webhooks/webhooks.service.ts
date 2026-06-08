@@ -577,7 +577,7 @@ export class WebhooksService {
           {
             name: config.name || 'Agent',
             icon: config.icon || '🤖',
-            agentType: config.agentType || 'stella-agent',
+            agentType: config.agentType || 'stella-light-agent',
             config: config.agentConfig || {},
             agentConfigurationId: config.agentConfigurationId,
             envVarTemplateId: config.envVarTemplateId,

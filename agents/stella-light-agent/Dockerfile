@@ -19,11 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy SDK first (dependency)
 COPY agents/stella-ai-agent-sdk /app/stella-ai-agent-sdk
 
-# Copy stella-light-agent
+# Copy stella-light-agent (includes its own config/plans)
 COPY agents/stella-light-agent /app/stella-light-agent
-
-# Copy plans from stella-agent (stella-light-agent uses a symlink which Docker doesn't follow)
-COPY agents/stella-agent/config/plans /app/stella-light-agent/config/plans
 
 # Install SDK (editable mode for development)
 RUN pip install --no-cache-dir /app/stella-ai-agent-sdk

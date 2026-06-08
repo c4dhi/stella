@@ -44,21 +44,9 @@ export class AgentImageService {
   // Registry of known agent types and their build contexts
   // Paths are relative to stella-backend/ directory (the new context)
   private readonly agentRegistry: Map<string, AgentImageConfig> = new Map([
-    ['stella-agent', {
-      imageName: 'stella-agent',
-      dockerfilePath: 'agents/stella-agent/Dockerfile',
-      contextPath: '.',
-      tag: 'latest',
-    }],
     ['stella-light-agent', {
       imageName: 'stella-light-agent',
       dockerfilePath: 'agents/stella-light-agent/Dockerfile',
-      contextPath: '.',
-      tag: 'latest',
-    }],
-    ['echo-agent', {
-      imageName: 'echo-agent',
-      dockerfilePath: 'agents/echo-agent/Dockerfile',
       contextPath: '.',
       tag: 'latest',
     }],

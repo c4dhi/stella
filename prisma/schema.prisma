@@ -14,22 +14,22 @@ datasource db {
 }
 
 model User {
-  id                         String              @id @default(uuid())
-  email                      String              @unique
-  password                   String              // bcrypt hashed
+  id                         String               @id @default(uuid())
+  email                      String               @unique
+  password                   String // bcrypt hashed
   name                       String?
-  verified                   Boolean             @default(false)
-  isSystemAdmin              Boolean             @default(false) // System-level admin access
-  createdAt                  DateTime            @default(now())
-  updatedAt                  DateTime            @updatedAt
+  verified                   Boolean              @default(false)
+  isSystemAdmin              Boolean              @default(false) // System-level admin access
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
   projectMemberships         ProjectMembership[]
-  customAgentTypes           AgentType[]         // Custom agents uploaded by this user
-  planTemplates              PlanTemplate[]      // Plan templates created by this user
-  envVarTemplates            EnvVarTemplate[]    // Environment variable templates created by this user
+  customAgentTypes           AgentType[] // Custom agents uploaded by this user
+  planTemplates              PlanTemplate[] // Plan templates created by this user
+  envVarTemplates            EnvVarTemplate[] // Environment variable templates created by this user
   agentConfigurations        AgentConfiguration[] // Agent pipeline configurations created by this user
-  messages                   UserMessage[]       // Inbox messages for this user
-  sentProjectInvitations     ProjectInvitation[] @relation("SentInvitations")
-  receivedProjectInvitations ProjectInvitation[] @relation("ReceivedInvitations")
+  messages                   UserMessage[] // Inbox messages for this user
+  sentProjectInvitations     ProjectInvitation[]  @relation("SentInvitations")
+  receivedProjectInvitations ProjectInvitation[]  @relation("ReceivedInvitations")
 }
 
 enum MemberRole {
@@ -61,19 +61,19 @@ model Project {
   memberships ProjectMembership[]
 
   // Agent inactivity auto-stop configuration
-  agentInactivityTimeoutMinutes Int?  // null = disabled (default)
+  agentInactivityTimeoutMinutes Int? // null = disabled (default)
 
   // Public Project Configuration
-  isPublic               Boolean    @default(false)
-  publicToken            String?    @unique @default(uuid())
-  publicAgentTypeId      String?
-  publicAgentType        AgentType? @relation(fields: [publicAgentTypeId], references: [id], name: "publicProjects")
-  publicAgentConfig      Json?      // { name, icon, plan?, config?, pipelineConfig?, envVarTemplateId?, envVars? }
-  publicVisualizerType   String?
-  publicVisualizerLocked Boolean    @default(false)
+  isPublic                        Boolean    @default(false)
+  publicToken                     String?    @unique @default(uuid())
+  publicAgentTypeId               String?
+  publicAgentType                 AgentType? @relation(fields: [publicAgentTypeId], references: [id], name: "publicProjects")
+  publicAgentConfig               Json? // { name, icon, plan?, config?, pipelineConfig?, envVarTemplateId?, envVars? }
+  publicVisualizerType            String?
+  publicVisualizerLocked          Boolean    @default(false)
   publicMaxSessionDurationSeconds Int? // null = no limit (default). Max 7200 (2h).
-  publicExpiresAt        DateTime?
-  publicEnabled          Boolean    @default(true)
+  publicExpiresAt                 DateTime?
+  publicEnabled                   Boolean    @default(true)
 
   // Project collaboration invitations
   projectInvitations ProjectInvitation[]
@@ -89,10 +89,10 @@ enum SessionStatus {
 }
 
 enum InvitationStatus {
-  PENDING   // Created, waiting for participant
-  ACCEPTED  // Participant joined
-  EXPIRED   // Time-based expiration
-  REVOKED   // Manually revoked by organizer
+  PENDING // Created, waiting for participant
+  ACCEPTED // Participant joined
+  EXPIRED // Time-based expiration
+  REVOKED // Manually revoked by organizer
 }
 
 model Session {
@@ -109,18 +109,18 @@ model Session {
   invitations  Invitation[]
   messages     Message[]
   events       RoomEvent[]
-  state        SessionState?   // State machine execution state
+  state        SessionState? // State machine execution state
 
   // Message-recorder optimization: webhook-driven room management
-  hasHumanParticipant    Boolean   @default(false)  // True when human is in room
-  humanJoinedAt          DateTime?                   // When first human joined
-  humanLeftAt            DateTime?                   // When last human left
-  recorderShouldJoin     Boolean   @default(false)  // True when recorder should be in room
+  hasHumanParticipant Boolean   @default(false) // True when human is in room
+  humanJoinedAt       DateTime? // When first human joined
+  humanLeftAt         DateTime? // When last human left
+  recorderShouldJoin  Boolean   @default(false) // True when recorder should be in room
 
   // Agent pausing: on-demand spawning for resource optimization
-  agentSpawnMode                String    @default("immediate")  // 'immediate' | 'on_demand'
-  lastAgentConfig               Json?                            // Stored config for respawning paused agents
-  agentInactivityTimeoutMinutes Int?                             // Inherited from project at creation
+  agentSpawnMode                String @default("immediate") // 'immediate' | 'on_demand'
+  lastAgentConfig               Json? // Stored config for respawning paused agents
+  agentInactivityTimeoutMinutes Int? // Inherited from project at creation
 
   @@index([projectId])
   @@index([status])
@@ -131,30 +131,30 @@ model Session {
 // State machine execution state for conversation progress tracking
 // Persists the plan execution state externally from agents
 model SessionState {
-  id                   String   @id @default(uuid())
-  sessionId            String   @unique
-  session              Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  sessionId String  @unique
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   // Plan data
-  planId               String?  // Reference to plan ID
-  planData             Json     // Full plan definition (states, tasks, deliverables)
+  planId   String? // Reference to plan ID
+  planData Json // Full plan definition (states, tasks, deliverables)
 
   // Current execution state
-  currentStateId       String   // Current state in the plan
-  completedTasks       String[] @default([]) // Task IDs that have been completed
-  skippedTasks         String[] @default([]) // Task IDs that were skipped
+  currentStateId String // Current state in the plan
+  completedTasks String[] @default([]) // Task IDs that have been completed
+  skippedTasks   String[] @default([]) // Task IDs that were skipped
 
   // Collected deliverables
-  deliverables         Json     @default("{}") // { key: { value, reasoning, collectedAt } }
+  deliverables Json @default("{}") // { key: { value, reasoning, collectedAt } }
 
   // Progress tracking
-  turnsWithoutProgress Int      @default(0) // Turns since last deliverable/task completion
-  totalTurns           Int      @default(0) // Total conversation turns
+  turnsWithoutProgress Int @default(0) // Turns since last deliverable/task completion
+  totalTurns           Int @default(0) // Total conversation turns
 
   // Timestamps
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  lastTransitionAt     DateTime? // When state last changed
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastTransitionAt DateTime? // When state last changed
 
   @@index([sessionId])
   @@index([planId])
@@ -184,78 +184,78 @@ enum AgentValidationStatus {
 
 // Agent type registry - supports built-in and custom agents
 model AgentType {
-  id               String    @id @default(uuid())
-  slug             String    @unique  // e.g., "stella-agent", "echo-agent", "memory-coach"
-  name             String              // Display name: "Stella Agent"
-  description      String              // Short description for gallery card
-  icon             String?             // Default emoji or image URL
-  version          String    @default("1.0.0")
+  id          String  @id @default(uuid())
+  slug        String  @unique // e.g., "stella-agent", "echo-agent", "memory-coach"
+  name        String // Display name: "Stella Agent"
+  description String // Short description for gallery card
+  icon        String? // Default emoji or image URL
+  version     String  @default("1.0.0")
 
   // Built-in vs custom
-  isBuiltIn        Boolean   @default(true)
+  isBuiltIn Boolean @default(true)
 
   // Ownership (for custom agents)
-  userId           String?             // Owner of custom agent (null for built-in)
-  user             User?     @relation(fields: [userId], references: [id])
+  userId String? // Owner of custom agent (null for built-in)
+  user   User?   @relation(fields: [userId], references: [id])
 
   // Package storage (for custom agents with uploaded zip)
-  packagePath      String?             // Local filesystem path to stored zip
-  packageSize      Int?                // Size in bytes
-  packageHash      String?             // SHA256 hash for integrity
+  packagePath String? // Local filesystem path to stored zip
+  packageSize Int? // Size in bytes
+  packageHash String? // SHA256 hash for integrity
 
   // Image configuration
-  imageUrl         String?             // Pre-built Docker image URL (e.g., ghcr.io/org/agent:v1)
-  dockerfilePath   String?             // Path to Dockerfile within package (default: "Dockerfile")
+  imageUrl       String? // Pre-built Docker image URL (e.g., ghcr.io/org/agent:v1)
+  dockerfilePath String? // Path to Dockerfile within package (default: "Dockerfile")
 
   // Validation workflow
   validationStatus AgentValidationStatus @default(PENDING)
-  validationNotes  String?             // Reviewer notes (for rejection reasons)
-  validatedAt      DateTime?           // When validation decision was made
-  validatedBy      String?             // Admin user ID who validated
+  validationNotes  String? // Reviewer notes (for rejection reasons)
+  validatedAt      DateTime? // When validation decision was made
+  validatedBy      String? // Admin user ID who validated
 
   // Config schema (JSON Schema format for UI)
-  configSchema     Json?               // JSON Schema defining available config options
-  capabilities     Json?               // e.g., ["voice", "text", "progress"]
-  defaultConfig    Json?               // Default config for this agent type
+  configSchema  Json? // JSON Schema defining available config options
+  capabilities  Json? // e.g., ["voice", "text", "progress"]
+  defaultConfig Json? // Default config for this agent type
 
   // Resource limits
-  resourceMemory   String?   @default("512Mi")   // Memory limit (e.g., "512Mi", "2Gi")
-  resourceCpu      String?   @default("250m")    // CPU limit (e.g., "250m", "1000m")
-  resourceGpu      Boolean   @default(false)     // Whether GPU is required
+  resourceMemory String? @default("512Mi") // Memory limit (e.g., "512Mi", "2Gi")
+  resourceCpu    String? @default("250m") // CPU limit (e.g., "250m", "1000m")
+  resourceGpu    Boolean @default(false) // Whether GPU is required
 
   // Author info (for custom agents)
-  authorName       String?             // Author display name
-  authorEmail      String?             // Author contact email
-  tags             Json?               // Array of tags for filtering
+  authorName  String? // Author display name
+  authorEmail String? // Author contact email
+  tags        Json? // Array of tags for filtering
 
   // Pipeline configuration schema (declares configurable nodes, edges, slots, thresholds)
-  pipelineSchema   Json?
+  pipelineSchema     Json?
   // SHA256 of pipelineSchema; lets the seed detect schema edits (even without a version
   // bump) so saved AgentConfigurations are reconciled only when the schema actually changes.
   pipelineSchemaHash String?
   // Manifest-declared {{placeholder}} palette for the Configurator (per agent type).
-  runtimeVariables Json?
+  runtimeVariables   Json?
   // Agent-declared default experts (parsed from the agent package's config/experts/*.json),
   // published for the Configurator's Expert Module so the frontend renders the agent's
   // declared experts/verdicts/actions instead of hardcoding them. Null for agents without experts.
-  expertDefaults   Json?
+  expertDefaults     Json?
   // Version of the SDK prompt compiler this agent resolves prompts with. Saved
   // configurations declare a minCompilerVersion that must be <= this.
-  compilerVersion  String?
+  compilerVersion    String?
 
   // SDK requirements
-  sdkMinVersion    String?             // Minimum stella-ai-agent-sdk version
+  sdkMinVersion String? // Minimum stella-ai-agent-sdk version
 
   // Timestamps
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   agents              AgentInstance[]
   buildLogs           AgentBuildLog[]
-  envVarTemplates     EnvVarTemplate[]      // Env var templates scoped to this agent type
-  publicProjects      Project[]             @relation(name: "publicProjects")
-  agentConfigurations AgentConfiguration[]  // Pipeline configurations for this agent type
+  envVarTemplates     EnvVarTemplate[] // Env var templates scoped to this agent type
+  publicProjects      Project[]            @relation(name: "publicProjects")
+  agentConfigurations AgentConfiguration[] // Pipeline configurations for this agent type
 
   @@index([slug])
   @@index([isBuiltIn])
@@ -264,39 +264,39 @@ model AgentType {
 }
 
 model AgentInstance {
-  id            String       @id @default(uuid())
+  id            String      @id @default(uuid())
   sessionId     String
-  session       Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  name          String       // Agent name (required)
-  icon          String?      // Optional emoji icon (default: 🤖)
-  status        AgentStatus  @default(STARTING)
+  session       Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name          String // Agent name (required)
+  icon          String? // Optional emoji icon (default: 🤖)
+  status        AgentStatus @default(STARTING)
   podName       String?
   secretName    String?
   configMapName String?
-  agentConfig   Json?        // Agent-specific config (e.g., { plan_id: "stella_smalltalk" })
-  agentType     String?      @default("stella-agent")  // Agent type slug for backward compat
-  agentTypeId   String?                               // FK to AgentType (optional for backward compat)
-  agentTypeRef  AgentType?   @relation(fields: [agentTypeId], references: [id])
-  createdAt     DateTime     @default(now())
+  agentConfig   Json? // Agent-specific config (e.g., { plan_id: "stella_smalltalk" })
+  agentType     String?     @default("stella-light-agent") // Agent type slug for backward compat
+  agentTypeId   String? // FK to AgentType (optional for backward compat)
+  agentTypeRef  AgentType?  @relation(fields: [agentTypeId], references: [id])
+  createdAt     DateTime    @default(now())
   stoppedAt     DateTime?
 
   // Environment variable template (for API keys like OPENAI_API_KEY)
-  envVarTemplateId String?
-  envVarTemplate   EnvVarTemplate? @relation(fields: [envVarTemplateId], references: [id])
+  envVarTemplateId       String?
+  envVarTemplate         EnvVarTemplate? @relation(fields: [envVarTemplateId], references: [id])
   // Encrypted manual env vars entered during deployment (used to preserve restart behavior)
-  manualEnvVarsEncrypted String? @db.Text
+  manualEnvVarsEncrypted String?         @db.Text
 
   // Health tracking (Phase 3.2)
-  healthState       String?   @default("unknown")  // Agent state: initializing, ready, processing, error, etc.
-  lastHealthCheck   DateTime?                      // Last time health check was performed
-  lastError         String?                        // Last error message from agent
-  messagesProcessed Int       @default(0)          // Number of messages processed by agent
-  grpcAddress       String?                        // gRPC address for agent connection (e.g., "agent-pod:50051")
+  healthState       String?   @default("unknown") // Agent state: initializing, ready, processing, error, etc.
+  lastHealthCheck   DateTime? // Last time health check was performed
+  lastError         String? // Last error message from agent
+  messagesProcessed Int       @default(0) // Number of messages processed by agent
+  grpcAddress       String? // gRPC address for agent connection (e.g., "agent-pod:50051")
 
   // Agent pausing: on-demand lifecycle management
-  pausedAt          DateTime?                      // When agent was paused due to inactivity
-  pauseReason       String?                        // 'inactivity' | 'manual'
-  resumeCount       Int       @default(0)          // Number of times agent has been resumed
+  pausedAt    DateTime? // When agent was paused due to inactivity
+  pauseReason String? // 'inactivity' | 'manual'
+  resumeCount Int       @default(0) // Number of times agent has been resumed
 
   @@index([sessionId])
   @@index([status])
@@ -308,14 +308,14 @@ model Participant {
   id                   String      @id @default(uuid())
   sessionId            String
   session              Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  name                 String      // Display name for the participant
-  identity             String      // LiveKit identity (auto-generated)
+  name                 String // Display name for the participant
+  identity             String // LiveKit identity (auto-generated)
   isManuallyRegistered Boolean     @default(false) // True if registered via API, false if auto-discovered
   joinedAt             DateTime    @default(now())
   leftAt               DateTime?
-  tokenRevokedAt       DateTime?   // When token was revoked (soft delete for security)
-  lastTokenRefresh     DateTime?   // Last time LiveKit token was refreshed
-  lastSeenAt           DateTime?   // Last presence update from LiveKit
+  tokenRevokedAt       DateTime? // When token was revoked (soft delete for security)
+  lastTokenRefresh     DateTime? // Last time LiveKit token was refreshed
+  lastSeenAt           DateTime? // Last presence update from LiveKit
   invitation           Invitation? // Link to invitation if created via invitation flow
 
   @@index([sessionId])
@@ -324,31 +324,31 @@ model Participant {
 
 // Invitation for participants to join sessions via shareable link
 model Invitation {
-  id              String           @id @default(uuid())
-  sessionId       String
-  session         Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   // Invitation details
-  token           String           @unique @default(uuid()) // URL token for /join/:token
-  participantName String           // Pre-assigned name for the participant
-  customMessage   String?          @db.Text // Optional organizer message
+  token           String  @unique @default(uuid()) // URL token for /join/:token
+  participantName String // Pre-assigned name for the participant
+  customMessage   String? @db.Text // Optional organizer message
 
   // Avatar/visualizer settings
-  visualizerType  String?          // e.g., "sphere", "face", "galaxy", "rainy", "snowy", "christmas", "sunny"
-  visualizerLocked Boolean         @default(false) // If true, participant can't change visualizer
+  visualizerType   String? // e.g., "sphere", "face", "galaxy", "rainy", "snowy", "christmas", "sunny"
+  visualizerLocked Boolean @default(false) // If true, participant can't change visualizer
 
   // Max session duration (from first agent message). null = no limit. Max 7200 (2h).
   maxSessionDurationSeconds Int?
 
   // Status tracking
-  status          InvitationStatus @default(PENDING)
-  createdAt       DateTime         @default(now())
-  expiresAt       DateTime?        // Organizer-configured expiration (null = indefinite)
-  acceptedAt      DateTime?        // When participant accepted and joined
+  status     InvitationStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  expiresAt  DateTime? // Organizer-configured expiration (null = indefinite)
+  acceptedAt DateTime? // When participant accepted and joined
 
   // Link to created participant (set when invitation is accepted)
-  participantId   String?          @unique
-  participant     Participant?     @relation(fields: [participantId], references: [id])
+  participantId String?      @unique
+  participant   Participant? @relation(fields: [participantId], references: [id])
 
   @@index([sessionId])
   @@index([token])
@@ -356,19 +356,19 @@ model Invitation {
 }
 
 model Message {
-  id            String       @id @default(uuid())
-  sessionId     String
-  session       Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   // Message content and metadata
-  content       String       @db.Text
-  messageType   String       // "transcript", "system", "task_update", "deliverable", "state_change", "participant_event"
-  role          String?      // "user", "assistant", "system"
-  status        String?      // "partial", "final"
-  metadata      Json?        // Store complete envelope with participant info, deliverables, processing messages, etc.
+  content     String  @db.Text
+  messageType String // "transcript", "system", "task_update", "deliverable", "state_change", "participant_event"
+  role        String? // "user", "assistant", "system"
+  status      String? // "partial", "final"
+  metadata    Json? // Store complete envelope with participant info, deliverables, processing messages, etc.
 
-  timestamp     DateTime     @default(now())
-  createdAt     DateTime     @default(now())
+  timestamp DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([sessionId])
   @@index([sessionId, timestamp])
@@ -391,21 +391,21 @@ model RoomEvent {
 
 // Build log for custom agent Docker image builds
 model AgentBuildLog {
-  id            String      @id @default(uuid())
-  agentTypeId   String
-  agentType     AgentType   @relation(fields: [agentTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  agentTypeId String
+  agentType   AgentType @relation(fields: [agentTypeId], references: [id], onDelete: Cascade)
 
   // Build status
-  status        String      // "pending", "building", "success", "failed"
-  imageName     String?     // Final image name (e.g., "memory-coach:1.0.0")
+  status    String // "pending", "building", "success", "failed"
+  imageName String? // Final image name (e.g., "memory-coach:1.0.0")
 
   // Build output
-  buildOutput   String?     @db.Text  // Full build log output
-  errorMessage  String?               // Error message if failed
+  buildOutput  String? @db.Text // Full build log output
+  errorMessage String? // Error message if failed
 
   // Timing
-  startedAt     DateTime    @default(now())
-  completedAt   DateTime?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
 
   @@index([agentTypeId])
   @@index([status])
@@ -419,7 +419,7 @@ model PlanTemplate {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name        String
   description String?  @db.Text
-  content     Json     // Canonical SDK format: { states: [...], system_prompt?: string, session_context?: { fields: [...] } }
+  content     Json // Canonical SDK format: { states: [...], system_prompt?: string, session_context?: { fields: [...] } }
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -428,27 +428,27 @@ model PlanTemplate {
 
 // Environment variable template for reusable secure configurations
 model EnvVarTemplate {
-  id          String     @id @default(uuid())
-  userId      String
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   name        String
-  description String?    @db.Text
+  description String? @db.Text
 
   // Encrypted JSON: { "KEY": "value", ... }
   // Values are encrypted at rest using AES-256-GCM
   // Format: {iv}:{authTag}:{encryptedData} (all base64 encoded)
-  variables   String     @db.Text
+  variables String @db.Text
 
   // Required: scope to a single agent type (templates are never "generic")
   agentTypeId String
-  agentType   AgentType  @relation(fields: [agentTypeId], references: [id])
+  agentType   AgentType @relation(fields: [agentTypeId], references: [id])
 
   // Agents using this template
-  agents      AgentInstance[]
+  agents AgentInstance[]
 
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([agentTypeId])
@@ -466,7 +466,7 @@ enum UserMessageType {
 
 // Project collaboration invitation status
 enum ProjectInvitationStatus {
-  PENDING  // Waiting for response
+  PENDING // Waiting for response
   ACCEPTED // User accepted the invitation
   DECLINED // User declined the invitation
 }
@@ -474,7 +474,7 @@ enum ProjectInvitationStatus {
 // Generic user inbox message
 model UserMessage {
   id        String          @id @default(uuid())
-  userId    String          // Recipient
+  userId    String // Recipient
   user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      UserMessageType
   title     String
@@ -496,9 +496,9 @@ model ProjectInvitation {
   id          String                  @id @default(uuid())
   projectId   String
   project     Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  inviterId   String                  // User who sent the invitation
+  inviterId   String // User who sent the invitation
   inviter     User                    @relation("SentInvitations", fields: [inviterId], references: [id])
-  inviteeId   String                  // User being invited
+  inviteeId   String // User being invited
   invitee     User                    @relation("ReceivedInvitations", fields: [inviteeId], references: [id])
   status      ProjectInvitationStatus @default(PENDING)
   createdAt   DateTime                @default(now())
@@ -515,18 +515,18 @@ model ProjectInvitation {
 
 // Hourly aggregated metrics for historical charts
 model UsageMetricsSnapshot {
-  id                String   @id @default(uuid())
-  timestamp         DateTime @default(now())
-  totalSessions     Int
-  activeSessions    Int
-  totalAgents       Int
-  runningAgents     Int
-  failedAgents      Int
-  totalParticipants Int
+  id                 String   @id @default(uuid())
+  timestamp          DateTime @default(now())
+  totalSessions      Int
+  activeSessions     Int
+  totalAgents        Int
+  runningAgents      Int
+  failedAgents       Int
+  totalParticipants  Int
   activeParticipants Int
-  peakParticipants  Int      // Peak concurrent during this hour
-  totalMessages     Int
-  messagesThisHour  Int
+  peakParticipants   Int // Peak concurrent during this hour
+  totalMessages      Int
+  messagesThisHour   Int
 
   @@index([timestamp])
 }
@@ -536,7 +536,7 @@ model SessionActivityLog {
   id            String    @id @default(uuid())
   sessionId     String
   projectId     String
-  status        String    // 'active', 'closed', 'error'
+  status        String // 'active', 'closed', 'error'
   hasAgentError Boolean   @default(false)
   createdAt     DateTime  @default(now())
   closedAt      DateTime?
@@ -547,27 +547,27 @@ model SessionActivityLog {
 
 // Server performance metrics (collected every ~5s)
 model ServerMetricsSnapshot {
-  id            String   @id @default(uuid())
-  timestamp     DateTime @default(now())
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now())
 
   // Node.js server metrics
-  cpuUsage      Float    // Percentage 0-100
-  cpuCores      Int?
-  memoryTotal   BigInt
-  memoryUsed    BigInt
-  memoryFree    BigInt
+  cpuUsage    Float // Percentage 0-100
+  cpuCores    Int?
+  memoryTotal BigInt
+  memoryUsed  BigInt
+  memoryFree  BigInt
 
   // GPU metrics (auto-detected via nvidia-smi)
-  gpuUsage      Float?
-  gpuMemoryUsed BigInt?
+  gpuUsage       Float?
+  gpuMemoryUsed  BigInt?
   gpuMemoryTotal BigInt?
-  gpuAvailable  Boolean  @default(false)
+  gpuAvailable   Boolean @default(false)
 
   // Kubernetes cluster metrics (if available)
-  k8sNodeCount  Int?
-  k8sPodCount   Int?
-  k8sCpuRequests Float?  // Total CPU requests across pods
-  k8sMemoryUsed BigInt?  // Total memory used across pods
+  k8sNodeCount   Int?
+  k8sPodCount    Int?
+  k8sCpuRequests Float? // Total CPU requests across pods
+  k8sMemoryUsed  BigInt? // Total memory used across pods
 
   @@index([timestamp])
 }
@@ -575,33 +575,33 @@ model ServerMetricsSnapshot {
 // Compatibility of a saved AgentConfiguration with its AgentType's current pipelineSchema.
 // Computed by the reconciliation pass that runs when an AgentType version/schema changes.
 enum ConfigCompatibility {
-  CURRENT    // agentVersion == AgentType.version and re-validates cleanly
+  CURRENT // agentVersion == AgentType.version and re-validates cleanly
   COMPATIBLE // authored against an older version but still re-validates against current schema
-  OUTDATED   // fails re-validation; excluded from deploy pickers until the user fixes it
+  OUTDATED // fails re-validation; excluded from deploy pickers until the user fixes it
 }
 
 // Agent pipeline configuration - user-created named configurations
 model AgentConfiguration {
-  id            String    @id @default(uuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name          String
-  description   String?   @db.Text
-  agentTypeId   String
-  agentType     AgentType @relation(fields: [agentTypeId], references: [id])
-  configuration Json      // Sparse overrides: { nodes: {...}, thresholds: {...} }
-  agentVersion  String?   // Version of agent type this config was last reconciled against
+  id                 String    @id @default(uuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?   @db.Text
+  agentTypeId        String
+  agentType          AgentType @relation(fields: [agentTypeId], references: [id])
+  configuration      Json // Sparse overrides: { nodes: {...}, thresholds: {...} }
+  agentVersion       String? // Version of agent type this config was last reconciled against
   // Minimum SDK prompt-compiler version this config's prompts require. The target
   // agent's compilerVersion must be >= this, else the config is OUTDATED/rejected.
   minCompilerVersion String?
 
   // Reconciliation state (recomputed only when the AgentType version/schema changes)
   compatibility     ConfigCompatibility @default(CURRENT)
-  compatibilityNote String?  @db.Text   // Why OUTDATED (e.g. "unknown node ID: expert_pool")
+  compatibilityNote String?             @db.Text // Why OUTDATED (e.g. "unknown node ID: expert_pool")
   lastReconciledAt  DateTime?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([agentTypeId])

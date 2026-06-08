@@ -24,7 +24,7 @@ stella-light-agent: User → LightProcessor → Response
 - **Full State Machine Support**: Same Plan/State/Task/Deliverable hierarchy
 - **Streaming Responses**: Token-by-token output for real-time feel
 - **Progress Tracking**: Compatible with SDK's ProgressState for frontend display
-- **Same Plan Format**: Reuses plans from stella-agent
+- **Same Plan Format**: Conversation plans bundled in `config/plans/`
 
 ## Trade-offs
 
@@ -101,7 +101,7 @@ The agent accepts these config options on session start:
 stella-light-agent/
 ├── config/
 │   ├── llm_config.json          # LLM configuration
-│   └── plans/                   # Symlink to stella-agent/config/plans/
+│   └── plans/                   # Conversation plan definitions (JSON)
 ├── src/stella_light_agent/
 │   ├── __init__.py
 │   ├── main.py                  # Entry point

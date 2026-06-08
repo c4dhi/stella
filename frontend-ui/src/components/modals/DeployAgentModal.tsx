@@ -114,11 +114,11 @@ export default function DeployAgentModal({
           console.error('Failed to fetch agent types:', err)
           setAgentTypes([
             {
-              id: 'echo-agent',
-              slug: 'echo-agent',
-              name: 'Echo Agent',
-              description: 'Simple test agent that echoes user input',
-              icon: '🔊',
+              id: 'stella-light-agent',
+              slug: 'stella-light-agent',
+              name: 'Stella Light Agent',
+              description: 'Lightweight single-LLM-call agent',
+              icon: '⚡',
               version: '1.0.0',
               isBuiltIn: true,
               capabilities: ['voice', 'text'],
