@@ -121,7 +121,7 @@ During conversation execution, each deliverable has a status:
 | `pending` | Not yet collected |
 | `partial` | Partially collected (awaiting clarification or validation) |
 | `completed` | Successfully collected and validated |
-| `skipped` | Skipped (only for optional deliverables) |
+| `skipped` | Not collected — either an optional deliverable the user declined, or any deliverable (required or optional) whose owning task was skipped |
 
 ### Status Flow
 
@@ -140,15 +140,15 @@ During conversation execution, each deliverable has a status:
 │  completed  │  Successfully collected
 └─────────────┘
 
-Or for optional deliverables:
+Or, when not collected:
 
 ┌─────────────┐
 │   pending   │
 └──────┬──────┘
-       │ User declines or task moves on
+       │ User declines (optional), or the owning task is skipped
        ▼
 ┌─────────────┐
-│   skipped   │  Optional deliverable not collected
+│   skipped   │  Not collected
 └─────────────┘
 ```
 
