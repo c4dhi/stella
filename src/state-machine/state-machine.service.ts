@@ -249,7 +249,51 @@ export class StateMachineService {
   // never hits it, and every firing is logged loudly so stuck agents are visible.
   private static readonly STUCK_STATE_TURN_LIMIT = 10;
 
+  // Priority for the implicit `all_tasks_complete` fallback transition that
+  // ensureTransitions guarantees on every non-goal state (#291 follow-up). It is
+  // deliberately very low (large number = lowest urgency) so any author-defined
+  // transition — branch conditions, deliverable gates, explicit jumps — always
+  // wins the priority sort. The fallback only decides the move when nothing the
+  // author wrote matched but the agent HAS addressed every task in the state.
+  private static readonly COMPLETION_FALLBACK_PRIORITY = 1000;
+
+  // Per-session serialization. Every state-mutating operation (complete/skip a
+  // task, skip a state, set a deliverable, increment a turn) is a read-modify-
+  // write-then-evaluate sequence against one SessionState row. The agent fires
+  // several of these per turn (e.g. completing three tasks at once), and on
+  // Node's single event loop those gRPC handlers interleave at every `await`.
+  // Without serialization each handler reads the SAME pre-update array, appends
+  // only its own id, and writes the whole array back — so concurrent completions
+  // clobber each other (last-writer-wins) and the full set is never persisted,
+  // leaving `all_tasks_complete` permanently false. Chaining all mutations for a
+  // given session through a promise makes each sequence atomic, so the final
+  // evaluation always sees every completion. (Single-writer assumption: one
+  // session-management-server process owns a session; horizontal scaling would
+  // additionally need a DB row lock / advisory lock.)
+  private readonly sessionChains = new Map<string, Promise<unknown>>();
+
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Run `fn` exclusively with respect to other mutations on the same session,
+   * serializing read-modify-write-evaluate sequences so concurrent agent tool
+   * calls cannot clobber each other's array updates. Operations on different
+   * sessions still run concurrently. The chain is self-cleaning: the map entry is
+   * dropped once the session goes idle so it does not grow unbounded.
+   */
+  private withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = (this.sessionChains.get(sessionId) ?? Promise.resolve()).catch(() => {});
+    const result = prev.then(() => fn());
+    // Tail tracks completion (success or failure) without rejecting the chain.
+    const tail = result.then(() => {}, () => {});
+    this.sessionChains.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.sessionChains.get(sessionId) === tail) {
+        this.sessionChains.delete(sessionId);
+      }
+    });
+    return result;
+  }
 
   /**
    * Ensure all states have transitions defined.
@@ -261,6 +305,17 @@ export class StateMachineService {
    * completes/skips tasks, or calls skip_state). `turn_count_exceeded` remains a
    * supported condition that a PLAN AUTHOR may add explicitly as an escape hatch,
    * but nothing implicit is added here.
+   *
+   * #291 follow-up: a non-goal, non-last state that has tasks is ALSO given an
+   * implicit `all_tasks_complete` transition to the next state in plan order, so
+   * that once the agent has addressed every task the state machine advances on its
+   * own instead of waiting on an explicit skip_state. This is ROUTE-AWARE: it is
+   * only added when every authored transition already targets that same next state
+   * (linear / single-exit gated states). On a real fork or jump — where an authored
+   * transition targets a different state — the fallback is suppressed, because
+   * routing there depends on data the agent produces and guessing "next in order"
+   * on completion could silently take the wrong branch. Author-defined transitions
+   * are always kept and out-prioritise the fallback (see COMPLETION_FALLBACK_PRIORITY).
    */
   private ensureTransitions(plan: PlanData): PlanData {
     const statesWithTransitions = plan.states.map((state, index) => {
@@ -274,8 +329,55 @@ export class StateMachineService {
       const stateType = state.type || 'loose';
       const nextStateId = isLastState ? undefined : plan.states[index + 1].id;
 
-      // Keep authored transitions as-is (after goal normalization).
+      // Keep authored transitions as-is (after goal normalization). For non-goal,
+      // non-last states, additionally guarantee an `all_tasks_complete` fallback to
+      // the next state so "every task addressed -> advance" always holds, even when
+      // the author only wrote branch/deliverable conditions. Goal states are driven
+      // by goal_achieved (all_tasks_complete is unsupported for them), so they are
+      // left untouched here.
       if (normalizedExistingTransitions.length > 0) {
+        // Route-aware completion fallback. We only synthesise an all_tasks_complete
+        // -> next-state transition when adding it can never cause a WRONG move:
+        //  - the state must have tasks ("all tasks ticked off" is meaningless without
+        //    them, and a vacuous all_tasks_complete would override the author's gate);
+        //  - the state must not already define a completion transition;
+        //  - and crucially, EVERY authored transition must already target the next
+        //    state in plan order. If any authored transition is a real branch or jump
+        //    (a different target, or the __end__ sentinel), the state's routing
+        //    genuinely depends on data the agent produces — guessing "next in order"
+        //    on task completion could silently take the wrong branch, so we leave it
+        //    to the authored conditions (and, as a last resort, the stuck-state net).
+        const routesOnlyToNextState =
+          !isLastState &&
+          normalizedExistingTransitions.every(
+            (t) => t.target_state_id === nextStateId,
+          );
+        const needsCompletionFallback =
+          !isLastState &&
+          stateType !== 'goal' &&
+          (state.tasks?.length ?? 0) > 0 &&
+          routesOnlyToNextState &&
+          !normalizedExistingTransitions.some(
+            (t) => t.condition_type === 'all_tasks_complete',
+          );
+
+        if (needsCompletionFallback) {
+          this.logger.log(
+            `Adding all_tasks_complete fallback for state '${state.id}' -> '${nextStateId}'`,
+          );
+          return {
+            ...state,
+            transitions: [
+              ...normalizedExistingTransitions,
+              {
+                target_state_id: nextStateId!,
+                condition_type: 'all_tasks_complete' as const,
+                priority: StateMachineService.COMPLETION_FALLBACK_PRIORITY,
+              },
+            ],
+          };
+        }
+
         return { ...state, transitions: normalizedExistingTransitions };
       }
 
@@ -362,6 +464,17 @@ export class StateMachineService {
   async completeTask(
     sessionId: string,
     taskId: string,
+    reasoning: string,
+  ): Promise<StateMachineResult> {
+    // Serialized per session so concurrent completions don't clobber each other.
+    return this.withSessionLock(sessionId, () =>
+      this.completeTaskLocked(sessionId, taskId, reasoning),
+    );
+  }
+
+  private async completeTaskLocked(
+    sessionId: string,
+    taskId: string,
     _reasoning: string,  // Reserved for future audit logging; not used in current logic
   ): Promise<StateMachineResult> {
     const state = await this.getState(sessionId);
@@ -437,6 +550,18 @@ export class StateMachineService {
    * Set a deliverable value
    */
   async setDeliverable(
+    sessionId: string,
+    key: string,
+    value: unknown,
+    reasoning: string,
+  ): Promise<StateMachineResult> {
+    // Serialized per session so concurrent writes don't clobber the deliverables JSON.
+    return this.withSessionLock(sessionId, () =>
+      this.setDeliverableLocked(sessionId, key, value, reasoning),
+    );
+  }
+
+  private async setDeliverableLocked(
     sessionId: string,
     key: string,
     value: unknown,
@@ -595,6 +720,17 @@ export class StateMachineService {
   async skipTask(
     sessionId: string,
     taskId: string,
+    reasoning: string,
+  ): Promise<StateMachineResult> {
+    // Serialized per session so concurrent skips/completions don't clobber the arrays.
+    return this.withSessionLock(sessionId, () =>
+      this.skipTaskLocked(sessionId, taskId, reasoning),
+    );
+  }
+
+  private async skipTaskLocked(
+    sessionId: string,
+    taskId: string,
     _reasoning: string,
   ): Promise<StateMachineResult> {
     const state = await this.getState(sessionId);
@@ -659,6 +795,17 @@ export class StateMachineService {
    * keep behavior predictable (#291 redesign).
    */
   async skipState(
+    sessionId: string,
+    stateId: string | undefined,
+    reasoning: string,
+  ): Promise<StateMachineResult> {
+    // Serialized per session so a concurrent completion can't be lost mid-skip.
+    return this.withSessionLock(sessionId, () =>
+      this.skipStateLocked(sessionId, stateId, reasoning),
+    );
+  }
+
+  private async skipStateLocked(
     sessionId: string,
     stateId: string | undefined,
     _reasoning: string,
@@ -897,6 +1044,20 @@ export class StateMachineService {
    * Increment turn counter (when no progress is made)
    */
   async incrementTurn(sessionId: string): Promise<{
+    turnsWithoutProgress: number;
+    transitioned: boolean;
+    newStateId?: string;
+    newStateTitle?: string;
+    sessionCompleted?: boolean;
+    farewellMessage?: string;
+    summaryBehavior?: string;
+  }> {
+    // Serialized: counting a turn evaluates transitions (read-modify-write of the
+    // current state), which must not interleave with a concurrent completion.
+    return this.withSessionLock(sessionId, () => this.incrementTurnLocked(sessionId));
+  }
+
+  private async incrementTurnLocked(sessionId: string): Promise<{
     turnsWithoutProgress: number;
     transitioned: boolean;
     newStateId?: string;

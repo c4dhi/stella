@@ -928,6 +928,175 @@ describe('agent-driven completion (#291)', () => {
     expect(stateB?.transitions?.some((t) => t.condition_type === 'turn_count_exceeded')).toBe(false);
   });
 
+  it('COMPLETION FALLBACK: a single-exit gated state (authored condition -> next state) still advances once every task is addressed', async () => {
+    // state-x has tasks + an authored deliverable_value gate that targets the NEXT
+    // state in plan order and will NOT match. Because every authored transition
+    // already routes to the next state, the route-aware fallback is added, so
+    // completing every task still advances (#291 follow-up) — the state machine
+    // helps even when the author never wrote a completion transition.
+    const sessionId = 'session-completion-fallback';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback',
+      title: 'Fallback Plan',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
+          transitions: [
+            {
+              // Gated single-exit: targets the next state, only fires if 'route' set.
+              target_state_id: 'state-next',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'go' },
+              priority: 1,
+            },
+          ],
+        },
+        // Next state in plan order; has its own task so it does not chain onwards.
+        {
+          id: 'state-next',
+          title: 'Next',
+          type: 'loose',
+          tasks: [{ id: 'task-next', description: 'more work', required: true }],
+        },
+        { id: 'state-end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    // The authored gate never matches (deliverable 'route' is never set), but the
+    // fallback to the next state in plan order fires once task-x is completed.
+    const res = await svc.completeTask(sessionId, 'task-x', 'finished');
+    expect(res.transitioned).toBe(true);
+    expect(res.newStateId).toBe('state-next');
+  });
+
+  it('COMPLETION FALLBACK: the fallback is appended at low priority so authored transitions always win the sort', async () => {
+    const sessionId = 'session-fallback-priority';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback2',
+      title: 'Fallback Plan 2',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
+          transitions: [
+            {
+              // Gated single-exit to the next state → eligible for the fallback.
+              target_state_id: 'state-next',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'go' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+        { id: 'state-end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    const authored = stateX?.transitions?.find((t) => t.condition_type === 'deliverable_value');
+    const fallback = stateX?.transitions?.find((t) => t.condition_type === 'all_tasks_complete');
+    // Both present; the synthesised fallback targets the next state in plan order
+    // and carries a strictly lower priority (larger number) than the authored gate.
+    expect(authored?.target_state_id).toBe('state-next');
+    expect(fallback?.target_state_id).toBe('state-next');
+    expect(fallback!.priority!).toBeGreaterThan(authored!.priority!);
+  });
+
+  it('COMPLETION FALLBACK: a real fork (authored branch to a non-next state) is NOT given a fallback and does not auto-advance', async () => {
+    // state-x routes to state-branch (NOT the next state in plan order) on a data
+    // condition. Route-aware: the fallback is suppressed so completing tasks cannot
+    // silently take the wrong branch — routing stays driven by the authored data
+    // condition (with the stuck-state net as the last resort).
+    const sessionId = 'session-fallback-fork';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback-fork',
+      title: 'Fallback Fork Plan',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [{ id: 'task-x', description: 'do work', required: true }],
+          transitions: [
+            {
+              // Jumps PAST the next state → a real branch, not a single-exit gate.
+              target_state_id: 'state-branch',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'branch' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+        { id: 'state-branch', title: 'Branch', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    // No fallback synthesised: the only authored transition is a branch elsewhere.
+    expect(stateX?.transitions?.some((t) => t.condition_type === 'all_tasks_complete')).toBe(false);
+    expect(stateX?.transitions).toHaveLength(1);
+
+    // Completing the task does NOT advance: the authored branch's data isn't present,
+    // and there is no completion fallback to guess "next in order".
+    const res = await svc.completeTask(sessionId, 'task-x', 'finished');
+    expect(res.transitioned).toBe(false);
+    expect((await svc.getCurrentState(sessionId))?.stateId).toBe('state-x');
+  });
+
+  it('COMPLETION FALLBACK: a task-less state with an authored condition is NOT given a vacuous fallback', async () => {
+    const sessionId = 'session-fallback-taskless';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'plan-fallback3',
+      title: 'Fallback Plan 3',
+      initial_state_id: 'state-x',
+      states: [
+        {
+          id: 'state-x',
+          title: 'X',
+          type: 'loose',
+          tasks: [],
+          transitions: [
+            {
+              target_state_id: 'state-branch',
+              condition_type: 'deliverable_value',
+              condition_config: { key: 'route', value: 'branch' },
+              priority: 1,
+            },
+          ],
+        },
+        { id: 'state-branch', title: 'Branch', type: 'loose', tasks: [] },
+        { id: 'state-next', title: 'Next', type: 'loose', tasks: [] },
+      ],
+    });
+
+    const raw = await (svc as any).getState(sessionId);
+    const stateX = (raw.planData as PlanData).states.find((s) => s.id === 'state-x');
+    // No tasks → no all_tasks_complete fallback synthesised (would be vacuously true
+    // and would silently override the author's deliverable gate).
+    expect(stateX?.transitions?.some((t) => t.condition_type === 'all_tasks_complete')).toBe(false);
+    expect(stateX?.transitions).toHaveLength(1);
+  });
+
   it('setting a deliverable does not complete its task or advance the state', async () => {
     const svc = await newServiceInStateB('session-opt-setdeliv');
     const res = await svc.setDeliverable('session-opt-setdeliv', 'opt_note', 'hello', 'optional');
@@ -1040,6 +1209,85 @@ describe('agent-driven completion (#291)', () => {
     const status = new Map(full?.states.map((s) => [s.id, s.status]));
     expect(status.get('state-a')).toBe('active');
     expect(status.get('state-b')).toBe('pending');
+  });
+});
+
+// =============================================================================
+// Concurrent mutations must not clobber each other (live race fix).
+// The agent completes several tasks in one turn, firing concurrent gRPC calls.
+// Each is a read-modify-write of the completedTasks array; without per-session
+// serialization they all read the same pre-update array and the last write wins,
+// so only ONE completion survives and all_tasks_complete can never be satisfied
+// (observed in production: a state with 3/3 tasks "done" in the UI that never
+// advanced). These tests fire the mutations concurrently and assert the full set
+// persists and the state advances.
+// =============================================================================
+describe('concurrent mutation race safety', () => {
+  function buildThreeTaskPlan(): PlanData {
+    return {
+      id: 'plan-3task',
+      title: 'Three Task Plan',
+      initial_state_id: 'work',
+      states: [
+        {
+          id: 'work',
+          title: 'Work',
+          type: 'loose',
+          tasks: [
+            { id: 'task-1', description: 'one', required: true },
+            { id: 'task-2', description: 'two', required: true },
+            { id: 'task-3', description: 'three', required: true },
+          ],
+        },
+        { id: 'done', title: 'Done', type: 'loose', tasks: [] },
+      ],
+    };
+  }
+
+  it('completing all tasks concurrently persists every completion and advances', async () => {
+    const sessionId = 'session-concurrent-complete';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildThreeTaskPlan());
+
+    // Fire all three completions at once, as the agent does in a single turn.
+    const results = await Promise.all([
+      svc.completeTask(sessionId, 'task-1', 'done 1'),
+      svc.completeTask(sessionId, 'task-2', 'done 2'),
+      svc.completeTask(sessionId, 'task-3', 'done 3'),
+    ]);
+
+    // No completion was lost: all three are recorded.
+    const full = await svc.getFullState(sessionId);
+    const work = full?.states.find((s) => s.id === 'work');
+    const completed = work?.tasks.filter((t) => t.status === 'completed').map((t) => t.id) ?? [];
+    expect(completed.sort()).toEqual(['task-1', 'task-2', 'task-3']);
+
+    // And exactly one of the concurrent calls observed the now-complete state and
+    // advanced (the others ran before the set was full).
+    expect(results.some((r) => r.transitioned && r.newStateId === 'done')).toBe(true);
+    expect(full?.currentStateId).toBe('done');
+  });
+
+  it('a concurrent mix of completes and skips still advances', async () => {
+    const sessionId = 'session-concurrent-mixed';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, buildThreeTaskPlan());
+
+    await Promise.all([
+      svc.completeTask(sessionId, 'task-1', 'done 1'),
+      svc.skipTask(sessionId, 'task-2', 'n/a'),
+      svc.completeTask(sessionId, 'task-3', 'done 3'),
+    ]);
+
+    const full = await svc.getFullState(sessionId);
+    const work = full?.states.find((s) => s.id === 'work');
+    const addressed = work?.tasks
+      .filter((t) => t.status === 'completed' || t.status === 'skipped')
+      .map((t) => t.id) ?? [];
+    expect(addressed.sort()).toEqual(['task-1', 'task-2', 'task-3']);
+    expect(full?.currentStateId).toBe('done');
   });
 });
 

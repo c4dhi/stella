@@ -12,16 +12,12 @@ from typing import Dict, List, Any, Optional
 
 
 class LightPromptBuilder:
-    """Builds a unified prompt with embedded guardrails for the light agent."""
+    """Builds a unified prompt with embedded guardrails for the light agent.
 
-    def __init__(self, use_tools: bool = False):
-        """Initialize the prompt builder.
-
-        Args:
-            use_tools: If True, build prompts for tool-based state management.
-                      If False, use legacy structured output format.
-        """
-        self._use_tools = use_tools
+    State is managed exclusively through the SDK toolbox, so prompts always
+    instruct the model in terms of tool calls (set_deliverable, complete_task,
+    skip_task, skip_state).
+    """
 
     def build_system_prompt(self, context: Dict[str, Any]) -> str:
         """
@@ -67,12 +63,8 @@ class LightPromptBuilder:
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
 
-        # Use different format based on mode
-        if self._use_tools:
-            parts.append(self._build_tool_instructions(deliverables, available_tasks))
-        else:
-            parts.append(self._build_response_format())
-            parts.append(self._build_deliverable_rules(deliverables))
+        # Tool-based state management instructions.
+        parts.append(self._build_tool_instructions(deliverables, available_tasks))
 
         # Add collected deliverables section (for update capability)
         collected_section = self._build_collected_section(collected_deliverables)
@@ -279,79 +271,6 @@ not a gate; you may skip a required task if it genuinely does not apply.)
                 parts.append(f"- **{t.get('id')}**: {t.get('description', '')}{hint}")
 
         return "\n".join(parts)
-
-    def _build_response_format(self) -> str:
-        """Build response format instructions."""
-        return """## Response Format
-You MUST respond using this EXACT format:
-
-MESSAGE: [Your conversational response here - 30-50 words, max 1 question]
-DELIVERABLES: [JSON object with extracted values] or [NONE]
-COMPLETED_TASKS: ["task_id_1", "task_id_2"] or [NONE]
-SKIPPED_TASKS: ["task_id_3"] or [NONE]
-
-Example responses:
-
-Example 1 - Collecting a deliverable, then completing its task:
-MESSAGE: That's wonderful to hear, Sarah! What kinds of plants do you enjoy growing the most?
-DELIVERABLES: {"user_name": {"value": "Sarah", "reasoning": "User introduced herself as Sarah"}}
-COMPLETED_TASKS: ["collect_name"]
-SKIPPED_TASKS: [NONE]
-
-Example 2 - No progress this turn:
-MESSAGE: Thanks for sharing that with me! What do you enjoy doing in your free time?
-DELIVERABLES: [NONE]
-COMPLETED_TASKS: [NONE]
-SKIPPED_TASKS: [NONE]
-
-Example 3 - Completing a task that has NO deliverables (like telling a joke):
-MESSAGE: Here's one - Why don't scientists trust atoms? Because they make up everything! It was lovely chatting with you.
-DELIVERABLES: [NONE]
-COMPLETED_TASKS: ["tell_joke"]
-SKIPPED_TASKS: [NONE]
-
-Example 4 - Skipping an optional task the user won't engage with:
-MESSAGE: No worries, we can leave that for now. Let's move on — what would you like to focus on next?
-DELIVERABLES: [NONE]
-COMPLETED_TASKS: [NONE]
-SKIPPED_TASKS: ["ask_optional_feedback"]
-
-### COMPLETED_TASKS / SKIPPED_TASKS Rules
-- The conversation only advances when EVERY task in the current phase is completed or skipped. Nothing completes on its own.
-- Put a task in COMPLETED_TASKS once you have accomplished it — including a task with deliverables, once you have collected what it needs (set the deliverable AND complete the task).
-- Put a task in SKIPPED_TASKS when it does not apply or the user clearly will not engage with it. "required" is only a hint about importance, not a hard gate.
-- Only mark tasks you actually addressed in your MESSAGE.
-- Format: JSON array of task IDs, e.g., ["tell_joke", "say_goodbye"]"""
-
-    def _build_deliverable_rules(self, deliverables: List[Dict]) -> str:
-        """Build deliverable extraction rules."""
-        pending = [d for d in deliverables if d.get("status") == "pending"]
-
-        if not pending:
-            return """## Deliverable Collection
-No deliverables to collect currently. Focus on natural conversation."""
-
-        rules = ["## Deliverable Collection", "Collect these pieces of information when the user provides them:"]
-
-        for d in pending:
-            required_marker = "*" if d.get("required", True) else "(optional)"
-            rules.append(f"\n**{d['key']}** {required_marker}")
-            rules.append(f"  Description: {d['description']}")
-            if d.get("acceptance_criteria"):
-                rules.append(f"  Criteria: {d['acceptance_criteria']}")
-            if d.get("examples"):
-                examples = ", ".join(str(e) for e in d['examples'][:3])
-                rules.append(f"  Examples: {examples}")
-
-        rules.append("""
-### Extraction Rules
-- Format: {"key": {"value": "extracted_value", "reasoning": "brief explanation"}}
-- Only extract when user CLEARLY and EXPLICITLY provides the information
-- NEVER extract from greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values - only extract what is directly stated
-- If unsure, use [NONE] and ask a clarifying question instead""")
-
-        return "\n".join(rules)
 
     def _build_context(
         self,

@@ -216,6 +216,10 @@ runtimeVariables:
     label: processing_mode
     description: "Processing mode (sequential/flexible/goal)"
     preview: "flexible (any order)"
+  - name: language
+    label: language
+    description: "Resolved session language (single source of truth, #214)"
+    preview: "German"
   - name: history
     label: history_N
     parametric: true

@@ -4,7 +4,7 @@ Stella Light Agent - Simplified single-LLM agent with prompt-based guardrails.
 This is a lightweight version of stella-agent that:
 - Uses a single LLM call instead of InputGate/ExpertPool/Aggregator pipeline
 - Embeds safety guardrails directly in the system prompt
-- Supports tool-based state management (via gRPC) or legacy text parsing
+- Manages state exclusively through the SDK toolbox (gRPC state machine)
 - Supports streaming responses
 """
 
@@ -25,12 +25,9 @@ from stella_agent_sdk.services.state_machine_client import StateMachineClient
 
 from stella_light_agent.llm.service import LLMService
 from stella_light_agent.barge_in_evaluator import BargeInEvaluator
-from stella_light_agent.processor import LightProcessor, ProcessorResult
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
-from stella_light_agent.state_machine import StateMachine
 from stella_light_agent.prompts import LightPromptBuilder
 from stella_agent_sdk import prompts as sdk_prompts
-from stella_light_agent.adapters import ProgressAdapter
 
 
 # Prompt-compiler version this agent is written and tested against. Pinned on
@@ -44,18 +41,11 @@ class StellaLightAgent(BaseAgent):
     """
     Stella Light Agent - Simplified single-LLM agent.
 
-    Processing Flow (Tool Mode):
+    Processing Flow:
     1. Build unified prompt with state context + guardrails
     2. Single LLM call with tool calling
-    3. Execute tools (set_deliverable, complete_task)
-    4. State machine updates via gRPC
-    5. Emit progress update
-
-    Processing Flow (Legacy Mode):
-    1. Build unified prompt with structured output format
-    2. Single LLM call with streaming response
-    3. Parse deliverables/tasks from text
-    4. Update local state machine
+    3. Execute tools (set_deliverable, complete_task, skip_task, skip_state)
+    4. State machine updates via gRPC (the single source of truth)
     5. Emit progress update
     """
 
@@ -68,7 +58,6 @@ class StellaLightAgent(BaseAgent):
     def __init__(
         self,
         llm_config_path: Optional[str] = None,
-        use_tools: bool = True,  # Default to tool mode
         state_machine_address: Optional[str] = None
     ):
         """
@@ -76,17 +65,16 @@ class StellaLightAgent(BaseAgent):
 
         Args:
             llm_config_path: Path to LLM configuration JSON file
-            use_tools: If True, use tool-based state management via gRPC.
-                      If False, use legacy text parsing with local state machine.
             state_machine_address: gRPC address for state machine service
+
+        State is managed exclusively through the SDK toolbox against the external
+        gRPC state machine — the single source of truth. There is no in-process
+        fallback engine.
         """
         super().__init__()
 
         # Set agent type to match the Docker image name (used for gRPC registration)
         self._agent_type = "stella-light-agent"
-
-        # Mode configuration
-        self._use_tools = use_tools
 
         # Determine config path
         if llm_config_path is None:
@@ -99,11 +87,11 @@ class StellaLightAgent(BaseAgent):
         # Agent Configurator's "Barge-in Evaluator" node — same as stella-v2.
         self.barge_in_evaluator = BargeInEvaluator(self.llm_service)
 
-        # Initialize prompt builder with tool mode
-        self.prompt_builder = LightPromptBuilder(use_tools=use_tools)
+        # Prompt builder (tool-based state management).
+        self.prompt_builder = LightPromptBuilder()
 
-        # Tool-based components (initialized per session)
-        # State machine shares the same gRPC port as agent registration (50051)
+        # Tool-based components (initialized per session).
+        # State machine shares the same gRPC port as agent registration (50051).
         self._state_machine_address = state_machine_address or os.environ.get(
             "STATE_MACHINE_ADDRESS", "localhost:50051"
         )
@@ -111,18 +99,12 @@ class StellaLightAgent(BaseAgent):
         self.tool_registry: Optional[ToolRegistry] = None
         self.tool_processor: Optional[ToolProcessor] = None
 
-        # Legacy components (for backward compatibility)
-        self.legacy_processor: Optional[LightProcessor] = None
-        self.state_machine: Optional[StateMachine] = None
-
-        if not use_tools:
-            # Initialize legacy components
-            self.legacy_processor = LightProcessor(llm_service=self.llm_service)
-            self.state_machine = StateMachine()
-
         # Session config
         self.config: Dict[str, Any] = {}
         self._session_started_at: Optional[str] = None
+        # Raw plan dict kept so progress updates can surface each state's
+        # transitions (the "Possible Next States" preview on the frontend).
+        self._plan_config: Optional[Dict[str, Any]] = None
         self._plan_system_prompt: Optional[str] = None
         # Configurator overrides injected via SDK config (pipeline_config).
         # Light exposes a single combined System Prompt (identity + conversational style).
@@ -135,8 +117,7 @@ class StellaLightAgent(BaseAgent):
         # version this agent was authored against; can be overridden via config.
         self._compiler_version: str = PROMPT_COMPILER_VERSION
 
-        mode_str = "tool-based" if use_tools else "legacy"
-        print(f"[StellaLightAgent] Initialized ({mode_str} mode)")
+        print("[StellaLightAgent] Initialized (tool-based state management)")
 
     def _find_config_file(self, relative_path: str) -> Optional[str]:
         """Find config file in various locations."""
@@ -256,13 +237,11 @@ class StellaLightAgent(BaseAgent):
 
         # Load plan configuration
         plan_config = self._load_plan_config(config)
+        # Retain the raw plan so progress updates can expose per-state transitions.
+        self._plan_config = plan_config
 
-        if self._use_tools:
-            # Initialize tool-based state management
-            await self._init_tool_mode(session_id, plan_config)
-        else:
-            # Initialize legacy state machine
-            await self._init_legacy_mode(plan_config)
+        # Initialize tool-based state management (the only path).
+        await self._init_tool_mode(session_id, plan_config)
 
         # Extract custom system prompt from plan if provided
         if plan_config and "system_prompt" in plan_config:
@@ -348,14 +327,6 @@ class StellaLightAgent(BaseAgent):
             tool_registry=self.tool_registry
         )
 
-    async def _init_legacy_mode(self, plan_config: Optional[Dict[str, Any]]) -> None:
-        """Initialize legacy text-parsing state management."""
-        if plan_config:
-            success = self.state_machine.initialize(plan_config)
-            print(f"[StellaLightAgent] State machine initialized: {success}")
-        else:
-            print("[StellaLightAgent] No plan_id or plan in config - state machine disabled")
-
     def _find_plan_file(self, plan_id: str) -> Optional[str]:
         """Find plan file by ID."""
         locations = [
@@ -375,49 +346,34 @@ class StellaLightAgent(BaseAgent):
         Called when agent is ready to start.
         Send initial progress state to frontend.
         """
-        print(f"[StellaLightAgent] on_ready called, use_tools={self._use_tools}, sm_client={self.sm_client is not None}")
+        print(f"[StellaLightAgent] on_ready called, sm_client={self.sm_client is not None}")
 
-        if self._use_tools:
-            # Get full progress from external state machine
-            if self.sm_client:
-                try:
-                    print("[StellaLightAgent] Fetching full state from state machine...")
-                    full_state = await self.sm_client.get_full_state()
-                    print(f"[StellaLightAgent] Full state received: {full_state is not None}, keys: {list(full_state.keys()) if full_state else 'None'}")
+        # Send the initial progress snapshot from the external state machine.
+        if self.sm_client:
+            try:
+                print("[StellaLightAgent] Fetching full state from state machine...")
+                full_state = await self.sm_client.get_full_state()
+                print(f"[StellaLightAgent] Full state received: {full_state is not None}, keys: {list(full_state.keys()) if full_state else 'None'}")
 
-                    if full_state:
-                        progress_state = self._build_progress_from_full_state(full_state)
-                        print(f"[StellaLightAgent] Built progress state with {len(progress_state.get('groups', []))} groups")
-                        yield AgentOutput.progress_update(
-                            session_id,
-                            progress_state,
-                            update_trigger="session_start",
-                            agent_name="stella-light-agent",
-                            agent_icon="💡"
-                        )
-                        print("[StellaLightAgent] Progress update yielded")
-                    else:
-                        print("[StellaLightAgent] No full state returned - state machine may not be initialized")
-                except Exception as e:
-                    print(f"[StellaLightAgent] Failed to get initial state: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print("[StellaLightAgent] No sm_client available")
+                if full_state:
+                    progress_state = self._build_progress_from_full_state(full_state)
+                    print(f"[StellaLightAgent] Built progress state with {len(progress_state.get('groups', []))} groups")
+                    yield AgentOutput.progress_update(
+                        session_id,
+                        progress_state,
+                        update_trigger="session_start",
+                        agent_name="stella-light-agent",
+                        agent_icon="💡"
+                    )
+                    print("[StellaLightAgent] Progress update yielded")
+                else:
+                    print("[StellaLightAgent] No full state returned - state machine may not be initialized")
+            except Exception as e:
+                print(f"[StellaLightAgent] Failed to get initial state: {e}")
+                import traceback
+                traceback.print_exc()
         else:
-            # Legacy mode
-            if self.state_machine and self.state_machine.is_initialized and self.state_machine.execution_state:
-                progress_state = ProgressAdapter.from_execution_state(
-                    self.state_machine.execution_state,
-                    started_at=self._session_started_at
-                )
-                yield AgentOutput.progress_update(
-                    session_id,
-                    progress_state,
-                    update_trigger="session_start",
-                    agent_name="stella-light-agent",
-                    agent_icon="💡"
-                )
+            print("[StellaLightAgent] No sm_client available")
 
     async def process(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         """
@@ -441,12 +397,8 @@ class StellaLightAgent(BaseAgent):
 
             print(f"[StellaLightAgent] Processing: '{input.text}'")
 
-            if self._use_tools:
-                async for output in self._process_with_tools(input):
-                    yield output
-            else:
-                async for output in self._process_legacy(input):
-                    yield output
+            async for output in self._process_with_tools(input):
+                yield output
 
         except Exception as e:
             print(f"[StellaLightAgent] Error: {e}")
@@ -617,92 +569,6 @@ class StellaLightAgent(BaseAgent):
             except Exception as e:
                 print(f"[StellaLightAgent] Failed to emit progress: {e}")
 
-    async def _process_legacy(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
-        """Process input using legacy text-parsing state management."""
-        # Fetch conversation history
-        conversation_history = await self._fetch_conversation_history(limit=self._history_limit)
-
-        # Get state machine context
-        sm_context = {}
-        if self.state_machine.is_initialized:
-            sm_context = self.state_machine.get_context_for_prompt()
-
-        # Add custom system prompt from plan if available
-        if self._plan_system_prompt:
-            sm_context["plan_system_prompt"] = self._plan_system_prompt
-
-        # Inject configured prompts, resolving {{placeholder}} variables against
-        # the live runtime context (same principle as stella-v2).
-        self._inject_configured_prompts(sm_context, conversation_history, input.text)
-
-        # Build prompts
-        system_prompt = self.prompt_builder.build_system_prompt(sm_context)
-        user_message = self.prompt_builder.build_user_message(
-            user_input=input.text,
-            conversation_history=conversation_history,
-            context=sm_context
-        )
-
-        # Process through LightProcessor (streams response)
-        result: Optional[ProcessorResult] = None
-        async for output in self.legacy_processor.process(
-            session_id=input.session_id,
-            system_prompt=system_prompt,
-            user_message=user_message
-        ):
-            if isinstance(output, ProcessorResult):
-                result = output
-            else:
-                yield output
-
-        # Drive the state machine for this turn. A single process_turn() call records
-        # deliverables, completed/skipped tasks, accounts the turn, and evaluates
-        # transitions. Completion and skipping are explicit agent actions — nothing
-        # auto-completes from deliverable presence (#291).
-        deliverables = result.deliverables if (result and result.deliverables) else {}
-        completed_tasks = result.completed_tasks if (result and result.completed_tasks) else []
-        skipped_tasks = result.skipped_tasks if (result and result.skipped_tasks) else []
-
-        if deliverables:
-            print(f"[StellaLightAgent] Extracted deliverables: {list(deliverables.keys())}")
-        if completed_tasks:
-            print(f"[StellaLightAgent] Completed tasks: {completed_tasks}")
-        if skipped_tasks:
-            print(f"[StellaLightAgent] Skipped tasks: {skipped_tasks}")
-
-        if result and self.state_machine.is_initialized:
-            sm_result = self.state_machine.process_turn(
-                extracted=deliverables,
-                completed_task_ids=completed_tasks,
-                skipped_task_ids=skipped_tasks,
-            )
-            if sm_result.transitioned:
-                print(
-                    f"[StellaLightAgent] Transitioned to: {sm_result.next_state_id} "
-                    f"({sm_result.transition_reason})"
-                )
-
-        # Emit deliverables to the rest of the pipeline.
-        if deliverables:
-            for key, data in deliverables.items():
-                value = data.get("value") if isinstance(data, dict) else data
-                yield AgentOutput.deliverable(input.session_id, key=key, value=value)
-
-        # Emit progress update
-        if self.state_machine.is_initialized and self.state_machine.execution_state:
-            self.state_machine.clear_state_changed_flag()
-            progress_state = ProgressAdapter.from_execution_state(
-                self.state_machine.execution_state,
-                started_at=self._session_started_at
-            )
-            yield AgentOutput.progress_update(
-                input.session_id,
-                progress_state,
-                update_trigger="turn_completion",
-                agent_name="stella-light-agent",
-                agent_icon="💡"
-            )
-
     def _build_context_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Build prompt context from external state machine state."""
         # Handle both 'state_title' (from gRPC) and 'title' (from direct dict)
@@ -721,20 +587,6 @@ class StellaLightAgent(BaseAgent):
             "state_just_changed": False,
         }
 
-    def _build_progress_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Build progress state for frontend from external state machine state (legacy)."""
-        return {
-            "execution_mode": "progressive",
-            "overall_progress": state.get("progress", 0),
-            "groups": [],
-            "metadata": {
-                "started_at": self._session_started_at,
-                "current_state": state.get("state_id"),
-                "total_turns": state.get("total_turns", 0),
-                "turns_without_progress": state.get("turns_without_progress", 0),
-            }
-        }
-
     def _build_progress_from_full_state(self, full_state: Dict[str, Any]) -> Dict[str, Any]:
         """Build progress state for frontend from full state machine state.
 
@@ -747,6 +599,28 @@ class StellaLightAgent(BaseAgent):
         groups = []
         current_group_id = None
         current_item_id = None
+
+        # Map each state's transitions from the raw plan so the frontend can render
+        # the "Possible Next States" preview (#291 follow-up). Transitions are static
+        # plan data; the live full_state only carries status, so we read them here.
+        transitions_by_state: Dict[str, list] = {}
+        plan_states = (self._plan_config or {}).get("states") or []
+        for plan_state in plan_states:
+            state_id = plan_state.get("id")
+            if not state_id:
+                continue
+            mapped = []
+            for transition in plan_state.get("transitions", []) or []:
+                target = transition.get("target_state_id")
+                if not target:
+                    continue
+                mapped.append({
+                    "target_state_id": target,
+                    "condition_type": transition.get("condition_type", "all_tasks_complete"),
+                    "priority": transition.get("priority"),
+                    "condition_config": transition.get("condition_config", {}),
+                })
+            transitions_by_state[state_id] = mapped
 
         for state in full_state.get("states", []):
             # Flatten: each deliverable becomes an item with task info in metadata
@@ -789,7 +663,9 @@ class StellaLightAgent(BaseAgent):
                 "is_current": state.get("status") == "active",
                 "description": state.get("description"),
                 "completed_at": None,
-                "metadata": {},
+                "metadata": {
+                    "transitions": transitions_by_state.get(state.get("id"), []),
+                },
             }
             groups.append(group)
 
@@ -817,10 +693,8 @@ class StellaLightAgent(BaseAgent):
     async def on_interrupt(self, session_id: str) -> None:
         """Handle user interruption (barge-in)."""
         print(f"[StellaLightAgent] Interrupt received: {session_id}")
-        if self._use_tools and self.tool_processor:
+        if self.tool_processor:
             self.tool_processor.cancel()
-        elif self.legacy_processor:
-            self.legacy_processor.cancel()
         self._is_processing = False
 
     async def on_barge_in(self, session_id: str, transcript: str) -> BargeInDecision:
@@ -867,11 +741,11 @@ class StellaLightAgent(BaseAgent):
 
         summary = {
             "agent": "stella-light-agent",
-            "mode": "tool-based" if self._use_tools else "legacy",
+            "mode": "tool-based",
             "llm_stats": self.llm_service.get_usage_stats(),
         }
 
-        if self._use_tools and self.sm_client:
+        if self.sm_client:
             try:
                 state = await self.sm_client.get_current_state()
                 deliverables = await self.sm_client.get_collected_deliverables()
@@ -885,12 +759,6 @@ class StellaLightAgent(BaseAgent):
             self.sm_client = None
             self.tool_registry = None
             self.tool_processor = None
-
-        elif self.state_machine and self.state_machine.is_initialized and self.state_machine.execution_state:
-            summary["deliverables"] = self.state_machine.execution_state.get_all_deliverable_values()
-            summary["progress"] = self.state_machine.execution_state.calculate_progress()
-            summary["state_machine"] = self.state_machine.get_status_summary()
-            self.state_machine = StateMachine()
 
         # Reset for next session
         self.llm_service.reset_stats()
