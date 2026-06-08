@@ -929,12 +929,16 @@ export class StateMachineService {
     const deliverables = state.deliverables as unknown as Record<string, DeliverableValue>;
 
     for (const task of currentState.tasks) {
-      // A task stays pending until the agent EXPLICITLY completes or skips it.
-      // Deliverable presence no longer hides a task — collecting data and ticking
-      // the task are separate, explicit agent actions (#291 redesign). `required`
-      // is surfaced for the agent's information only; it never hides a task.
+      // A task is "addressed" — and so no longer pending — when the agent has
+      // explicitly completed/skipped it, OR (hybrid #291) its required
+      // deliverables are all collected. This MUST match the canonical rule used
+      // by isCurrentStateComplete / isPlanStateComplete / getFullState, so the
+      // agent is never steered (esp. the strict-mode "current task" preview) to
+      // re-work a task whose data is already in. `required` is surfaced for the
+      // agent's information only; it never hides a task.
       if (state.completedTasks.includes(task.id)) continue;
       if (state.skippedTasks.includes(task.id)) continue;
+      if (this.deliverablesSatisfyTask(task, deliverables)) continue;
 
       const taskDeliverables = task.deliverables || [];
       const hasDeliverables = taskDeliverables.length > 0;

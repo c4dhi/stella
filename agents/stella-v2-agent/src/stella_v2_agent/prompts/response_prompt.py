@@ -271,7 +271,7 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
             state_completing = all_pending_keys.issubset(collected_keys)
 
             if state_completing:
-                next_hint, hinted_task_id, hinted_task_has_deliverables = _get_next_state_hint(sm_context)
+                next_hint, _, _ = _get_next_state_hint(sm_context)
                 note = (
                     "NOTE: The user just provided all the information needed for this phase. "
                     "Do NOT re-ask what they said. Acknowledge what they shared, then naturally "
@@ -281,9 +281,6 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
                 if next_hint:
                     note += f" Next topic: {next_hint}"
                 parts.append(note)
-
-                if hinted_task_id and not hinted_task_has_deliverables:
-                    sm_context["_hinted_task_id"] = hinted_task_id
             else:
                 parts.append(
                     "NOTE: The user just provided information for this task. "

@@ -484,7 +484,7 @@ describe('goal_achieved condition', () => {
     const rawState = await (svc as any).getState(sessionId);
     const goalState = (rawState?.planData as PlanData)?.states.find((state) => state.id === 'state-goal');
 
-    expect(goalState?.transitions[0]?.condition_type).toBe('goal_achieved');
+    expect(goalState?.transitions?.[0]?.condition_type).toBe('goal_achieved');
   });
 
   it('does not transition immediately in goal states without deliverables', async () => {
@@ -1199,6 +1199,53 @@ describe('agent-driven completion (#291)', () => {
     expect(task?.deliverables[0].status).toBe('skipped');
   });
 
+  it('getPendingTasks omits a hybrid-complete task (required deliverables collected, no explicit tick)', async () => {
+    // #291 consistency: getPendingTasks must use the same "addressed" rule as
+    // isCurrentStateComplete/getFullState. A multi-task state where one task's
+    // required deliverable is already collected should not re-surface that task
+    // as pending (which would steer the agent to re-work it).
+    const sessionId = 'session-pending-hybrid';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    await svc.initializeForSession(sessionId, {
+      id: 'p',
+      title: 'P',
+      initial_state_id: 's',
+      states: [
+        {
+          id: 's',
+          title: 'S',
+          type: 'loose',
+          tasks: [
+            {
+              id: 'goal',
+              description: 'Ask about fitness goals',
+              deliverables: [
+                { key: 'fitness_goal', description: 'Main objective', required: true },
+              ],
+            },
+            {
+              id: 'challenges',
+              description: 'Ask about challenges',
+              deliverables: [
+                { key: 'fitness_challenges', description: 'Challenges', required: true },
+              ],
+            },
+          ],
+        },
+        { id: 'end', title: 'End', type: 'loose', tasks: [] },
+      ],
+    });
+
+    // Collect only the first task's required deliverable.
+    await svc.setDeliverable(sessionId, 'fitness_goal', 'be more consistent', 'stated');
+
+    const pending = await svc.getPendingTasks(sessionId);
+    const ids = pending.map(t => t.id);
+    expect(ids).not.toContain('goal');      // hybrid-complete -> not pending
+    expect(ids).toContain('challenges');    // still genuinely pending
+  });
+
   it('skipState rejects a non-current state', async () => {
     const svc = await newServiceInStateB('session-skipstate-reject');
     const res = await svc.skipState('session-skipstate-reject', 'state-a', 'wrong');
@@ -1451,7 +1498,7 @@ describe('getFullState optional-task status on startup (#213)', () => {
         {
           id: 's',
           title: 'S',
-          type: 'flexible',
+          type: 'loose',
           tasks: [
             {
               id: 'multi',
@@ -1502,7 +1549,7 @@ describe('getFullState optional-task status on startup (#213)', () => {
         {
           id: 'habits',
           title: 'Exercise Habits',
-          type: 'flexible',
+          type: 'loose',
           tasks: [
             { id: 't1', description: 'preferred', deliverables: [{ key: 'pref', description: 'p', required: true, type: 'string' }] },
             { id: 't2', description: 'frequency', deliverables: [{ key: 'freq', description: 'f', required: true, type: 'string' }] },
@@ -1516,7 +1563,7 @@ describe('getFullState optional-task status on startup (#213)', () => {
         {
           id: 'goals',
           title: 'Goals and Challenges',
-          type: 'flexible',
+          type: 'loose',
           tasks: [{ id: 'g1', description: 'goal', deliverables: [{ key: 'goal', description: 'g', required: true, type: 'string' }] }],
           transitions: [],
         },
@@ -1551,7 +1598,7 @@ describe('getFullState optional-task status on startup (#213)', () => {
         {
           id: 'goals',
           title: 'Goals and Challenges',
-          type: 'flexible',
+          type: 'loose',
           tasks: [
             { id: 'g-goal', description: 'Ask about fitness goals', deliverables: [{ key: 'fitness_goal', description: 'goal', required: false, type: 'string' }] },
             { id: 'g-chal', description: 'Ask about challenges', deliverables: [{ key: 'fitness_challenges', description: 'challenges', required: false, type: 'string' }] },
@@ -1561,7 +1608,7 @@ describe('getFullState optional-task status on startup (#213)', () => {
         {
           id: 'followup',
           title: 'Follow-up',
-          type: 'flexible',
+          type: 'loose',
           tasks: [{ id: 'f-sched', description: 'Schedule follow-up', deliverables: [{ key: 'followup_schedule', description: 'sched', required: false, type: 'string' }] }],
           transitions: [],
         },
@@ -2152,7 +2199,7 @@ describe('realistic conversation simulation (#291)', () => {
       {
         id: 'exercise',
         title: 'Exercise Habits',
-        type: 'flexible',
+        type: 'loose',
         tasks: [
           {
             id: 'ex-pref',
