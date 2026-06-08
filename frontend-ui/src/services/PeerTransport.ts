@@ -48,6 +48,9 @@ export class PeerTransport implements Transport {
   private audioContext?: AudioContext
   private audioAnalyser?: AnalyserNode
   private audioAnalysisFrame?: number
+  // Audio-level analysis only runs while a consumer (the Face modal) wants it.
+  // Gating the loop on this flag keeps the page near-idle when nothing renders the level.
+  private audioAnalysisActive: boolean = false
 
   // Set the user's actual name for proper message attribution
   setUserName(name: string) {
@@ -63,6 +66,28 @@ export class PeerTransport implements Transport {
       } catch (err) {
         console.warn('⚠️ [AUDIO] Could not resume AudioContext:', err)
       }
+    }
+  }
+
+  // Enable/disable the audio-level analysis loop. Only the Face modal consumes the
+  // emitted level, so the live session view toggles this on modal open/close to avoid
+  // running 60 fps RMS analysis (and re-rendering subscribers) while nothing renders it.
+  setAudioAnalysisActive(active: boolean): void {
+    if (this.audioAnalysisActive === active) return
+    this.audioAnalysisActive = active
+
+    if (active) {
+      // Opening the modal is a user interaction, so the AudioContext can resume.
+      this.resumeAudioAnalysis()
+      if (this.remoteAudioTrack) {
+        this.startAudioLevelMonitoring()
+      }
+    } else {
+      this.stopAudioLevelMonitoring()
+      // Reset so the mouth/visualizer starts from rest next time the modal opens
+      // rather than re-mounting against a stale frozen level.
+      this.onAudioLevel(0)
+      this.onRemoteSpeaking(false)
     }
   }
 
@@ -207,8 +232,12 @@ export class PeerTransport implements Transport {
           // Set up Web Audio API for accurate speech detection
           this.setupWebAudioAnalysis(audioTrack)
 
-          // Start monitoring audio levels for face animation
-          this.startAudioLevelMonitoring()
+          // Start monitoring audio levels for face animation — but only if a consumer
+          // (the Face modal) is currently active. Otherwise the loop stays parked until
+          // setAudioAnalysisActive(true) is called, keeping the page idle.
+          if (this.audioAnalysisActive) {
+            this.startAudioLevelMonitoring()
+          }
 
           // Debug: Log audio element state
           console.log('🔊 [AUDIO] Remote audio track attached:', {
@@ -1055,13 +1084,36 @@ export class PeerTransport implements Transport {
     return Math.sqrt(sumSquares / timeData.length)
   }
 
-  // Start monitoring audio levels for face animation with RMS analysis
+  // Start monitoring audio levels for face animation with RMS analysis.
+  // The rAF loop is throttled to ~30 Hz and only emits the level when it changes
+  // meaningfully, so silence produces no store writes (and no subscriber re-renders).
   private startAudioLevelMonitoring() {
+    // Idempotent: never run two concurrent loops.
+    if (this.audioAnalysisFrame !== undefined) return
+
     let lastSpeakingState = false
     let resumeAttempted = false
+    // Throttle the RMS math + emits to ~30 Hz — plenty for a mouth visualizer, and a
+    // fraction of the per-frame work the old unconditional 60 fps loop did.
+    const MIN_INTERVAL_MS = 33
+    // Only emit when the level moves by at least this much, so a steady value (e.g. silence)
+    // stops re-rendering the Face modal entirely.
+    const LEVEL_EPSILON = 0.01
+    let lastProcessTime = 0
+    let lastEmittedLevel = -1
 
-    const analyzeAudio = async () => {
-      if (!this.remoteAudioTrack) return
+    const analyzeAudio = async (now: number) => {
+      if (!this.remoteAudioTrack) {
+        this.audioAnalysisFrame = undefined
+        return
+      }
+
+      // Throttle: skip this frame's work until the interval has elapsed.
+      if (now - lastProcessTime < MIN_INTERVAL_MS) {
+        this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
+        return
+      }
+      lastProcessTime = now
 
       let audioLevel = 0
       let isSpeaking = false
@@ -1099,8 +1151,11 @@ export class PeerTransport implements Transport {
         isSpeaking = audioLevel > 0.05
       }
 
-      // Emit audio level for mouth animation
-      this.onAudioLevel(audioLevel)
+      // Emit audio level only on a meaningful change (or the very first frame).
+      if (lastEmittedLevel < 0 || Math.abs(audioLevel - lastEmittedLevel) >= LEVEL_EPSILON) {
+        this.onAudioLevel(audioLevel)
+        lastEmittedLevel = audioLevel
+      }
 
       // Only emit speaking state change if it actually changed
       if (isSpeaking !== lastSpeakingState) {
@@ -1108,13 +1163,22 @@ export class PeerTransport implements Transport {
         lastSpeakingState = isSpeaking
       }
 
-      // Continue animation loop at 60 FPS
+      // Bail before rescheduling if the loop was torn down while we were awaiting
+      // (e.g. the modal closed during audioContext.resume()). Without this the awaited
+      // continuation would resurrect a loop stopAudioLevelMonitoring() already cancelled,
+      // reintroducing the idle burn this is meant to remove.
+      if (!this.audioAnalysisActive || !this.remoteAudioTrack) {
+        this.audioAnalysisFrame = undefined
+        return
+      }
+
+      // Continue the loop (throttled above to ~30 Hz of actual work)
       this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
     }
 
     // Start the analysis loop
     this.audioAnalysisFrame = requestAnimationFrame(analyzeAudio)
-    console.log('🎙️ [AUDIO] Started audio level monitoring (Web Audio RMS analysis)')
+    console.log('🎙️ [AUDIO] Started audio level monitoring (Web Audio RMS analysis, ~30 Hz, delta-gated)')
   }
 
   // Stop monitoring audio levels

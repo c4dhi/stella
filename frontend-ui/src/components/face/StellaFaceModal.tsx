@@ -17,17 +17,20 @@ interface StellaFaceModalProps {
   isOpen: boolean;
   onClose: () => void;
   isUserSpeaking?: boolean;
-  isRemoteSpeaking?: boolean;
-  audioLevel?: number;
 }
 
 const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
   isOpen,
   onClose,
-  isUserSpeaking = false,
-  isRemoteSpeaking = false,
-  audioLevel = 0
+  isUserSpeaking = false
 }) => {
+  // Audio level + remote-speaking are subscribed here (the only consumer) rather than in
+  // the parent SessionView, so high-frequency audio updates re-render just this modal and
+  // not the whole page. They only tick while the modal is open (see the gate effect below).
+  // See ticket #305.
+  const audioLevel = useStore(s => s.audioLevel);
+  const isRemoteSpeaking = useStore(s => s.isRemoteSpeaking);
+
   // Store state for mute button
   const status = useStore(s => s.status);
   const transport = useStore(s => s.transport);
@@ -102,12 +105,16 @@ const StellaFaceModal: React.FC<StellaFaceModalProps> = ({
     }
   }, [isGalleryOpen, isMuted]);
 
-  // Resume audio analysis when modal opens (user interaction enables AudioContext)
+  // Drive the audio-level analysis loop only while the modal is open. Nothing else
+  // consumes the level, so when closed the loop is fully stopped (no 30/60 fps RMS work,
+  // no store writes). Opening the modal is also a user interaction, so the transport can
+  // resume the AudioContext at the same time. See ticket #305.
   useEffect(() => {
-    if (isOpen && transport) {
-      // Opening the modal is a user interaction, so we can resume AudioContext
-      transport.resumeAudioAnalysis();
-    }
+    if (!transport) return;
+    transport.setAudioAnalysisActive(isOpen);
+    return () => {
+      transport.setAudioAnalysisActive(false);
+    };
   }, [isOpen, transport]);
 
   // Fullscreen toggle function
