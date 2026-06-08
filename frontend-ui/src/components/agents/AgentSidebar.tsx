@@ -8,6 +8,30 @@ import { useStore } from '../../store'
 import type { AgentInstance, AgentWithPodStatus } from '../../lib/api-types'
 import { AgentStatus, POLL_INTERVALS } from '../../lib/api-types'
 import { getRuntimeConfig } from '../../config/runtime'
+import { usePageVisibility } from '../../hooks/usePageVisibility'
+
+// Shallow structural compare of the fields the sidebar renders. Lets the fallback poll
+// skip state updates when nothing changed, instead of assigning a fresh array ref every
+// tick (which re-renders the whole agent list and its motion.divs). See ticket #305.
+function areAgentListsEqual(a: AgentInstance[], b: AgentInstance[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (
+      x.id !== y.id ||
+      x.status !== y.status ||
+      x.podName !== y.podName ||
+      x.name !== y.name ||
+      x.icon !== y.icon ||
+      x.stoppedAt !== y.stoppedAt
+    ) {
+      return false
+    }
+  }
+  return true
+}
 
 interface AgentSidebarProps {
   sessionId: string
@@ -19,6 +43,7 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
   const { addToast } = useToastStore()
   const { resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const isPageVisible = usePageVisibility()
   const removeAgentFromTimeline = useStore(s => s.removeAgentFromTimeline)
   const agentTaskLists = useStore(s => s.agentTaskLists)
   const taskUpdateHistory = useStore(s => s.taskUpdateHistory)
@@ -92,19 +117,24 @@ export default function AgentSidebar({ sessionId, initialAgents = [], onDeployCl
     })
   }, [agents])
 
-  // Poll for agents as fallback (server is source of truth)
+  // Poll for agents as a fallback — SSE in SessionView is the primary signal (it refreshes
+  // initialAgents on agent.*), the server stays source of truth. Pauses while the tab is
+  // hidden, and only commits when the list actually changed so an unchanged poll doesn't
+  // churn a new array ref and re-render the list every 2 s. See ticket #305.
   useEffect(() => {
+    if (!isPageVisible) return
+
     const interval = setInterval(async () => {
       try {
         const session = await apiClient.getSession(sessionId)
-        setAgents(session.agents)
+        setAgents(prev => (areAgentListsEqual(prev, session.agents) ? prev : session.agents))
       } catch (err) {
         console.error('Failed to refresh agents:', err)
       }
     }, POLL_INTERVALS.AGENTS)
 
     return () => clearInterval(interval)
-  }, [sessionId])
+  }, [sessionId, isPageVisible])
 
   // Deploy new agent
   const handleDeployAgent = async (

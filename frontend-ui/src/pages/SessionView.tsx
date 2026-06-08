@@ -19,6 +19,7 @@ import ProfileButton from '../components/layout/ProfileButton'
 import { useStore } from '../store'
 import { useAuthStore } from '../store/authStore'
 import { useThemeStore } from '../store/themeStore'
+import { usePageVisibility } from '../hooks/usePageVisibility'
 import { apiClient } from '../services/ApiClient'
 import { useToastStore } from '../store/toastStore'
 import type { SessionDetail, Participant, ListenerStatus } from '../lib/api-types'
@@ -26,12 +27,28 @@ import type { TranscriptChunk, ProcessingMessage, ParticipantEvent, ProgressUpda
 import { StateType, StateStatus, TaskStatus, DeliverableStatus } from '../lib/types'
 import { generateUUID } from '../lib/uuid'
 
+// Compare the fields that drive the recording indicator, so an unchanged listener-status
+// poll doesn't create a new object ref and re-render the page every 2 s. See ticket #305.
+function isSameListenerStatus(a: ListenerStatus | null, b: ListenerStatus): boolean {
+  if (!a) return false
+  return (
+    a.sessionStatus === b.sessionStatus &&
+    a.listener.isMonitoring === b.listener.isMonitoring &&
+    a.listener.isConnected === b.listener.isConnected &&
+    a.listener.roomState === b.listener.roomState &&
+    a.listener.participantIdentity === b.listener.participantIdentity &&
+    a.listener.reconnectAttempts === b.listener.reconnectAttempts &&
+    a.listener.remoteParticipants === b.listener.remoteParticipants
+  )
+}
+
 export default function SessionView() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const { addToast } = useToastStore()
   const { resolvedTheme, initializeTheme } = useThemeStore()
   const isDark = resolvedTheme === 'dark'
+  const isPageVisible = usePageVisibility()
 
   // Initialize theme on mount
   useEffect(() => {
@@ -87,8 +104,10 @@ export default function SessionView() {
   // Face modal state
   const isFaceModalOpen = useStore(s => s.isFaceModalOpen)
   const setFaceModalOpen = useStore(s => s.setFaceModalOpen)
-  const audioLevel = useStore(s => s.audioLevel)
-  const isRemoteSpeaking = useStore(s => s.isRemoteSpeaking)
+  // NOTE: deliberately NOT subscribing to `audioLevel`/`isRemoteSpeaking` here.
+  // Those update at up to ~30 Hz while connected; the only consumer is the Face modal,
+  // which now reads them from the store directly. Subscribing here would re-render this
+  // entire (~1000-line) page on every audio frame. See ticket #305.
   const setAgentReady = useStore(s => s.setAgentReady)
 
   // Handlers from ConnectPanel - now consolidated here
@@ -804,14 +823,16 @@ export default function SessionView() {
 
   // Participants are loaded as part of loadSession above (serialized to reduce connection burst)
 
-  // Poll listener status every 2 seconds
+  // Poll listener status (recording indicator). Pauses while the tab is hidden, and only
+  // commits when the status actually changed so an unchanged poll doesn't re-render this
+  // page every 2 s. See ticket #305.
   useEffect(() => {
-    if (!sessionId || !session || session.status !== 'ACTIVE') return
+    if (!sessionId || !session || session.status !== 'ACTIVE' || !isPageVisible) return
 
     const pollStatus = async () => {
       try {
         const status = await apiClient.getListenerStatus(sessionId)
-        setListenerStatus(status)
+        setListenerStatus(prev => (isSameListenerStatus(prev, status) ? prev : status))
       } catch (err) {
         console.error('Failed to get listener status:', err)
       }
@@ -824,7 +845,7 @@ export default function SessionView() {
     const interval = setInterval(pollStatus, 2000)
 
     return () => clearInterval(interval)
-  }, [sessionId, session?.status])
+  }, [sessionId, session?.status, isPageVisible])
 
   if (!sessionId) {
     return <div>Invalid session ID</div>
@@ -1030,8 +1051,6 @@ export default function SessionView() {
       <StellaFaceModal
         isOpen={isFaceModalOpen}
         onClose={() => setFaceModalOpen(false)}
-        isRemoteSpeaking={isRemoteSpeaking}
-        audioLevel={audioLevel}
       />
     </div>
   )

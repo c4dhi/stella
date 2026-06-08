@@ -196,6 +196,9 @@ export interface Transport extends TransportEvents {
   getCurrentRoomName: () => string | undefined
   // Audio analysis control (for face modal reactivity)
   resumeAudioAnalysis: () => Promise<void>
+  // Enable/disable the audio-level analysis loop. Toggled on Face-modal open/close so the
+  // 30 fps RMS loop (and its store writes) don't run while nothing renders the level (#305).
+  setAudioAnalysisActive: (active: boolean) => void
 }
 
 export type EnvelopeType =
