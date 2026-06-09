@@ -1,0 +1,14 @@
+{
+  "default_voice": "stella",
+  "voices": [
+    {
+      "id": "stella",
+      "display_name": "Stella",
+      "default_language": "de",
+      "clips": {
+        "de": { "audio": "stella_de.mp3", "text": "stella_de.txt" },
+        "en": { "audio": "stella_en.mp3", "text": "stella_en.txt" }
+      }
+    }
+  ]
+}
