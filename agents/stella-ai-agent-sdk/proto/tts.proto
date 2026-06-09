@@ -10,10 +10,6 @@ service TextToSpeech {
 
   // Health check
   rpc HealthCheck(Empty) returns (HealthResponse);
-
-  // Report the voices and languages the *active* provider can synthesize,
-  // so callers (the deploy UI) offer agents only provider-valid choices.
-  rpc GetCapabilities(Empty) returns (CapabilitiesResponse);
 }
 
 message Empty {}
@@ -42,20 +38,4 @@ message HealthResponse {
   bool healthy = 1;
   string provider = 2;          // Active TTS provider (piper, kokoro, chatterbox)
   string version = 3;
-}
-
-// A single selectable voice and the languages it has a native clip for.
-message VoiceInfo {
-  string id = 1;                     // Stable id sent back as SynthesizeRequest.voice
-  string display_name = 2;           // Human-friendly label for the UI
-  repeated string languages = 3;     // ISO 639-1 codes this voice has a native clip for
-  string default_language = 4;       // Fallback language when none requested
-}
-
-message CapabilitiesResponse {
-  string provider = 1;               // Active provider name (qwen3, kokoro, ...)
-  repeated VoiceInfo voices = 2;     // Selectable voices (>=1)
-  repeated string languages = 3;     // ISO codes the provider can speak (broad set)
-  string default_voice = 4;          // Voice used when none requested
-  bool supports_voice_selection = 5; // True when more than one voice is selectable
 }

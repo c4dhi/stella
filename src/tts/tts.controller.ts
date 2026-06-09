@@ -10,9 +10,12 @@ export class TtsController {
    * Voices and languages the active TTS provider can synthesize. Consumed by
    * the deploy UI so an agent is only offered provider-valid choices.
    * Authenticated via the global JwtAuthGuard (no @Public).
+   *
+   * max-age mirrors TtsService's server-side cache TTL (60s); the catalog only
+   * changes on a tts-service redeploy, so both freshness windows can be wide.
    */
   @Get('capabilities')
-  @Header('Cache-Control', 'private, max-age=30')
+  @Header('Cache-Control', 'private, max-age=60')
   async getCapabilities(): Promise<TtsCapabilities> {
     return this.tts.getCapabilities();
   }
