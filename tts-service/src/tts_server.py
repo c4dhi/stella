@@ -301,6 +301,37 @@ class TextToSpeechServicer(tts_pb2_grpc.TextToSpeechServicer):
             version="1.0.0",
         )
 
+    async def GetCapabilities(self, request, context):
+        """Report the active provider's selectable voices and languages.
+
+        Delegates to the active provider so the catalog always matches what
+        will actually synthesize. Returns an empty (no-selection) catalog if
+        no provider is initialized rather than erroring, so the UI can render
+        a sane "voice selection unavailable" state.
+        """
+        provider = self.engine.provider
+        if provider is None:
+            return tts_pb2.CapabilitiesResponse(
+                provider=self.engine.provider_name,
+                supports_voice_selection=False,
+            )
+        caps = provider.get_capabilities()
+        return tts_pb2.CapabilitiesResponse(
+            provider=self.engine.provider_name,
+            voices=[
+                tts_pb2.VoiceInfo(
+                    id=v.id,
+                    display_name=v.display_name,
+                    languages=list(v.languages),
+                    default_language=v.default_language,
+                )
+                for v in caps.voices
+            ],
+            languages=list(caps.languages),
+            default_voice=caps.default_voice,
+            supports_voice_selection=caps.supports_voice_selection,
+        )
+
 
 async def serve():
     """Start the gRPC server."""

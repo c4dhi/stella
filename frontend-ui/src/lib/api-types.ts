@@ -29,6 +29,25 @@ export type MessageType = 'text' | 'transcript' | 'system' | 'task_update' | 'de
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Unknown'
 
 // ============================================================================
+// TTS capabilities (what the active TTS provider can synthesize)
+// ============================================================================
+
+export interface TtsVoiceInfo {
+  id: string
+  displayName: string
+  languages: string[]      // ISO 639-1 codes this voice has a native clip for
+  defaultLanguage: string
+}
+
+export interface TtsCapabilities {
+  provider: string
+  voices: TtsVoiceInfo[]
+  languages: string[]      // ISO codes the provider can speak (broad set)
+  defaultVoice: string
+  supportsVoiceSelection: boolean
+}
+
+// ============================================================================
 // Entity Types
 // ============================================================================
 

@@ -31,6 +31,7 @@ import { StateMachineModule } from './state-machine/state-machine.module';
 import { AdminModule } from './admin/admin.module';
 import { AgentConfigurationsModule } from './agent-configurations/agent-configurations.module';
 import { HealthModule } from './health/health.module';
+import { TtsModule } from './tts/tts.module';
 
 const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.local';
 
@@ -67,6 +68,7 @@ const envFilePath = process.env.NODE_ENV === 'production' ? '.env.production' : 
     AdminModule,
     AgentConfigurationsModule,
     HealthModule,
+    TtsModule,
   ],
   controllers: [AppController],
   providers: [

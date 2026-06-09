@@ -75,6 +75,7 @@ import type {
   UpdateAgentConfigurationDto,
   PublicHealthResponse,
   MediaTestSession,
+  TtsCapabilities,
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
@@ -481,6 +482,11 @@ class SessionManagementClient {
 
   async getAgentTypes(): Promise<AgentType[]> {
     return this.get<AgentType[]>('/agent-types')
+  }
+
+  /** Voices and languages the active TTS provider can synthesize. */
+  async getTtsCapabilities(): Promise<TtsCapabilities> {
+    return this.get<TtsCapabilities>('/tts/capabilities')
   }
 
   async createAgent(
