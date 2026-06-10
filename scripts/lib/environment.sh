@@ -138,8 +138,22 @@ load_environment() {
     # Change to project directory
     cd "$PROJECT_DIR" || { error "Cannot change to project directory: $PROJECT_DIR"; exit 1; }
 
-    # Set NODE_ENV from flag or default to local (needed for check_setup_status)
-    export NODE_ENV="${ENV_FLAG:-local}"
+    # Determine NODE_ENV (needed for check_setup_status). An explicit
+    # --local/--production flag always wins. Otherwise auto-detect from which
+    # env file is actually configured on disk, so a plain `start-k8s.sh` (and
+    # the post-wizard reload below) deploys in the mode that was set up instead
+    # of blindly assuming local and ignoring an existing .env.production. If
+    # both files exist, local wins (dev default); if neither exists, fall back
+    # to local so the setup wizard is offered.
+    if [[ -n "${ENV_FLAG:-}" ]]; then
+        export NODE_ENV="$ENV_FLAG"
+    elif [[ -f ".env.local" ]]; then
+        export NODE_ENV="local"
+    elif [[ -f ".env.production" ]]; then
+        export NODE_ENV="production"
+    else
+        export NODE_ENV="local"
+    fi
 
     # Load only the environment-specific file
     local env_file=""
