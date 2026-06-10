@@ -13,9 +13,11 @@ import type {
   PlanTemplate,
   EnvVarTemplate,
   AgentConfiguration,
+  TtsCapabilities,
 } from '../../lib/api-types'
 import { parseAgentRequirements } from '../../lib/api-types'
 import ConfigurationSelectionStep from '../shared/ConfigurationSelectionStep'
+import VoiceSelectionStep from '../shared/VoiceSelectionStep'
 import { useEnvVarListEditor } from '../shared/EnvVarListEditor/useEnvVarListEditor'
 import EnvVarListEditor from '../shared/EnvVarListEditor/EnvVarListEditor'
 
@@ -25,7 +27,7 @@ interface DeployAgentModalProps {
   onSubmit: (name: string, icon?: string, config?: Record<string, unknown>, agentType?: string, envVarTemplateId?: string, envVars?: Record<string, string>, agentConfigurationId?: string) => Promise<void>
 }
 
-type Step = 'gallery' | 'upload' | 'configure' | 'configuration' | 'plan' | 'envvars'
+type Step = 'gallery' | 'upload' | 'configure' | 'configuration' | 'voice' | 'plan' | 'envvars'
 type GalleryTab = 'builtin' | 'myagents'
 type EnvVarsView = 'select' | 'edit'  // select=choose template, edit=manual entry
 
@@ -61,6 +63,14 @@ export default function DeployAgentModal({
   // Agent configuration state (pipeline configurator)
   const [selectedConfiguration, setSelectedConfiguration] = useState<AgentConfiguration | null>(null)
 
+  // TTS voice/language selection. '' = provider default voice / Auto language.
+  // Surfaced from the active provider's capabilities; persisted as the
+  // TTS_VOICE / TTS_LANGUAGE env vars the agent SDK already reads.
+  const [ttsCapabilities, setTtsCapabilities] = useState<TtsCapabilities | null>(null)
+  const [isLoadingTtsCaps, setIsLoadingTtsCaps] = useState(false)
+  const [ttsVoice, setTtsVoice] = useState('')
+  const [ttsLanguage, setTtsLanguage] = useState('')
+
   // Parse agent requirements from configSchema
   const agentRequirements = useMemo(() => {
     if (!selectedType) return { requiresPlan: false, requiredEnvVars: [] as string[], supportsConfigurator: false }
@@ -76,10 +86,21 @@ export default function DeployAgentModal({
 
   // Determine dynamic steps based on agent requirements
   // Flow: Gallery → Configure → (Configuration if supported) → (Plan if required) → Env Vars
+  // Show the voice step only when the active TTS provider actually exposes
+  // something to choose — a selectable voice or at least a language. Providers
+  // that report an empty catalog (no per-agent voice support) skip the step.
+  const supportsVoiceSelection = useMemo(() => {
+    if (!ttsCapabilities || ttsCapabilities.voices.length === 0) return false
+    return ttsCapabilities.supportsVoiceSelection || ttsCapabilities.languages.length > 0
+  }, [ttsCapabilities])
+
   const dynamicSteps = useMemo((): Step[] => {
     const steps: Step[] = ['gallery', 'configure']
     if (agentRequirements.supportsConfigurator && selectedType?.pipelineSchema) {
       steps.push('configuration')
+    }
+    if (supportsVoiceSelection) {
+      steps.push('voice')
     }
     if (agentRequirements.requiresPlan) {
       steps.push('plan')
@@ -87,7 +108,7 @@ export default function DeployAgentModal({
     // Always show env vars step (templates or manual entry)
     steps.push('envvars')
     return steps
-  }, [agentRequirements, selectedType?.pipelineSchema])
+  }, [agentRequirements, selectedType?.pipelineSchema, supportsVoiceSelection])
 
   // Reset state when modal opens
   useEffect(() => {
@@ -103,6 +124,20 @@ export default function DeployAgentModal({
       setEnvVarsView('select')
       setEnvVars({})
       setSelectedConfiguration(null)
+      setTtsVoice('')
+      setTtsLanguage('')
+
+      // Fetch TTS capabilities so the voice step (and its inclusion in the
+      // step flow) reflects what the active provider can actually produce.
+      // Failures are non-fatal: the step is simply omitted.
+      setIsLoadingTtsCaps(true)
+      apiClient.getTtsCapabilities()
+        .then(setTtsCapabilities)
+        .catch((err) => {
+          console.error('Failed to fetch TTS capabilities:', err)
+          setTtsCapabilities(null)
+        })
+        .finally(() => setIsLoadingTtsCaps(false))
 
       // Fetch agent types
       setIsLoadingTypes(true)
@@ -296,6 +331,16 @@ export default function DeployAgentModal({
         }
       }
 
+      // Voice/language selection rides in as the env vars the agent SDK already
+      // reads. Empty = provider default / Auto, so we omit them in that case to
+      // preserve the deployment default rather than pinning a value.
+      if (ttsVoice) {
+        filteredEnvVars['TTS_VOICE'] = ttsVoice
+      }
+      if (ttsLanguage) {
+        filteredEnvVars['TTS_LANGUAGE'] = ttsLanguage
+      }
+
       await onSubmit(
         name.trim(),
         icon,
@@ -326,6 +371,7 @@ export default function DeployAgentModal({
       case 'upload': return 'Upload Agent'
       case 'configure': return 'Customize Agent'
       case 'configuration': return 'Pipeline Configuration'
+      case 'voice': return 'Voice & Language'
       case 'plan': return 'Select a Plan'
       case 'envvars': return envVarsView === 'select' ? 'Environment Variables' : 'Configure Variables'
     }
@@ -337,6 +383,7 @@ export default function DeployAgentModal({
       case 'upload': return 'Upload a custom agent package (.zip)'
       case 'configure': return `Set a name and icon for your ${selectedType?.name || 'agent'}`
       case 'configuration': return `Customize the pipeline configuration for ${selectedType?.name || 'the agent'}`
+      case 'voice': return `Choose the voice and language for ${selectedType?.name || 'the agent'}`
       case 'plan': return `Choose a conversation plan for ${selectedType?.name || 'the agent'}`
       case 'envvars': return envVarsView === 'select'
         ? 'Select a template or enter variables manually'
@@ -681,6 +728,24 @@ export default function DeployAgentModal({
                       onSelectConfiguration={setSelectedConfiguration}
                     />
                   )}
+                </motion.div>
+              ) : step === 'voice' ? (
+                <motion.div
+                  key="voice"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-6"
+                >
+                  <VoiceSelectionStep
+                    capabilities={ttsCapabilities}
+                    loading={isLoadingTtsCaps}
+                    voice={ttsVoice}
+                    language={ttsLanguage}
+                    onVoiceChange={setTtsVoice}
+                    onLanguageChange={setTtsLanguage}
+                  />
                 </motion.div>
               ) : step === 'plan' ? (
                 <motion.div

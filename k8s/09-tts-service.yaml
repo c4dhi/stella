@@ -148,6 +148,18 @@ spec:
               cp /app/assets/ref_audio.mp3 /models/qwen3/ref_audio.mp3
               [ -f /app/assets/ref_audio.txt ] && cp /app/assets/ref_audio.txt /models/qwen3/ref_audio.txt
             fi
+
+            # Stage an optional reference-voice registry (voices.json + its
+            # per-voice / per-language clips) baked into the image at
+            # /app/assets/voices/, unless the operator already placed a
+            # manifest on the PVC. With a manifest the provider selects the
+            # reference clip by voice + language (#311); without one it falls
+            # back to the single ref_audio.mp3 above — identical to before.
+            # Adding voices later is a drop-files-on-PVC operation (no rebuild).
+            if [ ! -f /models/qwen3/voices.json ] && [ -d /app/assets/voices ]; then
+              echo "[TTS Init] Staging Qwen3 voice registry to /models/qwen3/"
+              cp -r /app/assets/voices/. /models/qwen3/
+            fi
           fi
 
           echo "[TTS Init] Model initialization complete!"
@@ -247,6 +259,11 @@ spec:
         # Transcript is read from a sibling .txt file next to QWEN3_REF_AUDIO
         # (e.g. /models/qwen3/ref_audio.txt). Drop both files on the PVC
         # together to swap voices — no env vars to share.
+        # Optional reference-voice registry (#311): a voices.json on the PVC
+        # mapping named voices to per-language clips. Defaults to
+        # /models/qwen3/voices.json; absent → single ref_audio.mp3 voice.
+        # QWEN3: - name: QWEN3_VOICES_MANIFEST
+        # QWEN3:   value: "/models/qwen3/voices.json"
         # QWEN3: - name: QWEN3_LANGUAGE
         # QWEN3:   valueFrom:
         # QWEN3:     configMapKeyRef:

@@ -28,14 +28,15 @@ LICENSE NOTES
 """
 
 import asyncio
+import json
 import os
 import threading
 import time
-from typing import Optional, Tuple, AsyncGenerator
+from typing import Optional, Tuple, AsyncGenerator, Dict
 
 import numpy as np
 
-from .base import TTSProvider
+from .base import TTSProvider, ProviderCapabilities, VoiceInfo
 
 try:
     import torch
@@ -72,6 +73,9 @@ _ISO_TO_QWEN3_LANGUAGE = {
 }
 # The set of labels the model accepts directly (already full names).
 _QWEN3_LANGUAGE_NAMES = {v.lower(): v for v in _ISO_TO_QWEN3_LANGUAGE.values()}
+# Reverse map (full name → ISO) so a caller passing "German" still keys clips
+# by "de" in the reference-voice registry.
+_QWEN3_NAME_TO_ISO = {v.lower(): k for k, v in _ISO_TO_QWEN3_LANGUAGE.items()}
 DEFAULT_SAMPLE_RATE = 24000
 # Codec runs at 12 Hz token rate; chunk_size=2 ≈ 167 ms audio per yield.
 # Smaller = lower TTFB, more decoder calls per second. The CUDA-graph
@@ -110,6 +114,13 @@ class Qwen3Provider(TTSProvider):
       env var only if you can't write to the same directory as the audio.
     - ``QWEN3_CHUNK_SIZE``: codec frames per streamed yield. Default 2.
     - ``QWEN3_SAMPLE_RATE``: output sample rate (Hz). Default 24000.
+    - ``QWEN3_VOICES_MANIFEST``: optional path to a ``voices.json`` registry
+      mapping named voices to per-language reference clips (see
+      ``_load_registry``). Default ``/models/qwen3/voices.json``. When the
+      file is absent the provider behaves exactly as before — a single voice
+      cloned from ``QWEN3_REF_AUDIO``. When present, the ``voice`` and
+      ``language`` request fields select the matching clip, with a fallback
+      chain that always lands on a real clip so TTS is never silent.
     """
 
     def __init__(self):
@@ -124,6 +135,19 @@ class Qwen3Provider(TTSProvider):
         self._ref_text = os.getenv("QWEN3_REF_TEXT", "")
         self._chunk_size = int(os.getenv("QWEN3_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self._sample_rate = int(os.getenv("QWEN3_SAMPLE_RATE", str(DEFAULT_SAMPLE_RATE)))
+        self._voices_manifest = os.getenv("QWEN3_VOICES_MANIFEST", "/models/qwen3/voices.json")
+
+        # Reference-voice registry (populated from voices.json in initialize()).
+        # Shape: { voice_id: {"display_name": str, "default_language": str|"",
+        #          "clips": { iso: {"audio": abs_path, "text": str|None,
+        #                            "text_path": abs_path|None} }}}
+        # Empty when no manifest is present → single-voice legacy behavior.
+        self._registry: Dict[str, dict] = {}
+        self._default_voice = "default"
+        # Caches: resolved (audio_path, transcript) by (voice, language), and
+        # transcripts by audio path so we read each sidecar .txt at most once.
+        self._ref_cache: Dict[Tuple[str, str], Tuple[str, str]] = {}
+        self._ref_text_cache: Dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -203,18 +227,46 @@ class Qwen3Provider(TTSProvider):
             traceback.print_exc()
             return False
 
+        # Build the reference-voice registry from voices.json (if present).
+        # Done after the default clip is validated above so the registry can
+        # fall back to it. Failures here are non-fatal: a bad/absent manifest
+        # degrades to the single default voice rather than failing init.
+        self._load_registry()
+
         self._initialized = True
-        await self._warm_up()
+        if not await self._warm_up():
+            # A model that can't even synthesize a warm-up phrase is unusable
+            # (most commonly a non-Base variant: CustomVoice/VoiceDesign do not
+            # support create_voice_clone_prompt, which this provider relies on).
+            # Fail init loudly so the service surfaces the problem / falls back
+            # instead of becoming the primary provider that silently returns no
+            # audio.
+            print("[Qwen3] Warm-up produced no audio — marking provider UNAVAILABLE.")
+            print(f"[Qwen3] QWEN3_MODEL_ID={self._model_id!r}. Reference-clip voice")
+            print("[Qwen3] cloning requires a -Base model (e.g. Qwen/Qwen3-TTS-12Hz-1.7B-Base).")
+            print("[Qwen3] CustomVoice / VoiceDesign variants are NOT supported here.")
+            self._initialized = False
+            return False
         return True
 
-    async def _warm_up(self) -> None:
-        """Run a tiny synth to capture CUDA graphs and prime kernels."""
+    async def _warm_up(self) -> bool:
+        """Run a tiny synth to capture CUDA graphs and prime kernels.
+
+        Returns True only if the warm-up actually produced audio. synthesize()
+        swallows its own exceptions and returns None, so we must check the
+        return value — otherwise a model that can't synthesize at all would
+        still report a successful warm-up."""
         try:
             t0 = time.time()
-            await self.synthesize("Hi.")
+            result = await self.synthesize("Hi.")
+            if result is None:
+                print("[Qwen3] Warm-up synthesis returned no audio.")
+                return False
             print(f"[Qwen3] Warm-up complete in {(time.time() - t0) * 1000:.0f}ms")
+            return True
         except Exception as e:
-            print(f"[Qwen3] Warm-up failed (non-fatal): {e}")
+            print(f"[Qwen3] Warm-up failed: {e}")
+            return False
 
     def _to_int16_numpy(self, chunk) -> np.ndarray:
         """Convert a model audio chunk (torch tensor or numpy) to int16 PCM.
@@ -259,6 +311,258 @@ class Qwen3Provider(TTSProvider):
         print(f"[Qwen3] Unknown language label '{candidate}', falling back to autodetect")
         return None
 
+    def _normalize_iso(self, language: Optional[str]) -> Optional[str]:
+        """Reduce a language hint to a base ISO 639-1 code for clip keying.
+
+        "de-AT" → "de", "German" → "de", "en" → "en". Empty / "Auto" / an
+        unknown label → None (meaning "no specific clip language"). This is
+        purely for *registry lookup*; the label actually handed to the model
+        still goes through ``_resolve_language``.
+        """
+        candidate = (language or "").strip().lower()
+        if not candidate or candidate == "auto":
+            return None
+        # Strip a region/script subtag: "de-at", "zh_hans" → "de", "zh".
+        base = candidate.replace("_", "-").split("-", 1)[0]
+        if base in _ISO_TO_QWEN3_LANGUAGE:
+            return base
+        # A full language name ("german") → its ISO code.
+        if candidate in _QWEN3_NAME_TO_ISO:
+            return _QWEN3_NAME_TO_ISO[candidate]
+        # Unknown but well-formed code: keep it so a manifest that uses an ISO
+        # code we don't map (e.g. a future addition) can still match a clip.
+        return base or None
+
+    def _load_registry(self) -> None:
+        """Load the reference-voice registry from ``voices.json``.
+
+        Manifest shape (paths relative to the manifest's directory)::
+
+            {
+              "default_voice": "stella",
+              "voices": [
+                {
+                  "id": "stella",
+                  "display_name": "Stella",
+                  "default_language": "en",
+                  "clips": {
+                    "en": {"audio": "stella_en.mp3", "text": "stella_en.txt"},
+                    "de": {"audio": "stella_de.mp3"}
+                  }
+                }
+              ]
+            }
+
+        ``text`` is optional — when omitted the provider reads the sibling
+        ``.txt`` next to the audio (the existing convention). A missing
+        manifest leaves the registry empty, which the resolver treats as
+        "single default voice" — identical to the pre-#311 behavior.
+        """
+        self._registry = {}
+        self._ref_cache = {}
+        self._default_voice = "default"
+
+        manifest = self._voices_manifest
+        if not manifest or not os.path.isfile(manifest):
+            print(f"[Qwen3] No voices manifest at {manifest!r}; using single default voice")
+            return
+
+        try:
+            with open(manifest, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[Qwen3] Failed to read voices manifest {manifest}: {e} — using single default voice")
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(manifest))
+        voices = data.get("voices") if isinstance(data, dict) else None
+        if not isinstance(voices, list):
+            print(f"[Qwen3] voices manifest has no 'voices' list — using single default voice")
+            return
+
+        registry: Dict[str, dict] = {}
+        for raw in voices:
+            if not isinstance(raw, dict):
+                continue
+            vid = str(raw.get("id") or "").strip()
+            if not vid:
+                continue
+            clips_raw = raw.get("clips") if isinstance(raw.get("clips"), dict) else {}
+            clips: Dict[str, dict] = {}
+            for lang, clip in clips_raw.items():
+                iso = self._normalize_iso(str(lang))
+                if not iso or not isinstance(clip, dict):
+                    continue
+                audio = clip.get("audio")
+                if not audio:
+                    continue
+                audio_path = audio if os.path.isabs(audio) else os.path.join(base_dir, audio)
+                text_val = clip.get("text")
+                text_path = None
+                if text_val and not os.path.isabs(text_val):
+                    text_path = os.path.join(base_dir, text_val)
+                elif text_val:
+                    text_path = text_val
+                if not os.path.isfile(audio_path):
+                    print(f"[Qwen3] voices[{vid}].{iso}: audio not found at {audio_path} — skipping clip")
+                    continue
+                clips[iso] = {"audio": audio_path, "text_path": text_path}
+            if not clips:
+                print(f"[Qwen3] voice '{vid}' has no usable clips — skipping")
+                continue
+            default_language = self._normalize_iso(str(raw.get("default_language") or "")) or next(iter(clips))
+            registry[vid] = {
+                "display_name": str(raw.get("display_name") or vid),
+                "default_language": default_language,
+                "clips": clips,
+            }
+
+        if not registry:
+            print(f"[Qwen3] voices manifest yielded no usable voices — using single default voice")
+            return
+
+        self._registry = registry
+        requested_default = str(data.get("default_voice") or "").strip()
+        if requested_default in registry:
+            self._default_voice = requested_default
+        else:
+            self._default_voice = next(iter(registry))
+            if requested_default:
+                print(f"[Qwen3] default_voice '{requested_default}' not in registry; using '{self._default_voice}'")
+        summary = ", ".join("{}({} langs)".format(v, len(registry[v]["clips"])) for v in registry)
+        print(
+            f"[Qwen3] Loaded {len(registry)} voice(s) from {manifest}: "
+            f"{summary} (default '{self._default_voice}')"
+        )
+
+    def _clip_text(self, clip: dict) -> str:
+        """Resolve a clip's transcript (cached). Empty string if unavailable.
+
+        Prefers an explicit ``text_path`` from the manifest; otherwise the
+        sibling ``.txt`` next to the audio. Voice cloning needs a transcript,
+        so the resolver treats an empty result as a miss and keeps falling
+        back rather than synthesizing with no reference text.
+        """
+        audio = clip["audio"]
+        if audio in self._ref_text_cache:
+            return self._ref_text_cache[audio]
+        text_path = clip.get("text_path") or (os.path.splitext(audio)[0] + ".txt")
+        text = ""
+        if os.path.isfile(text_path):
+            try:
+                with open(text_path, "r", encoding="utf-8") as f:
+                    text = f.read().strip()
+            except Exception as e:
+                print(f"[Qwen3] Failed to read transcript {text_path}: {e}")
+                text = ""
+        else:
+            print(f"[Qwen3] Transcript not found for {audio} (expected {text_path})")
+        self._ref_text_cache[audio] = text
+        return text
+
+    def _resolve_voice_id(self, voice: Optional[str]) -> str:
+        """Map a requested voice name to a registry id, or the default voice."""
+        if voice:
+            v = voice.strip()
+            if v in self._registry:
+                return v
+            for vid in self._registry:
+                if vid.lower() == v.lower():
+                    return vid
+            if v:
+                print(f"[Qwen3] Unknown voice '{voice}', falling back to default voice '{self._default_voice}'")
+        return self._default_voice
+
+    def _resolve_ref(self, voice: Optional[str], language: Optional[str]) -> Tuple[str, str]:
+        """Resolve the reference (audio_path, transcript) for a request.
+
+        Fallback chain — each step must point at a clip that exists on disk
+        *and* has a transcript, otherwise we fall through:
+
+          (voice, language) → (voice, voice.default_language)
+            → (default_voice, language) → (default_voice, its default)
+            → the bundled QWEN3_REF_AUDIO clip.
+
+        The final step guarantees we never return without a clip, so a
+        missing/unknown voice or language degrades to "wrong voice" rather
+        than silence — same defensive stance as language autodetect.
+        """
+        cache_key = ((voice or "").strip().lower(), (language or "").strip().lower())
+        cached = self._ref_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        lang = self._normalize_iso(language)
+        voice_id = self._resolve_voice_id(voice)
+        resolved: Optional[Tuple[str, str]] = None
+        # Try the requested voice first, then the default voice; within each,
+        # the requested language then that voice's own default language.
+        seen_voices = []
+        for vid in (voice_id, self._default_voice):
+            if vid in seen_voices:
+                continue
+            seen_voices.append(vid)
+            entry = self._registry.get(vid)
+            if not entry:
+                continue
+            for l in (lang, entry.get("default_language")):
+                if not l:
+                    continue
+                clip = entry["clips"].get(l)
+                if not clip:
+                    continue
+                text = self._clip_text(clip)
+                if text:
+                    resolved = (clip["audio"], text)
+                    break
+            if resolved:
+                break
+
+        if resolved is None:
+            # Never silent: the bundled clip validated at initialize().
+            resolved = (self._ref_audio, self._ref_text)
+
+        self._ref_cache[cache_key] = resolved
+        return resolved
+
+    def get_capabilities(self) -> ProviderCapabilities:
+        """Report selectable voices and synthesizable languages.
+
+        ``languages`` is the broad set of languages Qwen3 can *speak* (it
+        autodetects or honors any mapped ISO code even with a single clip),
+        not just the languages that have a native clip — so an agent can be
+        configured for a language before its clip exists, and the audio
+        improves automatically once the clip is dropped on the PVC. Each
+        voice's own ``languages`` list reports which languages it has a
+        native clip for (informational).
+        """
+        voices = []
+        if self._registry:
+            for vid, entry in self._registry.items():
+                voices.append(
+                    VoiceInfo(
+                        id=vid,
+                        display_name=entry["display_name"],
+                        languages=sorted(entry["clips"].keys()),
+                        default_language=entry["default_language"],
+                    )
+                )
+        else:
+            voices.append(
+                VoiceInfo(
+                    id=self._default_voice,
+                    display_name="Default",
+                    languages=[],
+                    default_language=self._normalize_iso(self._language) or "",
+                )
+            )
+        return ProviderCapabilities(
+            voices=voices,
+            languages=sorted(_ISO_TO_QWEN3_LANGUAGE.keys()),
+            default_voice=self._default_voice,
+            supports_voice_selection=len(voices) > 1,
+        )
+
     async def synthesize(
         self,
         text: str,
@@ -273,13 +577,14 @@ class Qwen3Provider(TTSProvider):
             return None
 
         lang = self._resolve_language(language)
+        ref_audio, ref_text = self._resolve_ref(voice, language)
 
         def _run():
             audio_list, sr = self._model.generate_voice_clone(
                 text=text,
                 language=lang,
-                ref_audio=self._ref_audio,
-                ref_text=self._ref_text,
+                ref_audio=ref_audio,
+                ref_text=ref_text,
             )
             return audio_list, sr
 
@@ -337,6 +642,10 @@ class Qwen3Provider(TTSProvider):
         # un-send audio to the consumer, so we never retry mid-stream.
         resolved = self._resolve_language(language)
         attempts = [resolved] if resolved is None else [resolved, None]
+        # Reference clip is chosen by (voice, language) and stays fixed across
+        # the language-autodetect retry below — the retry only changes the
+        # label handed to the model, not which voice we clone.
+        ref_audio, ref_text = self._resolve_ref(voice, language)
 
         for attempt_idx, attempt_lang in enumerate(attempts):
             queue: asyncio.Queue = asyncio.Queue(maxsize=16)
@@ -344,13 +653,14 @@ class Qwen3Provider(TTSProvider):
             # thread stops synthesizing into an abandoned queue.
             stop_event = threading.Event()
 
-            def _producer(attempt_lang=attempt_lang, queue=queue, stop_event=stop_event):
+            def _producer(attempt_lang=attempt_lang, queue=queue, stop_event=stop_event,
+                          ref_audio=ref_audio, ref_text=ref_text):
                 try:
                     for audio_chunk, _sr, _timing in self._model.generate_voice_clone_streaming(
                         text=text,
                         language=attempt_lang,
-                        ref_audio=self._ref_audio,
-                        ref_text=self._ref_text,
+                        ref_audio=ref_audio,
+                        ref_text=ref_text,
                         chunk_size=codec_chunk,
                     ):
                         if stop_event.is_set():

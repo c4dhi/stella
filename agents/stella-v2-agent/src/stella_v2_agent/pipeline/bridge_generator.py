@@ -21,6 +21,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, tolerating empty/blank/invalid → default.
+
+    An optional declared env var can reach the pod as an empty string, which
+    ``os.getenv(name, default)`` returns instead of the default — so
+    ``float("")`` would crash the agent at startup. Empty/whitespace/unparseable
+    all fall back to the default.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+
 BRIDGE_SYSTEM_PROMPT = """You are a person in a conversation. You just heard what the user said and you're about to give your full answer, but first you naturally acknowledge them — the way a real human would before continuing their thought. This will be spoken aloud by TTS.
 
 Think of how people actually talk. When someone tells you something, you don't just launch into your answer — you react briefly first. The bridge is that brief, human moment.
@@ -148,7 +166,7 @@ class BridgeGenerator:
         # The bridge only buys ~1s while the main pipeline runs; it must never
         # stall the turn. If the LLM is slow (API latency spike), fall back to a
         # canned bridge instead of hanging. Tunable via BRIDGE_TIMEOUT_MS.
-        self.bridge_timeout_s: float = float(os.getenv("BRIDGE_TIMEOUT_MS", "2000")) / 1000
+        self.bridge_timeout_s: float = _env_float("BRIDGE_TIMEOUT_MS", 2000.0) / 1000
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""

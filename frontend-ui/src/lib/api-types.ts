@@ -29,6 +29,25 @@ export type MessageType = 'text' | 'transcript' | 'system' | 'task_update' | 'de
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Unknown'
 
 // ============================================================================
+// TTS capabilities (what the active TTS provider can synthesize)
+// ============================================================================
+
+export interface TtsVoiceInfo {
+  id: string
+  displayName: string
+  languages: string[]      // ISO 639-1 codes this voice has a native clip for
+  defaultLanguage: string
+}
+
+export interface TtsCapabilities {
+  provider: string
+  voices: TtsVoiceInfo[]
+  languages: string[]      // ISO codes the provider can speak (broad set)
+  defaultVoice: string
+  supportsVoiceSelection: boolean
+}
+
+// ============================================================================
 // Entity Types
 // ============================================================================
 
@@ -915,7 +934,12 @@ export interface CreateEnvVarTemplateDto {
 export interface UpdateEnvVarTemplateDto {
   name?: string
   description?: string
+  // Keys to add or overwrite (merged on top of existing values; untouched keys
+  // keep their stored value, so unchanged secrets never need re-entry).
   variables?: Record<string, string>
+  // Keys to delete from the template (lets you remove a var without re-typing the
+  // secrets you keep).
+  removeKeys?: string[]
   // agentTypeId is immutable post-create; duplicate the template to rebind.
 }
 

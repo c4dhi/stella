@@ -98,3 +98,60 @@ class TTSProvider(ABC):
     async def cleanup(self) -> None:
         """Clean up any resources held by the provider."""
         pass
+
+    def get_capabilities(self) -> "ProviderCapabilities":
+        """Describe the voices and languages this provider can produce.
+
+        Used by the discovery RPC so the frontend can offer agents exactly
+        the choices the *active* provider supports — the catalog differs per
+        engine (Qwen3 clones from a reference-clip registry; Kokoro/Piper
+        ship a fixed set of built-in voices).
+
+        The default returns an empty catalog with ``supports_voice_selection
+        = False``: a provider that exposes no selectable voices (the safe
+        baseline) — callers render no picker rather than a misleading one.
+        """
+        return ProviderCapabilities(
+            voices=[],
+            languages=[],
+            default_voice="",
+            supports_voice_selection=False,
+        )
+
+
+class VoiceInfo:
+    """A single selectable voice and the languages it can speak.
+
+    For Qwen3 a voice is a named entry in the reference-clip registry and
+    ``languages`` are the ISO codes it has clips for. For catalog providers
+    (Kokoro/Piper) it is a built-in voice id; ``languages`` may be empty if
+    the engine doesn't bind voices to a language.
+    """
+
+    def __init__(
+        self,
+        id: str,
+        display_name: str = "",
+        languages: Optional[list] = None,
+        default_language: str = "",
+    ):
+        self.id = id
+        self.display_name = display_name or id
+        self.languages = languages or []
+        self.default_language = default_language
+
+
+class ProviderCapabilities:
+    """What an active provider can synthesize, for capability discovery."""
+
+    def __init__(
+        self,
+        voices: Optional[list] = None,
+        languages: Optional[list] = None,
+        default_voice: str = "",
+        supports_voice_selection: bool = False,
+    ):
+        self.voices = voices or []  # list[VoiceInfo]
+        self.languages = languages or []  # union of ISO codes (str)
+        self.default_voice = default_voice
+        self.supports_voice_selection = supports_voice_selection

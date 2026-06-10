@@ -245,10 +245,13 @@ export function toVariablesMap(
   for (const row of rows) {
     const key = row.key.trim()
     if (key === '') continue
-    // An untouched preserved row carries no plaintext — the server-side value is
-    // kept rather than overwritten with "". This covers edit-mode encrypted
-    // secrets and template defaults the user chose not to override (any mode).
-    if (row.valuePreserved && row.value === '') continue
+    // Skip rows with no value. A preserved row keeps its existing server/template
+    // value; a blank declared/custom row means "not set" — we omit it rather than
+    // persist an empty string. Persisting "" is what broke deploys: an optional
+    // declared var (e.g. BARGE_IN_EVAL_TIMEOUT_MS) left blank would be stored as
+    // "" and then injected into the pod, defeating the consumer's default
+    // (float(os.getenv("X","2000")) raises on ""). Empty == unset == omit.
+    if (row.value.trim() === '') continue
     out[key] = row.value
   }
   return out

@@ -90,8 +90,29 @@ export function buildSecretStringData(input: SecretDataBuildInput): Record<strin
     IDENTITY: `agent-${input.agentId}`,
     TTS_PROVIDER: input.ttsProvider,
     AGENT_CONFIG: agentConfigJson,
-    ...(input.customEnvVars || {}),
+    ...filterNonEmptyEnvVars(input.customEnvVars),
   }
+}
+
+/**
+ * Drop custom env vars whose value is empty so an empty variable always falls
+ * through to the consumer's built-in default. An injected empty string would
+ * otherwise SHADOW the default — e.g. `float(os.getenv("X", "2000"))` raises on
+ * `""` — which is exactly what crashed agents when a template carried an unset
+ * optional var. This is the universal backstop: whatever the source (template,
+ * manual entry, an already-saved template with empty keys), an empty value never
+ * reaches the pod. Fixed keys above are intentionally not filtered.
+ */
+function filterNonEmptyEnvVars(
+  vars: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(vars || {})) {
+    if (value !== undefined && value !== null && value !== '') {
+      out[key] = value
+    }
+  }
+  return out
 }
 
 /**

@@ -1,0 +1,15 @@
+{
+  "_comment": "Example Qwen3 reference-voice registry (#311). Copy to /models/qwen3/voices.json on the model PVC (or bake into the image under assets/voices/voices.json alongside the clips). Audio/text paths are relative to this file. 'text' is optional — if omitted the provider reads the sibling .txt next to the audio. Each voice can have one clip per language; selection is by voice + the spoken language, falling back to the voice's default_language, then the default_voice, then ref_audio.mp3. Drop in more clips any time — no rebuild needed.",
+  "default_voice": "stella",
+  "voices": [
+    {
+      "id": "stella",
+      "display_name": "Stella",
+      "default_language": "en",
+      "clips": {
+        "en": { "audio": "stella_en.mp3", "text": "stella_en.txt" },
+        "de": { "audio": "stella_de.mp3", "text": "stella_de.txt" }
+      }
+    }
+  ]
+}

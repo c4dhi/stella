@@ -251,6 +251,17 @@ describe('toVariablesMap', () => {
     // KEEP stays blank -> server uses the template value; OVERRIDE is sent.
     expect(toVariablesMap(rows)).toEqual({ OVERRIDE: 'mine' })
   })
+
+  it('never serializes a blank declared optional var as "" (regression: empty pod env crash)', () => {
+    // An optional declared var left blank must be OMITTED, not stored as "" —
+    // an injected "" shadows the consumer default (float(os.getenv("X","2000"))).
+    let rows = buildInitialRows({ requiredKeys: ['OPENAI_API_KEY'], optionalKeys: ['BARGE_IN_EVAL_TIMEOUT_MS'] })
+    const required = rows.find((r) => r.key === 'OPENAI_API_KEY')!
+    rows = updateRowValue(rows, required.id, 'sk-123')
+    const out = toVariablesMap(rows)
+    expect(out).toEqual({ OPENAI_API_KEY: 'sk-123' })
+    expect(out).not.toHaveProperty('BARGE_IN_EVAL_TIMEOUT_MS')
+  })
 })
 
 describe('hasVariableEdits', () => {

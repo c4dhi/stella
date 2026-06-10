@@ -30,6 +30,25 @@ from stella_light_agent.prompts.template import render_prompt
 
 logger = logging.getLogger(__name__)
 
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, tolerating empty/blank/invalid → default.
+
+    An optional declared env var can reach the pod as an empty string (e.g. a
+    template that carries the key but no value). ``os.getenv(name, default)``
+    returns that ``""`` instead of the default, so ``float("")`` would crash the
+    agent at startup. Treat empty/whitespace/unparseable as "unset" and fall back.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+
+
 BARGE_IN_SYSTEM_PROMPT = """You decide whether a user's interruption of the assistant's speech is a real interruption that should be acted on, or just a backchannel/noise that should be ignored so the assistant keeps talking.
 
 You are given the conversation so far and what the user just said while the assistant was speaking. JUDGE IT IN CONTEXT.
@@ -62,9 +81,7 @@ class BargeInEvaluator:
         # for that — bound the call tightly and default to COMMIT on timeout so a
         # slow classifier never leaves the user staring at a frozen agent.
         # Tunable via BARGE_IN_EVAL_TIMEOUT_MS.
-        self.eval_timeout_s: float = float(
-            os.getenv("BARGE_IN_EVAL_TIMEOUT_MS", "2000")
-        ) / 1000
+        self.eval_timeout_s: float = _env_float("BARGE_IN_EVAL_TIMEOUT_MS", 2000.0) / 1000
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from the Agent Configurator."""

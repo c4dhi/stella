@@ -81,11 +81,13 @@ data:
   # Qwen3-TTS (only used when TTS_PROVIDER=qwen3)
   # Apache-2.0 weights run IN-PROCESS in the tts-service container via
   # faster-qwen3-tts (MIT). The init container pre-stages the chosen
-  # variant onto the PVC; the operator must also place a reference WAV
-  # at QWEN3_REF_AUDIO (default /models/qwen3/ref_audio.mp3 — STELLA
-  # bundles a German one). The transcript lives in a sibling .txt file
-  # next to the audio (ref_audio.mp3 → ref_audio.txt), so swapping
-  # voices is just dropping two files on the PVC, no env edits needed.
+  # variant onto the PVC. Voices and languages are selected per-agent
+  # (deploy UI -> TTS_VOICE / TTS_LANGUAGE) against the voices.json
+  # registry on the PVC; add voices by dropping clips + a manifest entry
+  # there (see tts-service/assets/voices.example.json). QWEN3_REF_AUDIO
+  # and QWEN3_LANGUAGE below are defaulted fallbacks only (the
+  # never-silent default clip + Auto language) — no longer prompted in
+  # the setup wizard, but operators can still override them here.
   QWEN3_MODEL_ID: "${QWEN3_MODEL_ID}"
   QWEN3_REF_AUDIO: "${QWEN3_REF_AUDIO}"
   QWEN3_LANGUAGE: "${QWEN3_LANGUAGE}"

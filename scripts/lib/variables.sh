@@ -127,10 +127,15 @@ get_var_metadata() {
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
-        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. 0.6B-Base = fastest (~2GB VRAM, 156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). CustomVoice = voice cloning. VoiceDesign = instruction-based voice design.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice,Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign|" ;;
+        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. STELLA clones voices from reference clips, which ONLY the -Base models support. 0.6B-Base = fastest (~2GB VRAM, ~156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). The CustomVoice / VoiceDesign variants use different APIs and cannot do reference-clip cloning, so they are not offered here.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base|" ;;
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading Qwen3-TTS weights. Get one at https://huggingface.co/settings/tokens. Usually optional for Apache-2.0 models, but supplied here in case HF rate-limits anonymous downloads on the init container.||" ;;
-        QWEN3_REF_AUDIO)       echo "tts|text|optional|/models/qwen3/ref_audio.mp3|/models/qwen3/ref_audio.mp3|Path inside the tts-service pod to a 5-10s reference clip (WAV or MP3). STELLA bundles a German clip + sibling ref_audio.txt transcript; swap both files together on the PVC to change voice.||" ;;
-        QWEN3_LANGUAGE)        echo "tts|select|optional|Auto|Auto|Default input language. Auto = model autodetects from the text (works well for mixed-language deployments). Pin to a specific language only if autodetect misfires.|Auto,English,German,French,Spanish,Italian,Portuguese,Polish,Dutch,Chinese,Japanese,Korean|" ;;
+        # QWEN3_REF_AUDIO / QWEN3_LANGUAGE are intentionally NOT prompted here.
+        # Voice + language are selected per-agent (deploy UI -> TTS_VOICE /
+        # TTS_LANGUAGE) against the voices.json registry on the PVC. These two
+        # remain as defaulted env fallbacks (set in environment.sh / deploy.sh:
+        # /models/qwen3/ref_audio.mp3 and Auto) so deployments still work and
+        # operators can override via the ConfigMap, but they are no longer a
+        # competing source of truth in the wizard.
         QWEN3_CHUNK_SIZE)      echo "tts|text|optional|2|2|Codec frames per streamed yield (12Hz codec rate). 2 ≈ 167ms audio per yield, low TTFB. Drop to 1 for absolute minimum TTFB at the cost of more decoder calls.||" ;;
         QWEN3_DTYPE)           echo "tts|select|optional|bfloat16|bfloat16|Model weight dtype. bfloat16 on Ampere+ (A10/A100/L4/4090/H100). float16 on older cards without bf16 (V100/T4). float32 only for debugging.|bfloat16,float16,float32|" ;;
 
@@ -145,7 +150,9 @@ get_var_metadata() {
         KUBERNETES_DNS_NAMESERVER) echo "kubernetes|text|optional|10.96.0.10|10.96.0.10|Fallback K8s DNS IP||" ;;
 
         # --- PRODUCTION ---
-        PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com)||" ;;
+        PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com); used only to derive PUBLIC_*_URL when those are left blank||" ;;
+        PUBLIC_FRONTEND_URL)   echo "production|text|optional|||Full public URL browsers load the UI from (e.g. https://stella.example.org). Blank = derive https://PRODUCTION_DOMAIN. Also becomes the backend CORS origin.||" ;;
+        PUBLIC_API_URL)        echo "production|text|optional|||Full public URL of the backend API (e.g. https://backend.example.org). Blank = derive https://backend.PRODUCTION_DOMAIN. May be a completely different domain than the frontend.||" ;;
         STELLA_DATA_ROOT)      echo "production|text|optional|||Base dir for all heavy storage (Docker, K3s images, model/DB volumes); blank = system defaults||" ;;
         STELLA_AI_TEMP_DIR)    echo "production|text|optional|||Temp dir for builds/logs; blank = STELLA_DATA_ROOT/tmp or /tmp||" ;;
 
@@ -191,8 +198,6 @@ ALL_VARIABLES=(
     "ELEVENLABS_SIMILARITY_BOOST"
     "QWEN3_MODEL_ID"
     "HF_TOKEN"
-    "QWEN3_REF_AUDIO"
-    "QWEN3_LANGUAGE"
     "QWEN3_CHUNK_SIZE"
     "QWEN3_DTYPE"
     "ENABLE_GPU"
@@ -202,6 +207,8 @@ ALL_VARIABLES=(
     "AUTO_DETECT_K8S_DNS"
     "KUBERNETES_DNS_NAMESERVER"
     "PRODUCTION_DOMAIN"
+    "PUBLIC_FRONTEND_URL"
+    "PUBLIC_API_URL"
     "STELLA_DATA_ROOT"
     "STELLA_AI_TEMP_DIR"
 )
@@ -264,6 +271,19 @@ get_var_help() {
             echo "Public domain of the TURN server used for NAT traversal when a"
             echo "direct browser↔LiveKit connection fails, e.g. turn.example.com."
             echo "Required when TURN is enabled."
+            ;;
+        PUBLIC_FRONTEND_URL)
+            echo "The public URL where end users open the STELLA UI, e.g."
+            echo "https://stella.example.org or https://frontend.example.org."
+            echo "This also becomes the backend's CORS origin, so it must match"
+            echo "exactly what shows in the browser address bar."
+            echo "Leave BLANK to derive https://<PRODUCTION_DOMAIN> (the apex)."
+            ;;
+        PUBLIC_API_URL)
+            echo "The public URL of the backend API the browser calls, e.g."
+            echo "https://backend.example.org. It can live on a COMPLETELY"
+            echo "different domain than the frontend — they need not share a base."
+            echo "Leave BLANK to derive https://backend.<PRODUCTION_DOMAIN>."
             ;;
         STELLA_DATA_ROOT)
             echo "Where all the heavy storage lives: Docker build cache + images,"
