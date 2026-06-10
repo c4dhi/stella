@@ -150,7 +150,9 @@ get_var_metadata() {
         KUBERNETES_DNS_NAMESERVER) echo "kubernetes|text|optional|10.96.0.10|10.96.0.10|Fallback K8s DNS IP||" ;;
 
         # --- PRODUCTION ---
-        PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com)||" ;;
+        PRODUCTION_DOMAIN)     echo "production|text|production|||Your production domain (e.g. example.com); used only to derive PUBLIC_*_URL when those are left blank||" ;;
+        PUBLIC_FRONTEND_URL)   echo "production|text|optional|||Full public URL browsers load the UI from (e.g. https://stella.example.org). Blank = derive https://PRODUCTION_DOMAIN. Also becomes the backend CORS origin.||" ;;
+        PUBLIC_API_URL)        echo "production|text|optional|||Full public URL of the backend API (e.g. https://backend.example.org). Blank = derive https://backend.PRODUCTION_DOMAIN. May be a completely different domain than the frontend.||" ;;
         STELLA_DATA_ROOT)      echo "production|text|optional|||Base dir for all heavy storage (Docker, K3s images, model/DB volumes); blank = system defaults||" ;;
         STELLA_AI_TEMP_DIR)    echo "production|text|optional|||Temp dir for builds/logs; blank = STELLA_DATA_ROOT/tmp or /tmp||" ;;
 
@@ -205,6 +207,8 @@ ALL_VARIABLES=(
     "AUTO_DETECT_K8S_DNS"
     "KUBERNETES_DNS_NAMESERVER"
     "PRODUCTION_DOMAIN"
+    "PUBLIC_FRONTEND_URL"
+    "PUBLIC_API_URL"
     "STELLA_DATA_ROOT"
     "STELLA_AI_TEMP_DIR"
 )
@@ -267,6 +271,19 @@ get_var_help() {
             echo "Public domain of the TURN server used for NAT traversal when a"
             echo "direct browser↔LiveKit connection fails, e.g. turn.example.com."
             echo "Required when TURN is enabled."
+            ;;
+        PUBLIC_FRONTEND_URL)
+            echo "The public URL where end users open the STELLA UI, e.g."
+            echo "https://stella.example.org or https://frontend.example.org."
+            echo "This also becomes the backend's CORS origin, so it must match"
+            echo "exactly what shows in the browser address bar."
+            echo "Leave BLANK to derive https://<PRODUCTION_DOMAIN> (the apex)."
+            ;;
+        PUBLIC_API_URL)
+            echo "The public URL of the backend API the browser calls, e.g."
+            echo "https://backend.example.org. It can live on a COMPLETELY"
+            echo "different domain than the frontend — they need not share a base."
+            echo "Leave BLANK to derive https://backend.<PRODUCTION_DOMAIN>."
             ;;
         STELLA_DATA_ROOT)
             echo "Where all the heavy storage lives: Docker build cache + images,"
