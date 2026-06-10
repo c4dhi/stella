@@ -127,7 +127,7 @@ get_var_metadata() {
         ELEVENLABS_MODEL_ID)   echo "tts|text|optional|eleven_turbo_v2_5|eleven_turbo_v2_5|ElevenLabs model||" ;;
         ELEVENLABS_STABILITY)  echo "tts|text|optional|0.5|0.5|Voice stability (0-1)||" ;;
         ELEVENLABS_SIMILARITY_BOOST) echo "tts|text|optional|0.8|0.8|Voice similarity boost (0-1)||" ;;
-        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. 0.6B-Base = fastest (~2GB VRAM, 156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). CustomVoice = voice cloning. VoiceDesign = instruction-based voice design.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice,Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign|" ;;
+        QWEN3_MODEL_ID)        echo "tts|select|optional|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen/Qwen3-TTS-12Hz-0.6B-Base|Qwen3-TTS model variant. STELLA clones voices from reference clips, which ONLY the -Base models support. 0.6B-Base = fastest (~2GB VRAM, ~156ms TTFA on 4090). 1.7B-Base = higher quality (~5GB VRAM). The CustomVoice / VoiceDesign variants use different APIs and cannot do reference-clip cloning, so they are not offered here.|Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base|" ;;
         HF_TOKEN)              echo "tts|password|optional|||HuggingFace access token (hf_...) for downloading Qwen3-TTS weights. Get one at https://huggingface.co/settings/tokens. Usually optional for Apache-2.0 models, but supplied here in case HF rate-limits anonymous downloads on the init container.||" ;;
         # QWEN3_REF_AUDIO / QWEN3_LANGUAGE are intentionally NOT prompted here.
         # Voice + language are selected per-agent (deploy UI -> TTS_VOICE /

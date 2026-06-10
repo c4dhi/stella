@@ -234,17 +234,39 @@ class Qwen3Provider(TTSProvider):
         self._load_registry()
 
         self._initialized = True
-        await self._warm_up()
+        if not await self._warm_up():
+            # A model that can't even synthesize a warm-up phrase is unusable
+            # (most commonly a non-Base variant: CustomVoice/VoiceDesign do not
+            # support create_voice_clone_prompt, which this provider relies on).
+            # Fail init loudly so the service surfaces the problem / falls back
+            # instead of becoming the primary provider that silently returns no
+            # audio.
+            print("[Qwen3] Warm-up produced no audio — marking provider UNAVAILABLE.")
+            print(f"[Qwen3] QWEN3_MODEL_ID={self._model_id!r}. Reference-clip voice")
+            print("[Qwen3] cloning requires a -Base model (e.g. Qwen/Qwen3-TTS-12Hz-1.7B-Base).")
+            print("[Qwen3] CustomVoice / VoiceDesign variants are NOT supported here.")
+            self._initialized = False
+            return False
         return True
 
-    async def _warm_up(self) -> None:
-        """Run a tiny synth to capture CUDA graphs and prime kernels."""
+    async def _warm_up(self) -> bool:
+        """Run a tiny synth to capture CUDA graphs and prime kernels.
+
+        Returns True only if the warm-up actually produced audio. synthesize()
+        swallows its own exceptions and returns None, so we must check the
+        return value — otherwise a model that can't synthesize at all would
+        still report a successful warm-up."""
         try:
             t0 = time.time()
-            await self.synthesize("Hi.")
+            result = await self.synthesize("Hi.")
+            if result is None:
+                print("[Qwen3] Warm-up synthesis returned no audio.")
+                return False
             print(f"[Qwen3] Warm-up complete in {(time.time() - t0) * 1000:.0f}ms")
+            return True
         except Exception as e:
-            print(f"[Qwen3] Warm-up failed (non-fatal): {e}")
+            print(f"[Qwen3] Warm-up failed: {e}")
+            return False
 
     def _to_int16_numpy(self, chunk) -> np.ndarray:
         """Convert a model audio chunk (torch tensor or numpy) to int16 PCM.
