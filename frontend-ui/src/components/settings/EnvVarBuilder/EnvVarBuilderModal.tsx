@@ -39,10 +39,12 @@ export default function EnvVarBuilderModal({
 
   const isEditing = !!template
 
+  // Empty values are never persisted (toVariablesMap omits them) and updates MERGE
+  // rather than full-replace, so editing a key set no longer forces re-entering
+  // untouched secrets — hence no requireAllValues invariant.
   const editor = useEnvVarListEditor({
     mode: isEditing ? 'edit' : 'create',
     allowEmptyValues: true,
-    requireAllValuesWhenTouched: isEditing,
   })
 
   // Check if form has content (for unsaved changes tracking)
@@ -176,11 +178,11 @@ export default function EnvVarBuilderModal({
     }
 
     // Shared editor surfaces per-row issues inline; null means something is invalid.
+    // toVariablesMap now returns only the keys that carry a typed value (blank /
+    // preserved rows are omitted), so it never serializes an empty string.
     const variables = editor.toVariablesMap()
     if (variables === null) {
-      setError(editor.variablesTouched
-        ? 'Please enter a value for every variable (existing values must be re-entered when changing variables)'
-        : 'Please fix the highlighted variables')
+      setError('Please fix the highlighted variables')
       return
     }
 
@@ -193,12 +195,16 @@ export default function EnvVarBuilderModal({
 
     try {
       if (isEditing && template) {
-        // Untouched variables are omitted so the backend keeps the encrypted values
-        // (a rename needs no value re-entry). Touched edits send a full replacement.
+        // Updates MERGE server-side: send only typed values plus the keys that were
+        // removed. Untouched secrets keep their stored value (no re-entry needed).
+        const currentKeys = new Set(
+          editor.rows.map((r) => r.key.trim()).filter((k) => k !== ''),
+        )
+        const removeKeys = template.variableKeys.filter((k) => !currentKeys.has(k))
         await apiClient.updateEnvVarTemplate(template.id, {
           name: name.trim(),
           description: description.trim() || undefined,
-          ...(editor.variablesTouched ? { variables } : {}),
+          ...(editor.variablesTouched ? { variables, removeKeys } : {}),
         })
         addToast({ message: 'Template updated successfully', type: 'success' })
       } else {

@@ -154,9 +154,24 @@ export class EnvVarTemplatesService {
       description: dto.description,
     };
 
-    // Only encrypt and update variables if provided
-    if (dto.variables) {
-      updateData.variables = this.encryption.encrypt(dto.variables);
+    // Variable changes are MERGED into the existing (decrypted) set, not a full
+    // replace. The client sends only what it changed — `variables` adds/overwrites
+    // and `removeKeys` deletes — so untouched secrets keep their stored value and
+    // never need to be re-entered (e.g. deleting an optional var must not force
+    // re-typing OPENAI_API_KEY). The encrypted blob is only rewritten when one of
+    // the two is present.
+    const hasVariableChanges =
+      dto.variables !== undefined || (dto.removeKeys?.length ?? 0) > 0;
+    if (hasVariableChanges) {
+      const existing = await this.getDecryptedVariables(id, userId);
+      const merged: Record<string, string> = { ...existing };
+      for (const key of dto.removeKeys ?? []) {
+        delete merged[key];
+      }
+      for (const [key, value] of Object.entries(dto.variables ?? {})) {
+        merged[key] = value;
+      }
+      updateData.variables = this.encryption.encrypt(merged);
     }
 
     // Remove undefined values

@@ -118,4 +118,50 @@ describe('EnvVarTemplatesService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  describe('update (merge semantics)', () => {
+    // Build a service whose encryption round-trips a real object so we can assert
+    // exactly what the merged, re-encrypted variable set contains.
+    function createMergeService(existing: Record<string, string>) {
+      const row = makeRow({ id: 't1', userId: 'user-1' });
+      const encrypt = jest.fn((obj: Record<string, string>) => JSON.stringify(obj)) as jest.Mock;
+      const prisma = {
+        envVarTemplate: {
+          findUnique: jest.fn(async () => row),
+          update: jest.fn(async ({ data }: any) => ({ ...row, ...data })),
+        },
+      } as unknown as PrismaService;
+      const encryption = {
+        encrypt,
+        decrypt: jest.fn(() => existing),
+        getKeys: jest.fn(() => Object.keys(existing)),
+      } as unknown as EncryptionService;
+      return { svc: new EnvVarTemplatesService(prisma, encryption), encrypt };
+    }
+
+    it('keeps untouched secrets, applies overrides, and removes deleted keys', async () => {
+      const { svc, encrypt } = createMergeService({
+        OPENAI_API_KEY: 'sk-existing',
+        BARGE_IN_EVAL_TIMEOUT_MS: '',
+      });
+
+      await svc.update('t1', 'user-1', {
+        name: 'Keys',
+        variables: { EXTRA: 'new' }, // add/override only what changed
+        removeKeys: ['BARGE_IN_EVAL_TIMEOUT_MS'], // delete the empty optional var
+      });
+
+      // encrypt() receives the merged plaintext map as its first argument:
+      // untouched OPENAI_API_KEY preserved, EXTRA added, the removed key gone —
+      // the OpenAI key never had to be re-sent.
+      const merged = encrypt.mock.calls[0][0];
+      expect(merged).toEqual({ OPENAI_API_KEY: 'sk-existing', EXTRA: 'new' });
+    });
+
+    it('does not rewrite the encrypted blob when neither variables nor removeKeys are given', async () => {
+      const { svc, encrypt } = createMergeService({ OPENAI_API_KEY: 'sk-existing' });
+      await svc.update('t1', 'user-1', { name: 'Renamed' });
+      expect(encrypt).not.toHaveBeenCalled();
+    });
+  });
 });

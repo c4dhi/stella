@@ -89,6 +89,26 @@ describe('agent-config-injection util', () => {
     })
   })
 
+  it('drops empty custom env vars so they fall through to the consumer default', () => {
+    // Regression: an optional declared var carried into a template as "" must not
+    // be injected — an empty value shadows the agent's built-in default and
+    // crashed startup (float(os.getenv("BARGE_IN_EVAL_TIMEOUT_MS","2000")) on "").
+    const secret = buildSecretStringData({
+      agentId: 'agent-1',
+      livekitUrl: 'wss://livekit.local',
+      livekitApiKey: 'lk-key',
+      livekitApiSecret: 'lk-secret',
+      roomName: 'room-a',
+      ttsProvider: 'opensource',
+      agentConfig: {},
+      customEnvVars: { OPENAI_API_KEY: 'sk-test', BARGE_IN_EVAL_TIMEOUT_MS: '', TTS_VOICE: '' },
+    })
+
+    expect(secret.OPENAI_API_KEY).toBe('sk-test')
+    expect(secret).not.toHaveProperty('BARGE_IN_EVAL_TIMEOUT_MS')
+    expect(secret).not.toHaveProperty('TTS_VOICE')
+  })
+
   it('builds full injection payload from AgentType + user AgentConfiguration', () => {
     // End-to-end utility output: exact env vars and AGENT_CONFIG JSON for pod injection.
     // This is the closest deterministic unit test for what Kubernetes pod injection receives.

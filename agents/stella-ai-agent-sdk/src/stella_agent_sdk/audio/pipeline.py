@@ -51,6 +51,24 @@ from stella_agent_sdk.messages.types import BargeInDecision
 
 logger = logging.getLogger(__name__)
 
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int env var, tolerating empty/blank/invalid → default.
+
+    A declared optional env var can reach the pod as an empty string, which
+    ``os.getenv(name, default)`` returns instead of the default — so
+    ``int("")`` would crash at startup. Empty/whitespace/unparseable fall back.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+
+
 # TTS output format (matches RoomManager's AudioSource and the TTS service).
 _TTS_SAMPLE_RATE = 24000
 _BYTES_PER_SAMPLE = 2  # 16-bit mono PCM
@@ -134,7 +152,7 @@ class AudioPipeline:
         self._transcript_queue: asyncio.Queue[TranscriptEvent] = asyncio.Queue()
 
         # Transcript debouncing (secondary defense against rapid successive finals)
-        self._debounce_window_ms = int(os.getenv("TRANSCRIPT_DEBOUNCE_MS", "300"))
+        self._debounce_window_ms = _env_int("TRANSCRIPT_DEBOUNCE_MS", 300)
         self._pending_transcript: Optional[TranscriptEvent] = None
         self._pending_transcript_time: float = 0
         self._debounce_task: Optional[asyncio.Task] = None

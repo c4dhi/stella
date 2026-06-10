@@ -934,7 +934,12 @@ export interface CreateEnvVarTemplateDto {
 export interface UpdateEnvVarTemplateDto {
   name?: string
   description?: string
+  // Keys to add or overwrite (merged on top of existing values; untouched keys
+  // keep their stored value, so unchanged secrets never need re-entry).
   variables?: Record<string, string>
+  // Keys to delete from the template (lets you remove a var without re-typing the
+  // secrets you keep).
+  removeKeys?: string[]
   // agentTypeId is immutable post-create; duplicate the template to rebind.
 }
 
