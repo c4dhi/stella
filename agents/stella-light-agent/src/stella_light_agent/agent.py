@@ -446,6 +446,10 @@ class StellaLightAgent(BaseAgent):
                         "turns_without_progress", 0
                     )
                     sm_context["state_just_changed"] = self._state_just_changed
+                    # Consume the signal immediately so a mid-turn failure can't
+                    # carry a stale "just transitioned" into the next turn. The
+                    # end-of-turn assignment below re-sets it from this turn's result.
+                    self._state_just_changed = False
 
                 print(f"[StellaLightAgent] Pending tasks: {len(tasks)}, Pending deliverables: {len(deliverables)}, Collected: {len(collected)}")
 

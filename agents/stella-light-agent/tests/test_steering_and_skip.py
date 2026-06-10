@@ -83,6 +83,17 @@ def test_no_steering_block_without_state() -> None:
     assert "## Steering This Turn" not in prompt
 
 
+def test_steering_renders_cleanly_when_keys_missing() -> None:
+    # Defensive unit check on _build_steering: a pending deliverable with no key
+    # must not produce a dangling "for this phase: ." (Practically unreachable —
+    # the tool-instructions builder requires a key — but keep the prose robust.)
+    block = LightPromptBuilder()._build_steering(
+        [{"description": "no key here", "required": True, "status": "pending"}]
+    )
+    assert "for this phase: ." not in block
+    assert "pending deliverables for this phase." in block
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Layer 1: skip intent-mapping (#306 requirement 2)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,4 +239,37 @@ def test_transition_signal_propagates_to_next_turn(monkeypatch: pytest.MonkeyPat
     assert second["context"]["state_just_changed"] is True
     assert "State Transition Notice" in second["prompt"]
     # Flag cleared after being consumed.
+    assert agent._state_just_changed is False
+
+
+def test_transition_flag_not_stale_after_midturn_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If a turn transitions, then the NEXT turn raises mid-stream, the transition
+    # signal must not survive into the turn after that (consume-once semantics).
+    agent = _make_agent(monkeypatch)
+    agent.sm_client = _FakeSMClient()  # type: ignore[assignment]
+
+    agent.tool_processor = _FakeToolProcessor(  # type: ignore[assignment]
+        ToolProcessorResult(message="ok", transitioned=True)
+    )
+    _run_turn(agent)
+    assert agent._state_just_changed is True
+
+    class _BoomToolProcessor:
+        async def process(self, session_id, system_prompt, user_message):
+            raise RuntimeError("mid-stream boom")
+            yield  # pragma: no cover - makes this an async generator
+
+    agent.tool_processor = _BoomToolProcessor()  # type: ignore[assignment]
+
+    class _Inp:
+        session_id = "sess-1"
+        text = "hello"
+
+    async def _drive() -> None:
+        with pytest.raises(RuntimeError):
+            async for _ in agent._process_with_tools(_Inp()):
+                pass
+
+    asyncio.run(_drive())
+    # The signal was consumed at turn start, so it is no longer set despite the raise.
     assert agent._state_just_changed is False

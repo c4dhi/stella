@@ -84,7 +84,7 @@ class LightPromptBuilder:
         # most salient instruction the model sees before responding.
         if state:
             parts.append(
-                self._build_steering(deliverables, current_task, turns_without_progress)
+                self._build_steering(deliverables, turns_without_progress)
             )
 
         return "\n\n".join(parts)
@@ -296,7 +296,6 @@ The user's words decide which skip tool you use — read the scope literally:
     def _build_steering(
         self,
         deliverables: List[Dict],
-        current_task: Optional[Dict],
         turns_without_progress: int = 0,
     ) -> str:
         """Build deliverable-driven steering for the current turn (#306).
@@ -307,13 +306,15 @@ The user's words decide which skip tool you use — read the scope literally:
         than re-asking. Escalates when the turn counter shows it is stuck.
         """
         pending = [d for d in deliverables if d.get("status") == "pending"]
+        turns_without_progress = turns_without_progress or 0
         parts = ["## Steering This Turn (CRITICAL)"]
 
         if pending:
             keys = ", ".join(str(d.get("key")) for d in pending if d.get("key"))
+            phase_clause = f" for this phase: {keys}" if keys else " for this phase"
             parts.append(
                 "Your job this turn is to make progress on the remaining pending "
-                f"deliverables for this phase: {keys}. "
+                f"deliverables{phase_clause}. "
                 "Every question you ask must move toward one of them."
             )
             parts.append(
@@ -339,7 +340,7 @@ The user's words decide which skip tool you use — read the scope literally:
                 "forward — do not keep asking questions in this phase."
             )
 
-        if turns_without_progress and turns_without_progress >= 2:
+        if turns_without_progress >= 2:
             parts.append(
                 f"⚠️ You have now spent {turns_without_progress} turns in this phase "
                 "without recording anything new. Either record the deliverable the "
