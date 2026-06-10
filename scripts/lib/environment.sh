@@ -317,12 +317,28 @@ display_config_table() {
         gpu_display="${YELLOW}available${NC} (not enabled)"
     fi
 
-    # Format TTS provider with type indicator
+    # Format TTS provider with type/device indicator
     local tts_display="${TTS_PROVIDER:-piper}"
     case "${TTS_PROVIDER:-piper}" in
         piper)      tts_display="${tts_display} ${DIM}(local)${NC}" ;;
         kokoro)     tts_display="${tts_display} ${DIM}(local)${NC}" ;;
         elevenlabs) tts_display="${tts_display} ${DIM}(cloud)${NC}" ;;
+        qwen3)
+            # GPU provider: loads on CUDA unless pinned to cpu via QWEN3_DEVICE.
+            if [[ "$ENABLE_GPU" == "true" && "${QWEN3_DEVICE:-cuda}" != "cpu" ]]; then
+                tts_display="${tts_display} ${DIM}(CUDA)${NC}"
+            else
+                tts_display="${tts_display} ${DIM}(CPU)${NC}"
+            fi
+            ;;
+        chatterbox)
+            # GPU provider: CHATTERBOX_DEVICE=auto picks CUDA when available.
+            if [[ "$ENABLE_GPU" == "true" && "${CHATTERBOX_DEVICE:-auto}" != "cpu" ]]; then
+                tts_display="${tts_display} ${DIM}(CUDA)${NC}"
+            else
+                tts_display="${tts_display} ${DIM}(CPU)${NC}"
+            fi
+            ;;
     esac
 
     # Format STT provider with device indicator
