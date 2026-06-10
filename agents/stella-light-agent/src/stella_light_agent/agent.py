@@ -116,6 +116,11 @@ class StellaLightAgent(BaseAgent):
         # Explicit prompt-compiler version (never implicit/latest). Defaults to the
         # version this agent was authored against; can be overridden via config.
         self._compiler_version: str = PROMPT_COMPILER_VERSION
+        # Set when the PREVIOUS turn transitioned to a new state, so the next turn's
+        # prompt can fire the transition warning and stop soliciting the old state's
+        # deliverables (#306). The live get_current_state has no "did it just change"
+        # bit, so we derive it from the prior turn's tool result.
+        self._state_just_changed: bool = False
 
         print("[StellaLightAgent] Initialized (tool-based state management)")
 
@@ -229,6 +234,7 @@ class StellaLightAgent(BaseAgent):
         self._custom_persona = None
         self._custom_guidelines = None
         self._history_limit = 20
+        self._state_just_changed = False
         # Explicit compiler version: config override, else the agent's pinned default.
         self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
@@ -434,6 +440,12 @@ class StellaLightAgent(BaseAgent):
                 print(f"[StellaLightAgent] get_current_state returned: {state}")
                 if state:
                     sm_context = self._build_context_from_state(state)
+                    # Deliverable-driven steering inputs (#306): surface the stuck
+                    # counter and whether the previous turn moved to a new state.
+                    sm_context["turns_without_progress"] = state.get(
+                        "turns_without_progress", 0
+                    )
+                    sm_context["state_just_changed"] = self._state_just_changed
 
                 print(f"[StellaLightAgent] Pending tasks: {len(tasks)}, Pending deliverables: {len(deliverables)}, Collected: {len(collected)}")
 
@@ -544,6 +556,11 @@ class StellaLightAgent(BaseAgent):
                 print(f"[StellaLightAgent] Tasks skipped: {result.tasks_skipped}")
             if result.transitioned:
                 print(f"[StellaLightAgent] Transitioned to: {result.new_state_id}")
+
+        # Remember whether this turn moved to a new state so NEXT turn's prompt can
+        # acknowledge the transition and stop soliciting the old state's deliverables
+        # (#306 precise-skip follow-through).
+        self._state_just_changed = bool(result.transitioned) if result else False
 
         # Increment turn counter only if no progress was made. Completing OR skipping
         # a task is progress (the agent explicitly addressed it) (#291).
