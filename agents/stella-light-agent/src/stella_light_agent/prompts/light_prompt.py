@@ -35,6 +35,7 @@ class LightPromptBuilder:
         deliverables = context.get("deliverables", [])
         progress = context.get("progress", {})
         state_just_changed = context.get("state_just_changed", False)
+        turns_without_progress = context.get("turns_without_progress", 0)
         current_task = context.get("current_task")
         next_task = context.get("next_task")  # Preview task for strict mode
         available_tasks = context.get("available_tasks", [])
@@ -78,6 +79,13 @@ class LightPromptBuilder:
         # Add state transition warning if applicable
         if state_just_changed:
             parts.append(self._build_state_transition_warning(state))
+
+        # Deliverable-driven steering for THIS turn (#306). Kept last so it is the
+        # most salient instruction the model sees before responding.
+        if state:
+            parts.append(
+                self._build_steering(deliverables, turns_without_progress)
+            )
 
         return "\n\n".join(parts)
 
@@ -231,7 +239,20 @@ not a gate; you may skip a required task if it genuinely does not apply.)
 - Use this for an optional task the user clearly will not engage with, so the conversation can move on
 
 **skip_state** - Call to skip the entire current phase at once when none of it is relevant
-- Marks all of the phase's remaining tasks as skipped and advances"""]
+- Marks all of the phase's remaining tasks as skipped and advances
+
+### Interpreting a "skip" request from the user
+The user's words decide which skip tool you use — read the scope literally:
+- A bare **"skip this"**, "can we move on", "let's not do this one", "I'd rather not answer that"
+  refers to the CURRENT question/task ONLY → use **skip_task** on the current task.
+  It does NOT mean skip the whole phase.
+- Use **skip_state** ONLY when the user explicitly drops the ENTIRE section —
+  "skip this whole part", "skip all of this", "move on to the next section".
+- When in doubt, prefer **skip_task**: skipping one task still lets you cover the rest
+  of the phase, whereas skip_state discards every remaining task in the phase and can
+  end the conversation early (losing deliverables you still needed).
+- Once you have skipped a task, or the phase has ended, do NOT keep soliciting that
+  task's deliverable — let the conversation move on."""]
 
         if pending:
             parts.append("\n## Information to Collect")
@@ -269,6 +290,63 @@ not a gate; you may skip a required task if it genuinely does not apply.)
                 else:
                     hint = " — perform it, then complete_task"
                 parts.append(f"- **{t.get('id')}**: {t.get('description', '')}{hint}")
+
+        return "\n".join(parts)
+
+    def _build_steering(
+        self,
+        deliverables: List[Dict],
+        turns_without_progress: int = 0,
+    ) -> str:
+        """Build deliverable-driven steering for the current turn (#306).
+
+        Keeps the agent anchored to the *remaining pending deliverables* instead
+        of drifting into open-ended coaching questions that collect nothing, and
+        tells it to record answers the user already gave in recent history rather
+        than re-asking. Escalates when the turn counter shows it is stuck.
+        """
+        pending = [d for d in deliverables if d.get("status") == "pending"]
+        turns_without_progress = turns_without_progress or 0
+        parts = ["## Steering This Turn (CRITICAL)"]
+
+        if pending:
+            keys = ", ".join(str(d.get("key")) for d in pending if d.get("key"))
+            phase_clause = f" for this phase: {keys}" if keys else " for this phase"
+            parts.append(
+                "Your job this turn is to make progress on the remaining pending "
+                f"deliverables{phase_clause}. "
+                "Every question you ask must move toward one of them."
+            )
+            parts.append(
+                "Do NOT ask open-ended questions that collect none of these "
+                '(e.g. "what motivates you?", "what do you enjoy most?", '
+                '"want to experiment with different types?") — they make the '
+                "conversation linger without recording anything. Anchor your "
+                "follow-up to the next pending deliverable, record it with "
+                "set_deliverable, then complete_task and move on."
+            )
+            parts.append(
+                "**Recall what the user already said:** re-scan the recent "
+                "conversation above. If the user has ALREADY given information that "
+                "satisfies a pending deliverable — even a few turns ago, and even if "
+                "it was not in their latest message — call set_deliverable for it NOW "
+                "instead of asking again. Re-asking for something they already told "
+                "you is the worst failure mode."
+            )
+        else:
+            parts.append(
+                "All deliverables for this phase are already collected. Complete the "
+                "remaining task(s) with complete_task and move the conversation "
+                "forward — do not keep asking questions in this phase."
+            )
+
+        if turns_without_progress >= 2:
+            parts.append(
+                f"⚠️ You have now spent {turns_without_progress} turns in this phase "
+                "without recording anything new. Either record the deliverable the "
+                "user has effectively already given, or — if they clearly will not "
+                "engage with the current item — skip_task it and move on. Do not loop."
+            )
 
         return "\n".join(parts)
 
