@@ -6,7 +6,7 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, AsyncIterator, Awaitable, Dict, List, Optional, TYPE_CHECKING
 
 from stella_agent_sdk.messages.input import AgentInput
 from stella_agent_sdk.messages.output import AgentOutput
@@ -121,6 +121,64 @@ class BaseAgent(ABC):
         self._agent_name: str = "Agent"
         self._agent_id: str = ""
         self._agent_icon: str = "🤖"
+        # In-flight long-running ("deferred") tool calls, keyed by name (#198/#303).
+        # Drained when the session ends so a slow tool can't speak after lockdown.
+        self._pending_tools: Dict[str, "asyncio.Task[Any]"] = {}
+
+    def defer_tool(self, name: str, coro: Awaitable[Any]) -> "asyncio.Task[Any]":
+        """Register a long-running tool call so it can be reconciled if the session
+        ends before it finishes (#303). Schedules ``coro`` as a task, tracks it under
+        ``name``, and auto-removes it from the registry once it completes.
+
+        Returns the scheduled task so callers can await its result in the normal flow.
+        """
+        task = asyncio.ensure_future(coro)
+        self._pending_tools[name] = task
+
+        def _cleanup(t: "asyncio.Task[Any]", n: str = name) -> None:
+            if self._pending_tools.get(n) is t:
+                self._pending_tools.pop(n, None)
+
+        task.add_done_callback(_cleanup)
+        return task
+
+    async def drain_pending_tools(self, deadline_ms: int) -> Dict[str, List[str]]:
+        """Reconcile in-flight deferred tools when the session is winding down
+        (#198/#303): give them a bounded window to finish (``delivered``), then cancel
+        whatever is still running (``cancelled``). Errored tasks count as cancelled.
+
+        Never blocks longer than ``deadline_ms``, so it cannot push the session past
+        its hard lockdown. After it returns the registry is empty, so no late tool
+        result can be processed/spoken after teardown.
+        """
+        pending = dict(self._pending_tools)
+        self._pending_tools.clear()
+        if not pending:
+            return {"delivered": [], "cancelled": []}
+
+        timeout = max(0.0, deadline_ms / 1000.0)
+        if timeout > 0:
+            await asyncio.wait(list(pending.values()), timeout=timeout)
+
+        delivered: List[str] = []
+        cancelled: List[str] = []
+        to_cancel: List["asyncio.Task[Any]"] = []
+        for name, task in pending.items():
+            if not task.done():
+                task.cancel()
+                to_cancel.append(task)
+                cancelled.append(name)
+            elif task.cancelled() or task.exception() is not None:
+                cancelled.append(name)
+            else:
+                delivered.append(name)
+
+        # Let cancellations settle so the tasks are fully torn down (no lingering
+        # "Task was destroyed but it is pending" / late callbacks after lockdown).
+        if to_cancel:
+            await asyncio.gather(*to_cancel, return_exceptions=True)
+
+        return {"delivered": sorted(delivered), "cancelled": sorted(cancelled)}
 
     @property
     def session_id(self) -> Optional[str]:
@@ -530,6 +588,57 @@ class BaseAgent(ABC):
         self._session_id = None
         return {}
 
+    async def on_session_ending(
+        self, session_id: str, reason: str, deadline_ms: int
+    ) -> AsyncIterator[AgentOutput]:
+        """
+        Called when the session is being wound down *while the turn/audio loop is
+        still live* — the pre-teardown wrap-up window (issue #198).
+
+        This is distinct from the other two lifecycle hooks:
+        - ``on_interrupt`` is a barge-in: the user spoke over the agent and the
+          current turn should stop. ``on_session_ending`` is the system ending the
+          session (a timeout / max-duration cap), not the user.
+        - ``on_session_end`` runs in the teardown ``finally`` *after* the loop has
+          exited — too late to speak. ``on_session_ending`` runs *before* teardown,
+          so anything you yield here is still synthesized and heard.
+
+        Use it to emit a final spoken turn — a brief goodbye, a summary, a handback
+        of an identifier — before the session locks down. Once this fires, no new
+        user turns are accepted; your yielded output is the last thing the agent says.
+
+        You have a bounded budget: the backend force-closes the session at
+        ``deadline_ms``. Keep the wrap-up short; anything still in flight when the
+        deadline hits is cut off.
+
+        The default implementation yields nothing — the backend then falls back to
+        the plan's ``EndNodeConfig.farewell_message`` if one is set. Override to
+        generate a custom wrap-up (see the author-configurable interrupt handler).
+
+        Args:
+            session_id: The session being wound down.
+            reason: Why the session is ending (e.g. ``"session_end"`` for a
+                timeout / max-duration cap). Branch on this to tailor the wrap-up.
+            deadline_ms: Wall-clock budget in milliseconds for the wrap-up before
+                the backend force-closes.
+
+        Yields:
+            AgentOutput messages — the final spoken turn — before lockdown.
+
+        Example:
+            ```python
+            async def on_session_ending(self, session_id, reason, deadline_ms):
+                if reason == "session_end":
+                    async for out in self.generate_reply(
+                        session_id, "We're out of time — wrap up warmly in one sentence."
+                    ):
+                        yield out
+            ```
+        """
+        # Default implementation yields nothing (backend falls back to farewell_message).
+        return
+        yield  # Make this a generator
+
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """
         Called when configuration is updated during a session.
@@ -632,6 +741,14 @@ class BaseAgent(ABC):
 
         async for event in self.audio.audio_in():
             if event.is_final and event.text.strip():
+                # Terminal close (issue #198): once the session is winding down we
+                # stop taking new turns. The closing farewell is spoken out-of-band
+                # by the session-end handler; processing another user turn here would
+                # race it and "continue the conversation" past the cap.
+                if self.audio.is_closing:
+                    logger.info("[SESSION END] ignoring user turn while closing")
+                    continue
+
                 # Drain any stacked transcripts — only process the latest one.
                 # This prevents message pileup when the user speaks while the
                 # agent is still responding (transcripts queued during gate-open window).

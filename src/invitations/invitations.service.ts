@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
 import { AuthService } from '../auth/auth.service';
@@ -21,6 +22,7 @@ export class InvitationsService {
     private livekit: LiveKitService,
     private authService: AuthService,
     private configService: ConfigService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -79,6 +81,34 @@ export class InvitationsService {
         expiresAt,
       },
     });
+
+    // Session auto-end (issue #198): the max-duration cap is opt-in per session and
+    // originates here — from a manual invite or the public-session config. Propagate
+    // it onto the session so SessionTimeoutService (which reads
+    // Session.maxSessionDurationSeconds) can arm the cap timer on the first agent
+    // message. null leaves the session uncapped.
+    if (dto.maxSessionDurationSeconds != null) {
+      // Re-anchor when the agent has ALREADY spoken (re-invite mid-session). The cap
+      // is "absolute budget from the first agent message", but a cap applied now must
+      // not be measured from an anchor that predates it — otherwise the budget is
+      // already (over)spent and the reconcile sweep would graceful-close the live
+      // session within ~30s, with no warning. Restart the budget from now. The normal
+      // path (cap set before the agent speaks → firstAgentMessageAt null) is untouched:
+      // onAgentMessage stamps the anchor correctly on the first message.
+      const alreadySpoke = session.firstAgentMessageAt != null;
+      await this.prisma.session.update({
+        where: { id: sessionId },
+        data: {
+          maxSessionDurationSeconds: dto.maxSessionDurationSeconds,
+          ...(alreadySpoke ? { firstAgentMessageAt: new Date() } : {}),
+        },
+      });
+      // The cap (and possibly the anchor) changed on a live session — tell the timeout
+      // service to drop any stale timer and re-arm from the fresh cap + anchor. The
+      // periodic sweep would eventually catch a brand-new cap, but an existing in-memory
+      // timer would never be re-armed without this, and we don't want a 30s lag.
+      this.eventEmitter.emit('session.cap-changed', { sessionId });
+    }
 
     // Generate the join URL using the frontend URL
     const baseUrl = this.configService.get<string>('PUBLIC_FRONTEND_URL') || 'http://localhost:8080';

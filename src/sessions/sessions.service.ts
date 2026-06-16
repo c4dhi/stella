@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Observable, Subject, ReplaySubject, filter, map, finalize } from 'rxjs';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { TokenVerifier } from 'livekit-server-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveKitService } from '../livekit/livekit.service';
@@ -67,6 +67,18 @@ interface MessageEvent {
 @Injectable()
 export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
+
+  // Graceful close timing (issue #198). When the cap fires we ask the agent to wind
+  // down without cutting its current sentence off. The agent gets WAIT_MS to finish
+  // the message it is CURRENTLY speaking (it does NOT wait on the user — the user can
+  // no longer interrupt once closing begins); a message that overruns is cut off.
+  // After that we reserve FAREWELL_RESERVE_MS for the closing turn to actually play
+  // before the hard force-close. Total backstop = WAIT_MS + FAREWELL_RESERVE_MS.
+  /** How long the agent may take to finish its current message before it's cut off. */
+  private static readonly GRACEFUL_CLOSE_WAIT_MS = 30_000;
+  /** Time reserved after the wait window for the farewell to play before force-close. */
+  private static readonly GRACEFUL_CLOSE_FAREWELL_RESERVE_MS = 15_000;
+
   private connectedSessions: Set<string> = new Set(); // Track Python recorder connections
   private lastStatusUpdate: Date = new Date();
 
@@ -85,6 +97,7 @@ export class SessionsService {
     private agentsService: AgentsService,
     private roomMonitor: RoomMonitorService,
     private authService: AuthService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async create(projectId: string, createSessionDto: CreateSessionDto) {
@@ -94,9 +107,14 @@ export class SessionsService {
     // Fetch project to inherit agentInactivityTimeoutMinutes
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { agentInactivityTimeoutMinutes: true },
+      select: {
+        agentInactivityTimeoutMinutes: true,
+      },
     });
 
+    // Note: the max-duration cap (issue #198) is opt-in per session and is NOT set
+    // here. It is applied from the invitation (manual invite) or the public-session
+    // config when a participant is invited — see InvitationsService.create().
     const session = await this.prisma.session.create({
       data: {
         projectId,
@@ -345,13 +363,143 @@ export class SessionsService {
     return this.findOne(id);
   }
 
-  async close(id: string) {
+  /**
+   * Graceful close (issue #198) — used by the auto-end paths (e.g. the max-duration
+   * cap) so the agent is *not* cut off mid-sentence.
+   *
+   * Sequence:
+   *  1. Lock the session down: `ACTIVE → CLOSING` (no new user turns accepted).
+   *  2. Ask the agent to wrap up via a reason-carrying interrupt (e.g. "session_end"),
+   *     which it can distinguish from a barge-in.
+   *  3. Give it a bounded grace window to speak its closing turn. If the agent
+   *     finishes and reaches its end state, it leaves the room and the webhook
+   *     finalizes `CLOSING → CLOSED` first; otherwise the deadline force-closes via
+   *     close() (idempotent, so an early finalize makes this a no-op).
+   *
+   * The grace window can never extend the session indefinitely — close() always runs
+   * at the deadline. Returns immediately; finalization happens on the agent's wrap-up
+   * or at the deadline, whichever is first.
+   */
+  async beginGracefulClose(
+    id: string,
+    reason: string,
+    waitMs: number = SessionsService.GRACEFUL_CLOSE_WAIT_MS,
+  ): Promise<{ message: string }> {
+    // Hard backstop: the agent's wait budget plus the reserved farewell window. The
+    // session always reaches CLOSED by this deadline even if the agent never leaves.
+    const forceCloseMs =
+      waitMs + SessionsService.GRACEFUL_CLOSE_FAREWELL_RESERVE_MS;
     const session = await this.prisma.session.findUnique({
       where: { id },
+      select: { id: true, status: true, room: { select: { livekitRoomName: true } } },
     });
 
     if (!session) {
       throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    // Only an ACTIVE session can BEGIN a graceful close. A session already CLOSING
+    // is mid-wrap-up — either from the natural plan end-state (the agent is already
+    // saying its own farewell) or a prior graceful close. Re-running here would
+    // re-publish session_end (re-triggering the agent mid-farewell → a second
+    // goodbye) and arm a duplicate force-close timer. The stuck-CLOSING safety net
+    // lives in SessionTimeoutService.finalizeIfStuckClosing, not here.
+    if (session.status !== 'ACTIVE') {
+      return { message: `Session already ${session.status.toLowerCase()}` };
+    }
+
+    // Lockdown: enter CLOSING before asking the agent to wrap up. Status-guarded so
+    // a concurrent transition (e.g. natural end-state) wins the race cleanly.
+    await this.prisma.session.updateMany({
+      where: { id, status: 'ACTIVE' },
+      data: { status: 'CLOSING' },
+    });
+
+    this.logger.log(
+      `Graceful close for session ${id} (reason: ${reason}) — wrap-up signal + ${waitMs}ms wait + ${SessionsService.GRACEFUL_CLOSE_FAREWELL_RESERVE_MS}ms farewell reserve`,
+    );
+
+    // Ask the agent to wrap up (best-effort, reason-carrying) over the LiveKit data
+    // channel — the agent already consumes room data, so this rides a working path.
+    const roomName = session.room?.livekitRoomName;
+    if (roomName) {
+      try {
+        await this.livekit.sendData(roomName, {
+          type: 'session_end',
+          reason,
+          deadline_ms: waitMs,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to publish session_end to room ${roomName}: ${(error as Error).message}`,
+        );
+      }
+    } else {
+      this.logger.warn(`Session ${id} has no LiveKit room — skipping wrap-up signal`);
+    }
+
+    // Bounded grace, then force-finalize. If the agent finishes earlier (says its
+    // farewell and leaves), the webhook finalize closes it first and this close()
+    // no-ops (idempotent).
+    setTimeout(() => {
+      void this.close(id).catch((error) =>
+        this.logger.error(
+          `Force-close after grace window failed for session ${id}: ${(error as Error).message}`,
+        ),
+      );
+    }, forceCloseMs);
+
+    return { message: 'Graceful close initiated' };
+  }
+
+  /**
+   * Authoritative session closer — the single finalizer every close path funnels
+   * through, so all of them follow the same lifecycle: `ACTIVE → CLOSING → CLOSED`.
+   *
+   * Trigger matrix (who calls this):
+   *  - Manual close          — `SessionsController.close` (operator action).
+   *  - Empty-room auto-close  — `WebhooksService` when the last human+agent leave
+   *                             after a human interacted.
+   *  - Natural end-state      — `WebhooksService.finalizeClosingSessionOnAgentLeave`
+   *                             once the last agent leaves a session the state
+   *                             machine already moved to `CLOSING`.
+   *  - Auto-end (max duration) — `SessionTimeoutService` (issue #198), via the
+   *                             graceful close path which first drives `CLOSING`
+   *                             + a wrap-up turn, then finalizes here.
+   *
+   * Idempotent: a session already `CLOSED` is a no-op, and the final transition is
+   * status-guarded so concurrent callers (e.g. overlapping LiveKit webhooks)
+   * finalize and emit `session.closed` exactly once.
+   *
+   * NOTE: entering `CLOSING` before stopping agents opens the teardown window that
+   * issue #198's graceful wrap-up relies on. Callers that need the agent to speak a
+   * closing turn first should drive `CLOSING` + the interrupt themselves and only
+   * then call `close()` to finalize.
+   */
+  async close(id: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id },
+      include: { room: { select: { livekitRoomName: true } } },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with ID ${id} not found`);
+    }
+
+    // Idempotent: nothing left to do for an already-terminal session.
+    if (session.status === 'CLOSED') {
+      this.logger.log(`Session ${id} already CLOSED — close() is a no-op`);
+      return { message: 'Session already closed' };
+    }
+
+    // ACTIVE → CLOSING: enter the teardown window before tearing agents down so
+    // every close path passes through CLOSING (the natural end-state path already
+    // sets this via the state machine; this aligns manual/auto/empty-room closes).
+    if (session.status === 'ACTIVE') {
+      await this.prisma.session.updateMany({
+        where: { id, status: 'ACTIVE' },
+        data: { status: 'CLOSING' },
+      });
     }
 
     this.logger.log(`Closing session ${id} - stopping all agents`);
@@ -392,16 +540,44 @@ export class SessionsService {
     // Python message recorder will automatically stop monitoring when session becomes CLOSED
     this.logger.log(`Session ${id} cleanup complete - updating session status to CLOSED`);
 
-    await this.prisma.session.update({
-      where: { id },
+    // CLOSING → CLOSED, status-guarded so a concurrent close (e.g. an overlapping
+    // webhook) finalizes exactly once. `recorderShouldJoin: false` matches the
+    // webhook finalizer so the recorder stops being asked to (re)join.
+    const finalizeResult = await this.prisma.session.updateMany({
+      where: { id, status: { in: ['ACTIVE', 'CLOSING'] } },
       data: {
         status: 'CLOSED',
         closedAt: new Date(),
+        recorderShouldJoin: false,
       },
     });
 
+    if (finalizeResult.count === 0) {
+      // Another path already finalized this session — don't double-emit.
+      this.logger.log(`Session ${id} was finalized to CLOSED concurrently`);
+      return { message: 'Session closed successfully' };
+    }
+
+    // Tear down the LiveKit room so any lingering participant is disconnected
+    // (issue #198) — otherwise the human can sit in a dead room with no end signal.
+    // Best-effort: a failure here must not leave the session un-finalized.
+    const roomName = session.room?.livekitRoomName;
+    if (roomName) {
+      try {
+        await this.livekit.deleteRoom(roomName);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to delete LiveKit room ${roomName} for session ${id}: ${(error as Error).message}`,
+        );
+      }
+    }
+
     // Emit session.closed event for real-time dashboard updates
     this.emitSessionClosed(id, session.projectId, session.name);
+
+    // Internal lifecycle event: lets SessionTimeoutService drop the max-duration
+    // cap timer for this session (issue #198).
+    this.eventEmitter.emit('session.lifecycle.closed', { sessionId: id });
 
     return { message: 'Session closed successfully' };
   }
@@ -431,6 +607,9 @@ export class SessionsService {
 
     // Emit session.deleted event for real-time dashboard updates
     this.emitSessionDeleted(id, projectId, sessionName);
+
+    // Drop any max-duration cap timer tracking this session (issue #198).
+    this.eventEmitter.emit('session.lifecycle.closed', { sessionId: id });
 
     this.logger.log(`Session ${id} deleted - all agents stopped, all data removed`);
     return { message: 'Session deleted successfully' };
@@ -1165,6 +1344,21 @@ export class SessionsService {
         timestamp: validTimestamp,
       },
     });
+
+    // Arm the max-duration cap on the first agent message (issue #198). This is the
+    // LIVE message path (Python recorder → this method); the Node room monitor that
+    // also emits this event is disabled, so without this the cap timer never arms and
+    // no session_end is ever sent. Gated to spoken agent content (matches the anchor
+    // the participant-facing countdown uses); SessionTimeoutService arms once, so the
+    // repeated transcript_chunk events are cheap.
+    if (
+      role === 'assistant' &&
+      (messageType === 'transcript' ||
+        messageType === 'transcript_chunk' ||
+        messageType === 'agent_text')
+    ) {
+      this.eventEmitter.emit('session.agent-message', { sessionId });
+    }
 
     return { success: true, messageId: message.id, messageType };
   }

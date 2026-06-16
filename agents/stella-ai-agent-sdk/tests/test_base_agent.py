@@ -106,6 +106,47 @@ class TestBaseAgent:
         assert agent.is_processing is False
 
 
+class TestSessionEnding:
+    """Tests for on_session_ending — the pre-teardown wrap-up hook (issue #198)."""
+
+    @pytest.mark.asyncio
+    async def test_default_yields_nothing(self):
+        """Default hook is a no-op generator; the backend then falls back to farewell_message."""
+        agent = SimpleTestAgent()
+        await agent.on_session_start("s1", {})
+        outputs = [o async for o in agent.on_session_ending("s1", "session_end", 15000)]
+        assert outputs == []
+
+    @pytest.mark.asyncio
+    async def test_override_emits_wrap_up_turn(self):
+        """An agent can emit a final spoken turn before lockdown, branching on the reason."""
+
+        class WrapUpAgent(SimpleTestAgent):
+            async def on_session_ending(self, session_id, reason, deadline_ms):
+                if reason == "session_end":
+                    yield AgentOutput.text_final(session_id, "Thanks, goodbye!")
+
+        agent = WrapUpAgent()
+        await agent.on_session_start("s1", {})
+        outputs = [o async for o in agent.on_session_ending("s1", "session_end", 15000)]
+
+        assert len(outputs) == 1
+        assert outputs[0].content == "Thanks, goodbye!"
+
+    @pytest.mark.asyncio
+    async def test_wrap_up_is_reason_gated(self):
+        """A session-end wrap-up can be distinguished from a barge-in by the reason."""
+
+        class WrapUpAgent(SimpleTestAgent):
+            async def on_session_ending(self, session_id, reason, deadline_ms):
+                if reason == "session_end":
+                    yield AgentOutput.text_final(session_id, "bye")
+
+        agent = WrapUpAgent()
+        outputs = [o async for o in agent.on_session_ending("s1", "user_barge_in", 15000)]
+        assert outputs == []
+
+
 class TestBargeIn:
     """Tests for the barge-in capability and default evaluation hook."""
 

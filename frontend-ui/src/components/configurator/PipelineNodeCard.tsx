@@ -135,10 +135,11 @@ function PipelineNodeCardComponent({ data }: NodeProps) {
               </span>
             </div>
 
-            {/* Description (original fallback) */}
+            {/* Description preview — clamped to 3 lines so node height stays bounded
+                and cards never overlap. The full text is in the NodeDetailOverlay. */}
             {!stageSummary && description && (
               <p
-                className={`text-[10px] font-light leading-snug mt-1 ${
+                className={`text-[10px] font-light leading-snug mt-1 line-clamp-3 break-words ${
                   isDark ? 'text-zinc-500' : 'text-neutral-400'
                 }`}
               >

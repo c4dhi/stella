@@ -122,6 +122,14 @@ model Session {
   lastAgentConfig               Json? // Stored config for respawning paused agents
   agentInactivityTimeoutMinutes Int? // Inherited from project at creation
 
+  // Session auto-end (issue #198): hard max-duration cap. The cap is opt-in per
+  // session, set from the invitation (manual invite) or the public-session config
+  // (publicMaxSessionDurationSeconds) when the participant is invited (null = no cap).
+  // firstAgentMessageAt anchors the cap timer (set on the first agent message), so the
+  // backstop matches the participant-facing countdown and survives process restarts.
+  maxSessionDurationSeconds Int? // null = no cap
+  firstAgentMessageAt       DateTime? // anchor for the max-duration cap timer
+
   @@index([projectId])
   @@index([status])
   @@index([createdAt])
