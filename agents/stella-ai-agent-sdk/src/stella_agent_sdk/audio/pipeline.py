@@ -229,6 +229,11 @@ class AudioPipeline:
         self._barge_in_decider: Optional[
             Callable[[str], Awaitable["BargeInDecision"]]
         ] = None
+        # Session-end wrap-up handler (issue #198): invoked when the backend signals
+        # a graceful close over the data channel ({"type":"session_end"}).
+        self._session_end_handler: Optional[
+            Callable[[str, int], Awaitable[None]]
+        ] = None
         # Safety net: a suspend only resolves when STT delivers a FINAL transcript
         # (-> _resolve_barge_in). If STT errors/reconnects mid-barge-in and never
         # emits a final, the suspend would otherwise persist forever — permanent
@@ -255,6 +260,12 @@ class AudioPipeline:
         self._turn_active = False
         self._turn_suspended = False
         self._turn_release = asyncio.Event()
+
+        # Terminal-close gate (issue #198): once set, the conversation loop stops
+        # accepting new user turns — the session is ending. Set by interrupt_for_closing()
+        # when the backend signals session_end; the closing farewell is spoken
+        # out-of-band by run.py, then the agent disconnects itself.
+        self._closing = False
         self._turn_release.set()
         self._turn_abort = asyncio.Event()
 
@@ -290,6 +301,92 @@ class AudioPipeline:
     def is_speaking(self) -> bool:
         """Whether the agent is currently speaking (TTS playing)."""
         return self._is_speaking
+
+    @property
+    def is_closing(self) -> bool:
+        """Whether the session is winding down (issue #198). While True, the
+        conversation loop stops taking new user turns."""
+        return self._closing
+
+    async def interrupt_for_closing(self) -> None:
+        """Terminal interrupt for session end (issue #198).
+
+        The reversible counterpart is barge-in (the user briefly interrupts, then the
+        conversation continues). This is the irreversible close. In one step it:
+          • gates the conversation loop (``is_closing``) so no new user turn is taken,
+          • locks out barge-in so the user can't interrupt the goodbye,
+          • aborts the agent's own in-flight turn — generation and current audio,
+          • settles the interrupted speech worker and clears the hard-stop flag,
+        leaving the pipeline ready to voice the closing line with ``speak_line()`` (so
+        the farewell still highlights word-by-word). After the farewell the caller
+        publishes ``session_ended`` and disconnects.
+        """
+        if not self._closing:
+            logger.info("[SESSION END] terminal interrupt — closing the session")
+        self._closing = True
+        self._barge_in_enabled = False  # the user can no longer interrupt the goodbye
+
+        # Cut the agent's own in-flight turn: halt generation + stop current audio.
+        self.request_turn_abort()
+        await self.stop_speaking()
+
+        # Settle the interrupted worker, then clear the stop flag so a FRESH worker
+        # speaks the closing line from a clean slate (otherwise the stop flag, or an
+        # end-of-turn flush still in flight, would swallow it).
+        worker = self._speech_worker_task
+        if worker is not None and not worker.done():
+            try:
+                # shield so the timeout doesn't cancel a worker that's exiting cleanly.
+                await asyncio.wait_for(asyncio.shield(worker), timeout=2.0)
+            except Exception:
+                pass
+        self._stop_speaking_event.clear()
+
+    async def speak_line(self, text: str) -> None:
+        """Voice one complete line and highlight it word-by-word, the same way a
+        normal turn is spoken (publish the text, then synthesize it through the
+        streaming queue so the teleprompter tracks it). Used for the session-end
+        farewell — ``speak()`` would play audio but emit no teleprompter progress.
+        """
+        if not text.strip():
+            return
+        tid = f"line_{uuid.uuid4().hex[:8]}"
+        await self.publish_text(text, is_final=True, transcript_id=tid)
+        self.enqueue_sentence(text, transcript_id=tid, char_start=0, char_end=len(text))
+        await self.flush_speech_queue()
+
+    async def wait_for_playout_drain(self, max_wait_ms: int = 15_000) -> None:
+        """Block until buffered TTS audio has actually played out to the client.
+
+        ``flush_speech_queue()`` returns when the farewell's last frame is *pushed*
+        to the room — but up to ``queued_playout_ms`` of audio is still draining the
+        output + client buffers (see the CONTRACT note in ``_play_prefetched``).
+        Before the terminal ``session_ended`` overlay we wait that out so the
+        goodbye is fully heard rather than cut off by the disconnect (issue #198).
+        Bounded by ``max_wait_ms`` so a stuck buffer can never stall shutdown.
+        """
+        try:
+            waited = 0.0
+            while waited < max_wait_ms:
+                remaining = float(self._room.queued_playout_ms)
+                if remaining <= 50:
+                    return
+                step = min(remaining, 250.0)
+                await asyncio.sleep(step / 1000.0)
+                waited += step
+        except Exception:
+            pass
+
+    async def publish_session_ended(self, reason: str) -> None:
+        """Tell the frontend the session has terminally ended (issue #198) so it can
+        show the end overlay. Mirrors the session_completed signal used for a natural
+        end. Best-effort: a failure here must not block shutdown."""
+        try:
+            await self._room.publish_data(
+                {"type": "session_ended", "data": {"reason": reason}}
+            )
+        except Exception:
+            logger.exception("[SESSION END] failed to publish session_ended")
 
     @property
     def barge_in_enabled(self) -> bool:
@@ -761,6 +858,22 @@ class AudioPipeline:
         """
         try:
             message = json.loads(data.decode("utf-8"))
+
+            # Session-end wrap-up (issue #198): backend asks the agent to wind down.
+            # Dispatch to the registered handler (run.py) while the loop is still live
+            # so it can speak a final turn before the session locks down.
+            if message.get("type") == "session_end":
+                # Log receipt unconditionally so it's possible to tell "signal arrived"
+                # apart from "handler ran" when diagnosing a missing farewell.
+                logger.info(
+                    f"[SESSION END] data message received from backend "
+                    f"(handler_registered={self._session_end_handler is not None})"
+                )
+                if self._session_end_handler:
+                    reason = message.get("reason", "session_end")
+                    deadline_ms = int(message.get("deadline_ms", 15000))
+                    asyncio.create_task(self._session_end_handler(reason, deadline_ms))
+                return
 
             # Handle user_text messages from frontend
             if message.get("type") == "user_text":
@@ -1407,6 +1520,14 @@ class AudioPipeline:
         """Register the async callback that decides COMMIT vs RESUME for a
         barge-in transcript (wired to the agent's on_barge_in hook)."""
         self._barge_in_decider = decider
+
+    def set_session_end_handler(
+        self, handler: Callable[[str, int], Awaitable[None]]
+    ) -> None:
+        """Register the async callback invoked when the backend signals a graceful
+        close ({"type":"session_end"}) over the data channel — wired in run.py to
+        run the agent's on_session_ending wrap-up, then shut down (issue #198)."""
+        self._session_end_handler = handler
 
     async def _emit_barge_in_debug(self, content: str, **metadata) -> None:
         """Publish a barge-in debug message to the chat (frontend debug feed)

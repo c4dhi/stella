@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, DataPacket_Kind } from 'livekit-server-sdk';
 
 @Injectable()
 export class LiveKitService {
@@ -29,6 +29,27 @@ export class LiveKitService {
     // RoomServiceClient needs an HTTP URL, convert ws:// to http://
     const httpUrl = url.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
     this.roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
+  }
+
+  /**
+   * Publish a JSON control message to everyone in a room over the LiveKit data
+   * channel (issue #198). Used to signal the agent (e.g. `{type:'session_end'}`)
+   * so it can wrap up — the agent already consumes room data, so this rides a
+   * working channel instead of the unfinished gRPC duplex.
+   */
+  async sendData(roomName: string, payload: Record<string, unknown>): Promise<void> {
+    const data = new TextEncoder().encode(JSON.stringify(payload));
+    await this.roomService.sendData(roomName, data, DataPacket_Kind.RELIABLE, {});
+  }
+
+  /**
+   * Delete a LiveKit room, which disconnects every participant still in it
+   * (issue #198). Called when a session closes so a lingering participant is kicked
+   * and their client sees a clean Disconnected event instead of hanging in a dead
+   * room. Idempotent server-side: deleting a non-existent room is a no-op.
+   */
+  async deleteRoom(roomName: string): Promise<void> {
+    await this.roomService.deleteRoom(roomName);
   }
 
   async createToken(

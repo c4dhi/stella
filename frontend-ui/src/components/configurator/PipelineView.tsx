@@ -145,6 +145,43 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
       })
     }
 
+    // Session-end interrupt — the terminal counterpart to barge-in. Like barge-in it
+    // runs on a separate path (the backend session_end signal), not the turn pipeline,
+    // so give it its own input endpoint (the session-end trigger) and output endpoint
+    // (the spoken farewell + self-disconnect), aligned on its own row.
+    const interruptNode = schema.nodes.find((n) => n.id === 'interrupt_handler')
+    if (interruptNode) {
+      const interruptY = Y_OFFSET + interruptNode.position.row * ROW_SPACING
+      pipelineNodes.push({
+        id: '__interrupt_input__',
+        type: 'pipeline',
+        position: { x: INPUT_ANNOTATION_X, y: interruptY },
+        data: {
+          label: 'Session End',
+          isAnnotation: true,
+          annotationType: 'input',
+          isDark,
+        },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+      })
+      pipelineNodes.push({
+        id: '__interrupt_output__',
+        type: 'pipeline',
+        position: { x: X_OFFSET + maxCol * COL_SPACING + 210 + OUTPUT_ANNOTATION_X_PAD, y: interruptY },
+        data: {
+          label: 'Farewell / Close',
+          isAnnotation: true,
+          annotationType: 'output',
+          isDark,
+        },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+      })
+    }
+
     return pipelineNodes
   }, [schema.nodes, configuration, selectedNodeId, isDark, maxCol, annotationY])
 
@@ -346,6 +383,49 @@ export default function PipelineView({ schema, configuration, selectedNodeId, on
         source: 'barge_in',
         sourceHandle: 'right',
         target: '__bargein_output__',
+        type: 'default',
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: annotationEdgeColor,
+        },
+        style: {
+          stroke: annotationEdgeColor,
+          strokeWidth: 1.5,
+          strokeDasharray: '6 4',
+        },
+      })
+    }
+
+    // Session-end interrupt: trigger endpoint → handler → farewell/close endpoint.
+    const interruptNode = schema.nodes.find((n) => n.id === 'interrupt_handler')
+    if (interruptNode) {
+      pipelineEdges.push({
+        id: 'edge-interrupt-input',
+        source: '__interrupt_input__',
+        target: 'interrupt_handler',
+        targetHandle: 'left',
+        type: 'default',
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: annotationEdgeColor,
+        },
+        style: {
+          stroke: annotationEdgeColor,
+          strokeWidth: 1.5,
+          strokeDasharray: '6 4',
+        },
+      })
+      pipelineEdges.push({
+        id: 'edge-interrupt-output',
+        source: 'interrupt_handler',
+        sourceHandle: 'right',
+        target: '__interrupt_output__',
         type: 'default',
         animated: false,
         markerEnd: {

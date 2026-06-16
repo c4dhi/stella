@@ -123,8 +123,8 @@ pipelineSchema:
           default: 800
 
     - id: barge_in
-      label: "Barge-in Evaluator"
-      description: "Decides whether a user interruption is worth acting on (commit) or should be ignored so speech resumes. This agent supports barge-in by default; operators can force it off with BARGE_IN_ENABLED=false."
+      label: "Interrupt · Barge-in (reversible)"
+      description: "One of two interrupt types. BARGE-IN is reversible and local: the user speaks while the agent talks, the agent pauses, and this evaluator decides COMMIT (act on it, drop the rest of the reply) or RESUME (ignore it, keep talking). Control returns to the conversation either way. (The terminal interrupt is 'Interrupt · Session End' below.) This agent supports barge-in by default; force it off with BARGE_IN_ENABLED=false."
       icon: "✋"
       position: { row: -1, col: 0 }
       slots:
@@ -163,6 +163,24 @@ pipelineSchema:
           max: 20
           step: 1
           default: 3
+
+    - id: interrupt_handler
+      label: "Interrupt · Session End (terminal)"
+      description: "The other interrupt type. SESSION-END is terminal and global: when the session auto-ends (e.g. the max-duration cap, issue #198) the agent stops taking new turns, lets the current turn finish (or cuts it off at the deadline), speaks ONE closing turn that barge-in cannot suspend, then disconnects itself. Modes: 'Farewell' speaks the plan's End-node farewell (or a built-in goodbye if none is set — it never ends wordlessly); 'Wrap-up' lets the agent generate a short custom closing; 'Silent' is the only mode that closes without speaking."
+      icon: "👋"
+      position: { row: 1, col: 0 }
+      slots:
+        - id: mode
+          label: "On Session End"
+          type: select
+          options: ["farewell", "wrap_up", "silent"]
+          default: "farewell"
+        - id: wrap_up_prompt
+          label: "Wrap-up Prompt"
+          type: text
+          description: "Instruction for the agent's final closing turn when mode is 'wrap_up'. Supports {{variables}}."
+          default: |
+            We're out of time. Warmly thank the person and close the conversation in one short sentence.
 
   edges: []
 

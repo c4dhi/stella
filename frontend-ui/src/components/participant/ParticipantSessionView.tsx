@@ -11,6 +11,7 @@ import {
   Subtitles,
   Loader2,
   HelpCircle,
+  Clock,
 } from 'lucide-react'
 import { Room, RoomEvent, Track, RemoteTrack, RemoteTrackPublication, RemoteParticipant, LocalTrackPublication } from 'livekit-client'
 import TranscriptOverlay from '../face/TranscriptOverlay'
@@ -66,6 +67,9 @@ interface ParticipantSessionViewProps {
   sessionData: SessionData
 }
 
+// Warn the participant this many seconds before the session auto-ends (issue #198).
+const SESSION_TIMEOUT_WARNING_SECONDS = 30
+
 export default function ParticipantSessionView({ sessionData }: ParticipantSessionViewProps) {
   // Room connection state
   const [room, setRoom] = useState<Room | null>(null)
@@ -91,9 +95,17 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [sessionCompleted, setSessionCompleted] = useState(false)
   const sessionCompletedRef = useRef(false)
   const [sessionTimedOut, setSessionTimedOut] = useState(false)
+  const [showTimeoutWarning, setShowTimeoutWarning] = useState(false)
+  // True once the cap is reached (#198): the countdown is over and the agent is
+  // wrapping up. Flips the notification copy to "Time is up, please wrap up".
+  const [sessionTimeUp, setSessionTimeUp] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const sessionTimerStartedRef = useRef(false)
+  // True once the cap is reached (#198): the agent is now wrapping up. The terminal
+  // overlay waits for the actual end (the agent's `session_ended` signal, or the room
+  // disconnecting) — NOT this moment — so it never appears before the agent's goodbye.
+  const sessionEndingRef = useRef(false)
 
   // Transcripts
   const [userTranscript, setUserTranscript] = useState('')
@@ -432,6 +444,23 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         const decoder = new TextDecoder()
         const envelope = JSON.parse(decoder.decode(payload))
 
+        // Terminal auto-end signal from the agent (#198): the agent has finished its
+        // closing turn and is disconnecting. THIS is when the timeout overlay shows —
+        // after the goodbye, not at the cap.
+        if (envelope.type === 'session_ended') {
+          console.log('[Participant] Session ended signal received (auto-end)')
+          sessionEndingRef.current = true
+          if (!sessionCompletedRef.current) {
+            setShowTimeoutWarning(false)
+            setSessionTimedOut(true)
+          }
+          if (sessionTimerRef.current) {
+            clearInterval(sessionTimerRef.current)
+            sessionTimerRef.current = null
+          }
+          return
+        }
+
         // Handle session completed signal from agent
         if (envelope.type === 'session_completed') {
           console.log('[Participant] Session completed signal received')
@@ -476,8 +505,25 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
             sessionTimerRef.current = setInterval(() => {
               setElapsedSeconds(prev => {
                 const next = prev + 1
+                const remaining = sessionTimeoutSeconds - next
+                // Warn ~2 min before the auto-end so the participant can wrap up (#198).
+                if (remaining > 0 && remaining <= SESSION_TIMEOUT_WARNING_SECONDS && !sessionCompletedRef.current) {
+                  setShowTimeoutWarning(true)
+                }
+                // Cap reached: the agent is now wrapping up (it gets a grace window
+                // to say goodbye). Stop the countdown and flip the notification to
+                // "Time is up", but do NOT show the timeout overlay yet — that waits
+                // for the actual end (the agent's `session_ended` signal or room
+                // disconnect). Showing it here is exactly the "overlay appears before
+                // the agent wrapped up" bug.
                 if (next >= sessionTimeoutSeconds && !sessionCompletedRef.current) {
-                  setSessionTimedOut(true)
+                  sessionEndingRef.current = true
+                  setSessionTimeUp(true)
+                  // The agent now terminally interrupts the user to say goodbye.
+                  // Clear any lingering interim user transcript so the farewell's
+                  // teleprompter overlay (hidden while the user's subtitle shows)
+                  // takes over the screen — otherwise the goodbye isn't highlighted.
+                  setUserTranscript('')
                   if (sessionTimerRef.current) {
                     clearInterval(sessionTimerRef.current)
                     sessionTimerRef.current = null
@@ -653,10 +699,18 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   // Handle room disconnection
   const handleDisconnected = useCallback(() => {
     cleanupAudio()
-    // Don't show error if session completed or timed out
-    if (!sessionCompletedRef.current && !sessionTimedOut) {
-      setConnectionError('Disconnected from session')
+    if (sessionCompletedRef.current || sessionTimedOut) {
+      return
     }
+    // Fallback for the auto-end path (#198): if we're past the cap (agent wrapping
+    // up) and the room drops without an explicit `session_ended` — e.g. the agent
+    // died or the backend force-closed — treat the disconnect as the timeout end
+    // rather than surfacing a scary "Disconnected" error.
+    if (sessionEndingRef.current) {
+      setSessionTimedOut(true)
+      return
+    }
+    setConnectionError('Disconnected from session')
   }, [sessionTimedOut])
 
   // Handle participant joined (for real-time notifications)
@@ -1289,19 +1343,21 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
 
       {/* Teleprompter Overlay (#241): agent speech, word-by-word highlight.
           Shown while the agent is speaking; the user's own transcript overlay
-          below takes over when they speak. */}
+          below takes over when they speak. Once time is up (#198) the agent's
+          farewell owns the screen unconditionally — even if the user was
+          mid-sentence — so the goodbye is highlighted like any other answer. */}
       <TeleprompterOverlay
         text={teleprompterText}
         spokenChar={teleprompterSpokenChar}
         theme={currentVisualizer}
-        isVisible={showSubtitles && !userTranscript.trim() && !isChatOpen}
+        isVisible={showSubtitles && !isChatOpen && (sessionTimeUp || !userTranscript.trim())}
       />
 
-      {/* Transcript Overlay */}
+      {/* Transcript Overlay — hidden once time is up so it can't mask the farewell. */}
       <TranscriptOverlay
         transcript={userTranscript}
         theme={currentVisualizer}
-        isVisible={showSubtitles}
+        isVisible={showSubtitles && !sessionTimeUp}
       />
 
       {/* Bottom hint */}
@@ -1332,6 +1388,45 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           )}
         </div>
       </motion.div>
+      {/* Auto-end warning (#198): iOS-style notification, heads-up ~30s before close */}
+      {(showTimeoutWarning || sessionTimeUp) && !sessionTimedOut && !sessionCompleted && sessionData.maxSessionDurationSeconds != null && (
+        <motion.div
+          initial={{ opacity: 0, y: -24, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -24, scale: 0.96 }}
+          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+          // Center with margins, not -translate-x-1/2: framer-motion writes the
+          // transform inline (y/scale) and would override a Tailwind translate.
+          className="fixed top-5 inset-x-0 mx-auto z-50 w-[min(92vw,22rem)]"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-3 px-3.5 py-3 rounded-[1.6rem] bg-white/80 backdrop-blur-2xl shadow-2xl ring-1 ring-black/5">
+            {/* App-icon tile, iOS-notification style — red once time is up */}
+            <div className={`shrink-0 w-9 h-9 rounded-[0.7rem] flex items-center justify-center shadow-sm ${sessionTimeUp ? 'bg-red-500' : 'bg-amber-500'}`}>
+              <Clock className="w-5 h-5 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold leading-tight text-neutral-900">
+                {sessionTimeUp ? 'Time is up' : 'Session ending soon'}
+              </p>
+              <p className="text-[12px] leading-tight text-neutral-500 tabular-nums">
+                {sessionTimeUp
+                  ? 'Please wrap up.'
+                  : `Ending in ${Math.max(0, sessionData.maxSessionDurationSeconds - elapsedSeconds)}s`}
+              </p>
+            </div>
+            <button
+              onClick={() => { setShowTimeoutWarning(false); setSessionTimeUp(false) }}
+              className="shrink-0 text-neutral-400 hover:text-neutral-600 transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Session Completed Overlay */}
       <SessionCompletedOverlay isVisible={sessionCompleted} participantName={sessionData.participantName} />
 

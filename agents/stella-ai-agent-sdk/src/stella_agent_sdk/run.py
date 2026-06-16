@@ -58,6 +58,47 @@ from stella_agent_sdk.messages.types import OutputType
 logger = logging.getLogger(__name__)
 
 
+def _resolve_farewell_message(agent_config: Dict[str, Any]) -> str:
+    """Plan-level farewell (EndNodeConfig.farewell_message), used as the wrap-up
+    fallback when the agent's on_session_ending yields nothing (issue #198).
+
+    Defensive: AGENT_CONFIG is untyped JSON, so any missing/non-dict node yields "".
+    """
+    plan = agent_config.get("plan")
+    metadata = plan.get("metadata") if isinstance(plan, dict) else None
+    plan_builder = metadata.get("plan_builder") if isinstance(metadata, dict) else None
+    canvas = plan_builder.get("canvas") if isinstance(plan_builder, dict) else None
+    end_cfg = canvas.get("end_node_config") if isinstance(canvas, dict) else None
+    farewell = end_cfg.get("farewell_message") if isinstance(end_cfg, dict) else None
+    return farewell.strip() if isinstance(farewell, str) else ""
+
+
+def _resolve_interrupt_mode(agent_config: Dict[str, Any]) -> str:
+    """Author-configured session-end behavior (issue #198), read from the
+    Configurator's interrupt_handler node: 'farewell' (speak the plan farewell),
+    'wrap_up' (let the agent's on_session_ending generate a custom closing), or
+    'silent' (just close). Defaults to 'farewell' — safe for every agent.
+    """
+    pipeline_config = agent_config.get("pipeline_config")
+    nodes = pipeline_config.get("nodes") if isinstance(pipeline_config, dict) else None
+    handler = nodes.get("interrupt_handler") if isinstance(nodes, dict) else None
+    mode = handler.get("mode") if isinstance(handler, dict) else None
+    return mode if mode in ("farewell", "wrap_up", "silent") else "farewell"
+
+
+# Spoken when a session auto-ends in 'farewell'/'wrap_up' mode but no closing line
+# is configured — so the agent never ends wordlessly (issue #198). Apologetic,
+# because the agent may have just cut itself off mid-thought to say it.
+_DEFAULT_FAREWELL = (
+    "I'm so sorry, but we're out of time for today. "
+    "Thank you so much for chatting with me — take care!"
+)
+
+# Grace between the farewell finishing playout and the terminal "session ended"
+# overlay, so the last word fully lands before the screen drops (issue #198).
+_SESSION_END_GRACE_SECONDS = 2.0
+
+
 def _parse_participant_event_config(agent_config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Extract and normalize participant event message config from AGENT_CONFIG.
 
@@ -490,6 +531,64 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             for participant in existing_participants:
                 logger.info(f"[EXISTING PARTICIPANTS] Sending progress to {participant.identity}")
                 await audio_pipeline._room.publish_data(agent._last_progress_payload)
+
+        # 10e. Session-end wrap-up handler (issue #198). When the backend signals a
+        # graceful close over the data channel, run the agent's on_session_ending
+        # hook (speaking any final turn), fall back to the plan farewell if it stays
+        # silent, then trigger shutdown so teardown proceeds.
+        async def handle_session_end(reason: str, deadline_ms: int) -> None:
+            mode = _resolve_interrupt_mode(agent_config)
+            logger.info(
+                f"[SESSION END] signal received (reason={reason}, mode={mode}, deadline={deadline_ms}ms)"
+            )
+
+            # Time is up: interrupt everything now (no waiting on anyone), then say
+            # the farewell. The pipeline owns the audio mechanics — see
+            # interrupt_for_closing()/speak_line().
+            await audio_pipeline.interrupt_for_closing()
+
+            # Cancel any in-flight deferred tools — we're closing now (budget 0).
+            try:
+                await agent.drain_pending_tools(0)
+            except Exception:
+                logger.exception("[SESSION END] deferred-tool drain failed")
+
+            # Always say goodbye. 'silent' is the ONLY mode that closes without speaking.
+            if mode != "silent":
+                spoke = False
+                # 'wrap_up' lets the agent generate a custom closing; if it declines
+                # (yields nothing), fall through to the configured/default farewell.
+                if mode == "wrap_up":
+                    try:
+                        async for out in agent.on_session_ending(session_id, reason, deadline_ms):
+                            text = getattr(out, "content", None)
+                            if text:
+                                await audio_pipeline.speak_line(text)
+                                spoke = True
+                    except Exception:
+                        logger.exception("[SESSION END] on_session_ending failed")
+
+                if not spoke:
+                    await audio_pipeline.speak_line(
+                        _resolve_farewell_message(agent_config) or _DEFAULT_FAREWELL
+                    )
+
+            # Let the farewell finish playing out before telling the frontend it's
+            # over — flush_speech_queue() returns at push-time, but audio is still
+            # draining. Without this wait the timeout overlay covers the agent
+            # mid-goodbye (issue #198).
+            await audio_pipeline.wait_for_playout_drain()
+            # Extra grace so the last word fully lands (client jitter buffer) before
+            # the overlay drops — the playout estimate can run slightly ahead.
+            await asyncio.sleep(_SESSION_END_GRACE_SECONDS)
+
+            # Notify the frontend (overlay) and disconnect ourselves. The agent
+            # leaving the room drives the backend's finalize → close → revoke chain.
+            await audio_pipeline.publish_session_ended(reason)
+            await asyncio.sleep(0.5)  # let the data message deliver before disconnect
+            shutdown_event.set()
+
+        audio_pipeline.set_session_end_handler(handle_session_end)
 
         # 11. Run the agent's audio loop until shutdown
         audio_loop_task = asyncio.create_task(agent.run_audio_loop())

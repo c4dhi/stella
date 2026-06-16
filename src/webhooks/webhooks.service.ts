@@ -80,7 +80,7 @@ export class WebhooksService {
 
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
-      select: { id: true, status: true, projectId: true, name: true },
+      select: { id: true, status: true },
     });
 
     if (!session || session.status !== 'CLOSING') return;
@@ -89,37 +89,11 @@ export class WebhooksService {
     const remaining = await this.countRoomParticipants(roomName);
     if (remaining.agents > 0) return;
 
-    const closedAt = new Date();
-    const finalizeResult = await this.prisma.session.updateMany({
-      where: {
-        id: sessionId,
-        status: 'CLOSING',
-      },
-      data: {
-        status: 'CLOSED',
-        closedAt,
-        recorderShouldJoin: false,
-      },
-    });
-
-    // updateMany keeps this idempotent under concurrent webhook deliveries.
-    if (finalizeResult.count === 0) return;
-
-    const revokedInvitations = await this.prisma.invitation.updateMany({
-      where: {
-        sessionId,
-        status: { in: ['PENDING', 'ACCEPTED'] },
-      },
-      data: { status: 'REVOKED' },
-    });
-
-    if (revokedInvitations.count > 0) {
-      this.logger.log(
-        `Session ${sessionId}: auto-revoked ${revokedInvitations.count} invitation(s) on close finalization`,
-      );
-    }
-
-    this.sessionsService.emitSessionClosed(sessionId, session.projectId, session.name);
+    // Delegate the actual finalize to the single authoritative closer, which takes
+    // CLOSING → CLOSED, revokes invitations, marks participants left and emits
+    // session.closed exactly once (status-guarded, so concurrent webhook
+    // deliveries are idempotent).
+    await this.sessionsService.close(sessionId);
     this.logger.log(`Session ${sessionId} finalized to CLOSED after last agent disconnected`);
   }
 
@@ -303,27 +277,10 @@ export class WebhooksService {
     // the session might just be waiting for an invitation to be created.
     if (remainingParticipants.humans === 0 && remainingParticipants.agents === 0) {
       if (session.status === 'ACTIVE' && session.hasHumanParticipant) {
-        const closedAt = new Date();
-        await this.prisma.session.update({
-          where: { id: sessionId },
-          data: { status: 'CLOSED', closedAt },
-        });
-
-        // Auto-revoke pending/accepted invitations on session close
-        const revokedInvitations = await this.prisma.invitation.updateMany({
-          where: {
-            sessionId,
-            status: { in: ['PENDING', 'ACCEPTED'] },
-          },
-          data: { status: 'REVOKED' },
-        });
-        if (revokedInvitations.count > 0) {
-          this.logger.log(
-            `Session ${sessionId}: auto-revoked ${revokedInvitations.count} invitation(s) on close`,
-          );
-        }
-
-        this.sessionsService.emitSessionClosed(sessionId, session.projectId, session.name);
+        // Route empty-room auto-close through the single authoritative closer so it
+        // follows ACTIVE → CLOSING → CLOSED (and revokes invitations, marks
+        // participants left, emits session.closed) like every other close path.
+        await this.sessionsService.close(sessionId);
         this.logger.log(`Session ${sessionId} closed — all participants left after human interaction`);
       }
       this.startRecorderLeaveTimer(sessionId);

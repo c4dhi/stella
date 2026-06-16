@@ -80,6 +80,18 @@ export class InvitationsService {
       },
     });
 
+    // Session auto-end (issue #198): the max-duration cap is opt-in per session and
+    // originates here — from a manual invite or the public-session config. Propagate
+    // it onto the session so SessionTimeoutService (which reads
+    // Session.maxSessionDurationSeconds) can arm the cap timer on the first agent
+    // message. null leaves the session uncapped.
+    if (dto.maxSessionDurationSeconds != null) {
+      await this.prisma.session.update({
+        where: { id: sessionId },
+        data: { maxSessionDurationSeconds: dto.maxSessionDurationSeconds },
+      });
+    }
+
     // Generate the join URL using the frontend URL
     const baseUrl = this.configService.get<string>('PUBLIC_FRONTEND_URL') || 'http://localhost:8080';
     const joinUrl = `${baseUrl}/join/${invitation.token}`;

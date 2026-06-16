@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { Message, Prisma } from '@prisma/client';
 
@@ -16,7 +17,10 @@ export interface RecordMessageDto {
 export class MessageRecorderService {
   private readonly logger = new Logger(MessageRecorderService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Record a message to the database
@@ -38,6 +42,13 @@ export class MessageRecorderService {
       this.logger.debug(
         `Recorded message ${message.id} (${data.messageType}) for session ${data.sessionId}`,
       );
+
+      // Anchor the max-duration cap on the first agent message (issue #198).
+      // SessionTimeoutService dedupes via an in-memory guard, so emitting on every
+      // agent message is cheap and only the first one arms the timer.
+      if (data.role === 'assistant') {
+        this.eventEmitter.emit('session.agent-message', { sessionId: data.sessionId });
+      }
 
       return message;
     } catch (error) {
