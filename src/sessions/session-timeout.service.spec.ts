@@ -210,6 +210,48 @@ describe('SessionTimeoutService (max-duration cap)', () => {
     service.onModuleDestroy();
   });
 
+  it('re-arms a live session when its cap changes, clearing the stale timer', async () => {
+    // A mid-session re-invite changes the cap and re-anchors to now. onCapChanged must
+    // drop the old timer and arm the NEW budget — otherwise the stale timer fires on
+    // the old schedule (and the in-memory guard would block a plain re-arm).
+    const { service, prisma, sessionsService } = setup({
+      session: { status: 'ACTIVE', maxSessionDurationSeconds: 120, firstAgentMessageAt: null },
+    });
+
+    // Initial arm via the first agent message: 120s cap from t0.
+    await service.onAgentMessage({ sessionId: 's1' });
+    jest.advanceTimersByTime(60_000); // 60s elapsed
+    expect(sessionsService.beginGracefulClose).not.toHaveBeenCalled();
+
+    // Cap changed to a shorter 90s, re-anchored to now (what InvitationsService persists).
+    prisma.session.findUnique.mockResolvedValue({
+      id: 's1',
+      status: 'ACTIVE',
+      maxSessionDurationSeconds: 90,
+      firstAgentMessageAt: new Date(),
+    });
+    await service.onCapChanged({ sessionId: 's1' });
+
+    // The old 120s timer (would fire at t0+120) is gone; nothing fires before t0+60+90.
+    jest.advanceTimersByTime(89_000);
+    expect(sessionsService.beginGracefulClose).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(1_000);
+    expect(sessionsService.beginGracefulClose).toHaveBeenCalledTimes(1);
+    expect(sessionsService.beginGracefulClose).toHaveBeenCalledWith('s1', 'session_end');
+  });
+
+  it('cap-changed does not arm when the agent has not spoken yet (no anchor)', async () => {
+    const { service, sessionsService } = setup({
+      session: { status: 'ACTIVE', maxSessionDurationSeconds: 120, firstAgentMessageAt: null },
+      firstAgentMessage: null, // no recorded agent message to derive an anchor from
+    });
+
+    await service.onCapChanged({ sessionId: 's1' });
+
+    jest.advanceTimersByTime(200_000);
+    expect(sessionsService.beginGracefulClose).not.toHaveBeenCalled();
+  });
+
   it('clear() cancels a pending cap timer', async () => {
     const { service, sessionsService } = setup({
       session: { status: 'ACTIVE', maxSessionDurationSeconds: 120, firstAgentMessageAt: null },

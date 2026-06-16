@@ -115,19 +115,35 @@ export class SessionTimeoutService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
 
-      if (this.maxDurationTimers.has(s.id)) continue; // already tracked
-
-      let anchor = s.firstAgentMessageAt;
-      if (!anchor) {
-        anchor = await this.deriveAnchorFromMessages(s.id);
-        if (!anchor) continue; // agent hasn't spoken yet — nothing to anchor on
-      }
-      this.armCapTimer(s.id, s.maxSessionDurationSeconds!, anchor);
-      armed++;
+      if (await this.armSessionIfDue(s)) armed++;
     }
     if (armed > 0) {
       this.logger.log(`Cap reconciliation: armed ${armed} session(s) from persisted state`);
     }
+  }
+
+  /**
+   * Arm a single ACTIVE, capped session from persisted state, deriving the anchor from
+   * the message log if the `session.agent-message` event was missed. No-op (returns
+   * false) when the session isn't ACTIVE/capped, is already tracked, or the agent
+   * hasn't spoken yet (no anchor). Shared by the reconcile sweep and `onCapChanged`.
+   */
+  private async armSessionIfDue(s: {
+    id: string;
+    status: string;
+    maxSessionDurationSeconds: number | null;
+    firstAgentMessageAt: Date | null;
+  }): Promise<boolean> {
+    if (s.status !== 'ACTIVE' || !s.maxSessionDurationSeconds) return false;
+    if (this.maxDurationTimers.has(s.id)) return false; // already tracked
+
+    let anchor = s.firstAgentMessageAt;
+    if (!anchor) {
+      anchor = await this.deriveAnchorFromMessages(s.id);
+      if (!anchor) return false; // agent hasn't spoken yet — nothing to anchor on
+    }
+    this.armCapTimer(s.id, s.maxSessionDurationSeconds, anchor);
+    return true;
   }
 
   /**
@@ -215,6 +231,30 @@ export class SessionTimeoutService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.armCapTimer(sessionId, session.maxSessionDurationSeconds, anchor);
+  }
+
+  /**
+   * Re-arm when a session's cap changes on a LIVE session (issue #198). A mid-session
+   * re-invite can apply or change the cap after the agent already spoke; the write site
+   * re-anchors `firstAgentMessageAt`, but the in-memory timer would otherwise keep the
+   * stale cap (or never arm). Drop any existing timer and re-arm from the freshly
+   * persisted cap + anchor so the new budget takes effect immediately.
+   */
+  @OnEvent('session.cap-changed')
+  async onCapChanged(payload: { sessionId: string }): Promise<void> {
+    const { sessionId } = payload;
+    this.clear(sessionId); // drop the stale timer so armSessionIfDue can re-arm
+
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: {
+        id: true,
+        status: true,
+        maxSessionDurationSeconds: true,
+        firstAgentMessageAt: true,
+      },
+    });
+    if (session) await this.armSessionIfDue(session);
   }
 
   /** Stop tracking a session once it is closed (or deleted). */
