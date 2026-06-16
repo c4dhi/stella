@@ -340,6 +340,19 @@ class AudioPipeline:
                 await asyncio.wait_for(asyncio.shield(worker), timeout=2.0)
             except Exception:
                 pass
+            # A worker blocked in a slow TTS synthesize_stream only checks the stop
+            # flag between awaits, so it may still be alive here. Cancel it outright —
+            # we're tearing down, and enqueue_sentence only spawns a FRESH worker for
+            # the farewell when the old one is done(); a lingering worker would instead
+            # swallow the closing line onto its draining queue with the stop flag cleared.
+            if not worker.done():
+                worker.cancel()
+                try:
+                    await worker
+                except (asyncio.CancelledError, Exception):
+                    pass
+        # Drop the reference unconditionally so the farewell's enqueue starts clean.
+        self._speech_worker_task = None
         self._stop_speaking_event.clear()
 
     async def speak_line(self, text: str) -> None:
@@ -871,7 +884,10 @@ class AudioPipeline:
                 )
                 if self._session_end_handler:
                     reason = message.get("reason", "session_end")
-                    deadline_ms = int(message.get("deadline_ms", 15000))
+                    # Default matches the backend's GRACEFUL_CLOSE_WAIT_MS (30s) — the
+                    # backend always sends deadline_ms, but a mismatched fallback would
+                    # silently give a wrap_up agent half its real budget (issue #198).
+                    deadline_ms = int(message.get("deadline_ms", 30000))
                     asyncio.create_task(self._session_end_handler(reason, deadline_ms))
                 return
 

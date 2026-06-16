@@ -98,6 +98,14 @@ _DEFAULT_FAREWELL = (
 # overlay, so the last word fully lands before the screen drops (issue #198).
 _SESSION_END_GRACE_SECONDS = 2.0
 
+# Reserve, within the backend's deadline budget, for everything AFTER the last
+# wrap-up line is spoken — playout drain + grace + the deliver/disconnect sleep.
+# A custom 'wrap_up' closing is bounded to (deadline_ms − this) so the whole
+# sequence finishes before the backend's force-close backstop deletes the room and
+# cuts off the goodbye (issue #198). Drain below is capped to fit the same reserve.
+_SESSION_END_SPEAK_RESERVE_SECONDS = 13.0
+_SESSION_END_DRAIN_MAX_MS = 10_000
+
 
 def _parse_participant_event_config(agent_config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Extract and normalize participant event message config from AGENT_CONFIG.
@@ -536,7 +544,18 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
         # graceful close over the data channel, run the agent's on_session_ending
         # hook (speaking any final turn), fall back to the plan farewell if it stays
         # silent, then trigger shutdown so teardown proceeds.
+        # Re-entrancy guard (issue #198): a duplicate session_end frame — LiveKit
+        # redelivery, or a double-trigger — must not start a second farewell/shutdown
+        # sequence (overlapping goodbyes, double publish_session_ended/shutdown).
+        session_end_started = False
+
         async def handle_session_end(reason: str, deadline_ms: int) -> None:
+            nonlocal session_end_started
+            if session_end_started:
+                logger.info("[SESSION END] already closing — ignoring duplicate signal")
+                return
+            session_end_started = True  # set before the first await — gates re-entry
+
             mode = _resolve_interrupt_mode(agent_config)
             logger.info(
                 f"[SESSION END] signal received (reason={reason}, mode={mode}, deadline={deadline_ms}ms)"
@@ -559,12 +578,24 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
                 # 'wrap_up' lets the agent generate a custom closing; if it declines
                 # (yields nothing), fall through to the configured/default farewell.
                 if mode == "wrap_up":
+                    # Bound the wrap-up: a long, multi-sentence LLM closing must finish
+                    # (with drain + grace still to come) before the backend's
+                    # force-close backstop deletes the room and cuts off the goodbye.
+                    loop = asyncio.get_running_loop()
+                    speak_deadline = loop.time() + max(
+                        0.0, deadline_ms / 1000.0 - _SESSION_END_SPEAK_RESERVE_SECONDS
+                    )
                     try:
                         async for out in agent.on_session_ending(session_id, reason, deadline_ms):
                             text = getattr(out, "content", None)
                             if text:
                                 await audio_pipeline.speak_line(text)
                                 spoke = True
+                            if loop.time() >= speak_deadline:
+                                logger.warning(
+                                    "[SESSION END] wrap-up time budget exhausted — stopping further lines"
+                                )
+                                break
                     except Exception:
                         logger.exception("[SESSION END] on_session_ending failed")
 
@@ -576,8 +607,9 @@ async def run_agent_from_env(agent: BaseAgent) -> None:
             # Let the farewell finish playing out before telling the frontend it's
             # over — flush_speech_queue() returns at push-time, but audio is still
             # draining. Without this wait the timeout overlay covers the agent
-            # mid-goodbye (issue #198).
-            await audio_pipeline.wait_for_playout_drain()
+            # mid-goodbye (issue #198). Capped to fit inside the backend's farewell
+            # reserve so the drain itself can't outlive the force-close backstop.
+            await audio_pipeline.wait_for_playout_drain(max_wait_ms=_SESSION_END_DRAIN_MAX_MS)
             # Extra grace so the last word fully lands (client jitter buffer) before
             # the overlay drops — the playout estimate can run slightly ahead.
             await asyncio.sleep(_SESSION_END_GRACE_SECONDS)

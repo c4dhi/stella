@@ -125,18 +125,40 @@ class TestClosingInterrupt:
         assert pipeline._stop_speaking_event.is_set() is False  # ready to speak farewell
 
     @pytest.mark.asyncio
-    async def test_waits_out_a_winding_down_worker_before_clearing(self):
+    async def test_waits_out_a_winding_down_worker_then_clears_the_ref(self):
         pipeline = self._bare_pipeline()
         pipeline._stop_speaking_event.set()
 
         async def _winding_down():
             await asyncio.sleep(0.05)
 
-        pipeline._speech_worker_task = asyncio.create_task(_winding_down())
+        worker = asyncio.create_task(_winding_down())
+        pipeline._speech_worker_task = worker
 
         await pipeline.interrupt_for_closing()
 
-        assert pipeline._speech_worker_task.done()
+        assert worker.done()  # settled, not left dangling
+        # Ref cleared so the farewell's enqueue_sentence spawns a FRESH worker.
+        assert pipeline._speech_worker_task is None
+        assert pipeline._stop_speaking_event.is_set() is False
+
+    @pytest.mark.asyncio
+    async def test_cancels_a_worker_that_never_settles(self):
+        # A worker blocked in a slow TTS call won't honor the stop flag within the
+        # settle timeout; it must be cancelled so the farewell isn't appended to its
+        # draining queue (with the stop flag now cleared) and silently swallowed.
+        pipeline = self._bare_pipeline()
+
+        async def _stuck():
+            await asyncio.sleep(100)
+
+        worker = asyncio.create_task(_stuck())
+        pipeline._speech_worker_task = worker
+
+        await pipeline.interrupt_for_closing()
+
+        assert worker.cancelled() or worker.done()
+        assert pipeline._speech_worker_task is None
         assert pipeline._stop_speaking_event.is_set() is False
 
 

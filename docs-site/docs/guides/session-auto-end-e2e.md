@@ -9,17 +9,19 @@ half, which needs a live stack and can't be unit-tested.
 
 ```
 first agent message ─► cap timer armed (SessionTimeoutService)
-        cap elapses  ─► SessionsService.beginGracefulClose()
+        cap elapses  ─► SessionsService.beginGracefulClose()  (only if ACTIVE)
                           ├─ status: ACTIVE → CLOSING   (lockdown)
-                          └─ LiveKit data: {type:"session_end", reason, deadline_ms=60s}
-        agent (rebuilt) ─► _handle_data_message → handle_session_end
-                          ├─ wait-for-quiet (≤60s): user not mid-utterance, no turn
-                          │   generating, agent not speaking
-                          │     • goes quiet  → wrap up immediately
-                          │     • 60s elapses → suppress barge-in, interrupt & farewell
-                          ├─ on_session_ending / farewell (spoken)
+                          └─ LiveKit data: {type:"session_end", reason, deadline_ms=30s}
+        agent (rebuilt) ─► _handle_data_message → handle_session_end (re-entrancy-guarded)
+                          ├─ interrupt_for_closing(): gate new turns, lock out
+                          │   barge-in, abort the agent's own in-flight turn — NO
+                          │   waiting on anyone, even mid-user-utterance
+                          ├─ on_session_ending / farewell (always spoken; apologetic
+                          │   default if none configured)
+                          ├─ wait for playout to drain + grace, then publish
+                          │   session_ended (so the overlay never covers the goodbye)
                           └─ shutdown → leaves room
-        backstop (60s wait + 15s farewell reserve = 75s)
+        backstop (30s wait + 15s farewell reserve = 45s)
                      ─► force-close → status CLOSING → CLOSED, session.closed SSE
 ```
 
@@ -55,29 +57,28 @@ first agent message ─► cap timer armed (SessionTimeoutService)
 | t | Observe |
 |---|---|
 | ~0s | Agent speaks first message → cap armed. `Session.firstAgentMessageAt` set in DB. |
-| ~58–60s | Frontend shows the **"Session ending soon"** warning banner (≤120s remaining → fires ~immediately for a short cap). |
-| 60s | Backend log `Graceful close for session …`. DB `status` = **CLOSING**. A LiveKit data message `{"type":"session_end", deadline_ms:60000}` is published to the room. |
-| 60s+ | Agent receives it and **waits for the conversation to go quiet** (up to 60s). If you stay silent it wraps up right away; if you keep talking it waits, then **interrupts** at the end of the window. Then it **speaks the farewell/wrap-up** and disconnects. |
-| ≤135s | DB `status` = **CLOSED**, `closedAt` set. `session.closed` SSE emitted. Agent pod torn down. (Backstop fires at 60s wait + 15s farewell reserve after `CLOSING` if the agent never leaves on its own.) |
+| ~30s before cap | Frontend shows the **"Session ending soon"** warning banner (`SESSION_TIMEOUT_WARNING_SECONDS` = 30s remaining → fires ~immediately for a sub-30s cap). |
+| 60s | Backend log `Graceful close for session …`. DB `status` = **CLOSING**. A LiveKit data message `{"type":"session_end", deadline_ms:30000}` is published to the room. |
+| 60s+ | Agent receives it and **immediately interrupts everything** (its own turn included — no waiting on the user), then **always speaks the farewell/wrap-up**, waits for the audio to drain + grace, signals `session_ended`, and disconnects. |
+| ≤105s | DB `status` = **CLOSED**, `closedAt` set. `session.closed` SSE emitted. Agent pod torn down. (Backstop fires at 30s wait + 15s farewell reserve = 45s after `CLOSING` if the agent never leaves on its own.) |
 
-### Verify the "let the user finish" behavior explicitly
+### Verify the "interrupt and always farewell" behavior explicitly
 
-- **Quiet → immediate wrap-up**: when the cap fires, stay silent. Agent log
-  `[SESSION END] conversation quiet — wrapping up`; the farewell starts within ~1s.
-- **Talking → wait, then interrupt**: when the cap fires, keep talking continuously.
-  The farewell does **not** start while you speak. At the end of the 60s window:
-  `[SESSION END] wait window elapsed — interrupting to say farewell` and
-  `suppressing barge-in for the closing farewell` — the farewell now plays over you
-  and is **not** suspended by your speech.
-- **Talking, then stop**: keep talking, then go silent partway through the window —
-  the agent wraps up the moment you stop, not at the full 60s.
+- **Idle → immediate farewell**: when the cap fires while no one is talking, the
+  farewell starts right away (`[SESSION END] terminal interrupt — closing the session`).
+- **Mid-user-utterance → interrupt, then farewell**: when the cap fires while you are
+  still talking, the agent **interrupts you immediately** — it does **not** wait for
+  you to finish — and the farewell plays over you (barge-in is locked out for the
+  goodbye). The frontend clears your lingering transcript so the farewell teleprompts.
+- **Mid-agent-turn → cut its own turn, then farewell**: if the agent is mid-sentence
+  when the cap fires, it aborts its own turn and goes straight to the farewell.
 
 ## What to check
 
 - **DB**: `SELECT status, "closedAt", "firstAgentMessageAt", "maxSessionDurationSeconds" FROM "Session" WHERE id = '<id>';` →
   `ACTIVE` → `CLOSING` → `CLOSED`, `closedAt` non-null.
-- **Backend logs**: `Graceful close for session … — wrap-up signal + 60000ms wait + 15000ms farewell reserve`, then `Closing session … - stopping all agents`.
-- **Agent logs**: `[SESSION END] signal received …`, then `entering closing state — no new turns accepted`, then either the quiet or the interrupt line above. The agent stops itself (disconnects).
+- **Backend logs**: `Graceful close for session … — wrap-up signal + 30000ms wait + 15000ms farewell reserve`, then `Closing session … - stopping all agents`.
+- **Agent logs**: `[SESSION END] signal received …`, then `[SESSION END] terminal interrupt — closing the session`, then the farewell. The agent stops itself (disconnects).
 - **Frontend**: the warning banner shows before the cap; the **timeout overlay appears only after the agent's goodbye** (on the agent's `session_ended` data signal, or — as a fallback — when the LiveKit room is torn down). It must NOT appear at the cap instant.
 - **SSE** (`/projects/:id/events` or admin dashboard): a `session.closed` event.
 - **Invitation**: `SELECT status FROM "Invitation" WHERE "sessionId" = '<id>';` → `REVOKED` after close.
@@ -90,7 +91,7 @@ To verify the hard deadline (agent never finishes its wrap-up):
 1. Set the agent's interrupt mode to `wrap_up` and make `on_session_ending` hang
    (or just confirm the timing with a slow TTS).
 2. The backend **force-closes at the backstop** regardless (wait budget + farewell
-   reserve = ~75s after `CLOSING`) — `status` reaches `CLOSED` and
+   reserve = ~45s after `CLOSING`) — `status` reaches `CLOSED` and
    `stopAllSessionAgents` tears the pod down. The session must never hang in
    `CLOSING`.
 

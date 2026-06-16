@@ -91,11 +91,15 @@ export default function SessionDurationSelectionStep({
       <button
         onClick={() => {
           setShowCustom(true)
-          // Apply any minutes already typed; otherwise leave the value untouched
-          // until the user enters one.
+          // Apply any minutes already typed; otherwise clear the committed value to
+          // null so the prior preset isn't silently kept — switching to Custom with
+          // no entry must force the user to type a number (and a required-value
+          // parent can block submit) rather than submitting the old preset.
           if (customMinutes !== '') {
             const m = Math.max(CUSTOM_MIN_MINUTES, Math.min(CUSTOM_MAX_MINUTES, Number(customMinutes)))
             onMaxSessionDurationSecondsChange(m * 60)
+          } else {
+            onMaxSessionDurationSecondsChange(null)
           }
         }}
         className={`w-full p-4 rounded-xl flex items-center justify-between transition-all ${showCustom ? selectedClasses : unselectedClasses}`}

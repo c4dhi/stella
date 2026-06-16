@@ -232,6 +232,32 @@ describe('SessionsService.beginGracefulClose (issue #198)', () => {
     expect(res).toEqual({ message: 'Session already closed' });
   });
 
+  it('is a no-op for a session already CLOSING (no duplicate signal / force-close timer)', async () => {
+    // A capped session that reached its plan end-state is already CLOSING and the
+    // agent is mid-farewell. The cap timer firing must NOT re-publish session_end
+    // (which would re-trigger the agent → a second goodbye) or arm a second
+    // force-close timer. Guard: only an ACTIVE session begins a graceful close.
+    const { service, prisma, agents, livekit } = setup({
+      session: {
+        id: 's1',
+        projectId: 'p1',
+        name: 'Demo',
+        status: 'CLOSING',
+        room: { livekitRoomName: 'room-1' },
+      },
+    });
+
+    const res = await service.beginGracefulClose('s1', 'session_end', 1_000);
+
+    expect(prisma.session.updateMany).not.toHaveBeenCalled();
+    expect(livekit.sendData).not.toHaveBeenCalled();
+    expect(res).toEqual({ message: 'Session already closing' });
+
+    // No force-close timer was armed by this call.
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(agents.stopAllSessionAgents).not.toHaveBeenCalled();
+  });
+
   it('throws NotFound when the session does not exist', async () => {
     const { service } = setup({ session: null });
     await expect(

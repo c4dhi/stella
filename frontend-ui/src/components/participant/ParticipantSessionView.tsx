@@ -70,6 +70,13 @@ interface ParticipantSessionViewProps {
 // Warn the participant this many seconds before the session auto-ends (issue #198).
 const SESSION_TIMEOUT_WARNING_SECONDS = 30
 
+// Client-side backstop (issue #198): the terminal overlay normally shows on the
+// agent's `session_ended` signal, or on room disconnect when the backend force-closes
+// (~45s after the cap). If BOTH fail — agent crashes right after the cap AND the room
+// is never torn down — this fallback still surfaces the overlay so the participant is
+// never stranded on "Time is up" forever. Comfortably beyond the 45s backstop.
+const SESSION_TIMEUP_OVERLAY_FALLBACK_MS = 90_000
+
 export default function ParticipantSessionView({ sessionData }: ParticipantSessionViewProps) {
   // Room connection state
   const [room, setRoom] = useState<Room | null>(null)
@@ -122,6 +129,18 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     noteAgentText: noteTeleprompterText,
   } = useTeleprompter()
   const [messages, setMessages] = useState<ParticipantMessage[]>([])
+
+  // Client-side backstop (issue #198): once time is up, guarantee the terminal
+  // overlay eventually shows even if neither `session_ended` nor a room disconnect
+  // ever arrives (agent crash + room not torn down). Cleared if a real end wins first.
+  useEffect(() => {
+    if (!sessionTimeUp || sessionTimedOut || sessionCompleted) return
+    const t = setTimeout(() => {
+      if (!sessionCompletedRef.current) setSessionTimedOut(true)
+    }, SESSION_TIMEUP_OVERLAY_FALLBACK_MS)
+    return () => clearTimeout(t)
+  }, [sessionTimeUp, sessionTimedOut, sessionCompleted])
+
   const [pendingCorrelationIds, setPendingCorrelationIds] = useState<Set<string>>(new Set())
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
@@ -498,15 +517,23 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           const msgData = envelope.data
           const source = msgData?.source as string | undefined
           const speakerName = msgData?.speaker_name || ''
-          // Only start on agent messages, not user speech
-          if (envelope.type === 'agent_text' || source === 'agent' || speakerName.startsWith('agent')) {
+          // Anchor on the FIRST FINAL agent message so the participant countdown
+          // matches the backend cap, which stamps firstAgentMessageAt only on a
+          // recorded (final) agent transcript. Starting on a streamed partial
+          // (is_final=false) would run the UI clock seconds ahead of the real cap,
+          // flashing "Time is up" while the agent is still well within budget (#198).
+          const isFinalAgentMessage =
+            msgData?.is_final === true &&
+            (envelope.type === 'agent_text' || source === 'agent' || speakerName.startsWith('agent'))
+          if (isFinalAgentMessage) {
             const sessionTimeoutSeconds = sessionData.maxSessionDurationSeconds
             sessionTimerStartedRef.current = true
             sessionTimerRef.current = setInterval(() => {
               setElapsedSeconds(prev => {
                 const next = prev + 1
                 const remaining = sessionTimeoutSeconds - next
-                // Warn ~2 min before the auto-end so the participant can wrap up (#198).
+                // Heads-up SESSION_TIMEOUT_WARNING_SECONDS before the auto-end so the
+                // participant can wrap up (#198).
                 if (remaining > 0 && remaining <= SESSION_TIMEOUT_WARNING_SECONDS && !sessionCompletedRef.current) {
                   setShowTimeoutWarning(true)
                 }

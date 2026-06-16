@@ -398,17 +398,22 @@ export class SessionsService {
       throw new NotFoundException(`Session with ID ${id} not found`);
     }
 
-    if (session.status === 'CLOSED') {
-      return { message: 'Session already closed' };
+    // Only an ACTIVE session can BEGIN a graceful close. A session already CLOSING
+    // is mid-wrap-up — either from the natural plan end-state (the agent is already
+    // saying its own farewell) or a prior graceful close. Re-running here would
+    // re-publish session_end (re-triggering the agent mid-farewell → a second
+    // goodbye) and arm a duplicate force-close timer. The stuck-CLOSING safety net
+    // lives in SessionTimeoutService.finalizeIfStuckClosing, not here.
+    if (session.status !== 'ACTIVE') {
+      return { message: `Session already ${session.status.toLowerCase()}` };
     }
 
-    // Lockdown: enter CLOSING before asking the agent to wrap up.
-    if (session.status === 'ACTIVE') {
-      await this.prisma.session.updateMany({
-        where: { id, status: 'ACTIVE' },
-        data: { status: 'CLOSING' },
-      });
-    }
+    // Lockdown: enter CLOSING before asking the agent to wrap up. Status-guarded so
+    // a concurrent transition (e.g. natural end-state) wins the race cleanly.
+    await this.prisma.session.updateMany({
+      where: { id, status: 'ACTIVE' },
+      data: { status: 'CLOSING' },
+    });
 
     this.logger.log(
       `Graceful close for session ${id} (reason: ${reason}) — wrap-up signal + ${waitMs}ms wait + ${SessionsService.GRACEFUL_CLOSE_FAREWELL_RESERVE_MS}ms farewell reserve`,
