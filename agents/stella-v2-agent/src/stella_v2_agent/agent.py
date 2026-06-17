@@ -401,7 +401,15 @@ class StellaV2Agent(BaseAgent):
                     input.session_id, "response_start", turn_id, self._elapsed_ms(),
                 )
 
-                sm_context["_collected_keys"] = collected_keys
+                # Re-anchor the response to the state the turn actually landed in:
+                # a phase may have completed and advanced during Stage 2, and the
+                # response must open the new phase rather than finish the old one.
+                # Done here (not before arbitration) so it's skipped on override/
+                # short-circuit turns where no LLM response is generated.
+                response_sm_context = await self._resolve_response_context(
+                    sm_context, resolved_language
+                )
+                response_sm_context["_collected_keys"] = collected_keys
 
                 prepend_text = directive.resolved_response if directive.action == "prepend" else ""
 
@@ -411,7 +419,7 @@ class StellaV2Agent(BaseAgent):
                     user_input=input.text,
                     directive=arb_result.directive,
                     conversation_history=history,
-                    sm_context=sm_context,
+                    sm_context=response_sm_context,
                     plan_system_prompt=self._plan_system_prompt,
                     bridge=bridge,
                     prepend=prepend_text,
@@ -947,6 +955,57 @@ class StellaV2Agent(BaseAgent):
             if path.exists():
                 return str(path)
         return None
+
+    async def _resolve_response_context(
+        self,
+        sm_context: Dict[str, Any],
+        resolved_language: Optional[str],
+    ) -> Dict[str, Any]:
+        """Return the sm_context to author the response against.
+
+        task_extraction (Stage 2) can complete the current phase and ADVANCE the
+        state machine mid-turn. The turn-start ``sm_context`` still describes the
+        phase we just left, so authoring the response against it makes the agent
+        keep talking about (and re-asking) the old phase while the progress panel
+        — read from the post-turn backend state — correctly shows the new one. The
+        two then disagree within a single turn (the #304 state-sync bug).
+
+        The backend's current state after Stage 2 is the ground truth. A cheap
+        ``get_current_state()`` detects a transition; only then do we re-fetch the
+        full context so the response opens the state the turn landed in. Behaviour
+        is unchanged on the common path:
+
+        * No transition (or no state machine) → the original turn-start context is
+          returned, preserving the intent of finishing an in-progress task first.
+        * Transition to ``__end__`` → ``_fetch_sm_context`` returns an empty
+          context; we fall back to the original. The closing farewell is emitted
+          separately in Stage 5, so session end is never disturbed.
+        * Any gRPC hiccup (None/empty) → fall back to the original context.
+        """
+        pre_state_id = (sm_context.get("state") or {}).get("id")
+        if not (self.sm_client and pre_state_id):
+            return sm_context
+
+        post_state = await self.sm_client.get_current_state()
+        post_state_id = (post_state or {}).get("state_id")
+        if not post_state_id or post_state_id == pre_state_id:
+            return sm_context
+
+        refreshed = await self._fetch_sm_context()
+        if not (refreshed and refreshed.get("state")):
+            return sm_context
+
+        if self._plan_system_prompt:
+            refreshed["plan_system_prompt"] = self._plan_system_prompt
+        refreshed["language"] = resolved_language
+        # _fetch_sm_context already detects the change vs the turn-start state;
+        # set it explicitly so the response eases into the new phase.
+        refreshed["state_just_changed"] = True
+        logger.info(
+            f"State advanced mid-turn {pre_state_id} → {post_state_id}; "
+            f"re-anchoring response to the new phase"
+        )
+        return refreshed
 
     async def _fetch_sm_context(self) -> Dict[str, Any]:
         """Fetch state from gRPC backend and build sm_context for the pipeline.
