@@ -47,13 +47,22 @@ class TestFalseBoundary:
         assert BaseAgent._is_false_boundary("e.g.")
 
     def test_german_abbreviations(self):
-        assert BaseAgent._is_false_boundary("zum Beispiel z.B.")
+        assert BaseAgent._is_false_boundary("zum Beispiel z.B.")  # no-space form
         assert BaseAgent._is_false_boundary("das heißt d.h.")
-        assert BaseAgent._is_false_boundary("ungefähr ca.")
+        assert BaseAgent._is_false_boundary("und so weiter usw.")
 
-    def test_single_letter_initial(self):
-        assert BaseAgent._is_false_boundary("J.")
-        assert BaseAgent._is_false_boundary("written by J. R.")
+    def test_single_letter_is_a_real_boundary(self):
+        # A trailing single letter is NOT treated as an initial: merging real
+        # sentences ending in a letter is worse than clipping a rare initial.
+        assert not BaseAgent._is_false_boundary("You got an A.")
+        assert not BaseAgent._is_false_boundary("Take vitamin D.")
+        assert not BaseAgent._is_false_boundary("Go with plan B.")
+
+    def test_ambiguous_common_words_are_real_boundaries(self):
+        # Words/units/names that can legitimately end a sentence must NOT merge.
+        for s in ("The answer is no.", "You have 5 min.", "Pick the max.",
+                  "I talked to Al.", "I ate a fig.", "I live in CA."):
+            assert not BaseAgent._is_false_boundary(s), s
 
     def test_real_sentence_end_is_not_false(self):
         assert not BaseAgent._is_false_boundary("That works for me.")
@@ -74,9 +83,21 @@ class TestDispatch:
         ]
 
     def test_german_abbreviation_not_clipped(self):
-        assert _chunk("Mach etwas Sport, z. B. Laufen. Klingt gut. ") == [
-            "Mach etwas Sport, z. B. Laufen.",
+        # No-space form is protected (the spaced "z. B." is intentionally not).
+        assert _chunk("Mach etwas Sport, z.B. Laufen. Klingt gut. ") == [
+            "Mach etwas Sport, z.B. Laufen.",
             "Klingt gut.",
+        ]
+
+    def test_sentence_ending_in_common_word_is_not_merged(self):
+        # Regression: "no"/"min"/single-letter must not glue two sentences.
+        assert _chunk("The answer is no. Let me explain. ") == [
+            "The answer is no.",
+            "Let me explain.",
+        ]
+        assert _chunk("You got an A. Well done. ") == [
+            "You got an A.",
+            "Well done.",
         ]
 
     def test_ellipsis_is_a_boundary(self):

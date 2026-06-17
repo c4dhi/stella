@@ -218,14 +218,21 @@ class ExpertRunner:
             session_completed = False
             farewell_message: Optional[str] = None
             summary_behavior: Optional[str] = None
+            # Whether a tool advanced the state machine this turn, and where to.
+            # Surfaced so the response can be re-anchored to the new phase without
+            # re-querying the backend (agent.py _resolve_response_context).
+            transitioned = False
+            new_state_id: Optional[str] = None
             for r in results:
                 data = r.get("data", {}) or {}
                 # Read completion metadata even if batch_update had partial failures.
+                if data.get("transitioned") and not transitioned:
+                    transitioned = True
+                    new_state_id = data.get("new_state_id")
                 if data.get("session_completed"):
                     session_completed = True
                     farewell_message = data.get("farewell_message")
                     summary_behavior = data.get("summary_behavior")
-                    break
 
             latency_ms = (time.time() - start_time) * 1000
             verdict = "tool_calls_executed" if tool_calls_made else "no_tool_calls"
@@ -256,6 +263,10 @@ class ExpertRunner:
                     "session_completed": session_completed,
                     "farewell_message": farewell_message,
                     "summary_behavior": summary_behavior,
+                    # State advanced this turn (and the landed state id), for
+                    # post-transition response re-anchoring in agent.py.
+                    "transitioned": transitioned,
+                    "new_state_id": new_state_id,
                 },
             )
 

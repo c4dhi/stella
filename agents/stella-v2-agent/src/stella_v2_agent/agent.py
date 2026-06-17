@@ -404,10 +404,23 @@ class StellaV2Agent(BaseAgent):
                 # Re-anchor the response to the state the turn actually landed in:
                 # a phase may have completed and advanced during Stage 2, and the
                 # response must open the new phase rather than finish the old one.
+                # The transition signal comes from the task_extraction verdict (the
+                # SM tools report it) — no extra backend round-trips to detect.
                 # Done here (not before arbitration) so it's skipped on override/
                 # short-circuit turns where no LLM response is generated.
+                te_raw = next(
+                    (
+                        v.raw_output for v in all_verdicts
+                        if v.expert_name == "task_extraction" and v.success and v.raw_output
+                    ),
+                    {},
+                )
                 response_sm_context = await self._resolve_response_context(
-                    sm_context, resolved_language
+                    sm_context,
+                    resolved_language,
+                    transitioned=bool(te_raw.get("transitioned")),
+                    new_state_id=te_raw.get("new_state_id"),
+                    session_completed=bool(te_raw.get("session_completed")),
                 )
                 response_sm_context["_collected_keys"] = collected_keys
 
@@ -960,6 +973,9 @@ class StellaV2Agent(BaseAgent):
         self,
         sm_context: Dict[str, Any],
         resolved_language: Optional[str],
+        transitioned: bool,
+        new_state_id: Optional[str],
+        session_completed: bool,
     ) -> Dict[str, Any]:
         """Return the sm_context to author the response against.
 
@@ -970,25 +986,22 @@ class StellaV2Agent(BaseAgent):
         — read from the post-turn backend state — correctly shows the new one. The
         two then disagree within a single turn (the #304 state-sync bug).
 
-        The backend's current state after Stage 2 is the ground truth. A cheap
-        ``get_current_state()`` detects a transition; only then do we re-fetch the
-        full context so the response opens the state the turn landed in. Behaviour
-        is unchanged on the common path:
+        Detection is free: the state-machine tools already return
+        ``transitioned`` / ``new_state_id`` in their result data, surfaced on the
+        task_extraction verdict — so we re-fetch the full context ONLY when a
+        transition actually happened (no extra round-trips on the common,
+        non-transition turn, and none just to detect).
 
-        * No transition (or no state machine) → the original turn-start context is
-          returned, preserving the intent of finishing an in-progress task first.
-        * Transition to ``__end__`` → ``_fetch_sm_context`` returns an empty
-          context; we fall back to the original. The closing farewell is emitted
-          separately in Stage 5, so session end is never disturbed.
-        * Any gRPC hiccup (None/empty) → fall back to the original context.
+        Falls back to the turn-start context (unchanged behaviour) when:
+        * no transition happened — preserves finishing an in-progress task first;
+        * the turn ended the session (``session_completed`` or
+          ``new_state_id == "__end__"``) — the closing farewell is emitted in
+          Stage 5; re-anchoring to the blank ``__end__`` sentinel would be wrong;
+        * the re-fetch comes back unusable (gRPC hiccup / empty).
         """
-        pre_state_id = (sm_context.get("state") or {}).get("id")
-        if not (self.sm_client and pre_state_id):
+        if not transitioned or session_completed or not new_state_id or new_state_id == "__end__":
             return sm_context
-
-        post_state = await self.sm_client.get_current_state()
-        post_state_id = (post_state or {}).get("state_id")
-        if not post_state_id or post_state_id == pre_state_id:
+        if not self.sm_client:
             return sm_context
 
         refreshed = await self._fetch_sm_context()
@@ -1002,7 +1015,7 @@ class StellaV2Agent(BaseAgent):
         # set it explicitly so the response eases into the new phase.
         refreshed["state_just_changed"] = True
         logger.info(
-            f"State advanced mid-turn {pre_state_id} → {post_state_id}; "
+            f"State advanced mid-turn → {new_state_id}; "
             f"re-anchoring response to the new phase"
         )
         return refreshed

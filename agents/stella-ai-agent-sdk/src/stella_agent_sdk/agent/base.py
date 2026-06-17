@@ -959,26 +959,37 @@ class BaseAgent(ABC):
     _SENTENCE_END = re.compile(r'(?<=[.!?])\s+|(?<=\.\.\.)\s+')
 
     # Abbreviations whose trailing period is NOT a sentence end. Splitting after
-    # these clips a tiny fragment ("Dr.", "z. B.", "etc.") into its own TTS
-    # call, which the synthesizer renders as an unnatural standalone utterance
-    # with a falling final-clause pitch — audibly wrong (#304 B7). Lower-cased,
-    # trailing period stripped, compared against the token before the boundary.
+    # these clips a tiny fragment ("Dr.", "etc.") into its own TTS call, which the
+    # synthesizer renders as an unnatural standalone utterance (#304 B7).
+    #
+    # This list is deliberately CONSERVATIVE. The two failure modes are not
+    # symmetric: a FALSE positive merges two legitimate sentences into one run-on
+    # utterance (e.g. "The answer is no. Let me explain.") — the exact run-on this
+    # feature exists to prevent — whereas a MISSED abbreviation only clips a rare
+    # fragment. So we include ONLY tokens that are essentially never a standalone
+    # sentence-final word, and exclude common words / units / names that can end a
+    # sentence ("no", "min", "max", "al"/Al, "fig", "ca"/CA, "ms", "st", "nr").
+    # German entries are the no-space forms ("d.h.", "z.B."); the spaced form
+    # ("z. B.") is intentionally not special-cased — see _is_false_boundary.
     _ABBREVIATIONS = frozenset({
-        # English
-        "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "vs", "etc",
-        "e.g", "i.e", "approx", "no", "fig", "al",
-        # German
-        "z.b", "u.a", "d.h", "u.s.w", "usw", "ca", "bzw", "evtl", "inkl",
-        "max", "min", "nr", "z.t", "sog", "ggf", "geb", "bspw",
+        # English titles / abbreviations
+        "dr", "mr", "mrs", "prof", "sr", "jr", "vs", "etc", "e.g", "i.e",
+        # German (no-space forms)
+        "z.b", "u.a", "d.h", "u.s.w", "usw", "bzw", "evtl", "inkl", "z.t",
+        "sog", "ggf", "geb", "bspw",
     })
 
     @classmethod
     def _is_false_boundary(cls, text: str) -> bool:
         """True if ``text`` ends on punctuation that does NOT end a sentence.
 
-        Guards against splitting after an abbreviation ("Dr.", "z. B.") or a
-        single-letter initial ("J." in "J. R. R."), both of which would
-        otherwise be dispatched to TTS as their own clipped utterance.
+        Guards against splitting after a known abbreviation ("Dr.", "etc.",
+        "d.h."). We do NOT treat a trailing single letter as an initial: that
+        merged legitimate sentences ending in a letter ("vitamin D.", "plan B.",
+        "grade A."), which is worse than the rare clipped initials sequence it
+        would protect. Spaced German abbreviations ("z. B.") are likewise not
+        special-cased — the agent speaks "zum Beispiel", and a clip there is a
+        minor artifact, while mis-merging a real sentence is not.
         """
         stripped = text.rstrip()
         if not stripped or stripped[-1] not in ".!?":
@@ -987,12 +998,7 @@ class BaseAgent(ABC):
         if not tokens:
             return False
         token = tokens[-1].rstrip(".!?").lower()
-        if not token:
-            return False
-        if token in cls._ABBREVIATIONS:
-            return True
-        # Single-letter initial (e.g. "J." in "J. R. R. Tolkien").
-        return len(token) == 1 and token.isalpha()
+        return bool(token) and token in cls._ABBREVIATIONS
 
     def _enqueue_sentence(self, sentence: str, source: str = "response") -> None:
         """Enqueue a sentence for TTS, tagged with its character span in the
