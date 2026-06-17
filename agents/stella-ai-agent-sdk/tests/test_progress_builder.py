@@ -12,7 +12,7 @@ would have caught all three historical drifts before they shipped:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -497,6 +497,18 @@ def test_last_transition_flows_through_extra_metadata():
     lt = build_last_transition(_BRANCHING_PLAN, "greeting", "exercise")
     state = _build(full_state, extra_metadata={"last_transition": lt})
     assert state.metadata["last_transition"]["condition_type"] == "all_tasks_complete"
+
+
+@pytest.mark.parametrize("now,expected", [
+    (datetime(2026, 6, 17, 12, 0, 0), "2026-06-17T12:00:00Z"),                       # naive UTC
+    (datetime(2026, 6, 17, 12, 0, 0, tzinfo=timezone.utc), "2026-06-17T12:00:00Z"),  # aware UTC
+])
+def test_last_updated_is_well_formed_for_naive_and_aware_now(now, expected):
+    """Aware `now` must not yield the malformed '...+00:00Z' timestamp."""
+    full_state = {"current_state_id": "s", "progress": 0, "states": []}
+    state = progress_from_full_state(full_state, now=now)
+    assert state.last_updated == expected
+    assert not state.last_updated.endswith("+00:00Z")
 
 
 def test_progress_update_accepts_progress_state_object():

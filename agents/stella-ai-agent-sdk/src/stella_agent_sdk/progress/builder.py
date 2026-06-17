@@ -37,7 +37,7 @@ Transitions are NOT on the wire — pass the raw ``plan`` config so the builder
 can attach (and priority-sort) each state's "possible next states".
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from stella_agent_sdk.progress.types import (
@@ -152,6 +152,19 @@ def build_last_transition(
         "condition_config": winner.get("condition_config", {}),
         "priority": winner.get("priority"),
     }
+
+
+def _iso_z(moment: datetime) -> str:
+    """Format ``moment`` as an RFC 3339 timestamp with a trailing ``Z``.
+
+    A naive datetime is assumed to already be UTC (the ``datetime.utcnow()``
+    default). A timezone-aware datetime is converted to UTC and stripped of its
+    offset first, so the result is never the malformed ``...+00:00Z`` produced by
+    naively appending ``Z`` to an aware ``isoformat()``.
+    """
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment.isoformat() + "Z"
 
 
 def _elapsed_minutes(session_started_at: Optional[str], now: datetime) -> float:
@@ -325,6 +338,6 @@ def progress_from_full_state(
         progress_percentage=full_state.get("progress", 0),
         elapsed_minutes=_elapsed_minutes(session_started_at, now),
         started_at=session_started_at,
-        last_updated=now.isoformat() + "Z",
+        last_updated=_iso_z(now),
         metadata=metadata,
     )
