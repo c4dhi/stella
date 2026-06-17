@@ -586,13 +586,15 @@ export default function NodeDetailOverlay({
           {renderSlotField('model', 'Model', 'select', { selectOptions: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano'] })}
           {renderSlotField('temperature', 'Temperature', 'number', { min: 0, max: 1, step: 0.1 })}
           {renderSlotField('max_tokens', 'Max Tokens', 'number', { min: 10, max: 100, step: 5 })}
+          {renderSlotField('fast_path', 'Fast Bridge (skip LLM)', 'select', { selectOptions: ['off', 'on'] })}
+          {renderSlotField('timeout_ms', 'LLM Bridge Timeout (ms)', 'number', { min: 200, max: 5000, step: 100 })}
         </SettingsGrid>
 
         <div className={`flex items-center gap-2.5 text-[12px] font-light ${isDark ? 'text-zinc-500' : 'text-neutral-400'}`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-60">
             <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
           </svg>
-          Parallel path — no plan data. Generates ultra-short bridge phrase for early TTS.
+          Parallel path — no plan data. Fast Bridge "on" serves an instant templated ack (no LLM); "off" generates a contextual bridge from the prompt, falling back after the timeout.
         </div>
       </div>
     )

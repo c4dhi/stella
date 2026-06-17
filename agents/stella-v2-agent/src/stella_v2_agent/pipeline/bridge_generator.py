@@ -47,6 +47,18 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return raw in ("true", "1", "yes", "on")
 
+
+def _coerce_bool(value: Any) -> bool:
+    """Coerce a config value to bool, accepting the select's "on"/"off" strings.
+
+    The configurator has no boolean slot type, so a toggle arrives as the string
+    "on"/"off" (or already a bool). ``bool("off")`` is True, so we must parse the
+    string rather than cast it.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
 BRIDGE_SYSTEM_PROMPT = """You are a person in a conversation. You just heard what the user said and you're about to give your full answer, but first you naturally acknowledge them — the way a real human would before continuing their thought. This will be spoken aloud by TTS.
 
 Think of how people actually talk. When someone tells you something, you don't just launch into your answer — you react briefly first. The bridge is that brief, human moment.
@@ -176,12 +188,6 @@ _BRIDGE_INVENTORY = {
     (BRIDGE_TYPE_ACKNOWLEDGEMENT, False): ACKNOWLEDGEMENT_BRIDGES_EN,
 }
 
-# Backwards-compatible aliases (other modules/tests may import these names).
-FALLBACK_BRIDGES_EN = ACKNOWLEDGEMENT_BRIDGES_EN
-FALLBACK_BRIDGES_DE = ACKNOWLEDGEMENT_BRIDGES_DE
-GREETING_FALLBACKS_EN = GREETING_BRIDGES_EN
-GREETING_FALLBACKS_DE = GREETING_BRIDGES_DE
-
 _GREETING_WORDS = {"hello", "hi", "hey", "hallo", "hei", "greetings", "good morning", "good evening", "good afternoon",
                    "guten morgen", "guten tag", "guten abend", "moin", "servus", "grüß gott"}
 
@@ -296,7 +302,14 @@ class BridgeGenerator:
         self.fast_path_enabled: bool = _env_bool("BRIDGE_FAST_PATH", False)
 
     def apply_config(self, config: dict) -> None:
-        """Apply configuration overrides from Agent Configurator."""
+        """Apply configuration overrides from the Agent Configurator.
+
+        The configurator is the primary control surface for the bridge: every
+        knob below maps to a slot on the ``bridge_generator`` node in agent.yaml
+        (prompt, model, temperature, max_tokens, fast_path, timeout_ms). The env
+        vars (BRIDGE_FAST_PATH / BRIDGE_TIMEOUT_MS) are only deploy-time defaults
+        — any value set here overrides them.
+        """
         if "model" in config:
             self.bridge_model = config["model"]
         if "max_tokens" in config:
@@ -308,22 +321,24 @@ class BridgeGenerator:
         if "history_limit" in config:
             self.history_limit = int(config["history_limit"])
         if "fast_path" in config:
-            self.fast_path_enabled = bool(config["fast_path"])
+            self.fast_path_enabled = _coerce_bool(config["fast_path"])
+        if config.get("timeout_ms") not in (None, ""):
+            self.bridge_timeout_s = float(config["timeout_ms"]) / 1000
 
-    def fast_bridge(
-        self,
-        user_input: str,
-        language: Optional[str] = None,
-        predicted_cost: Optional[int] = None,
-    ) -> str:
+    def fast_bridge(self, user_input: str, language: Optional[str] = None) -> str:
         """Return a typed templated bridge INSTANTLY — no LLM call (#304 A3).
 
         Picks the sub-type with :func:`select_bridge_type` and a phrase from the
         matching inventory. Used for the fast-path and as the failure fallback,
         so both routes are guaranteed to land inside the gap window.
+
+        (No ``predicted_cost`` here: at bridge time the expert count doesn't exist
+        yet — the bridge runs in parallel with the gate — so selection uses the
+        input-shape heuristic. ``select_bridge_type`` keeps a ``predicted_cost``
+        hook for if/when a pre-gate cost estimate becomes available.)
         """
         is_german = (language == "de") if language else _detect_german(user_input)
-        bridge_type = select_bridge_type(user_input, predicted_cost=predicted_cost)
+        bridge_type = select_bridge_type(user_input)
         return pick_bridge_from_inventory(bridge_type, is_german)
 
     async def generate(
@@ -332,7 +347,6 @@ class BridgeGenerator:
         conversation_history: List[Dict[str, str]],
         language: Optional[str] = None,
         variables: Optional[Dict[str, Any]] = None,
-        predicted_cost: Optional[int] = None,
     ) -> str:
         """Generate a bridge phrase for the given user input.
 
@@ -347,10 +361,6 @@ class BridgeGenerator:
             variables: Template variables for prompt rendering (e.g.
                 ``isBargeIn``). Lets the configured bridge prompt react to
                 context such as the turn being a barge-in.
-            predicted_cost: Optional compute-cost signal (e.g. number of experts
-                the gate triggered) used to pick a pensive vs. acknowledgement
-                sub-type. Usually unknown at bridge time (the bridge runs in
-                parallel with the gate); a heuristic proxy stands in then.
 
         Returns:
             A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
@@ -361,7 +371,7 @@ class BridgeGenerator:
         # template. Guarantees the bridge lands inside the gap window instead of
         # waiting up to ``bridge_timeout_s`` for the LLM that masks latency.
         if self.fast_path_enabled:
-            bridge = self.fast_bridge(user_input, language, predicted_cost)
+            bridge = self.fast_bridge(user_input, language)
             logger.info(f"Fast-path bridge '{bridge}' in {(time.time() - start_time) * 1000:.0f}ms")
             return bridge
 
@@ -410,31 +420,15 @@ class BridgeGenerator:
                 return bridge
 
             # Validation failed — use context-appropriate fallback
-            fallback = self._pick_fallback(user_input, language)
+            fallback = self.fast_bridge(user_input, language)
             logger.info(f"Validation failed, fallback '{fallback}' in {latency_ms:.0f}ms")
             return fallback
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
-            fallback = self._pick_fallback(user_input, language)
+            fallback = self.fast_bridge(user_input, language)
             logger.error(f"Failed in {latency_ms:.0f}ms: {e}, fallback '{fallback}'")
             return fallback
-
-    @staticmethod
-    def _pick_fallback(
-        user_input: str,
-        language: Optional[str] = None,
-        predicted_cost: Optional[int] = None,
-    ) -> str:
-        """Pick a context-appropriate fallback bridge, in the resolved language.
-
-        Now type-aware (#304 A2): selects greeting / acknowledgement / pensive
-        from the matching inventory. Uses the resolved ``language`` when provided
-        (single source of truth); otherwise the legacy German heuristic.
-        """
-        is_german = (language == "de") if language else _detect_german(user_input)
-        bridge_type = select_bridge_type(user_input, predicted_cost=predicted_cost)
-        return pick_bridge_from_inventory(bridge_type, is_german)
 
     @staticmethod
     def _validate_bridge(raw: str) -> str:

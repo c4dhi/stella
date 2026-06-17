@@ -304,6 +304,28 @@ pipelineSchema:
           max: 100
           step: 5
           default: 30
+        - id: fast_path
+          label: "Fast Bridge (skip LLM)"
+          type: select
+          options: ["off", "on"]
+          default: "off"
+          description: >
+            When "on", the bridge is an INSTANT templated acknowledgement
+            (greeting / acknowledgement / "let me think") with no LLM call, so it
+            always lands inside the natural turn-taking gap. When "off" (default),
+            the LLM generates a contextual bridge from the prompt above — richer,
+            but it can take up to the timeout below to return.
+        - id: timeout_ms
+          label: "LLM Bridge Timeout (ms)"
+          type: number
+          min: 200
+          max: 5000
+          step: 100
+          default: 2000
+          description: >
+            How long to wait for the LLM bridge before falling back to an instant
+            templated one. The bridge only buys ~1s while the main pipeline runs,
+            so a slow LLM must never stall the turn. Ignored when Fast Bridge is on.
 
     - id: barge_in
       label: "Barge-in Evaluator"

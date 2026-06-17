@@ -115,3 +115,39 @@ class TestFastBridge:
         gen.fast_path_enabled = True
         bridge = await gen.generate("I run three times a week", [], language="en")
         assert bridge in ACKNOWLEDGEMENT_BRIDGES_EN
+
+
+class TestApplyConfig:
+    """Bridge knobs are controlled via the Agent Configurator (apply_config)."""
+
+    def test_fast_path_from_select_string(self):
+        gen = BridgeGenerator(llm_service=None)
+        # The configurator select sends "on"/"off" strings — bool("off") is True,
+        # so this must be parsed, not cast.
+        gen.apply_config({"fast_path": "on"})
+        assert gen.fast_path_enabled is True
+        gen.apply_config({"fast_path": "off"})
+        assert gen.fast_path_enabled is False
+
+    def test_fast_path_from_bool(self):
+        gen = BridgeGenerator(llm_service=None)
+        gen.apply_config({"fast_path": True})
+        assert gen.fast_path_enabled is True
+
+    def test_timeout_ms_overrides_env_default(self):
+        gen = BridgeGenerator(llm_service=None)
+        gen.apply_config({"timeout_ms": 1500})
+        assert gen.bridge_timeout_s == 1.5
+
+    def test_blank_timeout_is_ignored(self):
+        gen = BridgeGenerator(llm_service=None)
+        before = gen.bridge_timeout_s
+        gen.apply_config({"timeout_ms": ""})
+        assert gen.bridge_timeout_s == before
+
+    def test_other_knobs_still_apply(self):
+        gen = BridgeGenerator(llm_service=None)
+        gen.apply_config({"model": "gpt-4o", "temperature": 0.2, "max_tokens": 40})
+        assert gen.bridge_model == "gpt-4o"
+        assert gen.bridge_temperature == 0.2
+        assert gen.bridge_max_tokens == 40
