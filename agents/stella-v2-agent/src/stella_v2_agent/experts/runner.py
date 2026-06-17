@@ -229,7 +229,10 @@ class ExpertRunner:
                 if data.get("transitioned") and not transitioned:
                     transitioned = True
                     new_state_id = data.get("new_state_id")
-                if data.get("session_completed"):
+                # First-wins, matching ``transitioned`` above: if two tools both
+                # complete the session in one turn, keep the first's farewell /
+                # summary rather than letting a later result overwrite it.
+                if data.get("session_completed") and not session_completed:
                     session_completed = True
                     farewell_message = data.get("farewell_message")
                     summary_behavior = data.get("summary_behavior")
