@@ -41,7 +41,7 @@ from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
 from stella_v2_agent.pipeline.language_resolver import LanguageResolver
 from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
-from stella_v2_agent.adapters import ProgressAdapter
+from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 from stella_v2_agent.utils import normalize_transition_priority
 import logging
 
@@ -616,11 +616,14 @@ class StellaV2Agent(BaseAgent):
             )
             self._last_known_state_id = current_state_id
 
-            progress_state = ProgressAdapter.from_full_state_dict(
+            progress_state = progress_from_full_state(
                 full_state,
-                started_at=self._session_started_at,
                 plan=self._plan_config,
-                last_transition=last_transition,
+                session_started_at=self._session_started_at,
+                extra_metadata={
+                    "architecture": "stella_v2_pipeline",
+                    "last_transition": last_transition,
+                },
             )
             yield AgentOutput.progress_update(
                 session_id,
@@ -723,10 +726,14 @@ class StellaV2Agent(BaseAgent):
             full_state = await self.sm_client.get_full_state()
             if full_state:
                 self._last_known_state_id = full_state.get("current_state_id")
-                progress_state = ProgressAdapter.from_full_state_dict(
+                progress_state = progress_from_full_state(
                     full_state,
-                    started_at=self._session_started_at,
                     plan=self._plan_config,
+                    session_started_at=self._session_started_at,
+                    extra_metadata={
+                        "architecture": "stella_v2_pipeline",
+                        "last_transition": None,
+                    },
                 )
                 yield AgentOutput.progress_update(
                     session_id,
@@ -922,47 +929,12 @@ class StellaV2Agent(BaseAgent):
         from_state_id: Optional[str],
         to_state_id: Optional[str],
     ) -> Optional[Dict[str, Any]]:
-        """Build transition metadata for frontend explanation in task sidebar."""
-        if not from_state_id or not to_state_id or from_state_id == to_state_id:
-            return None
+        """Build transition metadata for the frontend "branch chosen" explanation.
 
-        states = (self._plan_config or {}).get("states", [])
-        if not isinstance(states, list):
-            return {
-                "from_state_id": from_state_id,
-                "to_state_id": to_state_id,
-            }
-
-        source_state = next((s for s in states if s.get("id") == from_state_id), None)
-        if not source_state:
-            return {
-                "from_state_id": from_state_id,
-                "to_state_id": to_state_id,
-            }
-
-        transitions = source_state.get("transitions", []) or []
-        matching = [
-            t for t in transitions
-            if t.get("target_state_id") == to_state_id
-        ]
-
-        # No direct matching transition means this update likely skipped across
-        # multiple states in one turn; avoid emitting misleading branch metadata.
-        if not matching:
-            return None
-
-        matching.sort(
-            key=lambda t: normalize_transition_priority(t.get("priority"))
-        )
-        winner = matching[0]
-
-        return {
-            "from_state_id": from_state_id,
-            "to_state_id": to_state_id,
-            "condition_type": winner.get("condition_type"),
-            "condition_config": winner.get("condition_config", {}),
-            "priority": winner.get("priority"),
-        }
+        Delegates to the shared SDK helper so light and v2 derive this
+        identically (#310).
+        """
+        return build_last_transition(self._plan_config, from_state_id, to_state_id)
 
     def _find_config_file(self, relative_path: str) -> Optional[str]:
         """Find a config file by trying multiple locations."""

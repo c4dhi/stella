@@ -66,6 +66,11 @@ from stella_agent_sdk.progress.types import (
     create_task,
     create_deliverable,
 )
+from stella_agent_sdk.progress.builder import (
+    progress_from_full_state,
+    build_last_transition,
+    normalize_transition_priority,
+)
 
 __all__ = [
     # Core progress types
@@ -82,4 +87,8 @@ __all__ = [
     "create_state",
     "create_task",
     "create_deliverable",
+    # Canonical full_state -> ProgressState builder (#310)
+    "progress_from_full_state",
+    "build_last_transition",
+    "normalize_transition_priority",
 ]

@@ -646,6 +646,71 @@ describe('goal_achieved condition', () => {
     expect(result.transitioned).toBe(false);
     expect(result.newStateId).toBeUndefined();
   });
+
+  it('cascades skipped onto uncollected goal deliverables once the goal state is complete (#310)', async () => {
+    // A goal state can complete (goal achieved) without every goal-level
+    // deliverable being collected. Those uncollected deliverables must render
+    // 'skipped' — mirroring the regular task skip cascade — not a stale
+    // 'pending' circle. Previously goal deliverables only ever got
+    // 'completed'/'pending', diverging from regular task deliverables.
+    const sessionId = 'session-goal-deliverable-skip-cascade';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].goal!.deliverables = [
+      { key: 'next_step', description: 'Concrete next step', required: true },
+      { key: 'timeframe', description: 'Timeframe', required: false },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    // Collect one goal deliverable, then achieve the goal so the state advances
+    // with the other deliverable still uncollected.
+    await svc.setDeliverable(sessionId, 'next_step', 'Go for a walk', 'captured');
+    const transition = await svc.setDeliverable(sessionId, '__goal_achieved__', true, 'done');
+    expect(transition.transitioned).toBe(true);
+
+    const fullState = await svc.getFullState(sessionId);
+    const goalState = fullState?.states.find(s => s.id === 'state-goal');
+    expect(goalState?.status).toBe('completed');
+
+    const goalTask = goalState?.tasks.find(t => t.id === '__goal_deliverables__');
+    expect(goalTask?.status).toBe('completed');
+    const byKey = new Map(goalTask?.deliverables.map(d => [d.key, d.status]));
+    expect(byKey.get('next_step')).toBe('completed');
+    // Uncollected goal deliverable cascades to skipped now the state is done.
+    expect(byKey.get('timeframe')).toBe('skipped');
+  });
+
+  it('renders regular tasks and goal deliverables together without double-counting keys (#310)', async () => {
+    const sessionId = 'session-goal-coexist-no-double-count';
+    const { prisma } = createPrismaMock();
+    const svc = new StateMachineService(prisma);
+    const plan = buildGoalStatePlan();
+    plan.states[0].goal!.deliverables = [
+      { key: 'goal_d1', description: 'Goal deliverable', required: true },
+    ];
+    plan.states[0].tasks = [
+      {
+        id: 'regular',
+        description: 'A regular task in a goal state',
+        deliverables: [{ key: 'task_d1', description: 'Task deliverable', required: true }],
+      },
+    ];
+    await svc.initializeForSession(sessionId, plan);
+
+    const fullState = await svc.getFullState(sessionId);
+    const goalState = fullState?.states.find(s => s.id === 'state-goal');
+
+    // Both the synthetic goal task and the real task are present.
+    const taskIds = goalState?.tasks.map(t => t.id) ?? [];
+    expect(taskIds).toContain('__goal_deliverables__');
+    expect(taskIds).toContain('regular');
+
+    // No deliverable key appears under more than one task (no double count).
+    const allKeys = goalState?.tasks.flatMap(t => t.deliverables.map(d => d.key)) ?? [];
+    expect(allKeys.sort()).toEqual(['goal_d1', 'task_d1']);
+    expect(allKeys.length).toBe(new Set(allKeys).size);
+  });
 });
 
 // =============================================================================

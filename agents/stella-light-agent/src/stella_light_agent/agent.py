@@ -22,6 +22,7 @@ from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
+from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 
 from stella_light_agent.llm.service import LLMService
 from stella_light_agent.barge_in_evaluator import BargeInEvaluator
@@ -105,6 +106,9 @@ class StellaLightAgent(BaseAgent):
         # Raw plan dict kept so progress updates can surface each state's
         # transitions (the "Possible Next States" preview on the frontend).
         self._plan_config: Optional[Dict[str, Any]] = None
+        # Last state seen on a progress emit, so the next update can describe the
+        # "branch chosen" (last_transition) at parity with stella-v2 (#310).
+        self._last_known_state_id: Optional[str] = None
         self._plan_system_prompt: Optional[str] = None
         # Configurator overrides injected via SDK config (pipeline_config).
         # Light exposes a single combined System Prompt (identity + conversational style).
@@ -362,8 +366,16 @@ class StellaLightAgent(BaseAgent):
                 print(f"[StellaLightAgent] Full state received: {full_state is not None}, keys: {list(full_state.keys()) if full_state else 'None'}")
 
                 if full_state:
-                    progress_state = self._build_progress_from_full_state(full_state)
-                    print(f"[StellaLightAgent] Built progress state with {len(progress_state.get('groups', []))} groups")
+                    # Anchor the transition tracker; the initial snapshot has no
+                    # prior state, so there is no branch to report yet.
+                    self._last_known_state_id = full_state.get("current_state_id")
+                    progress_state = progress_from_full_state(
+                        full_state,
+                        plan=self._plan_config,
+                        session_started_at=self._session_started_at,
+                        extra_metadata={"last_transition": None},
+                    )
+                    print(f"[StellaLightAgent] Built progress state with {len(progress_state.groups)} groups")
                     yield AgentOutput.progress_update(
                         session_id,
                         progress_state,
@@ -579,7 +591,19 @@ class StellaLightAgent(BaseAgent):
             try:
                 full_state = await self.sm_client.get_full_state()
                 if full_state:
-                    progress_state = self._build_progress_from_full_state(full_state)
+                    # Describe the "branch chosen" if the state changed this turn,
+                    # then advance the tracker (parity with stella-v2, #310).
+                    current_state_id = full_state.get("current_state_id")
+                    last_transition = build_last_transition(
+                        self._plan_config, self._last_known_state_id, current_state_id
+                    )
+                    self._last_known_state_id = current_state_id
+                    progress_state = progress_from_full_state(
+                        full_state,
+                        plan=self._plan_config,
+                        session_started_at=self._session_started_at,
+                        extra_metadata={"last_transition": last_transition},
+                    )
                     yield AgentOutput.progress_update(
                         input.session_id,
                         progress_state,
@@ -606,138 +630,6 @@ class StellaLightAgent(BaseAgent):
                 "percentage": state.get("progress", 0) * 100,
             },
             "state_just_changed": False,
-        }
-
-    def _build_progress_from_full_state(self, full_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Build progress state for frontend from full state machine state.
-
-        The frontend expects ProgressUpdateMessage format:
-        - groups[].label (not title)
-        - groups[].items[] = flat deliverables with task info in metadata
-        """
-        import datetime
-
-        groups = []
-        current_group_id = None
-        current_item_id = None
-
-        # Map each state's transitions from the raw plan so the frontend can render
-        # the "Possible Next States" preview (#291 follow-up). Transitions are static
-        # plan data; the live full_state only carries status, so we read them here.
-        transitions_by_state: Dict[str, list] = {}
-        plan_states = (self._plan_config or {}).get("states") or []
-        for plan_state in plan_states:
-            state_id = plan_state.get("id")
-            if not state_id:
-                continue
-            mapped = []
-            for transition in plan_state.get("transitions", []) or []:
-                target = transition.get("target_state_id")
-                if not target:
-                    continue
-                mapped.append({
-                    "target_state_id": target,
-                    "condition_type": transition.get("condition_type", "all_tasks_complete"),
-                    "priority": transition.get("priority"),
-                    "condition_config": transition.get("condition_config", {}),
-                })
-            transitions_by_state[state_id] = mapped
-
-        for state in full_state.get("states", []):
-            # Flatten: each deliverable becomes an item with task info in metadata
-            items = []
-            for task in state.get("tasks", []):
-                # The state machine is the single source of truth for whether a
-                # task is done (#291 hybrid model: completed/skipped, or all
-                # required deliverables collected). Ship that real status so the
-                # frontend renders backend truth instead of inferring "done"
-                # from deliverable fill.
-                task_status = task.get("status", "pending")
-                task_deliverables = task.get("deliverables", [])
-
-                if task_deliverables:
-                    for d in task_deliverables:
-                        item = {
-                            "id": d.get("key"),
-                            "label": d.get("description"),
-                            "status": d.get("status", "pending"),
-                            "required": d.get("required", True),
-                            "value": d.get("value"),
-                            "confidence": d.get("confidence"),
-                            "collected_at": d.get("collected_at"),
-                            "metadata": {
-                                "task_id": task.get("id"),
-                                "task_description": task.get("description"),
-                                "task_status": task_status,
-                                "deliverable_type": d.get("type", "string"),
-                                "acceptance_criteria": d.get("acceptance_criteria"),
-                                "reasoning": d.get("reasoning"),
-                            }
-                        }
-                        items.append(item)
-
-                        # Track current item (first pending deliverable in active state)
-                        if state.get("status") == "active" and d.get("status") == "pending" and not current_item_id:
-                            current_item_id = d.get("key")
-                else:
-                    # Deliverable-less task: emit one task-level item so the task
-                    # is visible and carries its real completed/skipped status
-                    # (mirrors the v2 progress adapter).
-                    task_item_id = f"task_{task.get('id', 'unknown')}"
-                    items.append({
-                        "id": task_item_id,
-                        "label": task.get("description", "Task"),
-                        "status": task_status,
-                        "required": task.get("required", True),
-                        "metadata": {
-                            "task_id": task.get("id"),
-                            "task_description": task.get("description"),
-                            "task_status": task_status,
-                            "is_task_item": True,
-                        }
-                    })
-                    if state.get("status") == "active" and task_status == "pending" and not current_item_id:
-                        current_item_id = task_item_id
-
-            # Map state status to group status
-            group_status = state.get("status", "pending")
-            if group_status == "active":
-                group_status = "in_progress"
-
-            group = {
-                "id": state.get("id"),
-                "label": state.get("title"),  # Frontend expects 'label' not 'title'
-                "execution_mode": state.get("type", "loose"),
-                "status": group_status,
-                "items": items,
-                "is_current": state.get("status") == "active",
-                "description": state.get("description"),
-                "completed_at": None,
-                "metadata": {
-                    "transitions": transitions_by_state.get(state.get("id"), []),
-                },
-            }
-            groups.append(group)
-
-            # Track current group
-            if state.get("status") == "active":
-                current_group_id = state.get("id")
-
-        return {
-            "groups": groups,
-            "current_group_id": current_group_id,
-            "current_item_id": current_item_id,
-            "progress_percentage": full_state.get("progress", 0),
-            "elapsed_minutes": 0,
-            "started_at": self._session_started_at,
-            "last_updated": datetime.datetime.now().isoformat(),
-            "metadata": {
-                "plan_id": full_state.get("plan_id"),
-                "plan_title": full_state.get("plan_title"),
-                "current_state_id": full_state.get("current_state_id"),
-                "total_turns": full_state.get("total_turns", 0),
-                "turns_without_progress": full_state.get("turns_without_progress", 0),
-            }
         }
 
     async def on_interrupt(self, session_id: str) -> None:
@@ -813,6 +705,7 @@ class StellaLightAgent(BaseAgent):
         # Reset for next session
         self.llm_service.reset_stats()
         self._session_started_at = None
+        self._last_known_state_id = None
 
         return summary
 
