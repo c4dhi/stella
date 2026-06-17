@@ -2269,12 +2269,23 @@ export class StateMachineService {
           .filter(d => !taskKeys.has(d.key)) // Deduplicate with task deliverables
           .map(d => {
             const collected = deliverables[d.key];
+            // Mirror the regular task skip cascade (#310): a collected goal
+            // deliverable is 'completed'; once the goal state itself is complete
+            // (goal achieved or abandoned), any still-uncollected goal
+            // deliverable cascades to 'skipped' rather than a stale 'pending'
+            // circle; otherwise it is 'pending'. Previously these only ever got
+            // 'completed'/'pending', diverging from regular task deliverables.
+            const deliverableStatus: 'pending' | 'completed' | 'skipped' = collected
+              ? 'completed'
+              : stateStatus === 'completed'
+                ? 'skipped'
+                : 'pending';
             return {
               key: d.key,
               description: d.description,
               type: d.type || 'string',
               required: d.required !== false,
-              status: (collected ? 'completed' : 'pending') as 'pending' | 'completed',
+              status: deliverableStatus,
               value: collected?.value,
               collectedAt: collected?.collectedAt,
               acceptanceCriteria: d.acceptance_criteria,
@@ -2308,7 +2319,12 @@ export class StateMachineService {
 
         if (goalDeliverableInfos.length > 0) {
           const allRequired = goalDeliverableInfos.filter(d => d.required && !d.discovered);
+          // A completed goal state means the goal was achieved — report the
+          // synthetic goal task as completed even if some required deliverables
+          // were skipped rather than collected (kept consistent with the
+          // deliverable skip cascade above).
           const goalTaskStatus: 'pending' | 'in_progress' | 'completed' =
+            stateStatus === 'completed' ? 'completed' :
             allRequired.every(d => d.status === 'completed') ? 'completed' :
             allRequired.some(d => d.status === 'completed') ? 'in_progress' : 'pending';
 

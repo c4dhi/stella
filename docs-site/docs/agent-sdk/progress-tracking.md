@@ -7,6 +7,81 @@ title: "📊 Progress Tracking"
 
 STELLA agents can track and display progress through todo lists and progress updates, keeping users informed about ongoing tasks.
 
+## State machine–backed progress (recommended)
+
+Agents that drive their plan through the STELLA **state machine** (the standard setup) should **not** hand-build progress payloads. Instead, fetch the authoritative state and convert it with the SDK's single canonical builder, `progress_from_full_state`. This is the **one** `get_full_state() → ProgressState` transform shared by every first-party agent (#310), so the to-do list, percentage, skip handling, goal states, and the "branch chosen" indicator render identically no matter which agent runs the plan.
+
+:::info Single source of truth
+The backend `StateMachineService.getFullState` is the source of truth for progress. The builder is a pure, deterministic adapter from its response to the `ProgressState` the frontend renders. **Never re-derive group/task/percentage status in your agent** — that hand-maintained drift is exactly what `progress_from_full_state` exists to prevent (it previously produced bugs like a skipped state disappearing from the route view and an `8000%` percentage).
+:::
+
+### Emitting progress
+
+```python
+from stella_agent_sdk.agent.base import BaseAgent
+from stella_agent_sdk.messages.output import AgentOutput
+from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
+
+
+class MyAgent(BaseAgent):
+    async def on_ready(self, session_id: str):
+        """Initial snapshot when the agent joins the room."""
+        full_state = await self.sm_client.get_full_state()
+        if full_state:
+            # Anchor the transition tracker; the first snapshot has no prior state.
+            self._last_known_state_id = full_state.get("current_state_id")
+            progress = progress_from_full_state(
+                full_state,
+                plan=self._plan_config,                      # → "Possible Next States"
+                session_started_at=self._session_started_at,
+            )
+            yield AgentOutput.progress_update(
+                session_id, progress,
+                update_trigger="session_start",
+                agent_name="my-agent", agent_icon="🤖",
+            )
+
+    async def _emit_progress(self, session_id: str):
+        """After each turn — include the 'branch chosen' when the state changed."""
+        full_state = await self.sm_client.get_full_state()
+        if not full_state:
+            return
+        current = full_state.get("current_state_id")
+        last_transition = build_last_transition(
+            self._plan_config, self._last_known_state_id, current
+        )
+        self._last_known_state_id = current
+        progress = progress_from_full_state(
+            full_state,
+            plan=self._plan_config,
+            session_started_at=self._session_started_at,
+            extra_metadata={"last_transition": last_transition},
+        )
+        yield AgentOutput.progress_update(
+            session_id, progress,
+            update_trigger="turn_completion",
+            agent_name="my-agent", agent_icon="🤖",
+        )
+```
+
+### `progress_from_full_state(...)`
+
+| Parameter | Required | Purpose / when omitted |
+|---|---|---|
+| `full_state` | **yes** | The `StateMachineClient.get_full_state()` response dict. |
+| `plan` | no | Raw plan config — populates each state's **"Possible Next States"** preview. Omit → empty transitions. |
+| `session_started_at` | no | ISO timestamp → `started_at` + `elapsed_minutes`. Omit → `None` / `0`. |
+| `extra_metadata` | no | Agent-specific top-level metadata merged into the payload, e.g. `{"last_transition": ...}` (the **"branch chosen"** block) or your own architecture tag. |
+| `now` | no | Clock override for deterministic `last_updated` / `elapsed_minutes` (tests). |
+
+It returns a `ProgressState`; pass it straight to `AgentOutput.progress_update`, which accepts a `ProgressState` **or** an equivalent dict.
+
+`build_last_transition(plan, from_state_id, to_state_id)` returns the branch the session just took (`{from_state_id, to_state_id, condition_type, condition_config, priority}`), or `None` when nothing changed or no single plan transition directly connects the two states (e.g. a multi-state skip in one turn).
+
+### Do existing custom agents need to change?
+
+**No.** `progress_from_full_state` and `build_last_transition` are additive exports — nothing in the SDK forces them, and the `ProgressState` / `ProgressGroup` / `ProgressItem` models are unchanged. Adopt the builder only if your agent uses the STELLA state machine and you want the canonical behaviour (correct skip rendering, 0–100 percentage, goal-state handling, the branch indicator) for free. An agent that manages its **own** state can keep constructing `ProgressState` directly.
+
 ## Todo Lists
 
 Todo lists help structure conversations and show users what tasks the agent is working on.
