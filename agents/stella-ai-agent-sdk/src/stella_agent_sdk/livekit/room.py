@@ -10,6 +10,8 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 import jwt
 import numpy as np
 
+from stella_agent_sdk.env import env_bool
+
 logger = logging.getLogger(__name__)
 
 # Try to import livekit - it's optional for agents that don't use direct audio
@@ -99,7 +101,7 @@ class RoomManager:
 
         # Acoustic Echo Cancellation (AEC)
         # Can be disabled via environment variable for debugging
-        aec_disabled_by_env = os.getenv("DISABLE_AEC", "false").lower() in ("true", "1", "yes")
+        aec_disabled_by_env = env_bool("DISABLE_AEC", False)
         if aec_disabled_by_env:
             logger.info("[AEC] Disabled via DISABLE_AEC environment variable")
             print("[AEC] Disabled via DISABLE_AEC environment variable")

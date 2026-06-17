@@ -9,43 +9,17 @@ On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """
 
 import asyncio
-import os
 import random
 import time
 from typing import Dict, Any, List, Optional
 
+from stella_agent_sdk.env import env_bool as _env_bool, env_float as _env_float
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
 from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES as _LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _env_float(name: str, default: float) -> float:
-    """Read a float env var, tolerating empty/blank/invalid → default.
-
-    An optional declared env var can reach the pod as an empty string, which
-    ``os.getenv(name, default)`` returns instead of the default — so
-    ``float("")`` would crash the agent at startup. Empty/whitespace/unparseable
-    all fall back to the default.
-    """
-    raw = (os.getenv(name) or "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    """Read a bool env var ("true"/"1"/"yes" → True), tolerating empty → default."""
-    raw = (os.getenv(name) or "").strip().lower()
-    if not raw:
-        return default
-    return raw in ("true", "1", "yes", "on")
 
 
 def _coerce_bool(value: Any) -> bool:

@@ -44,29 +44,13 @@ import time
 import uuid
 from typing import AsyncIterator, Awaitable, Callable, List, Optional
 
+from stella_agent_sdk.env import env_int as _env_int
 from stella_agent_sdk.livekit.room import RoomManager
 from stella_agent_sdk.services.stt_client import STTClient, TranscriptEvent
 from stella_agent_sdk.services.tts_client import TTSClient
 from stella_agent_sdk.messages.types import BargeInDecision
 
 logger = logging.getLogger(__name__)
-
-
-def _env_int(name: str, default: int) -> int:
-    """Read an int env var, tolerating empty/blank/invalid → default.
-
-    A declared optional env var can reach the pod as an empty string, which
-    ``os.getenv(name, default)`` returns instead of the default — so
-    ``int("")`` would crash at startup. Empty/whitespace/unparseable fall back.
-    """
-    raw = (os.getenv(name) or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
-        return default
 
 
 # ── First-audible-token latency budget (#304 A1) ─────────────────────────────

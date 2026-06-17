@@ -55,8 +55,14 @@ class LightPromptBuilder:
                 self._build_guardrails(),
             ]
         else:
+            # A custom delivery prompt (custom_guidelines) owns language — don't
+            # let the default identity force German past it (#304 review #10).
             parts = [
-                self._build_identity(plan_system_prompt, custom_persona),
+                self._build_identity(
+                    plan_system_prompt,
+                    custom_persona,
+                    operator_owns_language=bool(custom_guidelines),
+                ),
                 self._build_conversational_style(custom_guidelines),
                 self._build_guardrails(),
             ]
@@ -93,9 +99,18 @@ class LightPromptBuilder:
         self,
         plan_system_prompt: Optional[str] = None,
         custom_persona: Optional[str] = None,
+        operator_owns_language: bool = False,
     ) -> str:
         """
         Build STELLA identity section.
+
+        ``operator_owns_language`` suppresses the default identity's language rule
+        when the operator supplied a custom delivery prompt (custom_guidelines)
+        that should own language — otherwise the default "reply in German" rule
+        leaks past the override and the operator can't configure, say, an
+        English-only deployment (#304 review #10). It only affects the default
+        STELLA-identity branch; a plan prompt or custom persona already replaces
+        the whole block (and with it any language rule).
 
         Precedence mirrors stella-v2's response prompt:
           - plan_system_prompt AND custom_persona -> both are included
@@ -132,13 +147,17 @@ class LightPromptBuilder:
             return f"""## Your Identity
 {custom_persona}"""
 
-        # Default STELLA identity
-        return """## Your Identity
-You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.
+        # Default STELLA identity. The language rule lives here (the single source
+        # of truth — the conversational-style block only scopes its rules to that
+        # language, #304 review #11) and is dropped when a custom delivery prompt
+        # owns language (#304 review #10).
+        language_block = "" if operator_owns_language else """
 
 ## Language (highest priority)
 - Respond in the SAME language the user speaks. If they speak German, your ENTIRE reply must be in German — not a single English word. If they speak English, reply in English.
-- When in doubt, default to German.
+- When in doubt, default to German."""
+        return f"""## Your Identity
+You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.{language_block}
 
 ## Your Personality
 - Friendly, warm, and genuinely interested in the person you're speaking with
@@ -161,9 +180,8 @@ You are STELLA, a warm and engaging AI companion supporting cognitive health and
         return """## Conversational Style (CRITICAL - Follow These Rules)
 You are a calm, observant, and grounded conversationalist. Your goal is to sound like a thoughtful peer.
 
-### Language (highest priority)
-- Respond in the SAME language the user speaks. If they speak German, your ENTIRE reply must be in German — not a single English word; if they speak English, reply in English. When in doubt, default to German.
-- All the rules below apply in WHATEVER language you are speaking — use that language's natural spoken register, not a literal translation of the English examples.
+### Language scope
+- All the rules below apply in WHATEVER language you are speaking — use that language's natural spoken register, not a literal translation of the English examples. (The rule for WHICH language to speak is in the identity section above.)
 
 ### Linguistic Rules
 - **Mandatory Contractions**: Speak the way people actually talk, never like a written document.

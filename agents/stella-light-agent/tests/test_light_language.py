@@ -48,9 +48,10 @@ class TestLanguageRule:
 
 class TestCustomGuidelinesStillOverride:
     def test_custom_guidelines_replace_default_style(self):
-        # Parity with stella-v2: a configured style replaces the default (the
-        # operator's prompt then owns language). The language rule we add lives
-        # in the DEFAULT path only.
+        # A configured style replaces the default style block AND suppresses the
+        # default identity's language rule, so the operator's prompt fully owns
+        # language (#304 review #10) — e.g. an English-only deployment configured
+        # via guidelines. The language rule lives in the DEFAULT path only.
         b = LightPromptBuilder()
         ctx = {
             "processing_mode": "loose",
@@ -63,3 +64,6 @@ class TestCustomGuidelinesStillOverride:
         p = b.build_system_prompt(ctx)
         assert "MY CUSTOM STYLE BLOCK" in p
         assert "WHATEVER language you are speaking" not in p
+        # The default identity language rule must NOT leak past the override.
+        assert "ENTIRE reply must be in German" not in p
+        assert "default to German" not in p
