@@ -39,6 +39,14 @@ def _env_float(name: str, default: float) -> float:
         logger.warning("Invalid %s=%r; using default %s", name, raw, default)
         return default
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read a bool env var ("true"/"1"/"yes" → True), tolerating empty → default."""
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("true", "1", "yes", "on")
+
 BRIDGE_SYSTEM_PROMPT = """You are a person in a conversation. You just heard what the user said and you're about to give your full answer, but first you naturally acknowledge them — the way a real human would before continuing their thought. This will be spoken aloud by TTS.
 
 Think of how people actually talk. When someone tells you something, you don't just launch into your answer — you react briefly first. The bridge is that brief, human moment.
@@ -84,44 +92,95 @@ BARGE-IN: The user just interrupted you mid-sentence. Acknowledge the interrupti
 {{/if}}
 Output ONLY the bridge. No quotes, no labels, no explanation."""
 
-# Short fallback bridges used when LLM generation fails or is rejected.
-# Ensures every turn gets a bridge for consistent perceived latency.
-FALLBACK_BRIDGES_EN = [
+# ── Typed bridge inventories (#304 A2) ───────────────────────────────────────
+# Listener tokens are NOT interchangeable (Yngve 1970; Schegloff 1982). We pick
+# a sub-type by context rather than emitting one generic "acknowledgement":
+#   • GREETING       — greet back when the user greets.
+#   • ACKNOWLEDGEMENT — "received, go on" for an ordinary completed turn.
+#   • PENSIVE        — "let me think", signalling effortful/longer compute; used
+#                      when the turn looks hard (a question, a long input).
+#   • CONTINUER      — "mm-hm"-class. Reserved: continuers are mid-turn feedback
+#                      while the OTHER party holds the floor, so they are usually
+#                      wrong here (the user's turn is already complete). Kept for
+#                      completeness; not selected by default.
+# DELIBERATELY NO ASSESSMENT SUB-TYPE: evaluative tokens ("that's great", "wow")
+# are jarring before dispreferred content (a "no"/correction the agent can't yet
+# rule out at bridge time, since this runs before the experts). Omitting the
+# class entirely is the structural guarantee the A2 acceptance criterion asks for.
+BRIDGE_TYPE_GREETING = "greeting"
+BRIDGE_TYPE_ACKNOWLEDGEMENT = "acknowledgement"
+BRIDGE_TYPE_PENSIVE = "pensive"
+BRIDGE_TYPE_CONTINUER = "continuer"
+
+ACKNOWLEDGEMENT_BRIDGES_EN = [
     "Okay, yeah.",
     "Right, okay.",
     "Got it.",
     "Sure, okay.",
     "Yeah, I hear you.",
     "Alright.",
-    "Okay, let me think.",
     "Yeah, gotcha.",
+    "Okay, I follow.",
 ]
 
-FALLBACK_BRIDGES_DE = [
+ACKNOWLEDGEMENT_BRIDGES_DE = [
     "Ja, okay.",
     "Okay, verstehe.",
     "Ja, alles klar.",
-    "Okay, moment.",
     "Ja, ich verstehe.",
     "Alles klar.",
-    "Okay, mal schauen.",
     "Ja, genau.",
+    "Okay, ich versteh.",
+    "Ja, ich hör dich.",
 ]
 
-# Greeting-specific fallbacks for when user says hello/hi/hey.
-GREETING_FALLBACKS_EN = [
+# Pensive bridges signal "I'm working on something effortful" — they buy more
+# floor for a harder turn and soften a longer wait. No TTS-poor sounds
+# ("hmm"/"uh") — those render badly in our synth (see system prompt).
+PENSIVE_BRIDGES_EN = [
+    "Okay, let me think.",
+    "Right, let me think for a sec.",
+    "Okay, give me a moment.",
+    "Let me think about that.",
+]
+
+PENSIVE_BRIDGES_DE = [
+    "Okay, lass mich kurz überlegen.",
+    "Moment, ich überlege kurz.",
+    "Okay, einen Moment.",
+    "Lass mich kurz nachdenken.",
+]
+
+GREETING_BRIDGES_EN = [
     "Hey.",
     "Hi there.",
     "Hello.",
     "Hey, hi.",
 ]
 
-GREETING_FALLBACKS_DE = [
+GREETING_BRIDGES_DE = [
     "Hey.",
     "Hallo.",
     "Hi.",
     "Hey, hallo.",
 ]
+
+# Inventory lookup: (type, is_german) → list. Greeting/ack/pensive only;
+# continuer intentionally has no inventory (not selected — see note above).
+_BRIDGE_INVENTORY = {
+    (BRIDGE_TYPE_GREETING, True): GREETING_BRIDGES_DE,
+    (BRIDGE_TYPE_GREETING, False): GREETING_BRIDGES_EN,
+    (BRIDGE_TYPE_PENSIVE, True): PENSIVE_BRIDGES_DE,
+    (BRIDGE_TYPE_PENSIVE, False): PENSIVE_BRIDGES_EN,
+    (BRIDGE_TYPE_ACKNOWLEDGEMENT, True): ACKNOWLEDGEMENT_BRIDGES_DE,
+    (BRIDGE_TYPE_ACKNOWLEDGEMENT, False): ACKNOWLEDGEMENT_BRIDGES_EN,
+}
+
+# Backwards-compatible aliases (other modules/tests may import these names).
+FALLBACK_BRIDGES_EN = ACKNOWLEDGEMENT_BRIDGES_EN
+FALLBACK_BRIDGES_DE = ACKNOWLEDGEMENT_BRIDGES_DE
+GREETING_FALLBACKS_EN = GREETING_BRIDGES_EN
+GREETING_FALLBACKS_DE = GREETING_BRIDGES_DE
 
 _GREETING_WORDS = {"hello", "hi", "hey", "hallo", "hei", "greetings", "good morning", "good evening", "good afternoon",
                    "guten morgen", "guten tag", "guten abend", "moin", "servus", "grüß gott"}
@@ -146,6 +205,65 @@ def _detect_german(text: str) -> bool:
     return german_count >= 2 or (len(words) <= 3 and german_count >= 1)
 
 
+def _is_greeting(user_input: str) -> bool:
+    """Is the user's whole turn just a greeting (hi/hello/hallo)?"""
+    return user_input.strip().lower().rstrip("!.,?") in _GREETING_WORDS
+
+
+# A turn longer than this (in words) reads as effortful → favour a pensive bridge
+# that buys more floor while the heavier turn computes.
+_PENSIVE_WORD_THRESHOLD = 25
+
+
+def select_bridge_type(
+    user_input: str,
+    predicted_cost: Optional[int] = None,
+) -> str:
+    """Pick the bridge sub-type for a turn from context + predicted compute cost.
+
+    Inputs (per #304 A2):
+      • turn type — a bare greeting picks ``greeting``.
+      • predicted compute cost — when known (e.g. number of experts the gate
+        triggered), a heavier turn picks ``pensive``. When unknown (the bridge
+        runs in parallel with the gate, before that count exists), a cheap proxy
+        stands in: the user asked a question, or gave a long/complex turn.
+
+    Never returns an assessment sub-type — none exists (see inventory note): an
+    evaluative token before a not-yet-known dispreferred answer is the failure
+    mode A2 guards against. Continuers are also not selected (mid-turn only).
+    """
+    if _is_greeting(user_input):
+        return BRIDGE_TYPE_GREETING
+
+    if predicted_cost is not None:
+        # ≥2 experts / explicitly hard turn → effortful → pensive.
+        if predicted_cost >= 2:
+            return BRIDGE_TYPE_PENSIVE
+        return BRIDGE_TYPE_ACKNOWLEDGEMENT
+
+    # No cost signal yet — proxy from the input itself.
+    text = user_input.strip()
+    if "?" in text or len(text.split()) >= _PENSIVE_WORD_THRESHOLD:
+        return BRIDGE_TYPE_PENSIVE
+    return BRIDGE_TYPE_ACKNOWLEDGEMENT
+
+
+def pick_bridge_from_inventory(
+    bridge_type: str,
+    is_german: bool,
+) -> str:
+    """Return a random templated bridge of ``bridge_type`` in the right language.
+
+    Falls back to the acknowledgement inventory for any type without its own
+    list (e.g. continuer), so this never raises on an unexpected type.
+    """
+    inventory = _BRIDGE_INVENTORY.get(
+        (bridge_type, is_german),
+        ACKNOWLEDGEMENT_BRIDGES_DE if is_german else ACKNOWLEDGEMENT_BRIDGES_EN,
+    )
+    return random.choice(inventory)
+
+
 class BridgeGenerator:
     """Generates a short conversational bridge for early TTS synthesis.
 
@@ -168,6 +286,15 @@ class BridgeGenerator:
         # canned bridge instead of hanging. Tunable via BRIDGE_TIMEOUT_MS.
         self.bridge_timeout_s: float = _env_float("BRIDGE_TIMEOUT_MS", 2000.0) / 1000
 
+        # Fast-path bridge (#304 A3). The LLM bridge can itself take up to
+        # ``bridge_timeout_s`` to return — i.e. the latency-masking mechanism can
+        # add latency and miss the gap window it exists to fill. When enabled,
+        # the bridge is served INSTANTLY from the typed templated inventory (no
+        # LLM call), guaranteeing first-byte inside the gap window. Trades the
+        # LLM bridge's contextual richness for guaranteed timing, so it's opt-in
+        # via BRIDGE_FAST_PATH and easy to A/B against the A1 baseline.
+        self.fast_path_enabled: bool = _env_bool("BRIDGE_FAST_PATH", False)
+
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from Agent Configurator."""
         if "model" in config:
@@ -180,6 +307,24 @@ class BridgeGenerator:
             self.custom_system_prompt = config["system_prompt"]
         if "history_limit" in config:
             self.history_limit = int(config["history_limit"])
+        if "fast_path" in config:
+            self.fast_path_enabled = bool(config["fast_path"])
+
+    def fast_bridge(
+        self,
+        user_input: str,
+        language: Optional[str] = None,
+        predicted_cost: Optional[int] = None,
+    ) -> str:
+        """Return a typed templated bridge INSTANTLY — no LLM call (#304 A3).
+
+        Picks the sub-type with :func:`select_bridge_type` and a phrase from the
+        matching inventory. Used for the fast-path and as the failure fallback,
+        so both routes are guaranteed to land inside the gap window.
+        """
+        is_german = (language == "de") if language else _detect_german(user_input)
+        bridge_type = select_bridge_type(user_input, predicted_cost=predicted_cost)
+        return pick_bridge_from_inventory(bridge_type, is_german)
 
     async def generate(
         self,
@@ -187,6 +332,7 @@ class BridgeGenerator:
         conversation_history: List[Dict[str, str]],
         language: Optional[str] = None,
         variables: Optional[Dict[str, Any]] = None,
+        predicted_cost: Optional[int] = None,
     ) -> str:
         """Generate a bridge phrase for the given user input.
 
@@ -201,11 +347,23 @@ class BridgeGenerator:
             variables: Template variables for prompt rendering (e.g.
                 ``isBargeIn``). Lets the configured bridge prompt react to
                 context such as the turn being a barge-in.
+            predicted_cost: Optional compute-cost signal (e.g. number of experts
+                the gate triggered) used to pick a pensive vs. acknowledgement
+                sub-type. Usually unknown at bridge time (the bridge runs in
+                parallel with the gate); a heuristic proxy stands in then.
 
         Returns:
             A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
         """
         start_time = time.time()
+
+        # Fast-path (#304 A3): skip the LLM entirely and serve an instant typed
+        # template. Guarantees the bridge lands inside the gap window instead of
+        # waiting up to ``bridge_timeout_s`` for the LLM that masks latency.
+        if self.fast_path_enabled:
+            bridge = self.fast_bridge(user_input, language, predicted_cost)
+            logger.info(f"Fast-path bridge '{bridge}' in {(time.time() - start_time) * 1000:.0f}ms")
+            return bridge
 
         try:
             user_message = self._build_user_message(user_input, conversation_history)
@@ -263,19 +421,20 @@ class BridgeGenerator:
             return fallback
 
     @staticmethod
-    def _pick_fallback(user_input: str, language: Optional[str] = None) -> str:
+    def _pick_fallback(
+        user_input: str,
+        language: Optional[str] = None,
+        predicted_cost: Optional[int] = None,
+    ) -> str:
         """Pick a context-appropriate fallback bridge, in the resolved language.
 
-        Uses the resolved ``language`` when provided (single source of truth);
-        otherwise falls back to the legacy German heuristic on the input text.
+        Now type-aware (#304 A2): selects greeting / acknowledgement / pensive
+        from the matching inventory. Uses the resolved ``language`` when provided
+        (single source of truth); otherwise the legacy German heuristic.
         """
-        if language:
-            is_german = language == "de"
-        else:
-            is_german = _detect_german(user_input)
-        if user_input.strip().lower().rstrip("!.,") in _GREETING_WORDS:
-            return random.choice(GREETING_FALLBACKS_DE if is_german else GREETING_FALLBACKS_EN)
-        return random.choice(FALLBACK_BRIDGES_DE if is_german else FALLBACK_BRIDGES_EN)
+        is_german = (language == "de") if language else _detect_german(user_input)
+        bridge_type = select_bridge_type(user_input, predicted_cost=predicted_cost)
+        return pick_bridge_from_inventory(bridge_type, is_german)
 
     @staticmethod
     def _validate_bridge(raw: str) -> str:

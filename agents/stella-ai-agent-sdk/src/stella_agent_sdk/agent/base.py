@@ -867,6 +867,7 @@ class BaseAgent(ABC):
                                 not output.is_final
                                 and self._sentence_buffer
                                 and self._sentence_buffer.rstrip()[-1:] in ".!?"
+                                and not self._is_false_boundary(self._sentence_buffer)
                             ):
                                 remaining = self._flush_sentence_buffer()
                                 if remaining:
@@ -957,6 +958,42 @@ class BaseAgent(ABC):
     # natural sentence.
     _SENTENCE_END = re.compile(r'(?<=[.!?])\s+|(?<=\.\.\.)\s+')
 
+    # Abbreviations whose trailing period is NOT a sentence end. Splitting after
+    # these clips a tiny fragment ("Dr.", "z. B.", "etc.") into its own TTS
+    # call, which the synthesizer renders as an unnatural standalone utterance
+    # with a falling final-clause pitch — audibly wrong (#304 B7). Lower-cased,
+    # trailing period stripped, compared against the token before the boundary.
+    _ABBREVIATIONS = frozenset({
+        # English
+        "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "vs", "etc",
+        "e.g", "i.e", "approx", "no", "fig", "al",
+        # German
+        "z.b", "u.a", "d.h", "u.s.w", "usw", "ca", "bzw", "evtl", "inkl",
+        "max", "min", "nr", "z.t", "sog", "ggf", "geb", "bspw",
+    })
+
+    @classmethod
+    def _is_false_boundary(cls, text: str) -> bool:
+        """True if ``text`` ends on punctuation that does NOT end a sentence.
+
+        Guards against splitting after an abbreviation ("Dr.", "z. B.") or a
+        single-letter initial ("J." in "J. R. R."), both of which would
+        otherwise be dispatched to TTS as their own clipped utterance.
+        """
+        stripped = text.rstrip()
+        if not stripped or stripped[-1] not in ".!?":
+            return False
+        tokens = stripped.split()
+        if not tokens:
+            return False
+        token = tokens[-1].rstrip(".!?").lower()
+        if not token:
+            return False
+        if token in cls._ABBREVIATIONS:
+            return True
+        # Single-letter initial (e.g. "J." in "J. R. R. Tolkien").
+        return len(token) == 1 and token.isalpha()
+
     def _enqueue_sentence(self, sentence: str, source: str = "response") -> None:
         """Enqueue a sentence for TTS, tagged with its character span in the
         published agent_text so the teleprompter can light it up as spoken.
@@ -999,22 +1036,27 @@ class BaseAgent(ABC):
         is dispatched to the TTS queue immediately.
         """
         self._sentence_buffer += new_text
+        buf = self._sentence_buffer
 
-        # Split on sentence boundaries
-        parts = self._SENTENCE_END.split(self._sentence_buffer)
+        # Walk the boundaries in order. A boundary whose preceding token is an
+        # abbreviation or initial (e.g. "Dr.", "z. B.") is a false positive —
+        # we skip it WITHOUT advancing ``last_end`` so the fragment keeps
+        # accumulating into the next candidate instead of being dispatched as a
+        # clipped standalone utterance (#304 B7). finditer (not split) preserves
+        # the original text and inter-sentence whitespace exactly.
+        last_end = 0
+        for m in self._SENTENCE_END.finditer(buf):
+            candidate = buf[last_end:m.start()].strip()
+            if not candidate:
+                last_end = m.end()
+                continue
+            if self._is_false_boundary(candidate):
+                continue
+            self._enqueue_sentence(candidate, source=self._current_sentence_source)
+            last_end = m.end()
 
-        if len(parts) <= 1:
-            # No complete sentence yet — keep buffering
-            return
-
-        # All parts except the last are complete sentences
-        for sentence in parts[:-1]:
-            sentence = sentence.strip()
-            if sentence:
-                self._enqueue_sentence(sentence, source=self._current_sentence_source)
-
-        # Keep the last (incomplete) part in the buffer
-        self._sentence_buffer = parts[-1]
+        # Keep the remaining (incomplete) text in the buffer
+        self._sentence_buffer = buf[last_end:]
 
     def _flush_sentence_buffer(self) -> str:
         """Flush and return any remaining text in the sentence buffer."""
