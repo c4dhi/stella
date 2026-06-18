@@ -58,6 +58,33 @@ def test_steering_block_lists_pending_and_demands_recall() -> None:
     assert "set_deliverable" in prompt
 
 
+def test_text_response_steering_assumes_answer_recorded_and_forbids_reconfirm() -> None:
+    # #304: Phase 1 (spoken reply) is composed before extraction records the
+    # user's answer. The text variant must tell the agent to assume the answer is
+    # being recorded and move on — never echo-confirm it ("just to confirm…").
+    text = LightPromptBuilder().build_system_prompt(
+        _context_with_pending(), for_text_response=True
+    )
+    assert "## Steering This Turn" in text
+    lower = text.lower()
+    assert "being recorded" in lower
+    assert "just to confirm" in lower  # named as a banned pattern
+    assert "move the conversation forward" in lower
+    # The collection-pressure framing must NOT drive the spoken reply.
+    assert "Your job this turn is to make progress" not in text
+
+
+def test_tool_pass_keeps_collection_pressure_text_pass_drops_it() -> None:
+    # The two passes diverge: extraction keeps "make progress / set_deliverable",
+    # the spoken pass does not (so it stops re-asking what was just answered).
+    b = LightPromptBuilder()
+    tools = b.build_system_prompt(_context_with_pending())
+    text = b.build_system_prompt(_context_with_pending(), for_text_response=True)
+    assert "Your job this turn is to make progress" in tools
+    assert "set_deliverable" in tools
+    assert "Your job this turn is to make progress" not in text
+
+
 def test_steering_escalates_when_stuck() -> None:
     stuck = LightPromptBuilder().build_system_prompt(_context_with_pending(turns_without_progress=4))
     assert "4 turns" in stuck
@@ -162,7 +189,9 @@ class _FakeToolProcessor:
     def __init__(self, result: ToolProcessorResult) -> None:
         self._result = result
 
-    async def process(self, session_id, system_prompt, user_message) -> AsyncIterator[Any]:
+    async def process(
+        self, session_id, system_prompt, user_message, text_system_prompt=None
+    ) -> AsyncIterator[Any]:
         # Mimic the real processor: yields outputs then the result sentinel.
         yield self._result
 
@@ -188,10 +217,13 @@ def _run_turn(agent: StellaLightAgent) -> Dict[str, Any]:
     captured: Dict[str, Any] = {}
     real_build = agent.prompt_builder.build_system_prompt
 
-    def _capture(context: Dict[str, Any]) -> str:
-        captured["context"] = context
-        out = real_build(context)
-        captured["prompt"] = out
+    def _capture(context: Dict[str, Any], *, for_text_response: bool = False) -> str:
+        out = real_build(context, for_text_response=for_text_response)
+        # Capture the tool-pass prompt (the one with full collection steering);
+        # the agent now also builds a spoken-pass variant per turn.
+        if not for_text_response:
+            captured["context"] = context
+            captured["prompt"] = out
         return out
 
     agent.prompt_builder.build_system_prompt = _capture  # type: ignore[assignment]
@@ -255,7 +287,9 @@ def test_transition_flag_not_stale_after_midturn_failure(monkeypatch: pytest.Mon
     assert agent._state_just_changed is True
 
     class _BoomToolProcessor:
-        async def process(self, session_id, system_prompt, user_message):
+        async def process(
+            self, session_id, system_prompt, user_message, text_system_prompt=None
+        ):
             raise RuntimeError("mid-stream boom")
             yield  # pragma: no cover - makes this an async generator
 

@@ -19,13 +19,20 @@ class LightPromptBuilder:
     skip_task, skip_state).
     """
 
-    def build_system_prompt(self, context: Dict[str, Any]) -> str:
+    def build_system_prompt(
+        self, context: Dict[str, Any], *, for_text_response: bool = False
+    ) -> str:
         """
         Build complete system prompt with embedded guardrails.
 
         Args:
             context: State machine context from get_context_for_prompt()
                      May include 'plan_system_prompt' for custom identity/instructions
+            for_text_response: When True, build the prompt for the spoken-reply
+                     pass (Phase 1) — the steering assumes the user's latest answer
+                     is being recorded this turn, so the reply moves forward instead
+                     of re-confirming it. When False (default), build the
+                     tool/extraction pass (Phase 2) with full collection pressure.
 
         Returns:
             Complete system prompt string
@@ -90,7 +97,9 @@ class LightPromptBuilder:
         # most salient instruction the model sees before responding.
         if state:
             parts.append(
-                self._build_steering(deliverables, turns_without_progress)
+                self._build_steering(
+                    deliverables, turns_without_progress, for_text_response
+                )
             )
 
         return "\n\n".join(parts)
@@ -335,6 +344,7 @@ The user's words decide which skip tool you use — read the scope literally:
         self,
         deliverables: List[Dict],
         turns_without_progress: int = 0,
+        for_text_response: bool = False,
     ) -> str:
         """Build deliverable-driven steering for the current turn (#306).
 
@@ -342,6 +352,14 @@ The user's words decide which skip tool you use — read the scope literally:
         of drifting into open-ended coaching questions that collect nothing, and
         tells it to record answers the user already gave in recent history rather
         than re-asking. Escalates when the turn counter shows it is stuck.
+
+        ``for_text_response`` switches to the spoken-reply (Phase 1) variant: the
+        reply is composed from the turn-start snapshot, *before* extraction records
+        the user's latest answer, so the collection-pressure framing ("keep
+        pursuing X") makes the agent re-ask or echo-confirm what the user just
+        said. The text variant instead tells it to assume the answer is being
+        recorded and to move forward — while the tool/extraction pass keeps the
+        full collection pressure so recording still happens.
         """
         pending = [d for d in deliverables if d.get("status") == "pending"]
         turns_without_progress = turns_without_progress or 0
@@ -350,27 +368,55 @@ The user's words decide which skip tool you use — read the scope literally:
         if pending:
             keys = ", ".join(str(d.get("key")) for d in pending if d.get("key"))
             phase_clause = f" for this phase: {keys}" if keys else " for this phase"
-            parts.append(
-                "Your job this turn is to make progress on the remaining pending "
-                f"deliverables{phase_clause}. "
-                "Every question you ask must move toward one of them."
-            )
-            parts.append(
-                "Do NOT ask open-ended questions that collect none of these "
-                '(e.g. "what motivates you?", "what do you enjoy most?", '
-                '"want to experiment with different types?") — they make the '
-                "conversation linger without recording anything. Anchor your "
-                "follow-up to the next pending deliverable, record it with "
-                "set_deliverable, then complete_task and move on."
-            )
-            parts.append(
-                "**Recall what the user already said:** re-scan the recent "
-                "conversation above. If the user has ALREADY given information that "
-                "satisfies a pending deliverable — even a few turns ago, and even if "
-                "it was not in their latest message — call set_deliverable for it NOW "
-                "instead of asking again. Re-asking for something they already told "
-                "you is the worst failure mode."
-            )
+            if for_text_response:
+                # Phase 1 (spoken reply): the user has just responded; assume what
+                # they gave is being recorded right now. Receive it and advance —
+                # never re-ask or echo-confirm it (the #304 re-confirm loop).
+                still_open = (
+                    f" the items still open for this phase ({keys})"
+                    if keys else " whatever is still open for this phase"
+                )
+                parts.append(
+                    "The user has just responded. Assume whatever information they "
+                    "provided is being recorded RIGHT NOW. Your spoken reply must "
+                    "acknowledge what they said and MOVE THE CONVERSATION FORWARD — "
+                    f"to one of{still_open}, or, if they just gave the last one, "
+                    "wrap this topic up and ease toward what comes next."
+                )
+                parts.append(
+                    "NEVER ask the user to confirm, repeat, or restate something "
+                    'they just told you. No "just to confirm…", no "so you mean… '
+                    'right?", no echoing their own answer back to them as a '
+                    "question. Re-asking or re-confirming what they already gave you "
+                    "— in this message or earlier — is the worst failure mode here."
+                )
+                parts.append(
+                    "Do NOT ask open-ended questions that go nowhere "
+                    '(e.g. "what motivates you?", "what do you enjoy most?"). '
+                    "Anchor your one follow-up to the next thing still open."
+                )
+            else:
+                parts.append(
+                    "Your job this turn is to make progress on the remaining pending "
+                    f"deliverables{phase_clause}. "
+                    "Every question you ask must move toward one of them."
+                )
+                parts.append(
+                    "Do NOT ask open-ended questions that collect none of these "
+                    '(e.g. "what motivates you?", "what do you enjoy most?", '
+                    '"want to experiment with different types?") — they make the '
+                    "conversation linger without recording anything. Anchor your "
+                    "follow-up to the next pending deliverable, record it with "
+                    "set_deliverable, then complete_task and move on."
+                )
+                parts.append(
+                    "**Recall what the user already said:** re-scan the recent "
+                    "conversation above. If the user has ALREADY given information that "
+                    "satisfies a pending deliverable — even a few turns ago, and even if "
+                    "it was not in their latest message — call set_deliverable for it NOW "
+                    "instead of asking again. Re-asking for something they already told "
+                    "you is the worst failure mode."
+                )
         else:
             parts.append(
                 "All deliverables for this phase are already collected. Complete the "
