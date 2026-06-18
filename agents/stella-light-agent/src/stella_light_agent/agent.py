@@ -523,6 +523,12 @@ class StellaLightAgent(BaseAgent):
 
         # Build prompts
         system_prompt = self.prompt_builder.build_system_prompt(sm_context)
+        # Spoken-reply (Phase 1) prompt: authored as if the user's latest answer is
+        # already being recorded, so the reply moves forward instead of re-confirming
+        # what they just said. Phase 2 still extracts from `system_prompt` (#304).
+        text_system_prompt = self.prompt_builder.build_system_prompt(
+            sm_context, for_text_response=True
+        )
         user_message = self.prompt_builder.build_user_message(
             user_input=input.text,
             conversation_history=conversation_history,
@@ -541,7 +547,8 @@ class StellaLightAgent(BaseAgent):
         async for output in self.tool_processor.process(
             session_id=input.session_id,
             system_prompt=system_prompt,
-            user_message=user_message
+            user_message=user_message,
+            text_system_prompt=text_system_prompt,
         ):
             if isinstance(output, ToolProcessorResult):
                 result = output

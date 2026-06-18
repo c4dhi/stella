@@ -44,6 +44,7 @@ import time
 import uuid
 from typing import AsyncIterator, Awaitable, Callable, List, Optional
 
+from stella_agent_sdk.env import env_int as _env_int
 from stella_agent_sdk.livekit.room import RoomManager
 from stella_agent_sdk.services.stt_client import STTClient, TranscriptEvent
 from stella_agent_sdk.services.tts_client import TTSClient
@@ -52,21 +53,42 @@ from stella_agent_sdk.messages.types import BargeInDecision
 logger = logging.getLogger(__name__)
 
 
-def _env_int(name: str, default: int) -> int:
-    """Read an int env var, tolerating empty/blank/invalid → default.
+# ── First-audible-token latency budget (#304 A1) ─────────────────────────────
+# Targets grounded in turn-taking research. The natural between-turn gap clusters
+# around ~200 ms across languages (Stivers et al. 2009, PNAS); spoken-dialogue
+# systems start to feel unnatural past ~2 s and read as a breakdown past ~4 s
+# (assemblyai low-latency-voice-ai; arXiv 2507.22352 / 2404.16053).
+#   • bridge  — the floor-holding ack must land INSIDE the gap window to do its
+#               job, so its target is tight (~500 ms).
+#   • response — the first audible token of the substantive answer; ≤1 s is
+#               comfortable.
+# Both share warn (>2 s, unnatural) and alarm (>4 s, perceived dead air)
+# ceilings. Targets are visibility-only (log + analytics payload); no behavior
+# changes here. All four are env-tunable.
+_BRIDGE_FIRST_BYTE_TARGET_MS = _env_int("STELLA_BRIDGE_FIRST_BYTE_TARGET_MS", 500)
+_RESPONSE_FIRST_BYTE_TARGET_MS = _env_int("STELLA_RESPONSE_FIRST_BYTE_TARGET_MS", 1000)
+_FIRST_BYTE_WARN_MS = _env_int("STELLA_FIRST_BYTE_WARN_MS", 2000)
+_FIRST_BYTE_ALARM_MS = _env_int("STELLA_FIRST_BYTE_ALARM_MS", 4000)
 
-    A declared optional env var can reach the pod as an empty string, which
-    ``os.getenv(name, default)`` returns instead of the default — so
-    ``int("")`` would crash at startup. Empty/whitespace/unparseable fall back.
-    """
-    raw = (os.getenv(name) or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
-        return default
+
+def _first_byte_target_ms(source: str) -> int:
+    """Per-source first-audible-token target in ms (bridge tight, response ≤1 s)."""
+    return (
+        _BRIDGE_FIRST_BYTE_TARGET_MS
+        if source == "bridge"
+        else _RESPONSE_FIRST_BYTE_TARGET_MS
+    )
+
+
+def _latency_status(source: str, elapsed_ms: float) -> str:
+    """Classify a first-byte latency against the budget: ok | over_target | warn | alarm."""
+    if elapsed_ms > _FIRST_BYTE_ALARM_MS:
+        return "alarm"
+    if elapsed_ms > _FIRST_BYTE_WARN_MS:
+        return "warn"
+    if elapsed_ms > _first_byte_target_ms(source):
+        return "over_target"
+    return "ok"
 
 
 # TTS output format (matches RoomManager's AudioSource and the TTS service).
@@ -1262,17 +1284,10 @@ class AudioPipeline:
                         logger.info("TTS interrupted mid-sentence")
                         return  # Don't retry if intentionally interrupted
 
-                    # Emit first-byte analytics events (once per source per turn)
-                    if source == "bridge" and not self._turn_bridge_tts_first_byte_emitted:
-                        self._turn_bridge_tts_first_byte_emitted = True
-                        if self.turn_anchor_ts > 0:
-                            elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                            asyncio.create_task(self._emit_analytics_event("bridge_tts_first_byte", elapsed))
-                    elif source == "response" and not self._turn_response_tts_first_byte_emitted:
-                        self._turn_response_tts_first_byte_emitted = True
-                        if self.turn_anchor_ts > 0:
-                            elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                            asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
+                    # Emit first-byte analytics + latency-budget check (once per
+                    # source per turn). Shared with the prefetched path via
+                    # _emit_first_byte so both report against the #304 A1 budget.
+                    self._emit_first_byte(source)
 
                     self._audio_active = True
                     await self._room.publish_audio(chunk.audio_data)
@@ -2006,17 +2021,51 @@ class AudioPipeline:
         return chunks
 
     def _emit_first_byte(self, source: str) -> None:
-        """Emit the TTS first-byte analytics event once per source per turn."""
+        """Emit the TTS first-byte analytics event once per source per turn.
+
+        Also evaluates the elapsed time against the #304 A1 latency budget,
+        logging at warn/error when the first audible token lands past the
+        unnatural/breakdown ceilings, and stamping target+status onto the
+        analytics payload so dashboards can chart it without re-deriving targets.
+        """
         if source == "bridge" and not self._turn_bridge_tts_first_byte_emitted:
             self._turn_bridge_tts_first_byte_emitted = True
             if self.turn_anchor_ts > 0:
                 elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                asyncio.create_task(self._emit_analytics_event("bridge_tts_first_byte", elapsed))
+                self._report_first_byte_latency("bridge", elapsed)
         elif source == "response" and not self._turn_response_tts_first_byte_emitted:
             self._turn_response_tts_first_byte_emitted = True
             if self.turn_anchor_ts > 0:
                 elapsed = (time.perf_counter() - self.turn_anchor_ts) * 1000
-                asyncio.create_task(self._emit_analytics_event("response_tts_first_byte", elapsed))
+                self._report_first_byte_latency("response", elapsed)
+
+    def _report_first_byte_latency(self, source: str, elapsed_ms: float) -> None:
+        """Log first-byte latency vs. the budget and emit the analytics event.
+
+        Centralises A1 so every first-byte path (streaming + prefetched) reports
+        identically. ``status`` ∈ {ok, over_target, warn, alarm}.
+        """
+        target_ms = _first_byte_target_ms(source)
+        status = _latency_status(source, elapsed_ms)
+        msg = (
+            f"[latency] {source} first audible token: {elapsed_ms:.0f}ms "
+            f"(target ≤{target_ms}ms, warn>{_FIRST_BYTE_WARN_MS}ms, "
+            f"alarm>{_FIRST_BYTE_ALARM_MS}ms) → {status}"
+        )
+        if status == "alarm":
+            logger.error(msg)
+        elif status == "warn":
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+        asyncio.create_task(
+            self._emit_analytics_event(
+                f"{source}_tts_first_byte",
+                elapsed_ms,
+                target_ms=target_ms,
+                status=status,
+            )
+        )
 
     async def _play_prefetched(
         self, chunks, source: str = "response", meta: Optional[dict] = None

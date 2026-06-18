@@ -19,13 +19,20 @@ class LightPromptBuilder:
     skip_task, skip_state).
     """
 
-    def build_system_prompt(self, context: Dict[str, Any]) -> str:
+    def build_system_prompt(
+        self, context: Dict[str, Any], *, for_text_response: bool = False
+    ) -> str:
         """
         Build complete system prompt with embedded guardrails.
 
         Args:
             context: State machine context from get_context_for_prompt()
                      May include 'plan_system_prompt' for custom identity/instructions
+            for_text_response: When True, build the prompt for the spoken-reply
+                     pass (Phase 1) — the steering assumes the user's latest answer
+                     is being recorded this turn, so the reply moves forward instead
+                     of re-confirming it. When False (default), build the
+                     tool/extraction pass (Phase 2) with full collection pressure.
 
         Returns:
             Complete system prompt string
@@ -55,8 +62,14 @@ class LightPromptBuilder:
                 self._build_guardrails(),
             ]
         else:
+            # A custom delivery prompt (custom_guidelines) owns language — don't
+            # let the default identity force German past it (#304 review #10).
             parts = [
-                self._build_identity(plan_system_prompt, custom_persona),
+                self._build_identity(
+                    plan_system_prompt,
+                    custom_persona,
+                    operator_owns_language=bool(custom_guidelines),
+                ),
                 self._build_conversational_style(custom_guidelines),
                 self._build_guardrails(),
             ]
@@ -84,7 +97,9 @@ class LightPromptBuilder:
         # most salient instruction the model sees before responding.
         if state:
             parts.append(
-                self._build_steering(deliverables, turns_without_progress)
+                self._build_steering(
+                    deliverables, turns_without_progress, for_text_response
+                )
             )
 
         return "\n\n".join(parts)
@@ -93,9 +108,18 @@ class LightPromptBuilder:
         self,
         plan_system_prompt: Optional[str] = None,
         custom_persona: Optional[str] = None,
+        operator_owns_language: bool = False,
     ) -> str:
         """
         Build STELLA identity section.
+
+        ``operator_owns_language`` suppresses the default identity's language rule
+        when the operator supplied a custom delivery prompt (custom_guidelines)
+        that should own language — otherwise the default "reply in German" rule
+        leaks past the override and the operator can't configure, say, an
+        English-only deployment (#304 review #10). It only affects the default
+        STELLA-identity branch; a plan prompt or custom persona already replaces
+        the whole block (and with it any language rule).
 
         Precedence mirrors stella-v2's response prompt:
           - plan_system_prompt AND custom_persona -> both are included
@@ -132,9 +156,17 @@ class LightPromptBuilder:
             return f"""## Your Identity
 {custom_persona}"""
 
-        # Default STELLA identity
-        return """## Your Identity
-You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.
+        # Default STELLA identity. The language rule lives here (the single source
+        # of truth — the conversational-style block only scopes its rules to that
+        # language, #304 review #11) and is dropped when a custom delivery prompt
+        # owns language (#304 review #10).
+        language_block = "" if operator_owns_language else """
+
+## Language (highest priority)
+- Respond in the SAME language the user speaks. If they speak German, your ENTIRE reply must be in German — not a single English word. If they speak English, reply in English.
+- When in doubt, default to German."""
+        return f"""## Your Identity
+You are STELLA, a warm and engaging AI companion supporting cognitive health and wellbeing.{language_block}
 
 ## Your Personality
 - Friendly, warm, and genuinely interested in the person you're speaking with
@@ -157,10 +189,25 @@ You are STELLA, a warm and engaging AI companion supporting cognitive health and
         return """## Conversational Style (CRITICAL - Follow These Rules)
 You are a calm, observant, and grounded conversationalist. Your goal is to sound like a thoughtful peer.
 
+### Language scope
+- All the rules below apply in WHATEVER language you are speaking — use that language's natural spoken register, not a literal translation of the English examples. (The rule for WHICH language to speak is in the identity section above.)
+
 ### Linguistic Rules
-- **Mandatory Contractions**: Never use "do not," "it is," or "I am." Always use "don't," "it's," "I'm," etc.
-- **Safe Fillers**: Occasionally start responses with "Yeah," "Well," "Right," or "I mean," followed by a comma. Do NOT use "Mhmm" or "Uh."
-- **Natural Transitions**: Use "Actually," "Anyway," or "Plus" instead of formal linking words.
+- **Mandatory Contractions**: Speak the way people actually talk, never like a written document.
+  EN: "don't", "it's", "I'm", "that's", "you're" — never "do not", "it is".
+  DE: "hab ich", "ist's", "geht's", "gibt's", "hab's" — never "habe ich", "ist es".
+- **Safe Fillers**: Occasionally open with a short filler + comma.
+  EN: "Yeah,", "Well,", "Right,", "I mean,".
+  DE: "Ja,", "Also,", "Okay,", "Ich mein,".
+  Do NOT use filler sounds that render poorly in TTS: "Mhmm", "Uh", "äh", "ähm".
+- **Natural Transitions**: Use light spoken connectors, not formal linking words.
+  EN: "Actually,", "Anyway,", "Plus".
+  DE: "Eigentlich,", "Übrigens,", "Außerdem".
+- **Lexical Mirroring**: Reuse the user's own words for things — if they say "workout," say "workout," not "exercise session"; if they say "Sport," keep "Sport," don't switch to "Bewegung." Don't rename or formalize the vocabulary they chose, and match their register (casual stays casual). Reusing someone's wording is how you signal you're actually listening.
+
+### Preference-Shaped Delivery
+- **Welcome content goes direct**: agreement, confirmation, or good news is delivered immediately with no hedging preface — get to the point.
+- **Harder content gets eased into**: a correction, a "no," or unwelcome news takes a brief softener FIRST, then the gentle substance — never a flat, blunt refusal. People naturally preface and mitigate the harder messages; a uniform flat style sounds robotic.
 
 ### TTS Optimization (for natural speech rhythm)
 - **Breathing Pauses**: Use a comma every 7-10 words to create natural pauses.
@@ -297,6 +344,7 @@ The user's words decide which skip tool you use — read the scope literally:
         self,
         deliverables: List[Dict],
         turns_without_progress: int = 0,
+        for_text_response: bool = False,
     ) -> str:
         """Build deliverable-driven steering for the current turn (#306).
 
@@ -304,6 +352,14 @@ The user's words decide which skip tool you use — read the scope literally:
         of drifting into open-ended coaching questions that collect nothing, and
         tells it to record answers the user already gave in recent history rather
         than re-asking. Escalates when the turn counter shows it is stuck.
+
+        ``for_text_response`` switches to the spoken-reply (Phase 1) variant: the
+        reply is composed from the turn-start snapshot, *before* extraction records
+        the user's latest answer, so the collection-pressure framing ("keep
+        pursuing X") makes the agent re-ask or echo-confirm what the user just
+        said. The text variant instead tells it to assume the answer is being
+        recorded and to move forward — while the tool/extraction pass keeps the
+        full collection pressure so recording still happens.
         """
         pending = [d for d in deliverables if d.get("status") == "pending"]
         turns_without_progress = turns_without_progress or 0
@@ -312,27 +368,55 @@ The user's words decide which skip tool you use — read the scope literally:
         if pending:
             keys = ", ".join(str(d.get("key")) for d in pending if d.get("key"))
             phase_clause = f" for this phase: {keys}" if keys else " for this phase"
-            parts.append(
-                "Your job this turn is to make progress on the remaining pending "
-                f"deliverables{phase_clause}. "
-                "Every question you ask must move toward one of them."
-            )
-            parts.append(
-                "Do NOT ask open-ended questions that collect none of these "
-                '(e.g. "what motivates you?", "what do you enjoy most?", '
-                '"want to experiment with different types?") — they make the '
-                "conversation linger without recording anything. Anchor your "
-                "follow-up to the next pending deliverable, record it with "
-                "set_deliverable, then complete_task and move on."
-            )
-            parts.append(
-                "**Recall what the user already said:** re-scan the recent "
-                "conversation above. If the user has ALREADY given information that "
-                "satisfies a pending deliverable — even a few turns ago, and even if "
-                "it was not in their latest message — call set_deliverable for it NOW "
-                "instead of asking again. Re-asking for something they already told "
-                "you is the worst failure mode."
-            )
+            if for_text_response:
+                # Phase 1 (spoken reply): the user has just responded; assume what
+                # they gave is being recorded right now. Receive it and advance —
+                # never re-ask or echo-confirm it (the #304 re-confirm loop).
+                still_open = (
+                    f" the items still open for this phase ({keys})"
+                    if keys else " whatever is still open for this phase"
+                )
+                parts.append(
+                    "The user has just responded. Assume whatever information they "
+                    "provided is being recorded RIGHT NOW. Your spoken reply must "
+                    "acknowledge what they said and MOVE THE CONVERSATION FORWARD — "
+                    f"to one of{still_open}, or, if they just gave the last one, "
+                    "wrap this topic up and ease toward what comes next."
+                )
+                parts.append(
+                    "NEVER ask the user to confirm, repeat, or restate something "
+                    'they just told you. No "just to confirm…", no "so you mean… '
+                    'right?", no echoing their own answer back to them as a '
+                    "question. Re-asking or re-confirming what they already gave you "
+                    "— in this message or earlier — is the worst failure mode here."
+                )
+                parts.append(
+                    "Do NOT ask open-ended questions that go nowhere "
+                    '(e.g. "what motivates you?", "what do you enjoy most?"). '
+                    "Anchor your one follow-up to the next thing still open."
+                )
+            else:
+                parts.append(
+                    "Your job this turn is to make progress on the remaining pending "
+                    f"deliverables{phase_clause}. "
+                    "Every question you ask must move toward one of them."
+                )
+                parts.append(
+                    "Do NOT ask open-ended questions that collect none of these "
+                    '(e.g. "what motivates you?", "what do you enjoy most?", '
+                    '"want to experiment with different types?") — they make the '
+                    "conversation linger without recording anything. Anchor your "
+                    "follow-up to the next pending deliverable, record it with "
+                    "set_deliverable, then complete_task and move on."
+                )
+                parts.append(
+                    "**Recall what the user already said:** re-scan the recent "
+                    "conversation above. If the user has ALREADY given information that "
+                    "satisfies a pending deliverable — even a few turns ago, and even if "
+                    "it was not in their latest message — call set_deliverable for it NOW "
+                    "instead of asking again. Re-asking for something they already told "
+                    "you is the worst failure mode."
+                )
         else:
             parts.append(
                 "All deliverables for this phase are already collected. Complete the "

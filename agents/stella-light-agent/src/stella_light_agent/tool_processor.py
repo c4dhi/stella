@@ -103,7 +103,8 @@ class ToolProcessor:
         self,
         session_id: str,
         system_prompt: str,
-        user_message: str
+        user_message: str,
+        text_system_prompt: Optional[str] = None,
     ) -> AsyncIterator[AgentOutput]:
         """
         Process input with optimized text-first architecture.
@@ -116,8 +117,15 @@ class ToolProcessor:
 
         Args:
             session_id: Current session ID
-            system_prompt: Complete system prompt with context
+            system_prompt: Complete system prompt for the tool/extraction pass
+                (Phase 2) — keeps the collection-pressure steering.
             user_message: User's input message
+            text_system_prompt: Optional system prompt for the spoken pass
+                (Phase 1). Lets the agent author the reply assuming the user's
+                latest answer is being recorded — so it moves forward instead of
+                re-confirming what was just said — while Phase 2 still extracts
+                from the unchanged collection context. Falls back to
+                ``system_prompt`` when not provided.
 
         Yields:
             AgentOutput messages (text chunks, final result)
@@ -125,9 +133,14 @@ class ToolProcessor:
         self.cancelled = False
         transcript_id = f"tool_{uuid.uuid4().hex[:8]}"
 
-        # Build initial messages
+        # Phase 2 (tool/extraction) context — unchanged collection pressure.
         messages = [
             LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=user_message)
+        ]
+        # Phase 1 (spoken reply) context — assumes the answer is being recorded.
+        text_messages = [
+            LLMMessage(role="system", content=text_system_prompt or system_prompt),
             LLMMessage(role="user", content=user_message)
         ]
 
@@ -159,7 +172,7 @@ class ToolProcessor:
         # Start LLM generation
         llm_task = asyncio.create_task(
             self.llm_service.generate(
-                messages=messages,
+                messages=text_messages,
                 config=text_config,
                 callback=callback,
                 component_name="tool_processor_text"

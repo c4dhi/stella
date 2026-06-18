@@ -401,7 +401,28 @@ class StellaV2Agent(BaseAgent):
                     input.session_id, "response_start", turn_id, self._elapsed_ms(),
                 )
 
-                sm_context["_collected_keys"] = collected_keys
+                # Re-anchor the response to the state the turn actually landed in:
+                # a phase may have completed and advanced during Stage 2, and the
+                # response must open the new phase rather than finish the old one.
+                # The transition signal comes from the task_extraction verdict (the
+                # SM tools report it) — no extra backend round-trips to detect.
+                # Done here (not before arbitration) so it's skipped on override/
+                # short-circuit turns where no LLM response is generated.
+                te_raw = next(
+                    (
+                        v.raw_output for v in all_verdicts
+                        if v.expert_name == "task_extraction" and v.success and v.raw_output
+                    ),
+                    {},
+                )
+                response_sm_context = await self._resolve_response_context(
+                    sm_context,
+                    resolved_language,
+                    transitioned=bool(te_raw.get("transitioned")),
+                    new_state_id=te_raw.get("new_state_id"),
+                    session_completed=bool(te_raw.get("session_completed")),
+                )
+                response_sm_context["_collected_keys"] = collected_keys
 
                 prepend_text = directive.resolved_response if directive.action == "prepend" else ""
 
@@ -411,7 +432,7 @@ class StellaV2Agent(BaseAgent):
                     user_input=input.text,
                     directive=arb_result.directive,
                     conversation_history=history,
-                    sm_context=sm_context,
+                    sm_context=response_sm_context,
                     plan_system_prompt=self._plan_system_prompt,
                     bridge=bridge,
                     prepend=prepend_text,
@@ -947,6 +968,57 @@ class StellaV2Agent(BaseAgent):
             if path.exists():
                 return str(path)
         return None
+
+    async def _resolve_response_context(
+        self,
+        sm_context: Dict[str, Any],
+        resolved_language: Optional[str],
+        transitioned: bool,
+        new_state_id: Optional[str],
+        session_completed: bool,
+    ) -> Dict[str, Any]:
+        """Return the sm_context to author the response against.
+
+        task_extraction (Stage 2) can complete the current phase and ADVANCE the
+        state machine mid-turn. The turn-start ``sm_context`` still describes the
+        phase we just left, so authoring the response against it makes the agent
+        keep talking about (and re-asking) the old phase while the progress panel
+        — read from the post-turn backend state — correctly shows the new one. The
+        two then disagree within a single turn (the #304 state-sync bug).
+
+        Detection is free: the state-machine tools already return
+        ``transitioned`` / ``new_state_id`` in their result data, surfaced on the
+        task_extraction verdict — so we re-fetch the full context ONLY when a
+        transition actually happened (no extra round-trips on the common,
+        non-transition turn, and none just to detect).
+
+        Falls back to the turn-start context (unchanged behaviour) when:
+        * no transition happened — preserves finishing an in-progress task first;
+        * the turn ended the session (``session_completed`` or
+          ``new_state_id == "__end__"``) — the closing farewell is emitted in
+          Stage 5; re-anchoring to the blank ``__end__`` sentinel would be wrong;
+        * the re-fetch comes back unusable (gRPC hiccup / empty).
+        """
+        if not transitioned or session_completed or not new_state_id or new_state_id == "__end__":
+            return sm_context
+        if not self.sm_client:
+            return sm_context
+
+        refreshed = await self._fetch_sm_context()
+        if not (refreshed and refreshed.get("state")):
+            return sm_context
+
+        if self._plan_system_prompt:
+            refreshed["plan_system_prompt"] = self._plan_system_prompt
+        refreshed["language"] = resolved_language
+        # _fetch_sm_context already detects the change vs the turn-start state;
+        # set it explicitly so the response eases into the new phase.
+        refreshed["state_just_changed"] = True
+        logger.info(
+            f"State advanced mid-turn → {new_state_id}; "
+            f"re-anchoring response to the new phase"
+        )
+        return refreshed
 
     async def _fetch_sm_context(self) -> Dict[str, Any]:
         """Fetch state from gRPC backend and build sm_context for the pipeline.
