@@ -26,6 +26,7 @@ import { VisualizerType } from '../face/types'
 import { apiClient } from '../../services/ApiClient'
 import { determineMessageRole, extractSpeakerInfo } from '../../lib/messageUtils'
 import { useTeleprompter } from '../../hooks/useTeleprompter'
+import { usePersistedState } from '../../hooks/usePersistedState'
 import { applyAgentAudioSilencing } from '../../lib/agentAudio'
 import type { DeliveryStatus } from '../../lib/types'
 
@@ -67,6 +68,39 @@ interface ParticipantSessionViewProps {
   sessionData: SessionData
 }
 
+/** A single switch row inside the transcript-settings menu (#343). */
+function TranscriptToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: () => void
+}) {
+  return (
+    <button
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      onClick={onChange}
+      className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-sm text-white hover:bg-white/10 transition-colors"
+    >
+      <span>{label}</span>
+      <span
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+          checked ? 'bg-emerald-500/80' : 'bg-white/15'
+        }`}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            checked ? 'translate-x-4' : 'translate-x-0.5'
+          }`}
+        />
+      </span>
+    </button>
+  )
+}
+
 // Warn the participant this many seconds before the session auto-ends (issue #198).
 const SESSION_TIMEOUT_WARNING_SECONDS = 30
 
@@ -95,7 +129,19 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
   const [isGalleryOpen, setIsGalleryOpen] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [showSubtitles, setShowSubtitles] = useState(true)
+  // Transcript overlays (#343): two independent, persisted preferences instead
+  // of one shared subtitles flag. Both default ON — same as the old single
+  // subtitles toggle — but can now be enabled/disabled independently.
+  const [showUserTranscript, setShowUserTranscript] = usePersistedState(
+    'stella.participant.showUserTranscript',
+    true
+  )
+  const [showAgentTranscript, setShowAgentTranscript] = usePersistedState(
+    'stella.participant.showAgentTranscript',
+    true
+  )
+  const [isSubtitleMenuOpen, setIsSubtitleMenuOpen] = useState(false)
+  const subtitleMenuRef = useRef<HTMLDivElement>(null)
   const [showControls, setShowControls] = useState(true)
   const [audioEnabled, setAudioEnabled] = useState(false)  // Tracks if user has enabled audio via interaction
   const [isSupportOpen, setIsSupportOpen] = useState(false)
@@ -127,8 +173,28 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     spokenText: teleprompterText,
     applyProgress: applySpeechProgress,
     noteAgentText: noteTeleprompterText,
+    clearSpoken: clearTeleprompterText,
   } = useTeleprompter()
   const [messages, setMessages] = useState<ParticipantMessage[]>([])
+
+  // Close the transcript-settings menu (#343) on outside click or Escape.
+  useEffect(() => {
+    if (!isSubtitleMenuOpen) return
+    const onPointerDown = (e: MouseEvent) => {
+      if (subtitleMenuRef.current && !subtitleMenuRef.current.contains(e.target as Node)) {
+        setIsSubtitleMenuOpen(false)
+      }
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsSubtitleMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isSubtitleMenuOpen])
 
   // Client-side backstop (issue #198): once time is up, guarantee the terminal
   // overlay eventually shows even if neither `session_ended` nor a room disconnect
@@ -590,6 +656,12 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
             // Message from current participant (self)
             if (isFinal) {
               setUserTranscript('')
+              // Teleprompter (#343): the user just finalized a turn and the
+              // agent is expected to reply. Drop the agent's PREVIOUS spoken
+              // text so it doesn't briefly re-appear once the user overlay
+              // clears. A genuine barge-in the agent resumes is left intact by
+              // the hook (frozen highlight) and restored on the next progress.
+              clearTeleprompterText()
 
               // Check for optimistic message confirmation by correlation ID
               if (correlationId && pendingCorrelationIds.has(correlationId)) {
@@ -720,7 +792,7 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         console.error('Error parsing data:', error)
       }
     },
-    [pendingCorrelationIds, sessionData.identity, sessionData.participantName, sessionData.maxSessionDurationSeconds, applySpeechProgress, noteTeleprompterText]
+    [pendingCorrelationIds, sessionData.identity, sessionData.participantName, sessionData.maxSessionDurationSeconds, applySpeechProgress, noteTeleprompterText, clearTeleprompterText]
   )
 
   // Handle room disconnection
@@ -1184,6 +1256,9 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
     )
   }
 
+  // True when either transcript overlay is enabled — lights up the settings icon.
+  const anyTranscriptOn = showUserTranscript || showAgentTranscript
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -1270,20 +1345,52 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
           <MessageSquare className="w-5 h-5" />
         </motion.button>
 
-        {/* Subtitles Toggle */}
-        <motion.button
-          onClick={() => setShowSubtitles(!showSubtitles)}
-          className={`p-3 rounded-full backdrop-blur-sm border transition-all duration-300 hover:scale-110 ${
-            showSubtitles
-              ? 'bg-white/20 border-white/30 text-white'
-              : 'bg-white/10 border-white/20 text-white/40'
-          }`}
-          title={showSubtitles ? 'Hide subtitles' : 'Show subtitles'}
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <Subtitles className={`w-5 h-5 ${!showSubtitles ? 'opacity-50' : ''}`} />
-        </motion.button>
+        {/* Transcript Settings (#343): independent, persisted toggles for the
+            participant's own spoken transcript and the agent's teleprompter. */}
+        <div ref={subtitleMenuRef} className="relative">
+          <motion.button
+            onClick={() => setIsSubtitleMenuOpen(open => !open)}
+            className={`p-3 rounded-full backdrop-blur-sm border transition-all duration-300 hover:scale-110 ${
+              anyTranscriptOn
+                ? 'bg-white/20 border-white/30 text-white'
+                : 'bg-white/10 border-white/20 text-white/40'
+            }`}
+            title="Transcript settings"
+            aria-haspopup="menu"
+            aria-expanded={isSubtitleMenuOpen}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Subtitles className={`w-5 h-5 ${!anyTranscriptOn ? 'opacity-50' : ''}`} />
+          </motion.button>
+
+          <AnimatePresence>
+            {isSubtitleMenuOpen && (
+              <motion.div
+                role="menu"
+                className="absolute right-0 top-full mt-2 w-60 rounded-2xl bg-black/70 backdrop-blur-md border border-white/15 shadow-2xl p-2"
+                initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+              >
+                <p className="px-3 pt-1 pb-2 text-xs font-medium uppercase tracking-wide text-white/40">
+                  Transcripts
+                </p>
+                <TranscriptToggleRow
+                  label="My transcript"
+                  checked={showUserTranscript}
+                  onChange={() => setShowUserTranscript(v => !v)}
+                />
+                <TranscriptToggleRow
+                  label="Agent transcript"
+                  checked={showAgentTranscript}
+                  onChange={() => setShowAgentTranscript(v => !v)}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         {/* Gallery Button (only if not locked) */}
         {!sessionData.visualizerLocked && (
@@ -1377,14 +1484,14 @@ export default function ParticipantSessionView({ sessionData }: ParticipantSessi
         text={teleprompterText}
         spokenChar={teleprompterSpokenChar}
         theme={currentVisualizer}
-        isVisible={showSubtitles && !isChatOpen && (sessionTimeUp || !userTranscript.trim())}
+        isVisible={showAgentTranscript && !isChatOpen && (sessionTimeUp || !userTranscript.trim())}
       />
 
       {/* Transcript Overlay — hidden once time is up so it can't mask the farewell. */}
       <TranscriptOverlay
         transcript={userTranscript}
         theme={currentVisualizer}
-        isVisible={showSubtitles && !sessionTimeUp}
+        isVisible={showUserTranscript && !sessionTimeUp}
       />
 
       {/* Bottom hint */}

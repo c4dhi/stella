@@ -49,6 +49,13 @@ export interface Teleprompter {
   applyProgress: (data: AgentSpeechProgress) => void
   /** Record the latest `agent_text` for a transcript (binds + dims ahead of voice). */
   noteAgentText: (transcriptId: string, text: string) => void
+  /**
+   * Drop the visible spoken backdrop so a finished/interrupted agent turn stops
+   * lingering on screen (e.g. once the user has finalized their reply). The
+   * transcript binding and any frozen highlight are left intact, so a genuine
+   * barge-in that the agent resumes is restored unchanged by {@link applyProgress}.
+   */
+  clearSpoken: () => void
 }
 
 export function useTeleprompter(): Teleprompter {
@@ -222,6 +229,18 @@ export function useTeleprompter(): Teleprompter {
     [beginTranscript, clearFrozen, ensureLoop, resetSchedule]
   )
 
+  // Clear the dim backdrop without disturbing the turn binding or frozen
+  // highlight. Called when the heard turn is over and its text must not linger
+  // (a finalized user message awaiting the next agent reply). Deliberately a
+  // no-op while the agent is actively speaking (live cursor, not frozen) so we
+  // never blank a sentence mid-flight; a frozen barge-in IS cleared, and if the
+  // agent resumes that same message applyProgress restores spokenText from
+  // textByTranscriptRef, so the interrupted → resume path is preserved.
+  const clearSpoken = useCallback(() => {
+    if (rafRef.current != null && !frozenRef.current) return
+    setSpokenText('')
+  }, [])
+
   // Cancel any pending animation frame on unmount.
   useEffect(
     () => () => {
@@ -230,5 +249,5 @@ export function useTeleprompter(): Teleprompter {
     []
   )
 
-  return { spokenChar, spokenTranscriptId, frozenSpoken, spokenText, applyProgress, noteAgentText }
+  return { spokenChar, spokenTranscriptId, frozenSpoken, spokenText, applyProgress, noteAgentText, clearSpoken }
 }
