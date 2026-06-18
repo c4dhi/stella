@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
 import { useThemeStore } from '../store/themeStore'
 import { startMicWithVu } from '../services/audio/capture'
-import TTSControlButton from './TTSControlButton'
 import { useMessaging } from './messaging'
 
 export default function Composer() {
@@ -261,9 +260,6 @@ export default function Composer() {
               )}
             </motion.div>
           </motion.button>
-
-          {/* TTS Control Button - only appears during narration */}
-          <TTSControlButton />
 
           {/* Send Button */}
           <motion.button
