@@ -4,7 +4,7 @@ metadata:
   name: "STELLA V2"
   slug: "stella-v2-agent"
   version: "1.0.0"
-  description: "Streamlined 4-stage pipeline: Input Gate, Expert Pool, Deterministic Arbitration, Response Generator."
+  description: "Streamlined 3-stage pipeline: Expert Pool (self-gating), Deterministic Arbitration, Response Generator."
   icon: "🧠"
   tags:
     - voice

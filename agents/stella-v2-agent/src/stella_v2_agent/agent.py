@@ -1,18 +1,21 @@
-"""STELLA V2 Agent — streamlined 4-stage pipeline with deterministic arbitration.
+"""STELLA V2 Agent — streamlined 3-stage pipeline with deterministic arbitration.
 
-Processing Flow:
-1. Input Gate — fast JSON classification (~100-200ms)
-2. Expert Pool — parallel structured verdicts (~150-300ms wall-clock)
-3. Deterministic Arbitration — priority-based conflict resolution (~1ms, no LLM)
-4. Response Generator — streaming final answer with arbitration context
+Processing Flow (#363: no Input Gate — every enabled expert runs and self-gates):
+1. Expert Pool — parallel structured verdicts (~150-300ms wall-clock). The Bridge
+   Generator runs concurrently with this stage to mask latency.
+2. Deterministic Arbitration — priority-based conflict resolution (~1ms, no LLM).
+   This is the sole gate: it filters out tapped-out (non-flagging) verdicts.
+3. Response Generator — streaming final answer with arbitration context.
 
-Key differences from V1:
-- No SAFE/UNSAFE distinction: every input flows through all 4 stages
-- Input Gate returns structured JSON, selects which experts to run
-- Experts return short structured verdicts (not free-form text)
-- Arbitration is deterministic code (not an LLM call)
-- Expert configs are loadable from outside (like plans)
-- On Input Gate failure: predefined error message, no fallback generation
+Key properties:
+- No SAFE/UNSAFE distinction: every input flows through all stages.
+- Experts self-gate — each runs every turn and abstains via a non-flagging
+  verdict; there is no centralized relevance classifier (removed in #363).
+- Experts return short structured verdicts (not free-form text).
+- Arbitration is deterministic code (not an LLM call).
+- Expert configs are loadable from outside (like plans).
+- Garbled input is handled by the noise_detection expert's unclear → short-circuit
+  verdict (it replaces the old Input-Gate-failure path).
 """
 
 import asyncio
@@ -791,8 +794,9 @@ class StellaV2Agent(BaseAgent):
             }
             if experts_config:
                 self.expert_registry.apply_config(experts_config)
-                # Rebuild input gate with updated registry summaries
-                # (no need to rebuild objects — registry is shared by reference)
+                # The expert pool reads the registry by reference, so updated
+                # enabled/priority/custom-expert config takes effect with no
+                # object rebuild.
 
         # Apply threshold overrides
         if "history_limit" in thresholds:

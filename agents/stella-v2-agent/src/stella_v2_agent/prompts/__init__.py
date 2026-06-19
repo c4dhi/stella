@@ -1,1 +1,1 @@
-"""Prompt templates for Input Gate and Response Generator."""
+"""Prompt templates for the Bridge, Response Generator, and Barge-in evaluator."""

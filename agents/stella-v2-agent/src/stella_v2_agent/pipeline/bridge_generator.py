@@ -2,8 +2,8 @@
 
 Generates a brief, human-sounding acknowledgment (1-15 words, scaled to
 the user's energy) that buys time while the main pipeline
-(gate → experts → arbitration → response) completes. Runs in parallel with
-the Input Gate via asyncio.gather().
+(experts → arbitration → response) completes. Runs in parallel with the
+Expert Pool via asyncio.gather() (#363: there is no Input Gate to run beside).
 
 On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """

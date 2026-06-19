@@ -81,7 +81,7 @@ PROMPT_VARIABLES: List[PromptVariable] = [
     PromptVariable(
         name="stateContext",
         type="string",
-        description="Response/Input-gate: the current state-machine context "
+        description="Response generator: the current state-machine context "
         "(phase, goal, task instruction, deliverables still to collect / already "
         "collected, progress). Pre-formatted; place it with {{stateContext}} and "
         "wrap in {{#if stateContext}}…{{/if}}.",
@@ -92,18 +92,6 @@ PROMPT_VARIABLES: List[PromptVariable] = [
         description="Response generator: the arbitration directive for this turn "
         "(tone, must-avoid, follow-up guidance synthesised from the experts). "
         "Pre-formatted; place with {{directive}}, wrap in {{#if directive}}…{{/if}}.",
-    ),
-    PromptVariable(
-        name="experts",
-        type="string",
-        description="Input gate: the selectable experts as `- name: description` "
-        "lines. Place with {{experts}}.",
-    ),
-    PromptVariable(
-        name="rules",
-        type="string",
-        description="Input gate: the per-expert routing rules (from each expert's "
-        "trigger_criteria). Place with {{rules}}.",
     ),
 ]
 

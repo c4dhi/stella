@@ -1,7 +1,8 @@
-"""Stage 2: Expert Pool — parallel expert execution with structured verdicts.
+"""Stage 1: Expert Pool — parallel expert execution with structured verdicts.
 
-Takes the list of expert names from the Input Gate, runs them all in parallel
-via asyncio.gather(), and returns structured ExpertVerdict objects.
+Takes the enabled experts from the registry (#363: no Input Gate selects them —
+every enabled expert runs and self-gates), runs them all in parallel via
+asyncio.gather(), and returns structured ExpertVerdict objects.
 
 All experts (including task_extraction) run as foreground — their results
 are needed before response generation to ensure accurate state context.

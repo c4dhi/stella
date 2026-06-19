@@ -83,7 +83,8 @@ class ExpertConfig:
 
     Attributes:
         name: Unique expert identifier (e.g. "noise_detection").
-        description: What this expert does (shown to Input Gate).
+        description: What this expert does (shown in the agent configurator's
+            expert summary; #363 removed the Input Gate that also consumed it).
         priority: Higher priority wins in arbitration conflicts.
         enabled: Whether this expert is active.
         model: LLM model to use for this expert.
