@@ -26,6 +26,9 @@ from stella_agent_sdk.prompts.placeholder_compiler import (
     PLACEHOLDER_SPECS,
     COMPILER_VERSION,
     KNOWN_PLACEHOLDERS,
+    PLACEHOLDER_PATTERN,
+    HISTORY_PATTERN,
+    PLACEHOLDER_REGISTRY,
 )
 from stella_agent_sdk.prompts.registry import (
     compile,
@@ -57,4 +60,7 @@ __all__ = [
     "render_prompt",
     "PromptVariable",
     "format_history",
+    "PLACEHOLDER_PATTERN",
+    "HISTORY_PATTERN",
+    "PLACEHOLDER_REGISTRY",
 ]

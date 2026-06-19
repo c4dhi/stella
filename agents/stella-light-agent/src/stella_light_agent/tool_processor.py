@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Dict, Any, List, Optional
 
-from stella_agent_sdk.messages.output import AgentOutput
+from stella_agent_sdk import AgentOutput
 from stella_agent_sdk.tools import ToolRegistry, BaseTool, ToolResult
 
 from stella_agent_sdk.llm import (

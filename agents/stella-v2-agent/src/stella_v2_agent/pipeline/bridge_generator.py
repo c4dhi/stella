@@ -18,7 +18,7 @@ from stella_agent_sdk.env import env_bool as _env_bool, env_float as _env_float
 from stella_agent_sdk.llm import LLMService, LLMConfig, LLMMessage, LLMProvider
 from stella_agent_sdk.language import LANGUAGE_NAMES as _LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
-from stella_v2_agent.prompts.context import format_history
+from stella_agent_sdk.prompts import format_history
 import logging
 
 logger = logging.getLogger(__name__)

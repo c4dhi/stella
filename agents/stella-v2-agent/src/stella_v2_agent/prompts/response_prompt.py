@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 from stella_v2_agent.models.arbitration_result import ResponseDirective
 from stella_agent_sdk.language import LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
-from stella_v2_agent.prompts.context import format_history
+from stella_agent_sdk.prompts import format_history
 
 
 def build_response_system_prompt(

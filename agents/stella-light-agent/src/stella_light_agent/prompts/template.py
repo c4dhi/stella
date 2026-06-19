@@ -22,7 +22,7 @@ from typing import List
 # The render engine + PromptVariable descriptor are shared, in the SDK (single
 # source of truth). This module only declares THIS agent's variable registry and
 # re-exports render_prompt so existing importers keep working.
-from stella_agent_sdk.prompts.template import render_prompt, PromptVariable
+from stella_agent_sdk.prompts import render_prompt, PromptVariable
 
 __all__ = ["render_prompt", "PromptVariable", "PROMPT_VARIABLES"]
 

@@ -7,9 +7,9 @@ prompt. The tools are identical across agents, so the contract that explains how
 to use them must be identical too. Do not hand-duplicate this prose in an agent's
 prompts or config; import it from here.
 
-Stella V2's task_extraction expert and Stella Light's prompt builder both append
-``STATE_MACHINE_TOOL_GUIDANCE`` automatically. Edit the contract here and both
-agents pick up the change.
+Any agent that drives state through these tools appends
+``STATE_MACHINE_TOOL_GUIDANCE`` to its tool-calling prompt. Edit the contract
+here and every consumer picks up the change.
 """
 
 # The tool *schemas* (names/params/descriptions) come from each tool's
