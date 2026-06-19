@@ -162,6 +162,71 @@ def test_state_context_is_rendered_into_the_system_prompt():
     assert "Intro" in result
 
 
+def test_bridge_is_rendered_into_the_system_prompt_with_continuation_guidance():
+    # When a bridge was spoken, the final-stage prompt must carry it via {{bridge}}
+    # plus the "continue from your opener" guidance so the reply extends it
+    # seamlessly instead of restarting (#bridge-seam).
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), bridge="Got it, being healthier is the goal."
+    )
+    assert "Got it, being healthier is the goal." in result
+    assert "CONTINUE FROM" in result.upper()
+
+
+def test_no_bridge_omits_continuation_block():
+    # No bridge spoken -> the {{#if bridge}} block must not render (no dangling
+    # "continue from your opener" instruction on a fresh turn).
+    result = build_response_system_prompt({}, ResponseDirective(), bridge="")
+    assert "CONTINUE FROM" not in result.upper()
+
+
+# ---------------------------------------------------------------------------
+# State-condition flags drive the behavioral NOTE prose from the template,
+# not from hardcoded strings in _state_machine_section (#config-control).
+# ---------------------------------------------------------------------------
+
+def _sm_with_just_collected(*, all_pending_done: bool):
+    # current_task has one deliverable key that was just collected; a second
+    # pending deliverable exists unless all_pending_done.
+    deliverables = [{"key": "user_name", "status": "pending", "description": "name"}]
+    if not all_pending_done:
+        deliverables.append({"key": "age", "status": "pending", "description": "age"})
+    return {
+        "state": {"title": "Intro", "description": "Greet"},
+        "current_task": {"description": "Ask name", "deliverable_keys": ["user_name"]},
+        "deliverables": deliverables,
+        "_collected_keys": ["user_name"],
+    }
+
+
+def test_task_just_collected_renders_acknowledge_guidance():
+    sm = _sm_with_just_collected(all_pending_done=False)
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just answered for this task" in result
+    # The hardcoded "NOTE:" prose must no longer live in the structural section.
+    assert "NOTE: The user just provided" not in result
+
+
+def test_state_completing_renders_transition_guidance():
+    sm = _sm_with_just_collected(all_pending_done=True)
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "glide into the next topic" in result
+
+
+def test_state_just_changed_renders_ease_in_guidance():
+    sm = {"state": {"title": "Goals"}, "state_just_changed": True}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just moved into a new phase" in result
+
+
+def test_quiet_turn_renders_no_state_notes():
+    # Nothing special happened — none of the conditional NOTE blocks should fire.
+    sm = {"state": {"title": "Intro", "description": "Greet"}}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just answered for this task" not in result
+    assert "just moved into a new phase" not in result
+
+
 # ---------------------------------------------------------------------------
 # ResponseGenerator.apply_config()
 # ---------------------------------------------------------------------------

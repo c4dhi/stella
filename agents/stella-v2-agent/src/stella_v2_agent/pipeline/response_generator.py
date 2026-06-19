@@ -120,6 +120,7 @@ class ResponseGenerator:
             custom_guidelines=self.custom_guidelines,
             conversation_history=conversation_history,
             history_limit=self.history_limit or 10,
+            bridge=bridge,
         )
         user_message = build_response_user_message(user_input)
 
@@ -153,10 +154,12 @@ class ResponseGenerator:
             ))
             messages.append(LLMMessage(role="assistant", content=spoken_prefix))
         elif bridge:
-            messages.insert(1, LLMMessage(
-                role="system",
-                content=f'You already said "{bridge}" out loud as a brief, natural opener. Now continue as the SAME person, mid-breath. The combined output (opener + your continuation) is spoken as one seamless utterance, so it MUST flow as a single conversation turn.\n\nRules:\n- The opener was just the breath before you speak — NOT your whole reaction. Now bring something real: react to the SPECIFIC thing they said and/or move the conversation forward with a genuine thought.\n- Do NOT repeat, rephrase, or re-affirm the opener, and do NOT add a second greeting or acknowledgment — that part is already done.\n- Do NOT comment on the opener (no "I\'m glad to hear that", no "That said...")\n- Pick up right where it left off, so it sounds like one person kept talking.\n- Example: opener "Oh nice, okay." → you continue "The no-gear setup — you can train anywhere. Is running your wind-down or the main event?" → together: "Oh nice, okay. The no-gear setup — you can train anywhere. Is running your wind-down or the main event?"\n- Example: opener "Yeah, okay, I get that, it\'s been a lot." → you continue "Work stress has a way of eating the time you\'d actually move in. What still feels doable on the rough days?" → together as one turn.',
-            ))
+            # The "continue seamlessly from the bridge" guidance lives in the
+            # configurable response prompt (rendered via {{#if bridge}} / {{bridge}}
+            # in build_response_system_prompt) so operators own it. Here we only
+            # apply the structural mechanism: replay the bridge as the assistant's
+            # own in-progress turn so the model literally continues it rather than
+            # re-greeting. The two share one transcript_id → one seamless utterance.
             messages.append(LLMMessage(role="assistant", content=bridge))
 
         config = LLMConfig(

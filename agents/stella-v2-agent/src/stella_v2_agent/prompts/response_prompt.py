@@ -23,14 +23,16 @@ def build_response_system_prompt(
     custom_guidelines: Optional[str] = None,
     conversation_history: Optional[List[Dict[str, str]]] = None,
     history_limit: int = 10,
+    bridge: str = "",
 ) -> str:
     """Build the complete system prompt for the Response Generator.
 
     The persona is used verbatim (so a plan-authored persona is never
     reinterpreted), and the conversation guidelines are rendered through the
     template interface: the editable guidelines decide WHERE the turn's runtime
-    context goes via {{conversationHistory}}, {{stateContext}}, {{directive}} and
-    {{language}}. Nothing is appended in code — the template owns the layout.
+    context goes via {{conversationHistory}}, {{stateContext}}, {{directive}},
+    {{language}} and {{bridge}}. Nothing is appended in code — the template owns
+    the layout.
 
     Args:
         sm_context: State machine context for conversation awareness.
@@ -40,6 +42,12 @@ def build_response_system_prompt(
         custom_guidelines: Optional custom guidelines from Agent Configurator.
         conversation_history: Recent turns, exposed as {{conversationHistory}}.
         history_limit: How many recent turns to include.
+        bridge: The short acknowledgment already spoken to the user this turn
+            (the Bridge stage). Exposed as {{bridge}} so the editable guidelines
+            can instruct the reply to continue seamlessly from it instead of
+            restarting. This is a RESPONSE-GENERATOR-only variable — experts
+            never see the bridge (see PROMPT_VARIABLES note). Empty when no
+            bridge was spoken.
 
     Returns:
         Complete system prompt string.
@@ -67,6 +75,10 @@ def build_response_system_prompt(
         "stateContext": _state_machine_section(sm_context),
         "directive": directive.to_prompt_section() if directive else "",
         "language": _language_directive(sm_context.get("language")) or "",
+        "bridge": bridge or "",
+        # Runtime flags so the editable guidelines own the "just collected /
+        # phase completing / just transitioned" behavioral prose via {{#if ...}}.
+        **_state_conditions(sm_context),
     }
     sections.append(render_prompt(guidelines, ctx))
 
@@ -116,6 +128,22 @@ def _conversation_guidelines() -> str:
 - Offer a thought as often as you ask; not every turn needs a question. Don't run "acknowledge + question" every turn — that's what makes you a questionnaire.
 - Natural contractions and the occasional light filler. Reuse the user's own words.
 - 1-3 sentences, ~25-45 words. At most one question per turn. No markdown, bullets, or emojis.
+{{#if taskJustCollected}}{{#if stateCompleting}}
+
+The user just gave everything this phase needed. Don't re-ask any of it — acknowledge what they shared and glide into the next topic so it feels like a conversation, not a checklist.{{#if nextTopicHint}} Next topic: {{nextTopicHint}}{{/if}}{{else}}
+
+The user just answered for this task. Don't re-ask it — acknowledge it naturally and connect it to where you head next.{{/if}}{{/if}}
+{{#if stateJustChanged}}
+
+You just moved into a new phase. Ease in — connect it to what you were just talking about rather than announcing a topic change.
+{{/if}}
+{{#if bridge}}
+
+CONTINUE FROM WHAT YOU ALREADY SAID — you have just spoken this opener aloud: "{{bridge}}". Your reply is appended to it and spoken as ONE seamless utterance, so:
+- Do NOT restate, rephrase, define, or re-explain what the opener already conveyed. Never open with a textbook definition of something you just referenced.
+- Do NOT add a second greeting or acknowledgment — the opener already did that.
+- Pick up mid-breath, as the same person continuing: bring something real (react to the specific thing they said and/or move forward), don't reset and start the thought over.
+{{/if}}
 {{#if directive}}
 
 {{directive}}
@@ -166,39 +194,15 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
 
         # If any deliverables for this task were just collected, suppress the
         # instruction (which typically says "ask the user...") to prevent
-        # re-asking about information already provided.
+        # re-asking about information already provided. The behavioral guidance
+        # for that case (acknowledge, transition, ease into a new phase) is no
+        # longer hardcoded here — it lives in the editable conversation
+        # guidelines, gated on the {{taskJustCollected}} / {{stateCompleting}} /
+        # {{stateJustChanged}} runtime flags (see _state_conditions).
         task_del_keys = set(current_task.get("deliverable_keys", []))
         task_keys_just_collected = task_del_keys & collected_keys
 
-        if task_keys_just_collected:
-            # Don't show the instruction — it would tell the LLM to ask for
-            # something the user already provided this turn.
-            all_pending_keys = {
-                d["key"] for d in sm_context.get("deliverables", [])
-                if d.get("status") == "pending"
-            }
-            state_completing = all_pending_keys.issubset(collected_keys)
-
-            if state_completing:
-                next_hint, _, _ = _get_next_state_hint(sm_context)
-                note = (
-                    "NOTE: The user just provided all the information needed for this phase. "
-                    "Do NOT re-ask what they said. Acknowledge what they shared, then naturally "
-                    "transition to the next topic — connect what they just told you to where "
-                    "you're heading next so it feels like a conversation, not a checklist."
-                )
-                if next_hint:
-                    note += f" Next topic: {next_hint}"
-                parts.append(note)
-            else:
-                parts.append(
-                    "NOTE: The user just provided information for this task. "
-                    "Do NOT re-ask what they said. Acknowledge it naturally, and when "
-                    "you move to the next topic, connect it to what they just shared "
-                    "so the transition feels smooth."
-                )
-        elif instruction:
-            # No deliverables just collected — show the instruction normally
+        if not task_keys_just_collected and instruction:
             parts.append(f"Instruction: {instruction}")
 
     # Filter out just-collected deliverables from the pending list.
@@ -228,10 +232,43 @@ def _state_machine_section(sm_context: Dict[str, Any]) -> str:
     if pct > 0:
         parts.append(f"Overall progress: {pct:.0f}%")
 
-    if sm_context.get("state_just_changed"):
-        parts.append("NOTE: We just moved into a new conversation phase. Ease into it — connect it to what you were just talking about rather than announcing a topic change.")
-
     return "\n".join(parts)
+
+
+def _state_conditions(sm_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute the per-turn runtime flags the response guidelines reference via
+    {{#if ...}} blocks. This is what lets the EDITABLE guidelines own the
+    behavioral NOTE prose (acknowledge what was shared, don't re-ask, ease into a
+    new phase) instead of hardcoding it in _state_machine_section.
+
+    Returns:
+        taskJustCollected: the user just provided a deliverable for the current task.
+        stateCompleting:   …and that completed every pending deliverable in the phase.
+        stateJustChanged:  the conversation just transitioned into a new phase.
+        nextTopicHint:     the next phase/task hint (only when stateCompleting).
+    """
+    flags: Dict[str, Any] = {
+        "taskJustCollected": False,
+        "stateCompleting": False,
+        "stateJustChanged": bool(sm_context.get("state_just_changed")) if sm_context else False,
+        "nextTopicHint": "",
+    }
+    if not sm_context:
+        return flags
+
+    collected_keys = set(sm_context.get("_collected_keys", []))
+    current_task = sm_context.get("current_task")
+    if current_task and (set(current_task.get("deliverable_keys", [])) & collected_keys):
+        flags["taskJustCollected"] = True
+        all_pending_keys = {
+            d["key"] for d in sm_context.get("deliverables", [])
+            if d.get("status") == "pending"
+        }
+        if all_pending_keys.issubset(collected_keys):
+            flags["stateCompleting"] = True
+            hint, _, _ = _get_next_state_hint(sm_context)
+            flags["nextTopicHint"] = hint or ""
+    return flags
 
 
 def _get_next_state_hint(sm_context: Dict[str, Any]) -> tuple:

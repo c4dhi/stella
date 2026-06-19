@@ -93,6 +93,45 @@ PROMPT_VARIABLES: List[PromptVariable] = [
         "(tone, must-avoid, follow-up guidance synthesised from the experts). "
         "Pre-formatted; place with {{directive}}, wrap in {{#if directive}}…{{/if}}.",
     ),
+    PromptVariable(
+        name="taskJustCollected",
+        type="boolean",
+        description="Response generator: true when the user just provided a "
+        "deliverable for the current task this turn. Wrap acknowledge-don't-re-ask "
+        "guidance in {{#if taskJustCollected}}…{{/if}}.",
+    ),
+    PromptVariable(
+        name="stateCompleting",
+        type="boolean",
+        description="Response generator: true when the just-collected answer "
+        "completed every pending deliverable in the current phase (use inside "
+        "{{#if taskJustCollected}} to tell the reply to transition to the next "
+        "topic). Pairs with {{nextTopicHint}}.",
+    ),
+    PromptVariable(
+        name="stateJustChanged",
+        type="boolean",
+        description="Response generator: true on the first turn after moving into "
+        "a new conversation phase. Wrap 'ease into the new phase' guidance in "
+        "{{#if stateJustChanged}}…{{/if}}.",
+    ),
+    PromptVariable(
+        name="nextTopicHint",
+        type="string",
+        description="Response generator: a short hint about the next phase/task, "
+        "set only when {{stateCompleting}} is true. Place with {{nextTopicHint}}.",
+    ),
+    PromptVariable(
+        name="bridge",
+        type="string",
+        description="Response generator ONLY: the short acknowledgment already "
+        "spoken aloud this turn by the Bridge stage. The reply is appended to it "
+        "and spoken as one seamless utterance, so use {{#if bridge}}…{{bridge}}…"
+        "{{/if}} to tell the reply to continue from it (don't re-greet, don't "
+        "restate or define what the opener already said). Not available to "
+        "experts — only the final response stage sees the bridge. Empty when no "
+        "bridge was spoken.",
+    ),
 ]
 
 _VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
