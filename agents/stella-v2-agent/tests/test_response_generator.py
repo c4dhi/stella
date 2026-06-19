@@ -248,9 +248,10 @@ def test_apply_config_overrides_persona_and_history_limit():
 
 # ---------------------------------------------------------------------------
 # ResponseGenerator.generate() message assembly — the bridge-continuation
-# contract is injected in CODE (single source of truth), so it survives even a
-# stale/trimmed operator config that lacks the {{#if bridge}} block. This is
-# what prevents the "double bridge" (reply re-greeting after the spoken opener).
+# guidance is PROSE owned by the editable response prompt (rendered around the
+# {{bridge}} injection in the system prompt), not hidden in code. The only
+# auto-injected mechanism here is replaying the bridge as the assistant's
+# in-progress turn so the model literally continues it (one seamless utterance).
 # ---------------------------------------------------------------------------
 
 import asyncio
@@ -267,8 +268,9 @@ class _CapturingLLMService:
 
     async def generate(self, messages, config, callback, component_name="unknown"):
         self.captured_messages = messages
-        await callback.on_complete(LLMResponse(content="continued reply", usage_tokens=0))
-        return LLMResponse(content="continued reply", usage_tokens=0)
+        resp = LLMResponse(content="continued reply", model="test", provider="test")
+        await callback.on_complete(resp)
+        return resp
 
 
 def _run_generate(gen, **kwargs):
@@ -282,9 +284,10 @@ def _roles_and_contents(messages):
     return [(m.role, m.content) for m in messages]
 
 
-def test_bridge_injects_code_owned_continuation_instruction():
-    # Even with NO custom guidelines configured, the response generator must tell
-    # the LLM the bridge was already spoken and must not be repeated.
+def test_bridge_continuation_guidance_lives_in_the_system_prompt():
+    # The "continue from the opener, don't re-greet" guidance is rendered into the
+    # system prompt around {{bridge}} (editable, visible) — NOT a hidden code-only
+    # system message. The bridge is also replayed as the assistant's in-progress turn.
     svc = _CapturingLLMService()
     gen = ResponseGenerator(llm_service=svc)
     _run_generate(
@@ -297,18 +300,19 @@ def test_bridge_injects_code_owned_continuation_instruction():
         bridge="Bodyweight exercises are great!",
     )
     rc = _roles_and_contents(svc.captured_messages)
-    # A system message carries the already-spoken bridge + don't-repeat rules.
-    bridge_system = [c for r, c in rc if r == "system" and "ALREADY said this aloud" in c]
-    assert bridge_system, "expected a code-injected system message about the spoken bridge"
-    assert "Bodyweight exercises are great!" in bridge_system[0]
-    assert "second greeting or acknowledgment" in bridge_system[0]
-    # The bridge is also replayed as the assistant's own in-progress turn.
+    # Exactly ONE system message (the rendered prompt) — no extra hidden injection.
+    system_msgs = [c for r, c in rc if r == "system"]
+    assert len(system_msgs) == 1
+    # That single system prompt carries both the bridge text and the prose guidance.
+    assert "Bodyweight exercises are great!" in system_msgs[0]
+    assert "CONTINUE FROM" in system_msgs[0].upper()
+    # The bridge is replayed as the assistant's own in-progress turn (the mechanism).
     assert ("assistant", "Bodyweight exercises are great!") in rc
 
 
-def test_no_bridge_injects_no_continuation_instruction():
-    # On a fresh turn (no spoken opener) there must be no dangling continuation
-    # instruction and no assistant replay message.
+def test_no_bridge_has_no_continuation_guidance_or_replay():
+    # On a fresh turn (no spoken opener) the bridge block must not render and there
+    # must be no assistant replay message.
     svc = _CapturingLLMService()
     gen = ResponseGenerator(llm_service=svc)
     _run_generate(
@@ -321,5 +325,5 @@ def test_no_bridge_injects_no_continuation_instruction():
         bridge="",
     )
     rc = _roles_and_contents(svc.captured_messages)
-    assert not any("ALREADY said this aloud" in c for _, c in rc)
+    assert not any("CONTINUE FROM" in c.upper() for _, c in rc)
     assert not any(r == "assistant" for r, _ in rc)

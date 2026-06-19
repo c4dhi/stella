@@ -154,33 +154,14 @@ class ResponseGenerator:
             ))
             messages.append(LLMMessage(role="assistant", content=spoken_prefix))
         elif bridge:
-            # That the bridge was ALREADY spoken aloud this turn is a runtime FACT,
-            # not a style choice — so the "don't repeat it, continue mid-breath"
-            # contract is CRUCIAL plumbing injected here in code (single source of
-            # truth), exactly like the prepend path above. It must not depend on an
-            # operator's editable guidelines carrying the {{#if bridge}} block: a
-            # stale or trimmed config would otherwise drop the instruction and the
-            # reply would re-greet/re-acknowledge (the "double bridge"). The
-            # {{bridge}} placeholder in the guidelines stays available for TONE
-            # tuning; this guarantees the structural behavior regardless.
-            messages.insert(1, LLMMessage(
-                role="system",
-                content=(
-                    f'You have ALREADY said this aloud a moment ago, as the natural opening '
-                    f'beat of THIS reply: "{bridge}". Your output is appended directly after '
-                    f'it and the two are spoken as ONE seamless utterance, so continue as the '
-                    f'SAME person mid-breath.\n\n'
-                    "Rules:\n"
-                    "- Do NOT repeat, rephrase, re-affirm, or define anything the opener already said.\n"
-                    "- Do NOT add a second greeting or acknowledgment — the opener already reacted.\n"
-                    "- Do NOT open with a textbook definition of something you just named.\n"
-                    "- Bring something real: react to the SPECIFIC thing they said and/or move the "
-                    "conversation forward. It should sound like one person who simply kept talking."
-                ),
-            ))
-            # Also replay the bridge as the assistant's own in-progress turn so the
-            # model literally continues it. Shares one transcript_id with the
-            # response → one seamless utterance.
+            # The "continue from the opener, don't repeat it" guidance is PROSE, so
+            # it lives in the editable response prompt right around the {{bridge}}
+            # injection (build_response_system_prompt renders {{#if bridge}} /
+            # {{bridge}}) — visible to operators, not hidden in the background.
+            # The only thing auto-injected here is the crucial, non-prose mechanism:
+            # replay the bridge as the assistant's own in-progress turn so the model
+            # literally continues it. The two share one transcript_id → one seamless
+            # utterance.
             messages.append(LLMMessage(role="assistant", content=bridge))
 
         config = LLMConfig(
