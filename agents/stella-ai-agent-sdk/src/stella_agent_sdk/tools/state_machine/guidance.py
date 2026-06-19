@@ -25,6 +25,7 @@ You drive the conversation forward with these tools. The conversation only advan
 - **skip_state** — skip the ENTIRE current phase when none of it is relevant; it marks every remaining task in the phase as skipped and advances.
 
 Rules:
+- NEVER complete_task a task that owns a REQUIRED deliverable until that deliverable is recorded (set it this turn or it is already collected). Completing it before its answer exists wrongly marks the task done and can advance the conversation — e.g. completing "greet and ask for name" before any name was given. To move past such a task WITHOUT the answer, skip_task instead. (The state machine enforces this and will reject a premature completion.)
 - `task_id` must be the EXACT task ID (UUID) from the current context — never the task's description text. If you only know the description, call get_pending_tasks first to map it to the ID.
 - Interpreting a user "skip" request — read the scope literally: a bare "skip this" / "can we move on" / "I'd rather not answer that" refers to the CURRENT task ONLY → skip_task. Use skip_state ONLY when they explicitly drop the whole section ("skip all of this", "move on to the next section"). When in doubt, prefer skip_task — skip_state discards every remaining task and can end the conversation early.
 - Once a task is skipped or its phase has ended, stop soliciting that deliverable.

@@ -2491,3 +2491,84 @@ describe('realistic conversation simulation (#291)', () => {
     expect(collected.success).toBe(true);
   });
 });
+
+function buildDeliverableGatePlan(): PlanData {
+  // One state with: a deliverable-bearing required task (greet -> user_name),
+  // a deliverable-less task (intro), and an optional-only task (optional_ask).
+  return {
+    id: 'plan-deliverable-gate',
+    title: 'Deliverable Gate Plan',
+    initial_state_id: 'state-a',
+    states: [
+      {
+        id: 'state-a',
+        title: 'A',
+        type: 'loose',
+        tasks: [
+          {
+            id: 'greet',
+            description: 'Greet and ask for name',
+            deliverables: [
+              { key: 'user_name', description: 'Name', required: true, type: 'string' },
+            ],
+          },
+          { id: 'intro', description: 'Deliverable-less intro', deliverables: [] },
+          {
+            id: 'optional_ask',
+            description: 'Optional ask',
+            deliverables: [
+              { key: 'note', description: 'Optional note', required: false, type: 'string' },
+            ],
+          },
+        ],
+        transitions: [
+          { target_state_id: 'state-b', condition_type: 'all_tasks_complete', priority: 1 },
+        ],
+      },
+      { id: 'state-b', title: 'B', type: 'loose', tasks: [], transitions: [] },
+    ],
+  };
+}
+
+describe('StateMachineService complete_task deliverable guard (reliability)', () => {
+  const sessionId = 'session-deliverable-gate';
+  let service: StateMachineService;
+
+  beforeEach(async () => {
+    const { prisma } = createPrismaMock();
+    service = new StateMachineService(prisma);
+    await service.initializeForSession(sessionId, buildDeliverableGatePlan());
+  });
+
+  it('REJECTS completing a task whose required deliverable is not collected, and does not advance', async () => {
+    const res = await service.completeTask(sessionId, 'greet', 'tried to complete before any name');
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('user_name');
+
+    // The bug this fixes: the state must NOT have advanced.
+    const current = await service.getCurrentState(sessionId);
+    expect(current?.stateId).toBe('state-a');
+  });
+
+  it('ALLOWS completing the task once its required deliverable is collected', async () => {
+    await service.setDeliverable(sessionId, 'user_name', 'Felix', 'name given');
+    const res = await service.completeTask(sessionId, 'greet', 'name now collected');
+    expect(res.success).toBe(true);
+  });
+
+  it('ALLOWS completing a deliverable-less task freely', async () => {
+    const res = await service.completeTask(sessionId, 'intro', 'introduced myself');
+    expect(res.success).toBe(true);
+  });
+
+  it('ALLOWS completing a task that owns only OPTIONAL deliverables', async () => {
+    const res = await service.completeTask(sessionId, 'optional_ask', 'asked; user did not specify');
+    expect(res.success).toBe(true);
+  });
+
+  it('still lets the agent SKIP a required-deliverable task to move on without the data', async () => {
+    const res = await service.skipTask(sessionId, 'greet', 'user declined to give a name');
+    expect(res.success).toBe(true);
+    // Skipping is the honest way past it; complete is the one that was blocked.
+  });
+});
