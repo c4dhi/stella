@@ -122,23 +122,24 @@ def test_directive_section_included_when_directive_has_content():
 
 
 # ---------------------------------------------------------------------------
-# build_response_user_message()
+# Context flows through the template (system prompt), the user message is bare
 # ---------------------------------------------------------------------------
 
-def test_no_history_returns_only_user_message():
-    result = build_response_user_message("Hello there", [])
-    assert result == "[USER]: Hello there"
+def test_user_message_is_the_bare_input():
+    assert build_response_user_message("Hello there") == "Hello there"
 
 
-def test_with_history_prepends_formatted_lines():
+def test_history_is_rendered_into_the_system_prompt():
     history = [
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello"},
     ]
-    result = build_response_user_message("How are you?", history)
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), conversation_history=history
+    )
+    # Context goes via {{conversationHistory}} in the (rendered) guidelines.
     assert "[USER]: Hi" in result
     assert "[ASSISTANT]: Hello" in result
-    assert "[USER]: How are you?" in result
 
 
 def test_history_limit_truncates_older_messages():
@@ -147,9 +148,18 @@ def test_history_limit_truncates_older_messages():
         {"role": "assistant", "content": "msg2"},
         {"role": "user", "content": "msg3"},
     ]
-    result = build_response_user_message("latest", history, history_limit=1)
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), conversation_history=history, history_limit=1
+    )
     assert "msg3" in result
     assert "msg1" not in result
+
+
+def test_state_context_is_rendered_into_the_system_prompt():
+    sm = {"state": {"title": "Intro", "description": "Greet the user"}}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    # State machine context reaches the prompt via {{stateContext}}.
+    assert "Intro" in result
 
 
 # ---------------------------------------------------------------------------

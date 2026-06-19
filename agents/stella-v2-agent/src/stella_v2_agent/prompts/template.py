@@ -52,6 +52,59 @@ PROMPT_VARIABLES: List[PromptVariable] = [
         type="string",
         description="The current user message being processed.",
     ),
+    PromptVariable(
+        name="allowAppraisal",
+        type="boolean",
+        description="Bridge prompt only: true when a light appraisal of the user's "
+        "turn is permitted (the Bridge Appraisal toggle is on AND a safety screen "
+        "cleared). Use {{#if allowAppraisal}}…{{/if}} / {{#unless allowAppraisal}}…"
+        "{{/unless}} to allow or forbid evaluative phrasing.",
+    ),
+    PromptVariable(
+        name="conversationHistory",
+        type="string",
+        description="The recent conversation turns (most recent last), already "
+        "formatted as [ROLE]: text lines and trimmed to the stage's history "
+        "limit. Empty when there's no prior context. Wrap in "
+        "{{#if conversationHistory}}…{{/if}} so the header only shows when there "
+        "is history to show.",
+    ),
+    PromptVariable(
+        name="interruptedReply",
+        type="string",
+        description="Barge-in evaluator only: the assistant reply that was being "
+        "spoken when the user interrupted — the half-committed message, not yet in "
+        "the recorded history. Lets the evaluator judge the interruption against "
+        "what the assistant was actually saying. Empty if nothing was in flight. "
+        "Wrap in {{#if interruptedReply}}…{{/if}}.",
+    ),
+    PromptVariable(
+        name="stateContext",
+        type="string",
+        description="Response/Input-gate: the current state-machine context "
+        "(phase, goal, task instruction, deliverables still to collect / already "
+        "collected, progress). Pre-formatted; place it with {{stateContext}} and "
+        "wrap in {{#if stateContext}}…{{/if}}.",
+    ),
+    PromptVariable(
+        name="directive",
+        type="string",
+        description="Response generator: the arbitration directive for this turn "
+        "(tone, must-avoid, follow-up guidance synthesised from the experts). "
+        "Pre-formatted; place with {{directive}}, wrap in {{#if directive}}…{{/if}}.",
+    ),
+    PromptVariable(
+        name="experts",
+        type="string",
+        description="Input gate: the selectable experts as `- name: description` "
+        "lines. Place with {{experts}}.",
+    ),
+    PromptVariable(
+        name="rules",
+        type="string",
+        description="Input gate: the per-expert routing rules (from each expert's "
+        "trigger_criteria). Place with {{rules}}.",
+    ),
 ]
 
 _VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")

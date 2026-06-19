@@ -118,10 +118,10 @@ class ResponseGenerator:
             sm_context, directive, plan_system_prompt,
             custom_persona=self.custom_persona,
             custom_guidelines=self.custom_guidelines,
+            conversation_history=conversation_history,
+            history_limit=self.history_limit or 10,
         )
-        user_message = build_response_user_message(
-            user_input, conversation_history, history_limit=self.history_limit or 10
-        )
+        user_message = build_response_user_message(user_input)
 
         messages = [
             LLMMessage(role="system", content=system_prompt),
@@ -155,7 +155,7 @@ class ResponseGenerator:
         elif bridge:
             messages.insert(1, LLMMessage(
                 role="system",
-                content=f'You already said "{bridge}" out loud as a natural acknowledgment. Now continue with your actual response. The combined output (bridge + your continuation) will be spoken as one seamless utterance, so it MUST flow naturally as a single conversation turn.\n\nRules:\n- Do NOT repeat or rephrase anything already covered in the bridge\n- Do NOT comment on the bridge (no "I\'m glad to hear that", no "That said...")\n- Do NOT add another greeting or acknowledgment\n- Pick up right where the bridge left off — your continuation should feel like the same person kept talking\n- Example: bridge "Oh nice, okay." → you continue with "So three times a week is solid." → spoken together: "Oh nice, okay. So three times a week is solid."\n- Example: bridge "Yeah, okay, I get that, it\'s been a lot." → you continue with "Let\'s talk about what might work for you right now." → spoken together: "Yeah, okay, I get that, it\'s been a lot. Let\'s talk about what might work for you right now."',
+                content=f'You already said "{bridge}" out loud as a brief, natural opener. Now continue as the SAME person, mid-breath. The combined output (opener + your continuation) is spoken as one seamless utterance, so it MUST flow as a single conversation turn.\n\nRules:\n- The opener was just the breath before you speak — NOT your whole reaction. Now bring something real: react to the SPECIFIC thing they said and/or move the conversation forward with a genuine thought.\n- Do NOT repeat, rephrase, or re-affirm the opener, and do NOT add a second greeting or acknowledgment — that part is already done.\n- Do NOT comment on the opener (no "I\'m glad to hear that", no "That said...")\n- Pick up right where it left off, so it sounds like one person kept talking.\n- Example: opener "Oh nice, okay." → you continue "The no-gear setup — you can train anywhere. Is running your wind-down or the main event?" → together: "Oh nice, okay. The no-gear setup — you can train anywhere. Is running your wind-down or the main event?"\n- Example: opener "Yeah, okay, I get that, it\'s been a lot." → you continue "Work stress has a way of eating the time you\'d actually move in. What still feels doable on the rough days?" → together as one turn.',
             ))
             messages.append(LLMMessage(role="assistant", content=bridge))
 

@@ -10,11 +10,13 @@ a dedicated, configurable LLM prompt to classify the interruption:
             where it was suspended; the transcript is discarded.
 
 The prompt, model, provider, temperature, token budget and decision timeout are
-all editable in the Agent Configurator (the "Barge-in Evaluator" node) and the
-prompt supports template variables ({{bargeInTranscript}}, {{userInput}},
-{{isBargeIn}}). The call is bounded by a tight wall-clock timeout
-(BARGE_IN_EVAL_TIMEOUT_MS) defaulting to COMMIT, because the turn stays silent
-until the decision resolves.
+all editable in the Agent Configurator (the "Barge-in Evaluator" node). The
+prompt owns the full context layout via template variables — {{conversationHistory}}
+(the recent turns), {{interruptedReply}} (the half-committed message that was being
+spoken when the user cut in), {{bargeInTranscript}}, {{userInput}}, {{isBargeIn}} —
+and the interruption itself is sent as the user message. The call
+is bounded by a tight wall-clock timeout (BARGE_IN_EVAL_TIMEOUT_MS) defaulting to
+COMMIT, because the turn stays silent until the decision resolves.
 """
 
 import asyncio
@@ -27,19 +29,26 @@ from stella_agent_sdk.messages.types import BargeInDecision
 
 from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
 from stella_v2_agent.prompts.template import render_prompt
+from stella_v2_agent.prompts.context import format_history
 
 logger = logging.getLogger(__name__)
 
 
-BARGE_IN_SYSTEM_PROMPT = """You decide whether a user's interruption of the assistant's speech is a real interruption that should be acted on, or just a backchannel/noise that should be ignored so the assistant keeps talking.
+# Minimal fallback only. The full, editable prompt — including where the
+# conversation context goes — lives in agent.yaml (barge_in → system_prompt) and
+# is what runs in production. The interruption itself arrives as the user message.
+BARGE_IN_SYSTEM_PROMPT = """Decide whether the user's interruption of the assistant is a real interruption to act on (COMMIT) or backchannel/noise to ignore so the assistant keeps talking (RESUME).
+{{#if conversationHistory}}
 
-You are given the conversation so far and what the user just said while the assistant was speaking. JUDGE IT IN CONTEXT.
+Conversation so far:
+{{conversationHistory}}
+{{/if}}
+{{#if interruptedReply}}
 
-Output COMMIT if the user's words are meaningful given the conversation — a relevant answer to what the assistant just asked, a question, a correction, a new request, a clear "stop"/"wait", or a change of topic. An on-topic answer (e.g. giving their name right after being asked for it) is a real turn and must COMMIT.
+The assistant was mid-sentence saying (the user cut in here): {{interruptedReply}}
+{{/if}}
 
-Output RESUME if it was just acknowledgement, agreement, thinking-aloud, or noise that does not require the assistant to stop — e.g. "mhm", "yeah", "right", "go on", a cough, or a few filler words.
-
-When unsure, prefer COMMIT — ignoring a real interruption is worse than briefly pausing.
+COMMIT if the words are meaningful in context — an answer to what was just asked, a question, a correction, a new request, "stop"/"wait", or a topic change. RESUME if it's just acknowledgement, thinking-aloud, or noise ("mhm", "yeah", "go on", a cough). When unsure, prefer COMMIT.
 
 Output ONLY one word: COMMIT or RESUME."""
 
@@ -121,6 +130,9 @@ class BargeInEvaluator:
             "bargeInTranscript": transcript,
             "userInput": transcript,
             "isBargeIn": True,
+            # The recent turns, formatted and trimmed, so the configured prompt
+            # can place the context wherever it wants via {{conversationHistory}}.
+            "conversationHistory": format_history(conversation_history, self.history_limit),
         }
         if variables:
             ctx.update(variables)
@@ -129,7 +141,9 @@ class BargeInEvaluator:
         try:
             raw_prompt = self.custom_system_prompt or BARGE_IN_SYSTEM_PROMPT
             system_prompt = render_prompt(raw_prompt, ctx)
-            user_message = self._build_user_message(transcript, conversation_history)
+            # The interruption itself is the data being classified — sent as the
+            # user message. All surrounding context lives in the prompt template.
+            user_message = transcript
 
             # Bound the call on wall-clock: a suspended turn is silent until this
             # returns, so a slow LLM must not stall it. On timeout we fall through
@@ -167,24 +181,6 @@ class BargeInEvaluator:
             latency_ms = (time.time() - start_time) * 1000
             logger.error(f"Barge-in eval failed in {latency_ms:.0f}ms: {e} — defaulting to COMMIT")
             return BargeInDecision.COMMIT
-
-    def _build_user_message(
-        self,
-        transcript: str,
-        conversation_history: Optional[List[Dict[str, str]]],
-    ) -> str:
-        """Build the user message with recent conversation context so the
-        decision is made in context, not on the bare interruption alone."""
-        parts = []
-        if conversation_history:
-            recent = conversation_history[-self.history_limit:]
-            lines = [
-                f"[{(msg.get('role') or 'user').upper()}]: {msg.get('content', '')}"
-                for msg in recent
-            ]
-            parts.append("CONVERSATION SO FAR:\n" + "\n".join(lines))
-        parts.append(f"USER (interrupting while assistant was speaking): {transcript}")
-        return "\n\n".join(parts)
 
     @staticmethod
     def _parse_decision(raw: str) -> BargeInDecision:

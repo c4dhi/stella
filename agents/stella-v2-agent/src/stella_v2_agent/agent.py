@@ -150,6 +150,11 @@ class StellaV2Agent(BaseAgent):
         self._last_state_id: Optional[str] = None  # for detecting state transitions between turns
         self._last_post_response_state_id: Optional[str] = None  # for analytics emission
         self._turn_counter: int = 0  # monotonic turn counter for analytics
+        # The reply currently being spoken, accumulated as it streams. On a
+        # barge-in this is the "half-committed" message the user interrupted —
+        # not yet in the recorded history — so we hand it to the Barge-in
+        # Evaluator as the {{interruptedReply}} variable for in-context judging.
+        self._last_reply_text: str = ""
 
         logger.info(
             f"Initialized with {self.expert_registry.enabled_count} experts"
@@ -274,6 +279,9 @@ class StellaV2Agent(BaseAgent):
             # Emit bridge immediately for early TTS synthesis
             if bridge:
                 logger.info(f"Bridge: '{bridge}'")
+                # Track what's being spoken so a barge-in during the bridge still
+                # has the half-committed message to evaluate.
+                self._last_reply_text = bridge
                 yield AgentOutput.analytics_event(
                     input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
                     bridge_text=bridge,
@@ -444,6 +452,10 @@ class StellaV2Agent(BaseAgent):
                         output.metadata["language"] = resolved_language
                         if resolved_voice:
                             output.metadata["voice"] = resolved_voice
+                        # Keep the latest accumulated reply so a barge-in mid-stream
+                        # can evaluate against the half-committed message.
+                        if output.content:
+                            self._last_reply_text = output.content
                         if not first_token_emitted:
                             yield AgentOutput.analytics_event(
                                 input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
@@ -866,7 +878,14 @@ class StellaV2Agent(BaseAgent):
         except Exception as e:
             logger.warning(f"Barge-in: could not fetch history ({e}); evaluating without it")
             history = []
-        return await self.barge_in_evaluator.evaluate(transcript, conversation_history=history)
+        # The reply being interrupted is still in flight (not yet in `history`),
+        # so pass it explicitly as the {{interruptedReply}} runtime variable —
+        # the half-committed message the evaluator must judge the interruption against.
+        return await self.barge_in_evaluator.evaluate(
+            transcript,
+            conversation_history=history,
+            variables={"interruptedReply": self._last_reply_text or ""},
+        )
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """Handle runtime configuration update."""

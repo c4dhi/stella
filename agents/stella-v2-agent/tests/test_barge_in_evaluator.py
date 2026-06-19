@@ -72,7 +72,7 @@ async def test_custom_prompt_renders_transcript_variable():
 
 
 @pytest.mark.asyncio
-async def test_conversation_history_is_included_in_context():
+async def test_conversation_history_is_rendered_into_the_prompt():
     llm = FakeLLM("COMMIT")
     ev = BargeInEvaluator(llm)
     history = [
@@ -81,10 +81,10 @@ async def test_conversation_history_is_included_in_context():
     ]
     decision = await ev.evaluate("My name is felix", conversation_history=history)
     assert decision == BargeInDecision.COMMIT
-    # The user message must carry the conversation context + the interruption.
-    assert "CONVERSATION SO FAR" in llm.last_user_message
-    assert "Was möchtest du gerne genannt werden?" in llm.last_user_message
-    assert "My name is felix" in llm.last_user_message
+    # Context flows through the template (system prompt); the interruption itself
+    # is the bare user message.
+    assert "Was möchtest du gerne genannt werden?" in llm.last_system_prompt
+    assert llm.last_user_message == "My name is felix"
 
 
 @pytest.mark.asyncio
@@ -94,10 +94,10 @@ async def test_history_limit_trims_context():
     ev.apply_config({"history_limit": 2})
     history = [{"role": "user", "content": f"msg{i}"} for i in range(10)]
     await ev.evaluate("hello there", conversation_history=history)
-    # Only the last 2 messages are included.
-    assert "msg9" in llm.last_user_message
-    assert "msg8" in llm.last_user_message
-    assert "msg7" not in llm.last_user_message
+    # Only the last 2 messages are rendered into the prompt.
+    assert "msg9" in llm.last_system_prompt
+    assert "msg8" in llm.last_system_prompt
+    assert "msg7" not in llm.last_system_prompt
 
 
 @pytest.mark.asyncio
@@ -105,8 +105,45 @@ async def test_works_without_history():
     llm = FakeLLM("RESUME")
     ev = BargeInEvaluator(llm)
     assert await ev.evaluate("mhm") == BargeInDecision.RESUME
-    assert "My name" not in (llm.last_user_message or "")
-    assert "mhm" in llm.last_user_message
+    # No history → the {{#if conversationHistory}} context block is dropped.
+    assert llm.last_user_message == "mhm"
+    assert "Conversation so far" not in llm.last_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_interrupted_reply_variable_is_rendered():
+    """The half-committed reply (still in flight, not in history) reaches the
+    prompt via {{interruptedReply}} so the interruption is judged against it."""
+    llm = FakeLLM("COMMIT")
+    ev = BargeInEvaluator(llm)
+    await ev.evaluate(
+        "no wait",
+        variables={"interruptedReply": "So your preferred name is Felix, and"},
+    )
+    assert "So your preferred name is Felix, and" in llm.last_system_prompt
+    assert llm.last_user_message == "no wait"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_reply_omitted_when_empty():
+    llm = FakeLLM("RESUME")
+    ev = BargeInEvaluator(llm)
+    await ev.evaluate("mhm", variables={"interruptedReply": ""})
+    assert "mid-sentence" not in llm.last_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_context_placement_is_template_controlled():
+    """The template, not the code, owns context layout: a custom prompt that
+    doesn't reference {{conversationHistory}} gets no history at all."""
+    llm = FakeLLM("COMMIT")
+    ev = BargeInEvaluator(llm)
+    ev.apply_config({"system_prompt": "Decide: COMMIT or RESUME."})
+    history = [{"role": "assistant", "content": "secret-context-line"}]
+    await ev.evaluate("hi", conversation_history=history)
+    assert llm.last_system_prompt == "Decide: COMMIT or RESUME."
+    assert "secret-context-line" not in llm.last_system_prompt
+    assert llm.last_user_message == "hi"
 
 
 @pytest.mark.asyncio

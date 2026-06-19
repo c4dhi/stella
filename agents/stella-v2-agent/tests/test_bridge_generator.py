@@ -1,6 +1,9 @@
 """Tests for typed bridge selection and the fast-path (#304 A2/A3)."""
 
+import os
+
 import pytest
+import yaml
 
 from stella_v2_agent.pipeline.bridge_generator import (
     BridgeGenerator,
@@ -17,7 +20,33 @@ from stella_v2_agent.pipeline.bridge_generator import (
     ACKNOWLEDGEMENT_BRIDGES_EN,
     ACKNOWLEDGEMENT_BRIDGES_DE,
     _BRIDGE_INVENTORY,
+    _screen_risk,
 )
+from stella_v2_agent.prompts.template import render_prompt
+
+
+def _iter_dicts(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _iter_dicts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_dicts(v)
+
+
+def _slot_default(node_id: str, slot_id: str) -> str:
+    """Read a configurator slot's default from agent.yaml — the prompt that
+    actually runs in production (code prompts are only minimal fallbacks)."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "agent.yaml")) as f:
+        cfg = yaml.safe_load(f)
+    for d in _iter_dicts(cfg):
+        if d.get("id") == node_id and isinstance(d.get("slots"), list):
+            for slot in d["slots"]:
+                if slot.get("id") == slot_id:
+                    return slot.get("default", "")
+    raise AssertionError(f"{node_id}.{slot_id} not found in agent.yaml")
 
 
 class TestSelectBridgeType:
@@ -151,3 +180,95 @@ class TestApplyConfig:
         assert gen.bridge_model == "gpt-4o"
         assert gen.bridge_temperature == 0.2
         assert gen.bridge_max_tokens == 40
+
+
+class TestAppraisalRiskScreen:
+    """The cheap, deterministic screen that gates the appraisal tier (#343)."""
+
+    @pytest.mark.parametrize("text", [
+        "I hurt my knee last month",
+        "I've been really depressed lately",
+        "No, not really, I've been pretty lazy",
+        "Ich hab mir das Knie verletzt",
+        "Ich war ziemlich faul",
+        "I haven't been doing much",
+        "my dad died last week",
+        "I might need a lawyer for this",
+    ])
+    def test_sensitive_or_dispreferred_trips_screen(self, text):
+        assert _screen_risk(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "I've been running three times a week",
+        "I usually work out in the mornings",
+        "Ich laufe dreimal die Woche",
+        "I want to get stronger and feel better",
+    ])
+    def test_benign_clears_screen(self, text):
+        assert _screen_risk(text) is False
+
+
+class TestValidateBridgeAppraisalGate:
+    """Evaluative openers are rejected by default, allowed only under the gate."""
+
+    def test_evaluative_opener_rejected_by_default(self):
+        assert BridgeGenerator._validate_bridge("That's a good amount to work with.") == ""
+
+    def test_evaluative_opener_allowed_when_appraisal(self):
+        out = BridgeGenerator._validate_bridge(
+            "That's a good amount to work with.", allow_appraisal=True
+        )
+        assert out == "That's a good amount to work with."
+
+    def test_question_still_rejected_even_with_appraisal(self):
+        # The appraisal gate must NOT relax the no-questions rule.
+        assert BridgeGenerator._validate_bridge("That's good, right?", allow_appraisal=True) == ""
+
+
+class TestAppraisalConfig:
+    def test_appraisal_defaults_off(self):
+        gen = BridgeGenerator(llm_service=None)
+        assert gen.appraisal_enabled is False
+
+    def test_appraisal_toggle_from_select_string(self):
+        gen = BridgeGenerator(llm_service=None)
+        gen.apply_config({"appraisal": "on"})
+        assert gen.appraisal_enabled is True
+        gen.apply_config({"appraisal": "off"})
+        assert gen.appraisal_enabled is False
+
+
+class TestBridgePromptRendering:
+    """The appraisal permission/ban is wired through the PRODUCTION (agent.yaml)
+    bridge prompt via the template conditionals — not the code fallback."""
+
+    _BAN = "Do NOT evaluate what they said"
+    _PERMISSION = "You MAY add a brief, understated appraisal"
+
+    def test_ban_present_when_appraisal_off(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        rendered = render_prompt(prompt, {"allowAppraisal": False})
+        assert self._BAN in rendered
+        assert self._PERMISSION not in rendered
+
+    def test_ban_dropped_and_permission_added_when_appraisal_on(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        rendered = render_prompt(prompt, {"allowAppraisal": True})
+        assert self._BAN not in rendered
+        assert self._PERMISSION in rendered
+
+
+class TestConfigCarriesTheImprovements:
+    """The voice improvements must live in agent.yaml (user-editable), not be
+    hidden in code — these guard that the config screen is the source of truth."""
+
+    def test_yaml_guidelines_forbid_empty_praise(self):
+        guidelines = _slot_default("response_generator", "conversation_guidelines")
+        assert "NEVER praise a mundane answer" in guidelines
+
+    def test_yaml_bridge_carries_full_reflection(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        assert "carry the REACTION" in prompt
+
+    def test_appraisal_default_on_in_config(self):
+        assert _slot_default("bridge_generator", "appraisal") == "on"
