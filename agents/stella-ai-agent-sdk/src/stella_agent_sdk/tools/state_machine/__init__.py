@@ -22,6 +22,7 @@ from stella_agent_sdk.tools.state_machine.batch_update import BatchUpdateTool
 from stella_agent_sdk.tools.state_machine.get_state import GetCurrentStateTool
 from stella_agent_sdk.tools.state_machine.get_tasks import GetPendingTasksTool
 from stella_agent_sdk.tools.state_machine.get_deliverables import GetPendingDeliverablesTool
+from stella_agent_sdk.tools.state_machine.guidance import STATE_MACHINE_TOOL_GUIDANCE
 
 
 def create_state_machine_tools(client) -> List[BaseTool]:
@@ -56,4 +57,5 @@ __all__ = [
     "GetPendingTasksTool",
     "GetPendingDeliverablesTool",
     "create_state_machine_tools",
+    "STATE_MACHINE_TOOL_GUIDANCE",
 ]

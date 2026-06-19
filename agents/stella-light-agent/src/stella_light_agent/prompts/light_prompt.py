@@ -10,6 +10,8 @@ Combines all prompt components into a single system prompt with:
 
 from typing import Dict, List, Any, Optional
 
+from stella_agent_sdk.tools.state_machine import STATE_MACHINE_TOOL_GUIDANCE
+
 
 class LightPromptBuilder:
     """Builds a unified prompt with embedded guardrails for the light agent.
@@ -274,47 +276,19 @@ Remember: You are a supportive companion, not a replacement for professional adv
         """Build tool usage instructions for tool-based state management."""
         pending = [d for d in deliverables if d.get("status") == "pending"]
 
-        parts = ["""## Response Guidelines
-- Respond naturally and conversationally (30-50 words)
-- Ask only ONE question at a time
-- Always include a complete, conversational response
-- Your response will be spoken aloud - make it sound natural
-
-## Tool Usage
-You drive the conversation forward with these tools. The conversation only
-advances when EVERY task in the current phase is explicitly completed or skipped —
-nothing happens on its own. (A task being "required" is guidance about importance,
-not a gate; you may skip a required task if it genuinely does not apply.)
-
-**set_deliverable** - Call when the user CLEARLY and EXPLICITLY provides information you need to collect
-- Only call when you are certain the user provided the information
-- NEVER call for greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values
-- If unsure, ask a clarifying question instead
-- Recording a deliverable does NOT complete its task — you must still complete the task explicitly
-
-**complete_task** - Call to mark a task done. Use it for ANY task you have accomplished:
-- A task with no deliverables you just performed (telling a joke, an introduction, saying goodbye)
-- A task with deliverables, once you have collected what it needs (call set_deliverable first, then complete_task)
-
-**skip_task** - Call to skip a single task that does not apply or is not worth pursuing
-- Use this for an optional task the user clearly will not engage with, so the conversation can move on
-
-**skip_state** - Call to skip the entire current phase at once when none of it is relevant
-- Marks all of the phase's remaining tasks as skipped and advances
-
-### Interpreting a "skip" request from the user
-The user's words decide which skip tool you use — read the scope literally:
-- A bare **"skip this"**, "can we move on", "let's not do this one", "I'd rather not answer that"
-  refers to the CURRENT question/task ONLY → use **skip_task** on the current task.
-  It does NOT mean skip the whole phase.
-- Use **skip_state** ONLY when the user explicitly drops the ENTIRE section —
-  "skip this whole part", "skip all of this", "move on to the next section".
-- When in doubt, prefer **skip_task**: skipping one task still lets you cover the rest
-  of the phase, whereas skip_state discards every remaining task in the phase and can
-  end the conversation early (losing deliverables you still needed).
-- Once you have skipped a task, or the phase has ended, do NOT keep soliciting that
-  task's deliverable — let the conversation move on."""]
+        parts = [
+            (
+                "## Response Guidelines\n"
+                "- Respond naturally and conversationally (30-50 words)\n"
+                "- Ask only ONE question at a time\n"
+                "- Always include a complete, conversational response\n"
+                "- Your response will be spoken aloud - make it sound natural"
+            ),
+            # Tool-calling mechanics come from the SDK — the single source of
+            # truth, identical to stella-v2. Crucial plumbing, never hand-written
+            # here or exposed as an editable slot.
+            STATE_MACHINE_TOOL_GUIDANCE,
+        ]
 
         if pending:
             parts.append("\n## Information to Collect")

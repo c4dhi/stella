@@ -167,6 +167,28 @@ def test_append_output_format_false_skips_output_format():
     assert '{"verdict": "..."}' not in messages[0].content
 
 
+def test_tool_guidance_injected_from_sdk_when_requested():
+    # Tool-calling experts get the canonical tool-usage contract appended from the
+    # SDK (single source of truth) — never hand-written in the expert prompt.
+    from stella_agent_sdk.tools.state_machine import STATE_MACHINE_TOOL_GUIDANCE
+
+    runner = _runner()
+    config = _config(system_prompt="Extract things.")
+    messages = runner._build_messages(
+        config, "hi", [], {}, append_output_format=False, append_tool_guidance=True
+    )
+    assert STATE_MACHINE_TOOL_GUIDANCE in messages[0].content
+
+
+def test_tool_guidance_not_injected_by_default():
+    # JSON-mode experts must not get the tool contract.
+    from stella_agent_sdk.tools.state_machine import STATE_MACHINE_TOOL_GUIDANCE
+
+    runner = _runner()
+    messages = runner._build_messages(_config(system_prompt="Classify."), "hi", [], {})
+    assert STATE_MACHINE_TOOL_GUIDANCE not in messages[0].content
+
+
 def test_history_limit_truncates_older_messages():
     # history_limit=1 should keep only the last message
     long_history = [
