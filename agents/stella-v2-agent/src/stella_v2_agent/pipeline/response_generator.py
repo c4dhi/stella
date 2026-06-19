@@ -16,7 +16,7 @@ from typing import Dict, Any, List, AsyncIterator, Optional
 
 from stella_agent_sdk.messages.output import AgentOutput
 
-from stella_v2_agent.llm.service import (
+from stella_agent_sdk.llm import (
     LLMService, LLMConfig, LLMMessage, LLMResponse,
     LLMStreamingCallback, LLMProvider,
 )

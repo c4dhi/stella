@@ -24,7 +24,7 @@ from stella_v2_agent.experts.template_compiler import (
     HISTORY_PATTERN,
 )
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
-from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+from stella_agent_sdk.llm import LLMService, LLMConfig, LLMMessage, LLMProvider
 import logging
 
 logger = logging.getLogger(__name__)

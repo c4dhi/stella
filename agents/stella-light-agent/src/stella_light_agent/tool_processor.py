@@ -15,7 +15,7 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 from stella_agent_sdk.messages.output import AgentOutput
 from stella_agent_sdk.tools import ToolRegistry, BaseTool, ToolResult
 
-from stella_light_agent.llm.service import (
+from stella_agent_sdk.llm import (
     LLMService,
     LLMConfig,
     LLMProvider,

@@ -1,7 +1,12 @@
 """Unified LLM Service for handling all language model interactions.
 
-Provides a consistent interface across different LLM providers with streaming support.
-Copied from stella-agent V1 — will be centralized into shared SDK later.
+Provides a consistent interface across LLM providers (OpenAI via LangChain,
+OpenAI direct/tool-calling, Ollama, Mock) with streaming and tool-call support.
+
+This is the SINGLE source of truth for LLM access in the SDK — every agent
+(stella-v2, stella-light, …) consumes ``stella_agent_sdk.llm`` rather than
+shipping its own copy, so provider behavior, config loading, and usage tracking
+stay identical across agents.
 """
 
 import asyncio

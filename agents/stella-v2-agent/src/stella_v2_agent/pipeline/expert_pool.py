@@ -23,7 +23,7 @@ from stella_agent_sdk.tools import ToolRegistry
 from stella_v2_agent.experts.registry import ExpertRegistry
 from stella_v2_agent.experts.runner import ExpertRunner
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
-from stella_v2_agent.llm.service import LLMService
+from stella_agent_sdk.llm import LLMService
 import logging
 
 logger = logging.getLogger(__name__)

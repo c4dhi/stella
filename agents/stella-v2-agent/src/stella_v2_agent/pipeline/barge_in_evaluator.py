@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 from stella_agent_sdk.env import env_float as _env_float
 from stella_agent_sdk.messages.types import BargeInDecision
 
-from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
+from stella_agent_sdk.llm import LLMService, LLMConfig, LLMMessage, LLMProvider
 from stella_v2_agent.prompts.template import render_prompt
 from stella_v2_agent.prompts.context import format_history
 

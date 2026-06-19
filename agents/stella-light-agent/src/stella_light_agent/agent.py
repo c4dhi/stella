@@ -24,7 +24,7 @@ from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
 from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 
-from stella_light_agent.llm.service import LLMService
+from stella_agent_sdk.llm import LLMService
 from stella_light_agent.barge_in_evaluator import BargeInEvaluator
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.prompts import LightPromptBuilder

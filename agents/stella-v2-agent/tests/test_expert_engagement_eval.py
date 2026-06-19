@@ -63,7 +63,7 @@ EVAL_SETS = {
 def _runner():
     from stella_v2_agent.experts.registry import ExpertRegistry
     from stella_v2_agent.experts.runner import ExpertRunner
-    from stella_v2_agent.llm.service import LLMService
+    from stella_agent_sdk.llm import LLMService
     from pathlib import Path
 
     config_dir = Path(__file__).parent.parent / "config" / "experts"

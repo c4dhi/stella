@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from stella_agent_sdk.messages.types import BargeInDecision
-from stella_v2_agent.llm.service import LLMProvider
+from stella_agent_sdk.llm import LLMProvider
 from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
 
 
