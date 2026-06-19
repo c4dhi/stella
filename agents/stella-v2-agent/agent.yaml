@@ -83,46 +83,6 @@ defaultConfig: {}
 
 pipelineSchema:
   nodes:
-    - id: input_gate
-      label: "Input Gate"
-      description: "Fast JSON classification — selects which experts to activate (~100ms)"
-      icon: "🚦"
-      position: { row: 0, col: 0 }
-      slots:
-        - id: system_prompt
-          label: "System Prompt"
-          type: text
-          description: "System prompt for the input gate routing classifier"
-          default: |
-            You are a routing classifier. Select which expert modules to activate for this message.
-
-            RULES:
-            1. Include "noise_detection" if the message seems garbled or inaudible.
-            2. Include "medical" if health topics are mentioned.
-            3. Include "legal" if legal topics are mentioned.
-            4. Include "probing" if clarification might be needed.
-            5. Include "timekeeper" if the conversation seems stuck (many turns without progress).
-            6. Select multiple experts if needed — they run in parallel.
-        - id: model
-          label: "Model"
-          type: select
-          options: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"]
-          default: "gpt-4o-mini"
-        - id: temperature
-          label: "Temperature"
-          type: number
-          min: 0
-          max: 1
-          step: 0.1
-          default: 0.0
-        - id: max_tokens
-          label: "Max Tokens"
-          type: number
-          min: 20
-          max: 500
-          step: 10
-          default: 60
-
     - id: expert_pool
       label: "Expert Pool"
       description: "Parallel expert execution with structured verdicts (~200ms)"
@@ -138,11 +98,6 @@ pipelineSchema:
           type: expert_list
           description: "Define new custom experts with name, description, priority, model, and prompt"
           isCustom: true
-        - id: always_run
-          label: "Always Run"
-          type: string_list
-          description: "Experts that always run regardless of Input Gate selection"
-          default: ["task_extraction"]
         - id: background_experts
           label: "Background Experts"
           type: string_list
@@ -424,9 +379,6 @@ pipelineSchema:
           default: 3
 
   edges:
-    - source: input_gate
-      target: expert_pool
-      label: "expert names[]"
     - source: expert_pool
       target: arbitration
       label: "ExpertVerdict[]"

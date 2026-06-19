@@ -281,8 +281,8 @@ class BridgeGenerator:
     """Generates a short conversational bridge for early TTS synthesis.
 
     Uses a dedicated LLM call with higher temperature for natural variety.
-    Runs in parallel with InputGate.classify() — whichever finishes first
-    is used immediately.
+    Emitted up front (before the experts run) so the user hears a natural beat
+    while the rest of the pipeline computes.
     """
 
     def __init__(self, llm_service: LLMService):

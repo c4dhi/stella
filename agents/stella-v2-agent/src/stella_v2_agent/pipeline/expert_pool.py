@@ -52,8 +52,10 @@ class ExpertPool:
         self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "15000"))
 
-        # Configurable sets (overridable via apply_config)
-        self._always_run: set = set(self._registry.get_always_triggered_names())
+        # Experts whose results may be collected after the response (non-blocking).
+        # Stored from config; execution is still foreground today because
+        # task_extraction's state changes are needed before response generation.
+        self._background_experts: set = set()
 
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
         """Set or update the tool registry (called after session start)."""
@@ -69,9 +71,9 @@ class ExpertPool:
         self._runner._compiler_version = compiler_version
 
     def apply_config(self, config: dict) -> None:
-        """Apply configuration overrides from Agent Configurator."""
-        if "always_run" in config:
-            self._always_run = set(config["always_run"])
+        """Apply configuration overrides from the Agent Configurator."""
+        if "background_experts" in config:
+            self._background_experts = set(config["background_experts"])
 
     async def run(
         self,
@@ -80,17 +82,12 @@ class ExpertPool:
         conversation_history: List[Dict[str, str]],
         sm_context: Dict[str, Any],
     ) -> List[ExpertVerdict]:
-        """Run all experts in parallel and return their verdicts.
+        """Run the given experts in parallel and return their verdicts.
 
-        All experts block until complete — results are needed for
-        arbitration and accurate state context before response generation.
+        All experts block until complete — results are needed for arbitration and
+        accurate state context before response generation. With the Input Gate
+        gone (#363) the caller passes every enabled expert, and each self-gates.
         """
-        # Ensure always-run experts are included
-        names_set = set(expert_names)
-        for name in self._always_run:
-            if name not in names_set and self._registry.get(name):
-                expert_names = list(expert_names) + [name]
-
         if not expert_names:
             return []
 

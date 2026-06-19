@@ -195,7 +195,6 @@ class ExpertRegistry:
                         output_schema=expert_def.get("output_schema"),
                         output_format=expert_def.get("output_format", ""),
                         trigger_criteria=expert_def.get("trigger_criteria", ""),
-                        always_triggered=bool(expert_def.get("always_triggered", False)),
                         verdict_directives=expert_def.get("verdict_directives", {}),
                     )
                     self._experts[name] = custom_config
@@ -241,10 +240,6 @@ class ExpertRegistry:
             }
             for e in self.get_enabled()
         ]
-
-    def get_always_triggered_names(self) -> List[str]:
-        """Get names of all enabled experts marked as always_triggered."""
-        return [e.name for e in self._experts.values() if e.enabled and e.always_triggered]
 
     def filter_valid_names(self, names: List[str]) -> List[str]:
         """Filter a list of expert names to only those that exist and are enabled."""
