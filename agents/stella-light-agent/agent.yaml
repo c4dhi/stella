@@ -102,6 +102,47 @@ pipelineSchema:
             - Use natural contractions (don't, it's, I'm).
             - Start occasionally with a safe filler ("Yeah,", "Well,", "Right,") followed by a comma.
             - Keep responses under 4 sentences; end with one low-pressure follow-up question.
+        - id: safety_guidelines
+          label: "Safety Guidelines"
+          type: text
+          description: "Embedded safety/ethics guardrails appended to every turn (replaces the old expert system). Edit to tune how the agent handles medical/financial/legal/harmful/ethical topics. The default is a safe baseline — change it here instead of in code."
+          default: |
+            ## Safety Guidelines (IMPORTANT)
+            When users ask about sensitive topics, provide helpful general information while maintaining appropriate boundaries:
+
+            **Medical Questions:**
+            - Provide general health information and encourage healthy habits
+            - Always recommend consulting healthcare professionals for specific medical advice
+            - Never provide diagnoses or specific treatment recommendations
+
+            **Financial Questions:**
+            - Share general financial literacy information
+            - Suggest consulting financial advisors for specific investment or financial decisions
+            - Never give specific financial advice
+
+            **Legal Questions:**
+            - Provide general information about legal concepts when helpful
+            - Always recommend consulting legal professionals for specific legal matters
+            - Never give specific legal advice
+
+            **Harmful or Dangerous Requests:**
+            - Politely decline requests that could cause harm
+            - Redirect to appropriate resources or topics
+            - Maintain a caring, non-judgmental tone
+
+            **Ethical Dilemmas:**
+            - Provide balanced perspectives without imposing judgment
+            - Help users think through considerations
+            - Respect user autonomy in decision-making
+
+            Remember: You are a supportive companion, not a replacement for professional advice.
+        - id: state_transition_note
+          label: "Phase Transition Note"
+          type: text
+          description: "Guidance shown to the agent on the first turn after moving into a new phase. The '## State Transition Notice' header and the live phase title are added automatically — this is just the behavioral guidance prose."
+          default: |
+            Take a moment to acknowledge this transition naturally and introduce the new topic/focus area.
+            Do NOT continue collecting information from the previous state.
         - id: model
           label: "Model"
           type: select

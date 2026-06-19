@@ -116,6 +116,11 @@ class StellaLightAgent(BaseAgent):
         # Legacy fields, still honored for configs saved before persona/guidelines were merged.
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
+        # Operator-editable prose blocks (response.* slots) — default text lives in
+        # the prompt builder; these override it so the developer owns them from the
+        # config screen without code edits.
+        self._custom_safety_guidelines: Optional[str] = None
+        self._custom_state_transition_note: Optional[str] = None
         self._history_limit: int = 20
         # Explicit prompt-compiler version (never implicit/latest). Defaults to the
         # version this agent was authored against; can be overridden via config.
@@ -168,6 +173,10 @@ class StellaLightAgent(BaseAgent):
             self._custom_persona = response["persona"]
         if response.get("conversation_guidelines"):
             self._custom_guidelines = response["conversation_guidelines"]
+        if response.get("safety_guidelines"):
+            self._custom_safety_guidelines = response["safety_guidelines"]
+        if response.get("state_transition_note"):
+            self._custom_state_transition_note = response["state_transition_note"]
 
         if "history_limit" in thresholds:
             try:
@@ -219,6 +228,10 @@ class StellaLightAgent(BaseAgent):
             sm_context["custom_persona"] = render(self._custom_persona)
         if self._custom_guidelines:
             sm_context["custom_guidelines"] = render(self._custom_guidelines)
+        if self._custom_safety_guidelines:
+            sm_context["custom_safety_guidelines"] = render(self._custom_safety_guidelines)
+        if self._custom_state_transition_note:
+            sm_context["custom_state_transition_note"] = render(self._custom_state_transition_note)
         # The plan system prompt may also contain placeholders.
         if sm_context.get("plan_system_prompt"):
             sm_context["plan_system_prompt"] = render(sm_context["plan_system_prompt"])
@@ -237,6 +250,8 @@ class StellaLightAgent(BaseAgent):
         self._custom_system_prompt = None
         self._custom_persona = None
         self._custom_guidelines = None
+        self._custom_safety_guidelines = None
+        self._custom_state_transition_note = None
         self._history_limit = 20
         self._state_just_changed = False
         # Explicit compiler version: config override, else the agent's pinned default.

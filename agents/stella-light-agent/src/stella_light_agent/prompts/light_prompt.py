@@ -54,12 +54,17 @@ class LightPromptBuilder:
         # Legacy split fields, still honored for configs saved before the merge.
         custom_persona = context.get("custom_persona")
         custom_guidelines = context.get("custom_guidelines")
+        # Operator-editable prose blocks (response.* slots). Default text lives in
+        # the builders; these override it so the developer controls them from the
+        # config screen without touching code.
+        custom_safety = context.get("custom_safety_guidelines")
+        custom_transition = context.get("custom_state_transition_note")
 
         if custom_system_prompt:
             # One field replaces the default identity + conversational style.
             parts = [
                 self._build_identity(plan_system_prompt, custom_system_prompt),
-                self._build_guardrails(),
+                self._build_guardrails(custom_safety),
             ]
         else:
             # A custom delivery prompt (custom_guidelines) owns language — don't
@@ -71,7 +76,7 @@ class LightPromptBuilder:
                     operator_owns_language=bool(custom_guidelines),
                 ),
                 self._build_conversational_style(custom_guidelines),
-                self._build_guardrails(),
+                self._build_guardrails(custom_safety),
             ]
 
         # Add mode-specific instructions (flexible vs sequential)
@@ -91,7 +96,7 @@ class LightPromptBuilder:
 
         # Add state transition warning if applicable
         if state_just_changed:
-            parts.append(self._build_state_transition_warning(state))
+            parts.append(self._build_state_transition_warning(state, custom_transition))
 
         # Deliverable-driven steering for THIS turn (#306). Kept last so it is the
         # most salient instruction the model sees before responding.
@@ -221,8 +226,18 @@ You are a calm, observant, and grounded conversationalist. Your goal is to sound
 
 **Keep responses under 4 sentences total.**"""
 
-    def _build_guardrails(self) -> str:
-        """Build embedded safety guardrails (replaces expert system)."""
+    def _build_guardrails(self, custom: Optional[str] = None) -> str:
+        """Build embedded safety guardrails (replaces expert system).
+
+        Args:
+            custom: Operator-provided safety guidelines from the Agent
+                Configurator (response.safety_guidelines slot). When set, it
+                replaces the default text entirely — the developer owns the
+                guardrails from the config screen, with the default below as the
+                safe fallback.
+        """
+        if custom:
+            return custom
         return """## Safety Guidelines (IMPORTANT)
 When users ask about sensitive topics, provide helpful general information while maintaining appropriate boundaries:
 
@@ -470,12 +485,25 @@ The user's words decide which skip tool you use — read the scope literally:
 
         return "\n".join(parts)
 
-    def _build_state_transition_warning(self, state: Dict) -> str:
-        """Build warning when state just changed."""
-        return f"""## State Transition Notice
-You just transitioned to a new state: **{state.get('title', 'Unknown')}**
-Take a moment to acknowledge this transition naturally and introduce the new topic/focus area.
-Do NOT continue collecting information from the previous state."""
+    # Default behavioral guidance for a phase transition. The structural header
+    # and the live phase title stay in code; only this prose is operator-editable
+    # (response.state_transition_note slot) so it can be tuned without code edits.
+    _DEFAULT_STATE_TRANSITION_NOTE = (
+        "Take a moment to acknowledge this transition naturally and introduce the "
+        "new topic/focus area.\nDo NOT continue collecting information from the "
+        "previous state."
+    )
+
+    def _build_state_transition_warning(self, state: Dict, custom: Optional[str] = None) -> str:
+        """Build the notice shown when the phase just changed. ``custom`` (the
+        configured state_transition_note) replaces the default guidance prose;
+        the header and the live phase title are always supplied by code."""
+        body = custom or self._DEFAULT_STATE_TRANSITION_NOTE
+        return (
+            f"## State Transition Notice\n"
+            f"You just transitioned to a new state: **{state.get('title', 'Unknown')}**\n"
+            f"{body}"
+        )
 
     def _build_mode_instructions(
         self,
