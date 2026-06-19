@@ -214,10 +214,16 @@ class Arbitration:
             if isinstance(signals, list) and signals:
                 directive.deliverable_signals = [s for s in signals if isinstance(s, str)]
 
-        # 4. Handle timekeeper — when stuck, override probing with a direct
-        #    redirect toward the pending deliverable to prevent going in circles.
+        # 4. Handle timekeeper — when stuck, steer toward the pending deliverable
+        #    to prevent going in circles, but ONLY if probing hasn't already
+        #    steered this turn. Priority ordering is load-bearing here: probing
+        #    (60) outranks timekeeper (50), so probing's targeted follow-up or
+        #    redirect wins. With the Input Gate removed (#363) both experts report
+        #    every turn, so this gap-fill (act only when probing tapped out to
+        #    no_probe) is the common path, not an edge case.
         timekeeper_verdict = self._find_verdict(sorted_verdicts, "timekeeper")
-        if timekeeper_verdict and timekeeper_verdict.success:
+        probing_already_steered = directive.ask_followup or directive.force_redirect
+        if timekeeper_verdict and timekeeper_verdict.success and not probing_already_steered:
             if timekeeper_verdict.verdict in ("stuck", "force_advance"):
                 # Build a specific redirect using pending deliverable info
                 redirect = timekeeper_verdict.recommendation or ""
@@ -230,7 +236,6 @@ class Arbitration:
                     if pending:
                         redirect = f"Ask directly about: {', '.join(pending[:2])}. Do not ask follow-up questions about other topics."
 
-                # Timekeeper "stuck" overrides probing — force the redirect
                 directive.ask_followup = True
                 directive.followup_question = redirect
 

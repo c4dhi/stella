@@ -231,7 +231,11 @@ class ExpertRegistry:
         return [e.name for e in self.get_enabled()]
 
     def get_summaries(self) -> List[Dict[str, str]]:
-        """Get name + description + trigger_criteria for all enabled experts (used in Input Gate prompt)."""
+        """Get name + description + trigger_criteria for all enabled experts.
+
+        Retained for the agent-configurator expert-summary surface. (The Input
+        Gate that originally consumed this was removed in #363 — each expert now
+        self-gates via its own engage/tap-out prompt contract.)"""
         return [
             {
                 "name": e.name,
