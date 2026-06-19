@@ -3,6 +3,7 @@
 from typing import Any, Dict
 
 from stella_agent_sdk.tools.base import BaseTool, ToolResult
+from stella_agent_sdk.tools.state_machine.result import state_transition_data
 from stella_agent_sdk.services.state_machine_client import StateMachineClient
 
 
@@ -99,14 +100,6 @@ class CompleteTaskTool(BaseTool):
             data={
                 "task_id": resolved_task_id,
                 "task_completed": result.get("task_completed"),
-                "transitioned": result.get("transitioned", False),
-                "new_state_id": result.get("new_state_id"),
-                "new_state_title": result.get("new_state_title"),
-                "progress": result.get("progress"),
-                # Propagated from backend — set when plan reached __end__.
-                # The expert runner reads this to signal session completion upstream.
-                "session_completed": result.get("session_completed", False),
-                "farewell_message": result.get("farewell_message"),
-                "summary_behavior": result.get("summary_behavior"),
+                **state_transition_data(result),
             }
         )
