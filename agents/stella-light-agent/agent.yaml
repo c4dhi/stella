@@ -172,11 +172,21 @@ pipelineSchema:
         - id: system_prompt
           label: "System Prompt"
           type: text
-          description: "Decides if a barge-in is a real interruption. The conversation history is provided in the message so it judges in context. Must output exactly COMMIT (act on it, discard the rest of the current reply) or RESUME (ignore it, continue speaking). Supports variables: {{bargeInTranscript}}, {{userInput}}, {{isBargeIn}}."
+          description: "Decides if a barge-in is a real interruption. The interruption itself arrives as the user message; place the prior context yourself via {{conversationHistory}} and the half-committed reply via {{interruptedReply}} so the call judges in context. Must output exactly COMMIT (act on it, discard the rest of the current reply) or RESUME (ignore it, continue speaking). Supports variables: {{conversationHistory}}, {{interruptedReply}}, {{bargeInTranscript}}, {{userInput}}, {{isBargeIn}}."
           default: |
             You decide whether a user's interruption of the assistant's speech is a real interruption that should be acted on, or just a backchannel/noise that should be ignored so the assistant keeps talking.
+            {{#if conversationHistory}}
 
-            You are given the conversation so far and what the user just said while the assistant was speaking. JUDGE IT IN CONTEXT.
+            Conversation so far:
+            {{conversationHistory}}
+            {{/if}}
+            {{#if interruptedReply}}
+
+            The assistant was in the middle of saying (the user cut in here):
+            {{interruptedReply}}
+            {{/if}}
+
+            The user's interruption (what they said while the assistant was speaking) is given as the user message. JUDGE IT IN CONTEXT.
 
             Output COMMIT if the user's words are meaningful given the conversation — a relevant answer to what the assistant just asked, a question, a correction, a new request, a clear "stop"/"wait", or a change of topic. An on-topic answer (e.g. giving their name right after being asked for it) is a real turn and must COMMIT.
 

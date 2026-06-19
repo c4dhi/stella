@@ -7,7 +7,7 @@ import pytest
 
 from stella_agent_sdk.messages.types import BargeInDecision
 from stella_agent_sdk.llm import LLMProvider
-from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
+from stella_agent_sdk.agent.barge_in_evaluator import BargeInEvaluator
 
 
 class FakeLLM:

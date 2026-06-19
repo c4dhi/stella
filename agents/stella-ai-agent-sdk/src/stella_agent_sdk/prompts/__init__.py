@@ -34,6 +34,11 @@ from stella_agent_sdk.prompts.registry import (
     available_versions,
     latest_version,
 )
+from stella_agent_sdk.prompts.template import (
+    render_prompt,
+    PromptVariable,
+    format_history,
+)
 
 __all__ = [
     "compile",
@@ -49,4 +54,7 @@ __all__ = [
     "register_compiler",
     "available_versions",
     "latest_version",
+    "render_prompt",
+    "PromptVariable",
+    "format_history",
 ]
