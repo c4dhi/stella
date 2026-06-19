@@ -45,6 +45,21 @@ def test_default_transition_note_present_when_unconfigured():
     assert "acknowledge this transition naturally" in prompt
 
 
+def test_resolved_language_emits_authoritative_directive():
+    # The shared SDK language resolver's output flows into the prompt as an
+    # authoritative directive (parity with stella-v2).
+    de = LightPromptBuilder().build_system_prompt(_ctx(language="de"))
+    assert "Respond ENTIRELY in German" in de
+    en = LightPromptBuilder().build_system_prompt(_ctx(language="en"))
+    assert "Respond ENTIRELY in English" in en
+
+
+def test_no_resolved_language_omits_authoritative_directive():
+    # Without a locked language, only the soft identity rule stands.
+    prompt = LightPromptBuilder().build_system_prompt(_ctx())
+    assert "Respond ENTIRELY in" not in prompt
+
+
 def test_custom_transition_note_replaces_body_but_keeps_header_and_title():
     prompt = LightPromptBuilder().build_system_prompt(
         _ctx(

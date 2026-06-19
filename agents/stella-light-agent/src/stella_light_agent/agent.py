@@ -26,6 +26,7 @@ from stella_agent_sdk.progress import progress_from_full_state, build_last_trans
 
 from stella_agent_sdk.llm import LLMService
 from stella_agent_sdk.agent.barge_in_evaluator import BargeInEvaluator
+from stella_agent_sdk.language import LanguageResolver
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.prompts import LightPromptBuilder
 from stella_agent_sdk import prompts as sdk_prompts
@@ -90,6 +91,12 @@ class StellaLightAgent(BaseAgent):
 
         # Prompt builder (tool-based state management).
         self.prompt_builder = LightPromptBuilder()
+
+        # Conversation-language resolution (shared SDK logic — single source of
+        # truth, identical to stella-v2). One resolved language per turn flows to
+        # the prompt's {{language}} directive and to TTS via output metadata.
+        self.language_resolver = LanguageResolver()
+        self._session_language: Optional[str] = None
 
         # Tool-based components (initialized per session).
         # State machine shares the same gRPC port as agent registration (50051).
@@ -189,6 +196,12 @@ class StellaLightAgent(BaseAgent):
         if isinstance(barge_in, dict) and barge_in:
             self.barge_in_evaluator.apply_config(barge_in)
 
+        # Language resolver overrides (supported/default/thresholds) — same shared
+        # SDK resolver and config surface as stella-v2.
+        language_config = nodes.get("language", {}) or {}
+        if isinstance(language_config, dict) and language_config:
+            self.language_resolver.apply_config(language_config)
+
         print(
             f"[StellaLightAgent] Pipeline config applied: "
             f"model={self.llm_service.default_config.model}, "
@@ -254,6 +267,10 @@ class StellaLightAgent(BaseAgent):
         self._custom_state_transition_note = None
         self._history_limit = 20
         self._state_just_changed = False
+        # Fresh language lock per session so a resolved language never leaks
+        # between conversations (config — supported/default/thresholds — kept).
+        self.language_resolver.reset()
+        self._session_language = None
         # Explicit compiler version: config override, else the agent's pinned default.
         self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
@@ -532,6 +549,25 @@ class StellaLightAgent(BaseAgent):
             sm_context["plan_system_prompt"] = self._plan_system_prompt
             print(f"[StellaLightAgent] Using plan system prompt: {self._plan_system_prompt[:100]}...")
 
+        # Resolve the conversation language for this turn (single source of truth,
+        # shared SDK logic — identical to stella-v2). The plan language seeds it;
+        # STT's acoustic detection (input metadata) overrides when confident, else
+        # the bundled text classifier reads input.text. Flows to {{language}} and
+        # to TTS via output metadata below.
+        self.language_resolver.set_seed((self._plan_config or {}).get("language"))
+        meta = getattr(input, "metadata", None) or {}
+        detected_language = meta.get("detected_language") or None
+        language_signal = (
+            (detected_language, float(meta.get("language_confidence") or 0.0))
+            if detected_language
+            else None
+        )
+        self._session_language = self.language_resolver.resolve(
+            input.text, signal=language_signal
+        )
+        sm_context["language"] = self._session_language
+        print(f"[StellaLightAgent] Resolved language for turn: {self._session_language}")
+
         # Inject configured prompts, resolving {{placeholder}} variables against
         # the live runtime context (same principle as stella-v2).
         self._inject_configured_prompts(sm_context, conversation_history, input.text)
@@ -568,6 +604,11 @@ class StellaLightAgent(BaseAgent):
             if isinstance(output, ToolProcessorResult):
                 result = output
             else:
+                # Stamp the resolved language so the SDK routes TTS to the right
+                # voice (parity with stella-v2). Guard: not every output carries a
+                # mutable metadata dict.
+                if self._session_language and getattr(output, "metadata", None) is not None:
+                    output.metadata["language"] = self._session_language
                 yield output
 
         # Handle results

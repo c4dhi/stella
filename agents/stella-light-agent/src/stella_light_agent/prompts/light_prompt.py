@@ -11,6 +11,7 @@ Combines all prompt components into a single system prompt with:
 from typing import Dict, List, Any, Optional
 
 from stella_agent_sdk.tools.state_machine import STATE_MACHINE_TOOL_GUIDANCE
+from stella_agent_sdk.language import language_name
 
 
 class LightPromptBuilder:
@@ -80,6 +81,13 @@ class LightPromptBuilder:
                 self._build_conversational_style(custom_guidelines),
                 self._build_guardrails(custom_safety),
             ]
+
+        # Deterministic language directive (single source of truth, parity with
+        # stella-v2). When the resolver locked a concrete language, state it
+        # authoritatively — it overrides the soft "same language" rule above.
+        language_directive = self._build_language_directive(context.get("language"))
+        if language_directive:
+            parts.append(language_directive)
 
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
@@ -227,6 +235,19 @@ You are a calm, observant, and grounded conversationalist. Your goal is to sound
 3. End with a simple, low-pressure follow-up question
 
 **Keep responses under 4 sentences total.**"""
+
+    def _build_language_directive(self, language: Optional[str]) -> str:
+        """Authoritative 'respond entirely in <language>' block when the resolver
+        locked a concrete language; empty for auto/unknown so the soft prompt rule
+        stands. Mirrors stella-v2's _language_directive (single source of truth)."""
+        if not language or language == "auto":
+            return ""
+        name = language_name(language)
+        return (
+            "## Language (highest priority — overrides everything above)\n"
+            f"- Respond ENTIRELY in {name}. Every single word, including any examples, must be in {name}.\n"
+            "- This is the language detected for this conversation; do not switch languages on your own."
+        )
 
     def _build_guardrails(self, custom: Optional[str] = None) -> str:
         """Build embedded safety guardrails (replaces expert system).

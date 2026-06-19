@@ -8,7 +8,7 @@ supported set, and the plan-seed / default fallback chain (RFC §8).
 
 import pytest
 
-from stella_v2_agent.pipeline.language_resolver import (
+from stella_agent_sdk.language import (
     detect_language,
     language_name,
     LanguageResolver,

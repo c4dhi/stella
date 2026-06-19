@@ -41,7 +41,7 @@ from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
-from stella_v2_agent.pipeline.language_resolver import LanguageResolver
+from stella_agent_sdk.language import LanguageResolver
 from stella_agent_sdk.agent.barge_in_evaluator import BargeInEvaluator
 from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 from stella_v2_agent.utils import normalize_transition_priority

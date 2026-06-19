@@ -10,7 +10,7 @@ Composes the final system prompt from:
 from typing import Dict, Any, List, Optional
 
 from stella_v2_agent.models.arbitration_result import ResponseDirective
-from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES
+from stella_agent_sdk.language import LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
 from stella_v2_agent.prompts.context import format_history
 
