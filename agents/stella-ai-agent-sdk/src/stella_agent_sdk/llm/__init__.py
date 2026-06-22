@@ -15,6 +15,7 @@ from stella_agent_sdk.llm.service import (
     LLMStreamingCallback,
     LLMProviderInterface,
     LLMUsageStats,
+    stream_completion,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "LLMStreamingCallback",
     "LLMProviderInterface",
     "LLMUsageStats",
+    "stream_completion",
 ]

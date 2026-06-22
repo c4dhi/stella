@@ -19,8 +19,7 @@ from typing import Dict, Any, List, Optional
 
 from stella_agent_sdk.env import env_bool as _env_bool, env_float as _env_float
 from stella_agent_sdk.llm import (
-    LLMService, LLMConfig, LLMMessage, LLMProvider,
-    LLMResponse, LLMStreamingCallback,
+    LLMService, LLMConfig, LLMMessage, LLMProvider, stream_completion,
 )
 from stella_agent_sdk.language import LANGUAGE_NAMES as _LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
@@ -365,25 +364,6 @@ def _screen_risk(user_input: str) -> bool:
     return any(phrase in text for phrase in _APPRAISAL_RISK_PHRASES)
 
 
-class _StreamingBridgeCallback(LLMStreamingCallback):
-    """Pushes streaming bridge events into an asyncio.Queue as ``(kind, payload)``:
-    ``("token", accumulated_text)`` on each token (full text so far, which the
-    sentence gate needs), ``("complete", LLMResponse)`` at the end, and
-    ``("error", Exception)`` on failure."""
-
-    def __init__(self, queue: asyncio.Queue):
-        self._queue = queue
-
-    async def on_token(self, token: str, accumulated_text: str) -> None:
-        await self._queue.put(("token", accumulated_text))
-
-    async def on_complete(self, final_response: LLMResponse) -> None:
-        await self._queue.put(("complete", final_response))
-
-    async def on_error(self, error: Exception) -> None:
-        await self._queue.put(("error", error))
-
-
 class BridgeGenerator:
     """Generates a short conversational bridge for early TTS synthesis.
 
@@ -573,7 +553,6 @@ class BridgeGenerator:
         allow_appraisal = self.appraisal_enabled and not _screen_risk(user_input)
 
         released = ""  # accumulated, validated bridge text yielded so far
-        gen_task: Optional[asyncio.Task] = None
         try:
             messages = self._build_messages(
                 user_input, conversation_history, language, variables, allow_appraisal
@@ -587,42 +566,21 @@ class BridgeGenerator:
                 json_mode=False,
             )
 
-            queue: asyncio.Queue = asyncio.Queue()
-            callback = _StreamingBridgeCallback(queue)
-            gen_task = asyncio.create_task(
-                self._llm_service.generate(
-                    messages=messages, config=config,
-                    callback=callback, component_name="bridge_generator",
-                )
-            )
-
-            # Bound the whole bridge on wall-clock — a slow LLM must never stall
-            # the turn. The deadline covers first-byte AND the tail; on timeout we
-            # keep whatever validated sentences already streamed (or fall back if
-            # none did).
-            deadline = start_time + self.bridge_timeout_s
-            raw = ""
-            stop = False
-            while not stop:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    raise asyncio.TimeoutError
-                kind, payload = await asyncio.wait_for(queue.get(), timeout=remaining)
-                if kind == "token":
-                    raw = payload
-                    final = False
-                elif kind == "complete":
-                    raw = (payload.content if payload and payload.content else raw)
-                    final = True
-                else:  # "error"
-                    break
-
-                candidate, stop = _gate_stream(raw, allow_appraisal, final=final)
-                if candidate and candidate != released and candidate.startswith(released):
-                    released = candidate
-                    yield released
-                if final:
-                    break
+            # Consume the LLM stream through the shared SDK adapter (single source
+            # of truth for callback→async-iterator), bounded on wall-clock so a
+            # slow LLM never stalls the turn. The timeout covers first-byte AND the
+            # tail; on timeout we keep whatever validated sentences already
+            # streamed (or fall back below if none did).
+            async with asyncio.timeout(self.bridge_timeout_s):
+                async for raw, final in stream_completion(
+                    self._llm_service, messages, config, component_name="bridge_generator",
+                ):
+                    candidate, stop = _gate_stream(raw, allow_appraisal, final=final)
+                    if candidate and candidate != released and candidate.startswith(released):
+                        released = candidate
+                        yield released
+                    if stop:
+                        break
 
             latency_ms = (time.time() - start_time) * 1000
             if released:
@@ -634,9 +592,6 @@ class BridgeGenerator:
                 logger.warning(f"Bridge stream ended early after {latency_ms:.0f}ms: {e}")
             else:
                 logger.error(f"Bridge stream failed in {latency_ms:.0f}ms: {e}")
-        finally:
-            if gen_task is not None and not gen_task.done():
-                gen_task.cancel()
 
         # Nothing valid was released (rejected first sentence, timeout/error
         # before first byte, or empty output) → safe canned fallback.

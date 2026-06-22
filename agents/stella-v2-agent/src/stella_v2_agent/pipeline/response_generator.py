@@ -10,15 +10,13 @@ The directive section tells the LLM:
 - Expert summary context
 """
 
-import asyncio
 import uuid
 from typing import Dict, Any, List, AsyncIterator, Optional
 
 from stella_agent_sdk import AgentOutput
 
 from stella_agent_sdk.llm import (
-    LLMService, LLMConfig, LLMMessage, LLMResponse,
-    LLMStreamingCallback, LLMProvider,
+    LLMService, LLMConfig, LLMMessage, LLMProvider, stream_completion,
 )
 from stella_v2_agent.models.arbitration_result import ResponseDirective
 from stella_v2_agent.prompts.response_prompt import (
@@ -28,24 +26,6 @@ from stella_v2_agent.prompts.response_prompt import (
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-class _StreamingResponseCallback(LLMStreamingCallback):
-    """Callback that pushes streaming tokens into an asyncio.Queue."""
-
-    def __init__(self, queue: asyncio.Queue):
-        self._queue = queue
-        self._accumulated = ""
-
-    async def on_token(self, token: str, accumulated_text: str) -> None:
-        self._accumulated = accumulated_text
-        await self._queue.put(("token", token))
-
-    async def on_complete(self, final_response: LLMResponse) -> None:
-        await self._queue.put(("complete", final_response))
-
-    async def on_error(self, error: Exception) -> None:
-        await self._queue.put(("error", error))
 
 
 class ResponseGenerator:
@@ -174,68 +154,31 @@ class ResponseGenerator:
 
         if not transcript_id:
             transcript_id = f"response_{uuid.uuid4().hex[:8]}"
-        queue: asyncio.Queue = asyncio.Queue()
-        callback = _StreamingResponseCallback(queue)
 
-        # Start LLM generation in background
-        generation_task = asyncio.create_task(
-            self._llm_service.generate(
-                messages=messages,
-                config=config,
-                callback=callback,
-                component_name="response_generator",
-            )
-        )
-
-        # Prepend already-spoken prefix (bridge and/or deterministic safety line)
-        # so TTS speaks prefix + response as one seamless utterance.
+        # Prepend the already-spoken prefix (bridge and/or deterministic safety
+        # line) so TTS speaks prefix + response as one seamless utterance. The LLM
+        # streams just its own continuation; we put the prefix back in front of
+        # each accumulated chunk.
         spoken_prefix = " ".join(p for p in (bridge, prepend) if p)
-        accumulated = (spoken_prefix + " ") if spoken_prefix else ""
+        prefix = (spoken_prefix + " ") if spoken_prefix else ""
+
+        # Consume the stream through the shared SDK adapter (single source of
+        # truth for callback→async-iterator) instead of hand-rolling a queue.
         try:
-            while True:
-                event = await queue.get()
-                event_type = event[0]
-
-                if event_type == "token":
-                    token = event[1]
-                    accumulated += token
-                    yield AgentOutput.text_chunk(
-                        session_id,
-                        accumulated.strip(),
-                        transcript_id=transcript_id,
-                        is_final=False,
-                    )
-
-                elif event_type == "complete":
-                    # Send final chunk
-                    if accumulated.strip():
-                        yield AgentOutput.text_chunk(
-                            session_id,
-                            accumulated.strip(),
-                            transcript_id=transcript_id,
-                            is_final=True,
-                        )
-                    break
-
-                elif event_type == "error":
-                    error = event[1]
-                    logger.error(f"Streaming error: {error}")
-                    # Send error as final text
-                    error_msg = "I'm sorry, I encountered an issue. Could you try again?"
-                    yield AgentOutput.text_chunk(
-                        session_id,
-                        error_msg,
-                        transcript_id=transcript_id,
-                        is_final=True,
-                    )
-                    break
-
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            if not generation_task.done():
-                generation_task.cancel()
-            raise
-
-        # Ensure generation task completes
-        if not generation_task.done():
-            await generation_task
+            async for llm_text, is_final in stream_completion(
+                self._llm_service, messages, config, component_name="response_generator",
+            ):
+                yield AgentOutput.text_chunk(
+                    session_id,
+                    (prefix + llm_text).strip(),
+                    transcript_id=transcript_id,
+                    is_final=is_final,
+                )
+        except Exception as error:
+            logger.error(f"Streaming error: {error}")
+            yield AgentOutput.text_chunk(
+                session_id,
+                "I'm sorry, I encountered an issue. Could you try again?",
+                transcript_id=transcript_id,
+                is_final=True,
+            )
