@@ -183,49 +183,6 @@ async def test_resume_continues_same_message_after_rejected_barge_in():
     task.cancel()
 
 
-class OrderRecordingRoom(CapturingRoom):
-    """Records a single interleaved timeline of audio frames and data
-    envelopes so a test can assert their relative ordering."""
-
-    def __init__(self):
-        super().__init__()
-        self.timeline = []  # ("audio",) | ("data", <type>)
-
-    async def publish_audio(self, data: bytes):
-        await asyncio.sleep(0)
-        self.published.extend(data)
-        self.timeline.append(("audio",))
-
-    async def publish_data(self, payload, *a, **k):
-        await asyncio.sleep(0)
-        self.data.append(payload)
-        self.timeline.append(("data", payload.get("type")))
-
-
-@pytest.mark.asyncio
-async def test_speaking_envelope_leads_the_first_audio_frame():
-    """The 'speaking' envelope anchors the frontend's word-cursor schedule, so
-    it must be PUBLISHED before the audio it describes — otherwise the highlight
-    trails the voice. It is awaited (not fire-and-forget) at the play site, so it
-    lands ahead of the first audio frame even under load."""
-    room = OrderRecordingRoom()
-    pipe = AudioPipeline(room, stt_client=None, tts_client=None, session_id="s")
-    pipe._teleprompter_enabled = True
-    pipe._is_speaking = True
-
-    await pipe._play_prefetched(silence(10), meta=META)
-    for _ in range(5):
-        await asyncio.sleep(0)
-
-    # First speech_progress in the timeline is "speaking" and precedes any audio.
-    first_audio = next(i for i, ev in enumerate(room.timeline) if ev[0] == "audio")
-    first_speaking = next(
-        i for i, ev in enumerate(room.timeline)
-        if ev == ("data", "agent_speech_progress")
-    )
-    assert first_speaking < first_audio
-
-
 def test_default_on_when_env_unset(monkeypatch):
     monkeypatch.delenv("STELLA_TELEPROMPTER_ENABLED", raising=False)
     room = CapturingRoom()

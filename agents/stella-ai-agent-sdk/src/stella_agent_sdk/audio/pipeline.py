@@ -1653,23 +1653,36 @@ class AudioPipeline:
             decision="resume",
         )
 
-    def _build_speech_progress_payload(
-        self, state: str, meta: Optional[dict] = None
-    ) -> Optional[dict]:
-        """Build the ``agent_speech_progress`` envelope, or None if there's
-        nothing to anchor a highlight to (teleprompter off, or no char span).
+    def _emit_speech_progress(self, state: str, meta: Optional[dict] = None) -> None:
+        """Publish an ``agent_speech_progress`` envelope for the teleprompter.
 
-        Pure aside from reading the live playhead/meta — both the fire-and-forget
-        and the awaited emitters share it so the payload can't drift between them.
+        Drives the on-screen highlight (#241). ``state`` is one of:
+          - ``speaking``     — this sentence's audio is now playing (fresh or
+                               resumed). Carries ``duration_ms`` = audible time
+                               left so the frontend can advance a word cursor.
+          - ``spoken``       — the sentence's last frame was *pushed* (not yet
+                               necessarily heard — see the contract note at the
+                               emission site in ``_play_prefetched``).
+          - ``interrupted``  — barge-in froze playback; the highlight stays at
+                               the playhead.
+
+        ``spoken_char`` is the absolute character offset reached so far,
+        derived from the byte-accurate playhead so the highlight matches what
+        the user actually heard. No-op when the teleprompter is disabled or the
+        sentence carries no character span.
         """
+        # Drive client-side barge-in silencing first, on its own barge-in-gated
+        # channel — it must NOT be suppressed by the teleprompter flag or by a
+        # missing char span below (see _emit_playback_state).
+        self._emit_playback_state(state)
         if not self._teleprompter_enabled:
-            return None
+            return
         meta = meta if meta is not None else self._cur_meta
         if not meta:
             # No character span for this sentence (base._enqueue_sentence could
             # not locate it in the published agent_text) — nothing to anchor the
             # highlight to, so emit nothing.
-            return None
+            return
 
         char_start = meta["char_start"]
         char_end = meta["char_end"]
@@ -1701,7 +1714,7 @@ class AudioPipeline:
         except Exception:
             delay_ms = 0
 
-        return {
+        payload = {
             "type": "agent_speech_progress",
             "data": {
                 "transcript_id": meta["transcript_id"],
@@ -1714,65 +1727,11 @@ class AudioPipeline:
                 "agent_id": self._agent_id,
             },
         }
-
-    def _emit_speech_progress(self, state: str, meta: Optional[dict] = None) -> None:
-        """Publish an ``agent_speech_progress`` envelope for the teleprompter.
-
-        Drives the on-screen highlight (#241). ``state`` is one of:
-          - ``speaking``     — this sentence's audio is now playing (fresh or
-                               resumed). Carries ``duration_ms`` = audible time
-                               left so the frontend can advance a word cursor.
-          - ``spoken``       — the sentence's last frame was *pushed* (not yet
-                               necessarily heard — see the contract note at the
-                               emission site in ``_play_prefetched``).
-          - ``interrupted``  — barge-in froze playback; the highlight stays at
-                               the playhead.
-
-        ``spoken_char`` is the absolute character offset reached so far,
-        derived from the byte-accurate playhead so the highlight matches what
-        the user actually heard. No-op when the teleprompter is disabled or the
-        sentence carries no character span.
-
-        Fire-and-forget: used for the ``spoken``/``interrupted`` envelopes whose
-        timing the frontend does NOT schedule against. The ``speaking`` envelope
-        — which anchors the word-cursor schedule — is awaited at the play site
-        via :meth:`_emit_speech_progress_now` so it can't be starved behind the
-        streaming/expert workload and arrive after its own audio (which would
-        make the highlight trail the voice).
-        """
-        # Drive client-side barge-in silencing first, on its own barge-in-gated
-        # channel — it must NOT be suppressed by the teleprompter flag or by a
-        # missing char span below (see _emit_playback_state).
-        self._emit_playback_state(state)
-        payload = self._build_speech_progress_payload(state, meta)
-        if payload is None:
-            return
         try:
             asyncio.create_task(self._room.publish_data(payload))
         except RuntimeError:
             # No running loop (e.g. called from sync test context) — skip.
             pass
-
-    async def _emit_speech_progress_now(
-        self, state: str, meta: Optional[dict] = None
-    ) -> None:
-        """Awaited variant of :meth:`_emit_speech_progress`.
-
-        The frontend schedules the word cursor at ``now + delay_ms + client_lag``
-        relative to *when it receives this envelope*, so the whole schedule
-        assumes the envelope LEADS the audio it describes. A fire-and-forget
-        publish breaks that under load: while the bridge streams and the expert
-        pool runs (Stage 2), the create_task'd send is starved and lands after
-        the audio is already audible, so the highlight trails the voice. Awaiting
-        the publish before the first audio frame restores the lead; the data send
-        only enqueues to the channel, so it costs sub-millisecond, not real audio
-        latency.
-        """
-        self._emit_playback_state(state)
-        payload = self._build_speech_progress_payload(state, meta)
-        if payload is None:
-            return
-        await self._room.publish_data(payload)
 
     async def _resolve_barge_in(self, transcript: str) -> None:
         """Resolve a suspended barge-in given the user's transcript.
@@ -2149,17 +2108,10 @@ class AudioPipeline:
             if first:
                 first = False
                 self._emit_first_byte(source)
-                # Teleprompter: this sentence's audio is starting. Tell the
+                # Teleprompter: this sentence's audio has started. Tell the
                 # frontend its span and audible duration so it can advance a
-                # word cursor across it in time with the audio. AWAITED (not
-                # fire-and-forget): the frontend schedules the cursor relative to
-                # when this envelope arrives, assuming it leads the audio — under
-                # streaming load a create_task'd send is starved behind the LLM
-                # stream + expert pool and lands after the audio is audible,
-                # making the highlight trail the voice. Awaiting it before the
-                # first frame keeps the anchor ahead of the sound (the publish
-                # only enqueues to the data channel — sub-ms, no audio latency).
-                await self._emit_speech_progress_now("speaking", meta=meta)
+                # word cursor across it in time with the audio.
+                self._emit_speech_progress("speaking", meta=meta)
 
             # The agent is now audibly talking — a barge-in may start.
             self._audio_active = True
