@@ -254,23 +254,35 @@ class StellaV2Agent(BaseAgent):
             yield AgentOutput.analytics_event(
                 input.session_id, "bridge_start", turn_id, self._elapsed_ms(),
             )
-            bridge = await self.bridge_generator.generate(
-                input.text, history, language=resolved_language, variables=prompt_variables
-            )
 
             # Shared transcript_id for bridge + response (one seamless utterance)
             transcript_id = f"response_{uuid.uuid4().hex[:8]}"
 
-            # Emit bridge immediately for early TTS synthesis
-            if bridge:
-                logger.info(f"Bridge: '{bridge}'")
+            # Stream the bridge through the SAME accumulated-TEXT_CHUNK interface
+            # the Response Generator uses: each emitted chunk is the full bridge so
+            # far, and the SDK's run loop diffs it and hands every completed
+            # sentence to TTS the instant it's ready. So the first sentence starts
+            # speaking after a few hundred ms instead of waiting for the whole
+            # (now richer) bridge — and the rest streams in behind it. is_final
+            # stays False: the response continues this same transcript.
+            bridge = ""
+            bridge_ready_emitted = False
+            async for bridge_accum in self.bridge_generator.generate_stream(
+                input.text, history, language=resolved_language, variables=prompt_variables
+            ):
+                if not bridge_accum:
+                    continue
+                bridge = bridge_accum
                 # Track what's being spoken so a barge-in during the bridge still
-                # has the half-committed message to evaluate.
+                # has the (latest) half-committed message to evaluate.
                 self._last_reply_text = bridge
-                yield AgentOutput.analytics_event(
-                    input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
-                    bridge_text=bridge,
-                )
+                if not bridge_ready_emitted:
+                    bridge_ready_emitted = True
+                    # First audible byte of the turn — record the timing here.
+                    yield AgentOutput.analytics_event(
+                        input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
+                        bridge_text=bridge,
+                    )
                 bridge_output = AgentOutput.text_chunk(
                     input.session_id,
                     bridge,
@@ -282,6 +294,9 @@ class StellaV2Agent(BaseAgent):
                 if resolved_voice:
                     bridge_output.metadata["voice"] = resolved_voice
                 yield bridge_output
+
+            if bridge:
+                logger.info(f"Bridge: '{bridge}'")
 
             # ── Stage 2: Expert Pool (every enabled expert) ──
             # With no gate, all enabled experts run in parallel and self-gate;

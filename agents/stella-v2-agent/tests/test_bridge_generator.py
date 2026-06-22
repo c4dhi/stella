@@ -21,8 +21,34 @@ from stella_v2_agent.pipeline.bridge_generator import (
     ACKNOWLEDGEMENT_BRIDGES_DE,
     _BRIDGE_INVENTORY,
     _screen_risk,
+    _gate_stream,
 )
+from stella_agent_sdk.llm import LLMResponse
 from stella_v2_agent.prompts.template import render_prompt
+
+
+class _FakeStreamingLLM:
+    """Streams ``text`` token-by-token via callback.on_token(token, accumulated),
+    then on_complete — mimicking the real streaming LLM service for the bridge."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.called = False
+
+    async def generate(self, messages, config, callback, component_name="unknown"):
+        self.called = True
+        acc = ""
+        for tok in self.text.split(" "):
+            piece = (" " if acc else "") + tok
+            acc += piece
+            await callback.on_token(piece, acc)
+        resp = LLMResponse(content=acc, model="t", provider="t")
+        await callback.on_complete(resp)
+        return resp
+
+
+async def _drain(agen):
+    return [x async for x in agen]
 
 
 def _iter_dicts(obj):
@@ -300,3 +326,84 @@ class TestConfigCarriesTheImprovements:
 
     def test_appraisal_default_on_in_config(self):
         assert _slot_default("bridge_generator", "appraisal") == "on"
+
+
+class TestGateStream:
+    """The sentence-gated streaming validator (_gate_stream) keeps the bridge's
+    guarantees per completed sentence so TTS can start before it's finished."""
+
+    def test_releases_only_complete_sentences(self):
+        # Trailing incomplete text is held back (never speak half a sentence).
+        out, stop = _gate_stream("Okay, I hear you. That sounds", allow_appraisal=False, final=False)
+        assert out == "Okay, I hear you."
+        assert stop is False
+
+    def test_final_flushes_remainder_with_terminal_punctuation(self):
+        out, stop = _gate_stream("Okay, I hear you. That sounds draining", allow_appraisal=False, final=True)
+        assert out == "Okay, I hear you. That sounds draining."
+
+    def test_question_sentence_is_dropped_and_stops(self):
+        out, stop = _gate_stream("Okay, got it. So what do you enjoy?", allow_appraisal=False, final=True)
+        assert out == "Okay, got it."
+        assert stop is True
+
+    def test_question_only_yields_nothing(self):
+        out, stop = _gate_stream("What do you enjoy?", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_word_cap_stops_before_overrun(self):
+        out, stop = _gate_stream(" ".join(["word"] * 40) + ".", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_evaluative_opener_blocked_by_default(self):
+        out, stop = _gate_stream("That's a great routine.", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_evaluative_opener_allowed_under_appraisal(self):
+        out, stop = _gate_stream("That's a great routine.", allow_appraisal=True, final=True)
+        assert out == "That's a great routine."
+        assert stop is False
+
+
+class TestGenerateStream:
+    """End-to-end streaming through a fake LLM: accumulated chunks, guardrails,
+    and safe fallbacks — the path agent.py drives for early sentence-level TTS."""
+
+    @pytest.mark.asyncio
+    async def test_streams_multi_sentence_bridge_incrementally(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("Okay, I hear you. That sounds really draining."))
+        gen.bridge_timeout_s = 5.0
+        out = await _drain(gen.generate_stream("I force myself to work out", [], language="en"))
+        # First emit is just the opening sentence; final is the whole bridge.
+        assert out[0] == "Okay, I hear you."
+        assert out[-1] == "Okay, I hear you. That sounds really draining."
+        # Each chunk is the full accumulated text so far (monotonic prefixes).
+        assert all(out[-1].startswith(chunk) for chunk in out)
+
+    @pytest.mark.asyncio
+    async def test_question_only_falls_back_to_canned_bridge(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("What do you enjoy doing?"))
+        gen.bridge_timeout_s = 5.0
+        out = await _drain(gen.generate_stream("x", [], language="en"))
+        assert out, "must always yield at least a fallback"
+        assert "?" not in out[-1]
+        assert out[-1] in ACKNOWLEDGEMENT_BRIDGES_EN + PENSIVE_BRIDGES_EN
+
+    @pytest.mark.asyncio
+    async def test_fast_path_yields_single_canned_chunk_without_llm(self):
+        fake = _FakeStreamingLLM("should not be used")
+        gen = BridgeGenerator(llm_service=fake)
+        gen.fast_path_enabled = True
+        out = await _drain(gen.generate_stream("I run three times a week", [], language="en"))
+        assert len(out) == 1 and out[0] in ACKNOWLEDGEMENT_BRIDGES_EN
+        assert fake.called is False
+
+    @pytest.mark.asyncio
+    async def test_generate_delegates_and_returns_final_accumulated(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("Right, that makes sense. Thanks for sharing."))
+        gen.bridge_timeout_s = 5.0
+        full = await gen.generate("x", [], language="en")
+        assert full == "Right, that makes sense. Thanks for sharing."
