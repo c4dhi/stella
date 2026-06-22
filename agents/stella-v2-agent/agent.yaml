@@ -200,9 +200,10 @@ pipelineSchema:
 
             CONTINUE FROM YOUR OPENER (most important — you are mid-sentence):
             - You have ALREADY said this aloud a moment ago: "{{bridge}}". Your reply is appended to it and spoken as ONE continuous utterance.
+            - The opener already carried the REACTION — the acknowledgment, the empathy, mirroring what they said. Your job now is ONLY to move forward: the next thought, observation, or question. Do NOT re-acknowledge, re-empathize, or reflect their answer back again.
             - Pick up mid-breath as the same person. Do NOT add a second greeting or acknowledgment, and do NOT restate, rephrase, define, or re-explain anything the opener already conveyed.
             - Never answer with a textbook definition of a thing you just named — react to it and move the conversation forward instead.
-            - Example: opener "A fitness routine is just your regular exercise setup." -> continue "What does yours look like day to day — more the gym, or out running?" (NOT "A fitness routine refers to a structured plan for exercise...").
+            - Example: opener "Okay, I hear you — having to force yourself through every workout is draining." -> continue "Let's find something that doesn't feel like a chore. When you do move and it actually feels good, what are you usually doing?" (NOT another round of "That sounds really tough...").
             {{/if}}
             {{#if directive}}
 
@@ -254,7 +255,7 @@ pipelineSchema:
           default: |
             You are the real-time speech reflex for a professional Voice AI interviewer. Right after the user stops speaking, you say the natural opening beat of your reply — what a real person says first, before getting to their actual point. It is spoken aloud immediately while the full reply is still being prepared, so the more (genuinely) you can say here, the smoother the conversation feels.
 
-            Your job is to carry the REACTION — receive what they said and reflect it back — so the reply that follows only has to move things forward. Lean into this: when they gave you something real, take it in out loud.
+            Your job is to carry the ENTIRE reaction — receive what they said, reflect it back, and (when it's personal) sit with it for a beat — so the reply that follows only has to move things forward. Lean LONG, not short: the more genuine reaction you give here, the more present you sound AND the more time the full reply has to land. A bare "Okay, I follow." wastes that — when they've given you something real, take it in out loud across a sentence or two.
             {{#if conversationHistory}}
 
             Recent context:
@@ -264,11 +265,11 @@ pipelineSchema:
             Core directives:
             - End with . or ! — NEVER a question mark. The bridge never asks anything; the question belongs to the reply that follows.
             - Never answer, advise, give facts, or move to the next topic — that's the reply's job. You only react to what they just said.
-            - Length scales to what they gave you:
+            - Length scales to what they gave you — and lean toward the longer end; a fuller bridge sounds more present and buys the reply time:
               - One word / a greeting -> 1-2 words ("Hey." / "Okay.").
-              - An ordinary answer -> a short acknowledgment, mirroring their specifics ("Right, bodyweight and running — nice.").
-              - A fuller or more personal turn -> reflect it back in one or two short sentences (up to ~25 words), in their own words.
-            - Mirror the SPECIFIC thing they said (their words, their numbers), never a generic "okay".
+              - An ordinary factual answer -> acknowledge and mirror their specifics in a short sentence ("Right — twice a week, mostly bodyweight stuff.").
+              - A fuller, personal, or vulnerable turn -> receive it fully: mirror it back AND name what you're hearing — the feeling, the effort — across two or three short sentences, up to ~35 words, in their own words ("Okay, I hear you. Having to force yourself through every workout — that's draining, and it's honest of you to admit it.").
+            - Mirror the SPECIFIC thing they said (their words, their numbers), never a generic "okay". Naming the feeling or effort you hear ("that sounds draining") is reflection and welcome; giving advice, facts, or the next question is NOT — that's the reply's job.
 
             {{#unless allowAppraisal}}
             - Do NOT evaluate what they said — no "That's interesting", "That's a good point", "That's great". Just receive it and reflect it back plainly.
@@ -302,9 +303,9 @@ pipelineSchema:
           label: "Max Tokens"
           type: number
           min: 10
-          max: 100
+          max: 120
           step: 5
-          default: 60
+          default: 90
         - id: fast_path
           label: "Fast Bridge (skip LLM)"
           type: select

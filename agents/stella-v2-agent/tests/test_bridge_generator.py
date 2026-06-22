@@ -225,6 +225,30 @@ class TestValidateBridgeAppraisalGate:
         assert BridgeGenerator._validate_bridge("That's good, right?", allow_appraisal=True) == ""
 
 
+class TestValidateBridgeLength:
+    """The bridge now carries the full reaction (up to ~35 words / 2-3 short
+    sentences), so a fuller reflective opener must pass while runaway output is
+    still rejected. A richer bridge speaks longer and covers more of the gap."""
+
+    def test_fuller_reflective_bridge_within_35_words_passes(self):
+        # The empathetic two-sentence opener that should land in the BRIDGE (not
+        # be deferred into the main reply, leaving an awkward gap).
+        bridge = (
+            "Okay, I hear you. Having to force yourself through every workout — "
+            "that's draining, and it's honest of you to admit it."
+        )
+        assert len(bridge.split()) <= 35
+        assert BridgeGenerator._validate_bridge(bridge) == bridge
+
+    def test_thirty_word_bridge_passes(self):
+        bridge = " ".join(["word"] * 30) + "."
+        assert BridgeGenerator._validate_bridge(bridge) == bridge
+
+    def test_over_35_words_rejected(self):
+        bridge = " ".join(["word"] * 36) + "."
+        assert BridgeGenerator._validate_bridge(bridge) == ""
+
+
 class TestAppraisalConfig:
     def test_appraisal_defaults_off(self):
         gen = BridgeGenerator(llm_service=None)
@@ -268,7 +292,11 @@ class TestConfigCarriesTheImprovements:
 
     def test_yaml_bridge_carries_full_reflection(self):
         prompt = _slot_default("bridge_generator", "system_prompt")
-        assert "carry the REACTION" in prompt
+        # The bridge owns the ENTIRE reaction and is told to lean long (a fuller
+        # reflective bridge sounds present and buys the reply time), not just emit
+        # a bare acknowledgment.
+        assert "carry the ENTIRE reaction" in prompt
+        assert "Lean LONG" in prompt
 
     def test_appraisal_default_on_in_config(self):
         assert _slot_default("bridge_generator", "appraisal") == "on"

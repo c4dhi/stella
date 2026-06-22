@@ -1,9 +1,12 @@
 """Bridge Generator — natural conversational bridge for early TTS synthesis.
 
-Generates a brief, human-sounding acknowledgment (1-15 words, scaled to
-the user's energy) that buys time while the main pipeline
-(experts → arbitration → response) completes. Runs in parallel with the
-Expert Pool via asyncio.gather() (#363: there is no Input Gate to run beside).
+Generates a human-sounding reaction (a couple of words for a greeting, up to
+~35 / two-three short sentences to fully receive a personal turn) that buys
+time while the main pipeline (experts → arbitration → response) completes. The
+bridge carries the whole reaction so the reply only has to move forward — and a
+fuller bridge speaks longer, covering more of the gap before the reply lands.
+Runs in parallel with the Expert Pool via asyncio.gather() (#363: there is no
+Input Gate to run beside).
 
 On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """
@@ -47,8 +50,8 @@ Recent context:
 {{/if}}
 
 - End with . or ! — never ask a question.
-- 1-2 words for a short answer or greeting; up to ~12 words to briefly reflect a longer turn in their own words.
-- Never answer, advise, or evaluate what they said — just receive it and lead in.
+- 1-2 words for a short answer or greeting; up to ~35 words to fully receive a longer or more personal turn — mirror it back and name the feeling or effort you hear, in their own words.
+- Never answer, advise, or evaluate what they said — just receive it and lead in. Naming what you hear ("that sounds draining") is reflection and welcome; advice or the next question is not.
 - Mirror the specific thing they said, not a generic "okay". Match the user's language.
 {{#if isBargeIn}}
 The user just interrupted you — acknowledge it briefly and yield ("Oh, go ahead."). Don't continue your previous point.
@@ -290,7 +293,10 @@ class BridgeGenerator:
 
         # LLM config (overridable via apply_config)
         self.bridge_model = "gpt-4o-mini"
-        self.bridge_max_tokens = 50
+        # Headroom for a fuller reflective bridge (up to ~35 words / 2-3 short
+        # sentences). agent.yaml's bridge_generator.max_tokens overrides this when
+        # a config is loaded; this is the no-config default.
+        self.bridge_max_tokens = 80
         self.bridge_temperature = 0.7
         self.custom_system_prompt: Optional[str] = None
         self.history_limit: int = 0  # 0 = default (2)
@@ -382,7 +388,8 @@ class BridgeGenerator:
                 context such as the turn being a barge-in.
 
         Returns:
-            A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
+            A validated bridge phrase (a couple of words up to ~35, scaled to the
+            user's turn). Always returns a bridge (fallback on failure).
         """
         start_time = time.time()
 
@@ -490,9 +497,11 @@ class BridgeGenerator:
         if "?" in bridge:
             return ""
 
-        # Max 25 words — the bridge now carries the full reflective opener (and a
-        # brief appraisal when allowed), up to ~one or two short sentences.
-        if len(bridge.split()) > 25:
+        # Max 35 words — the bridge carries the full reaction (acknowledge +
+        # mirror + name the feeling/effort, and a brief appraisal when allowed),
+        # up to two or three short sentences for a personal turn. A richer bridge
+        # both sounds more present and buys the main reply more time to land.
+        if len(bridge.split()) > 35:
             return ""
 
         # Reject evaluative commentary ("That's a great question!", "What a nice thought!")
