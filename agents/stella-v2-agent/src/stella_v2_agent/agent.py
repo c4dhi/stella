@@ -330,6 +330,19 @@ class StellaV2Agent(BaseAgent):
                 pre_collected = set(sm_context.get("collected_deliverables", {}).keys())
                 post_collected = await self.sm_client.get_collected_deliverables()
                 collected_keys = [k for k in post_collected if k not in pre_collected]
+                # Visibility for the "agent re-asks for info already given" class of
+                # bug: the response prompt only suppresses an "ask …" instruction
+                # for keys in collected_keys, so if task_extraction silently fails
+                # to set a deliverable the user clearly provided, the agent re-asks.
+                # This line makes that diagnosable from logs without a debugger.
+                still_pending = [
+                    d["key"] for d in sm_context.get("deliverables", [])
+                    if d.get("status") == "pending" and d["key"] not in collected_keys
+                ]
+                logger.info(
+                    "Deliverables this turn: collected_now=%s already=%s still_pending=%s",
+                    collected_keys, sorted(pre_collected), still_pending,
+                )
 
             # ── Stage 3: Deterministic Arbitration (original context) ──
             logger.info("Stage 3: Arbitration")
