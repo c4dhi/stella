@@ -26,9 +26,6 @@ def test_stella_v2_startup_with_effective_config_and_pipeline_settings(
         "pipeline_config": {
             "nodes": {
                 "response_generator": {"temperature": 0.2},
-                "expert_pool": {
-                    "background_experts": ["task_extraction"],
-                },
                 "bridge_generator": {"max_tokens": 25},
             },
             "thresholds": {"history_limit": 25},
@@ -43,7 +40,6 @@ def test_stella_v2_startup_with_effective_config_and_pipeline_settings(
     assert agent.llm_service.default_config.temperature == 0.3
     assert agent.response_generator.response_temperature == 0.2
     assert agent.bridge_generator.bridge_max_tokens == 25
-    assert agent.expert_pool._background_experts == {"task_extraction"}
     assert agent._custom_history_limit == 25
     # Unspecified slots keep their code defaults (partial override doesn't reset
     # them). These are the in-code fallbacks; in production the configurator fills
@@ -94,7 +90,6 @@ def test_stella_v2_pipeline_slot_overrides_merge_with_defaults(
     config = {
         "pipeline_config": {
             "nodes": {
-                "expert_pool": {"background_experts": ["task_extraction", "probing"]},
                 "arbitration": {"tone_map": {"medical": "very_cautious"}},
             },
             "thresholds": {},
@@ -104,7 +99,6 @@ def test_stella_v2_pipeline_slot_overrides_merge_with_defaults(
     asyncio.run(agent.on_session_start("session-stella-v2-merge", config))
 
     # Explicit overrides are applied.
-    assert agent.expert_pool._background_experts == {"task_extraction", "probing"}
     assert agent.arbitration._tone_map["medical"] == "very_cautious"
 
     # Unspecified defaults remain intact (partial merge behavior).

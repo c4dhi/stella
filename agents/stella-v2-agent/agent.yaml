@@ -98,11 +98,6 @@ pipelineSchema:
           type: expert_list
           description: "Define new custom experts with name, description, priority, model, and prompt"
           isCustom: true
-        - id: background_experts
-          label: "Background Experts"
-          type: string_list
-          description: "Experts whose results are collected after response (non-blocking)"
-          default: ["task_extraction"]
 
     - id: arbitration
       label: "Arbitration"

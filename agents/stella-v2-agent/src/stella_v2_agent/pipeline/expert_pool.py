@@ -53,11 +53,6 @@ class ExpertPool:
         self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "15000"))
 
-        # Experts whose results may be collected after the response (non-blocking).
-        # Stored from config; execution is still foreground today because
-        # task_extraction's state changes are needed before response generation.
-        self._background_experts: set = set()
-
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
         """Set or update the tool registry (called after session start)."""
         self._tool_registry = tool_registry
@@ -70,11 +65,6 @@ class ExpertPool:
         expert overrides.
         """
         self._runner._compiler_version = compiler_version
-
-    def apply_config(self, config: dict) -> None:
-        """Apply configuration overrides from the Agent Configurator."""
-        if "background_experts" in config:
-            self._background_experts = set(config["background_experts"])
 
     async def run(
         self,
