@@ -513,12 +513,33 @@ export class StateMachineService {
       return { success: true, taskCompleted: taskId }; // Already done
     }
 
-    // Completion is an EXPLICIT agent action. The agent may complete any task —
-    // including one with deliverables — when it judges the task done; it does not
-    // matter whether every deliverable was collected. Deliverables are data the
-    // agent records via set_deliverable; ticking the task is a separate, explicit
-    // act (#291 redesign: state mutation only ever happens through agent tools,
-    // never derived from deliverable presence).
+    // Reliability invariant — owned by the state machine, never delegated to the
+    // agent: a task that OWNS required deliverables may not be completed until
+    // those deliverables have been collected. Completing it otherwise ticks the
+    // task and, via `all_tasks_complete`, advances the state with its required
+    // data missing (the observed bug: "Greet and ask for name" got completed on
+    // a bare "Hello", jumping the conversation to the next phase before any name
+    // was given). The agent still drives state — to move on WITHOUT the data it
+    // must `skip_task` (an honest, distinct status), not `complete_task`.
+    // Deliverable-less and optional-only tasks complete freely; the #291 hybrid
+    // path (collecting the last required deliverable auto-advances the state) is
+    // unaffected — that runs through set_deliverable, not here.
+    const collectedDeliverables =
+      state.deliverables as unknown as Record<string, DeliverableValue>;
+    const missingRequired = this.uncollectedRequiredDeliverables(task, collectedDeliverables);
+    if (missingRequired.length > 0) {
+      this.logger.warn(
+        `Rejected complete_task '${taskId}' for session ${sessionId}: ` +
+          `required deliverable(s) not yet collected: ${missingRequired.join(', ')}`,
+      );
+      return {
+        success: false,
+        error:
+          `Task '${taskId}' has required deliverable(s) not yet collected: ` +
+          `${missingRequired.join(', ')}. Record them with set_deliverable first, ` +
+          `or skip_task to move on without them.`,
+      };
+    }
 
     // Mark task as completed (and clear any prior skip of the same id).
     const updatedCompletedTasks = [...state.completedTasks, taskId];
@@ -1260,6 +1281,24 @@ export class StateMachineService {
    * Multi-deliverable tasks therefore only count when ALL required deliverables
    * are present. Discovered (goal-mode) insights never satisfy a required key.
    */
+  /**
+   * Required deliverable keys a task still OWES: declared `required` (not
+   * `required === false`) and not yet collected. A discovered (goal-mode) insight
+   * does not count as satisfying a required key — mirrors `deliverablesSatisfyTask`.
+   * Empty for deliverable-less or optional-only tasks. Used to gate `complete_task`
+   * so a task can't be ticked (and advance the state) before its required data
+   * exists.
+   */
+  private uncollectedRequiredDeliverables(
+    task: PlanTask,
+    deliverables: Record<string, DeliverableValue>,
+  ): string[] {
+    return (task.deliverables || [])
+      .filter(d => d.required !== false)
+      .filter(d => !(d.key in deliverables) || deliverables[d.key]?.discovered)
+      .map(d => d.key);
+  }
+
   private deliverablesSatisfyTask(
     task: PlanTask,
     deliverables: Record<string, DeliverableValue>,

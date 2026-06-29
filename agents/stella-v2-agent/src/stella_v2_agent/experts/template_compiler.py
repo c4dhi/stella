@@ -10,7 +10,7 @@ To COMPILE a prompt, do not use this module — call the versioned entry point
 compilation is always pinned to an explicit compiler version.
 """
 
-from stella_agent_sdk.prompts.placeholder_compiler import (  # noqa: F401
+from stella_agent_sdk.prompts import (  # noqa: F401
     PLACEHOLDER_PATTERN,
     HISTORY_PATTERN,
     PLACEHOLDER_REGISTRY,

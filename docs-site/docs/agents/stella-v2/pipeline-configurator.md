@@ -48,10 +48,7 @@ Agent behavior depends on many parameters: which experts are enabled, what promp
 |------|------|---------|-----------|
 | `experts` | expert_list | Built-in set | Enable/disable experts, set per-expert model, temperature, prompt, and priority. |
 | `custom_experts` | expert_list | Empty | Define entirely new experts with custom prompts for domain-specific analysis. |
-| `always_run` | string_list | `["task_extraction"]` | Experts that run on every message regardless of Input Gate routing. `task_extraction` must always run because it extracts structured data from every user response. |
-| `background_experts` | string_list | `["task_extraction"]` | Experts whose results are collected **after** the response is generated. They don't block the response pipeline, making them ideal for side-effect experts (data extraction, logging). |
-
-**Design decision — always_run vs. background_experts**: These are independent flags. An expert can be always-run but blocking (its findings influence the response), or always-run and background (it runs every turn but doesn't delay the response). `task_extraction` is both: it must run every turn to capture deliverables, but its output feeds the state machine rather than the response, so it runs in the background.
+| `always_run` | string_list | `["task_extraction"]` | Experts that run on every message. `task_extraction` must always run because it extracts structured data from every user response. |
 
 **When to customize**: Add custom experts for domain-specific analysis (e.g., a "compliance" expert for regulated industries). Reorder expert priority to change which expert "wins" in arbitration conflicts. Wire each expert's verdicts to deterministic responses in the [Expert Module](#expert-module--verdict-responses).
 

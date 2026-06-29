@@ -21,7 +21,6 @@ from stella_agent_sdk.messages.types import OutputType
 from stella_v2_agent.agent import StellaV2Agent
 from stella_v2_agent.experts.base import ExpertConfig, VerdictDirective
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
-from stella_v2_agent.models.gate_result import GateResult
 
 BRIDGE_TEXT = "Mm, okay."
 OVERRIDE_TEMPLATE = "Please contact emergency services right away."
@@ -36,10 +35,7 @@ def _build_agent(monkeypatch, *, action: str) -> StellaV2Agent:
     agent = StellaV2Agent()
     agent.sm_client = None  # no state machine -> Stage 5 no-ops, collected-keys skipped
 
-    # Stage 1: deterministic gate (selects medical) + a non-empty acknowledgment bridge.
-    agent.input_gate.classify = AsyncMock(
-        return_value=GateResult(experts=["medical"], failed=False, latency_ms=1.0)
-    )
+    # Stage 1: a non-empty acknowledgment bridge (no Input Gate anymore — #363).
     agent.bridge_generator.generate = AsyncMock(return_value=BRIDGE_TEXT)
 
     # Stage 2: the medical expert returns a CRITICAL verdict.

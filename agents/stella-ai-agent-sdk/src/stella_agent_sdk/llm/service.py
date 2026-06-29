@@ -1,7 +1,12 @@
 """Unified LLM Service for handling all language model interactions.
 
-Provides a consistent interface across different LLM providers with streaming support.
-Copied from stella-agent V1 — will be centralized into shared SDK later.
+Provides a consistent interface across LLM providers (OpenAI via LangChain,
+OpenAI direct/tool-calling, Ollama, Mock) with streaming and tool-call support.
+
+This is the SINGLE source of truth for LLM access in the SDK — every agent
+(stella-v2, stella-light, …) consumes ``stella_agent_sdk.llm`` rather than
+shipping its own copy, so provider behavior, config loading, and usage tracking
+stay identical across agents.
 """
 
 import asyncio
@@ -10,7 +15,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, AsyncIterator, List, Optional, Tuple, Union
 from pathlib import Path
 import logging
 
@@ -775,3 +780,71 @@ class LLMService:
 
     def reset_stats(self):
         self.usage_stats = LLMUsageStats()
+
+
+async def stream_completion(
+    llm_service: "LLMService",
+    messages: List[LLMMessage],
+    config: LLMConfig,
+    component_name: str = "unknown",
+) -> AsyncIterator[Tuple[str, bool]]:
+    """Consume a streaming LLM generation as an async iterator.
+
+    SINGLE SOURCE OF TRUTH for adapting the callback-based streaming API into an
+    ``async for``. Pipeline stages used to each hand-roll the same
+    queue+callback+create_task bridge; they now share this one. Yields
+    ``(accumulated_text, is_final)`` pairs — the full text so far, then a final
+    pair with ``is_final=True`` carrying the authoritative final text.
+
+    Built on ``llm_service.generate(callback=...)`` so any service (real or a
+    test double) that honours that contract works unchanged. Raises if the
+    generation errors (the provider signals ``on_error``, or the underlying task
+    raises before any callback fires — covered by the done-callback below, so the
+    consumer never hangs on a silent failure).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    class _QueueCallback(LLMStreamingCallback):
+        async def on_token(self, token: str, accumulated_text: str) -> None:
+            await queue.put(("token", accumulated_text))
+
+        async def on_complete(self, final_response: LLMResponse) -> None:
+            await queue.put(("complete", final_response))
+
+        async def on_error(self, error: Exception) -> None:
+            await queue.put(("error", error))
+
+    task = asyncio.create_task(
+        llm_service.generate(
+            messages=messages, config=config,
+            callback=_QueueCallback(), component_name=component_name,
+        )
+    )
+
+    # If generate() raises BEFORE any callback fires, no event is ever queued and
+    # the drain below would hang. Surface that exception as an error event.
+    def _on_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            queue.put_nowait(("error", exc))
+
+    task.add_done_callback(_on_done)
+
+    last = ""
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "token":
+                last = payload
+                yield last, False
+            elif kind == "complete":
+                final_text = payload.content if (payload and getattr(payload, "content", None)) else last
+                yield final_text, True
+                return
+            else:  # "error"
+                raise payload
+    finally:
+        if not task.done():
+            task.cancel()

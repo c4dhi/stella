@@ -8,8 +8,7 @@
   "max_tokens": 200,
   "can_call_functions": false,
   "trigger_criteria": "The message seems garbled, inaudible, or contains transcription artifacts",
-  "always_triggered": false,
-  "system_prompt": "Determine if the user's message is clear enough to act on.\n\nUnclear: gibberish, random characters, transcription artifacts, nonsense syllables.\nClear: any message with discernible meaning, even brief (\"ja\", \"nein\", \"yes\", \"no\", \"ok\").\nBe lenient — if ANY meaning is discernible, mark clear.\n\nIMPORTANT: Write the recommendation in the SAME LANGUAGE as the user's message. If German, write German. If English, write English.\n\n{{history_4}}\n\n{{user_message}}\n\nKeep recommendation under 10 words.",
+  "system_prompt": "You are the noise gate. Decide ONLY whether the user's last message is intelligible enough to act on. You run on every turn and you are the agent's sole safeguard against replying to broken speech-to-text — there is no other check, so be reliable, but do not be trigger-happy.\n\nENGAGE — verdict \"unclear\": the message carries NO discernible meaning. Pure gibberish, random characters, isolated nonsense syllables, or an empty / near-empty transcription artifact. This short-circuits the turn and asks the user to repeat, so only use it when you genuinely cannot tell what they want.\nENGAGE — verdict \"partial\": part of the message is intelligible but the actionable part is genuinely ambiguous (broken mid-sentence, a key word dropped to noise).\nTAP OUT — verdict \"clear\": everything else. This is your default and by far your most common verdict. ANY message with discernible meaning is clear — even a single word (\"ja\", \"nein\", \"yes\", \"no\", \"ok\", \"maybe\"), even off-topic, even blunt or rude, even a question you personally can't answer. Brevity, typos, and topic are NOT noise. When in doubt, choose \"clear\".\n\nExamples:\n- \"asdkfj qwpoe xcvb\" -> unclear\n- \"\" / \"uh\" / \"[inaudible]\" -> unclear\n- \"ok\" / \"ja\" / \"no thanks\" / \"tell me a joke\" -> clear\n- \"I went runnin yestrday\" (typos, clear intent) -> clear\n- \"the the for for um the\" (no actionable meaning survives) -> partial\n\nYou expect to return \"clear\" on the large majority of turns; \"unclear\"/\"partial\" should be uncommon.\n\nIMPORTANT: Write the recommendation in the SAME LANGUAGE as the user's message. When you tap out (\"clear\"), leave the recommendation empty.\n\n{{history_4}}\n\n{{user_message}}\n\nKeep recommendation under 10 words.",
   "output_format": "{\"verdict\":\"...\",\"confidence\":0.0,\"recommendation\":\"short\"}",
   "output_schema": {
     "verdict": "clear|unclear|partial",
@@ -20,17 +19,17 @@
     "clear": {
       "action": "inform",
       "template": "",
-      "description": "The message has discernible meaning, even if brief."
+      "description": "TAP OUT (default). The message has discernible meaning, even if brief, off-topic, or full of typos."
     },
     "unclear": {
       "action": "short_circuit",
       "template": "",
-      "description": "Gibberish, random characters, transcription artifacts, or nonsense syllables."
+      "description": "ENGAGE. No discernible meaning: gibberish, random characters, transcription artifacts, or an empty/nonsense transcription."
     },
     "partial": {
       "action": "inform",
       "template": "",
-      "description": "Only partially intelligible."
+      "description": "ENGAGE. Only partially intelligible — the actionable part is genuinely ambiguous."
     }
   }
 }

@@ -128,15 +128,16 @@ def test_steering_renders_cleanly_when_keys_missing() -> None:
 def test_skip_intent_mapping_present() -> None:
     prompt = LightPromptBuilder().build_system_prompt(_context_with_pending())
 
-    # The disambiguation block exists and maps a bare "skip this" to skip_task.
-    assert 'Interpreting a "skip" request' in prompt
+    # The disambiguation block exists (now injected from the SDK tool contract)
+    # and maps a bare "skip this" to skip_task.
+    assert 'Interpreting a user "skip" request' in prompt
     assert '"skip this"' in prompt
     # Explicit guidance that a bare skip is the current task, not the whole state.
     lower = prompt.lower()
-    assert "does not mean skip the whole phase" in lower
+    assert "refers to the current task only" in lower
     assert "when in doubt, prefer" in lower
     # skip_state reserved for whole-section intent.
-    assert "entire section" in lower or "whole part" in lower
+    assert "whole section" in lower
 
 
 def test_transition_warning_fires_when_state_just_changed() -> None:

@@ -25,12 +25,7 @@ def test_stella_v2_startup_with_effective_config_and_pipeline_settings(
         "expert_overrides": {},
         "pipeline_config": {
             "nodes": {
-                "input_gate": {"max_tokens": 77},
                 "response_generator": {"temperature": 0.2},
-                "expert_pool": {
-                    "always_run": ["task_extraction"],
-                    "background_experts": ["task_extraction"],
-                },
                 "bridge_generator": {"max_tokens": 25},
             },
             "thresholds": {"history_limit": 25},
@@ -43,16 +38,14 @@ def test_stella_v2_startup_with_effective_config_and_pipeline_settings(
     assert agent.config == config
     assert agent.llm_service.default_config.model == "gpt-4.1-mini"
     assert agent.llm_service.default_config.temperature == 0.3
-    assert agent.input_gate.gate_max_tokens == 77
     assert agent.response_generator.response_temperature == 0.2
     assert agent.bridge_generator.bridge_max_tokens == 25
-    assert agent.expert_pool._background_experts == {"task_extraction"}
     assert agent._custom_history_limit == 25
-    # Unspecified slot defaults remain intact (partial override behavior).
-    assert agent.input_gate.gate_model == "gpt-4o-mini"
-    assert agent.input_gate.gate_temperature == 0.0
-    assert agent.response_generator.response_max_tokens == 150
-    assert agent.bridge_generator.bridge_temperature == 0.4
+    # Unspecified slots keep their code defaults (partial override doesn't reset
+    # them). These are the in-code fallbacks; in production the configurator fills
+    # agent.yaml slot defaults into the effective config it sends.
+    assert agent.response_generator.response_max_tokens == 200
+    assert agent.bridge_generator.bridge_temperature == 0.7
 
 
 def test_stella_v2_startup_requires_pipeline_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,8 +90,6 @@ def test_stella_v2_pipeline_slot_overrides_merge_with_defaults(
     config = {
         "pipeline_config": {
             "nodes": {
-                "input_gate": {"model": "gpt-4o"},
-                "expert_pool": {"always_run": ["task_extraction", "probing"]},
                 "arbitration": {"tone_map": {"medical": "very_cautious"}},
             },
             "thresholds": {},
@@ -108,13 +99,9 @@ def test_stella_v2_pipeline_slot_overrides_merge_with_defaults(
     asyncio.run(agent.on_session_start("session-stella-v2-merge", config))
 
     # Explicit overrides are applied.
-    assert agent.input_gate.gate_model == "gpt-4o"
-    assert agent.expert_pool._always_run == {"task_extraction", "probing"}
     assert agent.arbitration._tone_map["medical"] == "very_cautious"
 
     # Unspecified defaults remain intact (partial merge behavior).
-    assert agent.input_gate.gate_max_tokens == 60
-    assert agent.input_gate.gate_temperature == 0.0
-    assert agent.expert_pool._background_experts == {"task_extraction"}
+    assert agent.response_generator.response_max_tokens == 200
     assert agent.arbitration._tone_map["legal"] == "cautious"
     assert agent.arbitration._tone_map["noise_detection"] == "neutral"

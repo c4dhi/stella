@@ -1,7 +1,8 @@
-"""Stage 2: Expert Pool — parallel expert execution with structured verdicts.
+"""Stage 1: Expert Pool — parallel expert execution with structured verdicts.
 
-Takes the list of expert names from the Input Gate, runs them all in parallel
-via asyncio.gather(), and returns structured ExpertVerdict objects.
+Takes the enabled experts from the registry (#363: no Input Gate selects them —
+every enabled expert runs and self-gates), runs them all in parallel via
+asyncio.gather(), and returns structured ExpertVerdict objects.
 
 All experts (including task_extraction) run as foreground — their results
 are needed before response generation to ensure accurate state context.
@@ -22,7 +23,7 @@ from stella_agent_sdk.tools import ToolRegistry
 from stella_v2_agent.experts.registry import ExpertRegistry
 from stella_v2_agent.experts.runner import ExpertRunner
 from stella_v2_agent.models.expert_verdict import ExpertVerdict
-from stella_v2_agent.llm.service import LLMService
+from stella_agent_sdk.llm import LLMService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,6 @@ class ExpertPool:
         self._tool_registry = tool_registry
         self._timeout_ms = int(os.environ.get("EXPERT_TIMEOUT_MS", "15000"))
 
-        # Configurable sets (overridable via apply_config)
-        self._always_run: set = set(self._registry.get_always_triggered_names())
-
     def set_tool_registry(self, tool_registry: ToolRegistry) -> None:
         """Set or update the tool registry (called after session start)."""
         self._tool_registry = tool_registry
@@ -68,11 +66,6 @@ class ExpertPool:
         """
         self._runner._compiler_version = compiler_version
 
-    def apply_config(self, config: dict) -> None:
-        """Apply configuration overrides from Agent Configurator."""
-        if "always_run" in config:
-            self._always_run = set(config["always_run"])
-
     async def run(
         self,
         expert_names: List[str],
@@ -80,17 +73,12 @@ class ExpertPool:
         conversation_history: List[Dict[str, str]],
         sm_context: Dict[str, Any],
     ) -> List[ExpertVerdict]:
-        """Run all experts in parallel and return their verdicts.
+        """Run the given experts in parallel and return their verdicts.
 
-        All experts block until complete — results are needed for
-        arbitration and accurate state context before response generation.
+        All experts block until complete — results are needed for arbitration and
+        accurate state context before response generation. With the Input Gate
+        gone (#363) the caller passes every enabled expert, and each self-gates.
         """
-        # Ensure always-run experts are included
-        names_set = set(expert_names)
-        for name in self._always_run:
-            if name not in names_set and self._registry.get(name):
-                expert_names = list(expert_names) + [name]
-
         if not expert_names:
             return []
 

@@ -10,6 +10,9 @@ Combines all prompt components into a single system prompt with:
 
 from typing import Dict, List, Any, Optional
 
+from stella_agent_sdk.tools.state_machine import STATE_MACHINE_TOOL_GUIDANCE
+from stella_agent_sdk.language import language_name
+
 
 class LightPromptBuilder:
     """Builds a unified prompt with embedded guardrails for the light agent.
@@ -54,12 +57,17 @@ class LightPromptBuilder:
         # Legacy split fields, still honored for configs saved before the merge.
         custom_persona = context.get("custom_persona")
         custom_guidelines = context.get("custom_guidelines")
+        # Operator-editable prose blocks (response.* slots). Default text lives in
+        # the builders; these override it so the developer controls them from the
+        # config screen without touching code.
+        custom_safety = context.get("custom_safety_guidelines")
+        custom_transition = context.get("custom_state_transition_note")
 
         if custom_system_prompt:
             # One field replaces the default identity + conversational style.
             parts = [
                 self._build_identity(plan_system_prompt, custom_system_prompt),
-                self._build_guardrails(),
+                self._build_guardrails(custom_safety),
             ]
         else:
             # A custom delivery prompt (custom_guidelines) owns language — don't
@@ -71,8 +79,15 @@ class LightPromptBuilder:
                     operator_owns_language=bool(custom_guidelines),
                 ),
                 self._build_conversational_style(custom_guidelines),
-                self._build_guardrails(),
+                self._build_guardrails(custom_safety),
             ]
+
+        # Deterministic language directive (single source of truth, parity with
+        # stella-v2). When the resolver locked a concrete language, state it
+        # authoritatively — it overrides the soft "same language" rule above.
+        language_directive = self._build_language_directive(context.get("language"))
+        if language_directive:
+            parts.append(language_directive)
 
         # Add mode-specific instructions (flexible vs sequential)
         parts.append(self._build_mode_instructions(mode, current_task, next_task))
@@ -91,7 +106,7 @@ class LightPromptBuilder:
 
         # Add state transition warning if applicable
         if state_just_changed:
-            parts.append(self._build_state_transition_warning(state))
+            parts.append(self._build_state_transition_warning(state, custom_transition))
 
         # Deliverable-driven steering for THIS turn (#306). Kept last so it is the
         # most salient instruction the model sees before responding.
@@ -221,8 +236,31 @@ You are a calm, observant, and grounded conversationalist. Your goal is to sound
 
 **Keep responses under 4 sentences total.**"""
 
-    def _build_guardrails(self) -> str:
-        """Build embedded safety guardrails (replaces expert system)."""
+    def _build_language_directive(self, language: Optional[str]) -> str:
+        """Authoritative 'respond entirely in <language>' block when the resolver
+        locked a concrete language; empty for auto/unknown so the soft prompt rule
+        stands. Mirrors stella-v2's _language_directive (single source of truth)."""
+        if not language or language == "auto":
+            return ""
+        name = language_name(language)
+        return (
+            "## Language (highest priority — overrides everything above)\n"
+            f"- Respond ENTIRELY in {name}. Every single word, including any examples, must be in {name}.\n"
+            "- This is the language detected for this conversation; do not switch languages on your own."
+        )
+
+    def _build_guardrails(self, custom: Optional[str] = None) -> str:
+        """Build embedded safety guardrails (replaces expert system).
+
+        Args:
+            custom: Operator-provided safety guidelines from the Agent
+                Configurator (response.safety_guidelines slot). When set, it
+                replaces the default text entirely — the developer owns the
+                guardrails from the config screen, with the default below as the
+                safe fallback.
+        """
+        if custom:
+            return custom
         return """## Safety Guidelines (IMPORTANT)
 When users ask about sensitive topics, provide helpful general information while maintaining appropriate boundaries:
 
@@ -259,47 +297,19 @@ Remember: You are a supportive companion, not a replacement for professional adv
         """Build tool usage instructions for tool-based state management."""
         pending = [d for d in deliverables if d.get("status") == "pending"]
 
-        parts = ["""## Response Guidelines
-- Respond naturally and conversationally (30-50 words)
-- Ask only ONE question at a time
-- Always include a complete, conversational response
-- Your response will be spoken aloud - make it sound natural
-
-## Tool Usage
-You drive the conversation forward with these tools. The conversation only
-advances when EVERY task in the current phase is explicitly completed or skipped —
-nothing happens on its own. (A task being "required" is guidance about importance,
-not a gate; you may skip a required task if it genuinely does not apply.)
-
-**set_deliverable** - Call when the user CLEARLY and EXPLICITLY provides information you need to collect
-- Only call when you are certain the user provided the information
-- NEVER call for greetings (hi, hello, hey, good morning, etc.)
-- NEVER guess or infer values
-- If unsure, ask a clarifying question instead
-- Recording a deliverable does NOT complete its task — you must still complete the task explicitly
-
-**complete_task** - Call to mark a task done. Use it for ANY task you have accomplished:
-- A task with no deliverables you just performed (telling a joke, an introduction, saying goodbye)
-- A task with deliverables, once you have collected what it needs (call set_deliverable first, then complete_task)
-
-**skip_task** - Call to skip a single task that does not apply or is not worth pursuing
-- Use this for an optional task the user clearly will not engage with, so the conversation can move on
-
-**skip_state** - Call to skip the entire current phase at once when none of it is relevant
-- Marks all of the phase's remaining tasks as skipped and advances
-
-### Interpreting a "skip" request from the user
-The user's words decide which skip tool you use — read the scope literally:
-- A bare **"skip this"**, "can we move on", "let's not do this one", "I'd rather not answer that"
-  refers to the CURRENT question/task ONLY → use **skip_task** on the current task.
-  It does NOT mean skip the whole phase.
-- Use **skip_state** ONLY when the user explicitly drops the ENTIRE section —
-  "skip this whole part", "skip all of this", "move on to the next section".
-- When in doubt, prefer **skip_task**: skipping one task still lets you cover the rest
-  of the phase, whereas skip_state discards every remaining task in the phase and can
-  end the conversation early (losing deliverables you still needed).
-- Once you have skipped a task, or the phase has ended, do NOT keep soliciting that
-  task's deliverable — let the conversation move on."""]
+        parts = [
+            (
+                "## Response Guidelines\n"
+                "- Respond naturally and conversationally (30-50 words)\n"
+                "- Ask only ONE question at a time\n"
+                "- Always include a complete, conversational response\n"
+                "- Your response will be spoken aloud - make it sound natural"
+            ),
+            # Tool-calling mechanics come from the SDK — the single source of
+            # truth, identical to stella-v2. Crucial plumbing, never hand-written
+            # here or exposed as an editable slot.
+            STATE_MACHINE_TOOL_GUIDANCE,
+        ]
 
         if pending:
             parts.append("\n## Information to Collect")
@@ -470,12 +480,25 @@ The user's words decide which skip tool you use — read the scope literally:
 
         return "\n".join(parts)
 
-    def _build_state_transition_warning(self, state: Dict) -> str:
-        """Build warning when state just changed."""
-        return f"""## State Transition Notice
-You just transitioned to a new state: **{state.get('title', 'Unknown')}**
-Take a moment to acknowledge this transition naturally and introduce the new topic/focus area.
-Do NOT continue collecting information from the previous state."""
+    # Default behavioral guidance for a phase transition. The structural header
+    # and the live phase title stay in code; only this prose is operator-editable
+    # (response.state_transition_note slot) so it can be tuned without code edits.
+    _DEFAULT_STATE_TRANSITION_NOTE = (
+        "Take a moment to acknowledge this transition naturally and introduce the "
+        "new topic/focus area.\nDo NOT continue collecting information from the "
+        "previous state."
+    )
+
+    def _build_state_transition_warning(self, state: Dict, custom: Optional[str] = None) -> str:
+        """Build the notice shown when the phase just changed. ``custom`` (the
+        configured state_transition_note) replaces the default guidance prose;
+        the header and the live phase title are always supplied by code."""
+        body = custom or self._DEFAULT_STATE_TRANSITION_NOTE
+        return (
+            f"## State Transition Notice\n"
+            f"You just transitioned to a new state: **{state.get('title', 'Unknown')}**\n"
+            f"{body}"
+        )
 
     def _build_mode_instructions(
         self,

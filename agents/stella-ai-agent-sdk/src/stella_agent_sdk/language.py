@@ -1,11 +1,10 @@
 """Language resolver — single source of truth for the conversation language.
 
-RFC: docs/rfcs/2026-06-01_language-handling.md
-
-Today language is decided three times independently (bridge heuristic, response
-prompt inference, static TTS env var) and they can drift apart within one turn.
-This module collapses that into ONE resolved language per turn that the bridge,
-the response prompt, the {{language}} template variable, and TTS all read.
+Without this, language tends to be decided several times independently within a
+turn (an early bridge/ack heuristic, response-prompt inference, a static TTS env
+var) and they can drift apart. This module collapses that into ONE resolved
+language per turn that every consumer — the prompt's {{language}} directive and
+TTS routing — reads, so the whole turn speaks one language.
 
 Design (see RFC §8):
 - Resolve from a per-turn ``(language, confidence)`` signal. For voice the

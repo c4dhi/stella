@@ -1,18 +1,21 @@
-"""STELLA V2 Agent — streamlined 4-stage pipeline with deterministic arbitration.
+"""STELLA V2 Agent — streamlined 3-stage pipeline with deterministic arbitration.
 
-Processing Flow:
-1. Input Gate — fast JSON classification (~100-200ms)
-2. Expert Pool — parallel structured verdicts (~150-300ms wall-clock)
-3. Deterministic Arbitration — priority-based conflict resolution (~1ms, no LLM)
-4. Response Generator — streaming final answer with arbitration context
+Processing Flow (#363: no Input Gate — every enabled expert runs and self-gates):
+1. Expert Pool — parallel structured verdicts (~150-300ms wall-clock). The Bridge
+   Generator runs concurrently with this stage to mask latency.
+2. Deterministic Arbitration — priority-based conflict resolution (~1ms, no LLM).
+   This is the sole gate: it filters out tapped-out (non-flagging) verdicts.
+3. Response Generator — streaming final answer with arbitration context.
 
-Key differences from V1:
-- No SAFE/UNSAFE distinction: every input flows through all 4 stages
-- Input Gate returns structured JSON, selects which experts to run
-- Experts return short structured verdicts (not free-form text)
-- Arbitration is deterministic code (not an LLM call)
-- Expert configs are loadable from outside (like plans)
-- On Input Gate failure: predefined error message, no fallback generation
+Key properties:
+- No SAFE/UNSAFE distinction: every input flows through all stages.
+- Experts self-gate — each runs every turn and abstains via a non-flagging
+  verdict; there is no centralized relevance classifier (removed in #363).
+- Experts return short structured verdicts (not free-form text).
+- Arbitration is deterministic code (not an LLM call).
+- Expert configs are loadable from outside (like plans).
+- Garbled input is handled by the noise_detection expert's unclear → short-circuit
+  verdict (it replaces the old Input-Gate-failure path).
 """
 
 import asyncio
@@ -24,23 +27,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 
-from stella_agent_sdk.agent.base import BaseAgent
-from stella_agent_sdk.messages.input import AgentInput
-from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
-from stella_agent_sdk.services.state_machine_client import StateMachineClient
+from stella_agent_sdk import BaseAgent
+from stella_agent_sdk import AgentInput
+from stella_agent_sdk import AgentOutput
+from stella_agent_sdk import StatusSubtype, BargeInDecision
+from stella_agent_sdk.services import StateMachineClient
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
 
-from stella_v2_agent.llm.service import LLMService
+from stella_agent_sdk.llm import LLMService
 from stella_v2_agent.experts.registry import ExpertRegistry
-from stella_v2_agent.pipeline.input_gate import InputGate
 from stella_v2_agent.pipeline.bridge_generator import BridgeGenerator
 from stella_v2_agent.pipeline.expert_pool import ExpertPool
 from stella_v2_agent.pipeline.arbitration import Arbitration
 from stella_v2_agent.pipeline.response_generator import ResponseGenerator
-from stella_v2_agent.pipeline.language_resolver import LanguageResolver
-from stella_v2_agent.pipeline.barge_in_evaluator import BargeInEvaluator
+from stella_agent_sdk.language import LanguageResolver
+from stella_agent_sdk.agent import BargeInEvaluator
 from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 from stella_v2_agent.utils import normalize_transition_priority
 import logging
@@ -56,13 +58,13 @@ PROMPT_COMPILER_VERSION = "1.0.0"
 
 
 class StellaV2Agent(BaseAgent):
-    """STELLA V2 Agent: 4-stage pipeline with deterministic arbitration.
+    """STELLA V2 Agent: 3-stage pipeline with deterministic arbitration.
 
-    Pipeline stages:
-    1. InputGate — classify input, select experts
-    2. ExpertPool — run experts in parallel
-    3. Arbitration — deterministic conflict resolution
-    4. ResponseGenerator — streaming response with injected guidance
+    Pipeline stages (#363: no Input Gate — every enabled expert runs and self-gates):
+    1. ExpertPool — run all enabled experts in parallel; each self-gates (abstains)
+    2. Arbitration — deterministic conflict resolution, drops abstentions
+    3. ResponseGenerator — streaming response with injected guidance
+    (a Bridge is emitted up front for early TTS while the experts run)
 
     Post-response:
     - Process task_extraction deliverables through state machine
@@ -118,8 +120,7 @@ class StellaV2Agent(BaseAgent):
         self.llm_service = LLMService(config_path=llm_config_path)
         self.expert_registry = ExpertRegistry(experts_dir=experts_dir)
 
-        # Initialize pipeline stages
-        self.input_gate = InputGate(self.llm_service, self.expert_registry)
+        # Initialize pipeline stages (no Input Gate — #363)
         self.bridge_generator = BridgeGenerator(self.llm_service)
         self.expert_pool = ExpertPool(
             self.llm_service, self.expert_registry,
@@ -150,6 +151,11 @@ class StellaV2Agent(BaseAgent):
         self._last_state_id: Optional[str] = None  # for detecting state transitions between turns
         self._last_post_response_state_id: Optional[str] = None  # for analytics emission
         self._turn_counter: int = 0  # monotonic turn counter for analytics
+        # The reply currently being spoken, accumulated as it streams. On a
+        # barge-in this is the "half-committed" message the user interrupted —
+        # not yet in the recorded history — so we hand it to the Barge-in
+        # Evaluator as the {{interruptedReply}} variable for in-context judging.
+        self._last_reply_text: str = ""
 
         logger.info(
             f"Initialized with {self.expert_registry.enabled_count} experts"
@@ -238,46 +244,45 @@ class StellaV2Agent(BaseAgent):
                 input.session_id, "Processing your message...", StatusSubtype.PROCESSING
             )
 
-            # ── Stage 1: Input Gate + Bridge Generator (parallel) ──
-            logger.info(f"Stage 1: Input Gate + Bridge for: '{input.text}'")
+            # ── Stage 1: Bridge Generator ──
+            # The Input Gate is gone (#363): every enabled expert runs each turn
+            # and decides for itself whether to engage (abstaining with a
+            # non-flagging verdict), with arbitration filtering the abstentions.
+            # So Stage 1 is just the bridge, emitted immediately for early TTS
+            # while the experts run.
+            logger.info(f"Stage 1: Bridge for: '{input.text}'")
             yield AgentOutput.analytics_event(
                 input.session_id, "bridge_start", turn_id, self._elapsed_ms(),
             )
-            gate_result, bridge = await asyncio.gather(
-                self.input_gate.classify(input.text, history, sm_context),
-                self.bridge_generator.generate(
-                    input.text, history, language=resolved_language, variables=prompt_variables
-                ),
-            )
-
-            yield AgentOutput.debug(
-                input.session_id,
-                f"InputGate: selected {len(gate_result.experts)} experts in {gate_result.latency_ms:.0f}ms",
-                component="input_gate",
-                **gate_result.to_debug_dict(),
-            )
-
-            # On gate failure: ignore bridge, send hardcoded message, skip all downstream stages
-            if gate_result.failed:
-                yield AgentOutput.analytics(
-                    input.session_id, stage="safety_routing", timing_ms=0,
-                    route="UNSAFE", experts_consulted=[], turn_id=turn_id,
-                )
-                yield AgentOutput.text_chunk(
-                    input.session_id, self.arbitration.gate_failure_message, is_final=True
-                )
-                return
 
             # Shared transcript_id for bridge + response (one seamless utterance)
             transcript_id = f"response_{uuid.uuid4().hex[:8]}"
 
-            # Emit bridge immediately for early TTS synthesis
-            if bridge:
-                logger.info(f"Bridge: '{bridge}'")
-                yield AgentOutput.analytics_event(
-                    input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
-                    bridge_text=bridge,
-                )
+            # Stream the bridge through the SAME accumulated-TEXT_CHUNK interface
+            # the Response Generator uses: each emitted chunk is the full bridge so
+            # far, and the SDK's run loop diffs it and hands every completed
+            # sentence to TTS the instant it's ready. So the first sentence starts
+            # speaking after a few hundred ms instead of waiting for the whole
+            # (now richer) bridge — and the rest streams in behind it. is_final
+            # stays False: the response continues this same transcript.
+            bridge = ""
+            bridge_ready_emitted = False
+            async for bridge_accum in self.bridge_generator.generate_stream(
+                input.text, history, language=resolved_language, variables=prompt_variables
+            ):
+                if not bridge_accum:
+                    continue
+                bridge = bridge_accum
+                # Track what's being spoken so a barge-in during the bridge still
+                # has the (latest) half-committed message to evaluate.
+                self._last_reply_text = bridge
+                if not bridge_ready_emitted:
+                    bridge_ready_emitted = True
+                    # First audible byte of the turn — record the timing here.
+                    yield AgentOutput.analytics_event(
+                        input.session_id, "bridge_ready", turn_id, self._elapsed_ms(),
+                        bridge_text=bridge,
+                    )
                 bridge_output = AgentOutput.text_chunk(
                     input.session_id,
                     bridge,
@@ -290,13 +295,18 @@ class StellaV2Agent(BaseAgent):
                     bridge_output.metadata["voice"] = resolved_voice
                 yield bridge_output
 
-            # ── Stage 2: Expert Pool (all experts, including task_extraction) ──
-            # All experts run in parallel and block until done. task_extraction
-            # updates the state machine via tool calls (set_deliverable, etc.),
-            # but we keep the ORIGINAL sm_context for response generation so
-            # the agent still performs task instructions before advancing.
+            if bridge:
+                logger.info(f"Bridge: '{bridge}'")
 
-            experts_to_run = list(gate_result.experts)
+            # ── Stage 2: Expert Pool (every enabled expert) ──
+            # With no gate, all enabled experts run in parallel and self-gate;
+            # task_extraction still runs every turn and updates the state machine
+            # via tool calls (set_deliverable, etc.), but we keep the ORIGINAL
+            # sm_context for response generation so the agent still performs task
+            # instructions before advancing. noise_detection also runs every turn
+            # and covers the old gate-failure path via its arbitration short-circuit.
+
+            experts_to_run = self.expert_registry.get_enabled_names()
 
             logger.info(f"Stage 2: Expert Pool — {experts_to_run}")
             all_verdicts = await self.expert_pool.run(
@@ -320,6 +330,19 @@ class StellaV2Agent(BaseAgent):
                 pre_collected = set(sm_context.get("collected_deliverables", {}).keys())
                 post_collected = await self.sm_client.get_collected_deliverables()
                 collected_keys = [k for k in post_collected if k not in pre_collected]
+                # Visibility for the "agent re-asks for info already given" class of
+                # bug: the response prompt only suppresses an "ask …" instruction
+                # for keys in collected_keys, so if task_extraction silently fails
+                # to set a deliverable the user clearly provided, the agent re-asks.
+                # This line makes that diagnosable from logs without a debugger.
+                still_pending = [
+                    d["key"] for d in sm_context.get("deliverables", [])
+                    if d.get("status") == "pending" and d["key"] not in collected_keys
+                ]
+                logger.info(
+                    "Deliverables this turn: collected_now=%s already=%s still_pending=%s",
+                    collected_keys, sorted(pre_collected), still_pending,
+                )
 
             # ── Stage 3: Deterministic Arbitration (original context) ──
             logger.info("Stage 3: Arbitration")
@@ -341,7 +364,7 @@ class StellaV2Agent(BaseAgent):
             yield AgentOutput.analytics(
                 input.session_id, stage="safety_routing", timing_ms=0,
                 route="INTERCEPTED" if arb_result.directive.short_circuit else "SAFE",
-                experts_consulted=list(gate_result.experts),
+                experts_consulted=experts_to_run,
                 turn_id=turn_id,
             )
 
@@ -444,6 +467,10 @@ class StellaV2Agent(BaseAgent):
                         output.metadata["language"] = resolved_language
                         if resolved_voice:
                             output.metadata["voice"] = resolved_voice
+                        # Keep the latest accumulated reply so a barge-in mid-stream
+                        # can evaluate against the half-committed message.
+                        if output.content:
+                            self._last_reply_text = output.content
                         if not first_token_emitted:
                             yield AgentOutput.analytics_event(
                                 input.session_id, "response_first_token", turn_id, self._elapsed_ms(),
@@ -462,7 +489,7 @@ class StellaV2Agent(BaseAgent):
             # explicit tool calls — there is no post-hoc auto-completion (#291).
             logger.info("Stage 5: Post-response processing")
             async for output in self._process_post_response(
-                input.session_id, all_verdicts, gate_result
+                input.session_id, all_verdicts
             ):
                 yield output
 
@@ -486,7 +513,6 @@ class StellaV2Agent(BaseAgent):
         self,
         session_id: str,
         expert_verdicts: list,
-        gate_result,
     ) -> AsyncIterator[AgentOutput]:
         """Process expert results after response generation completes.
 
@@ -711,7 +737,6 @@ class StellaV2Agent(BaseAgent):
                 experts_dir=experts_dir, overrides=expert_overrides
             )
             # Rebuild pipeline stages with updated registry
-            self.input_gate = InputGate(self.llm_service, self.expert_registry)
             self.expert_pool = ExpertPool(
                 self.llm_service, self.expert_registry,
                 tool_registry=self.tool_registry,
@@ -775,7 +800,6 @@ class StellaV2Agent(BaseAgent):
 
         # Apply per-node config overrides
         node_stage_map = {
-            "input_gate": self.input_gate,
             "expert_pool": self.expert_pool,
             "arbitration": self.arbitration,
             "response_generator": self.response_generator,
@@ -798,8 +822,9 @@ class StellaV2Agent(BaseAgent):
             }
             if experts_config:
                 self.expert_registry.apply_config(experts_config)
-                # Rebuild input gate with updated registry summaries
-                # (no need to rebuild objects — registry is shared by reference)
+                # The expert pool reads the registry by reference, so updated
+                # enabled/priority/custom-expert config takes effect with no
+                # object rebuild.
 
         # Apply threshold overrides
         if "history_limit" in thresholds:
@@ -866,7 +891,14 @@ class StellaV2Agent(BaseAgent):
         except Exception as e:
             logger.warning(f"Barge-in: could not fetch history ({e}); evaluating without it")
             history = []
-        return await self.barge_in_evaluator.evaluate(transcript, conversation_history=history)
+        # The reply being interrupted is still in flight (not yet in `history`),
+        # so pass it explicitly as the {{interruptedReply}} runtime variable —
+        # the half-committed message the evaluator must judge the interruption against.
+        return await self.barge_in_evaluator.evaluate(
+            transcript,
+            conversation_history=history,
+            variables={"interruptedReply": self._last_reply_text or ""},
+        )
 
     async def on_config_update(self, session_id: str, config: Dict[str, Any]) -> None:
         """Handle runtime configuration update."""

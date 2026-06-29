@@ -10,15 +10,13 @@ The directive section tells the LLM:
 - Expert summary context
 """
 
-import asyncio
 import uuid
 from typing import Dict, Any, List, AsyncIterator, Optional
 
-from stella_agent_sdk.messages.output import AgentOutput
+from stella_agent_sdk import AgentOutput
 
-from stella_v2_agent.llm.service import (
-    LLMService, LLMConfig, LLMMessage, LLMResponse,
-    LLMStreamingCallback, LLMProvider,
+from stella_agent_sdk.llm import (
+    LLMService, LLMConfig, LLMMessage, LLMProvider, stream_completion,
 )
 from stella_v2_agent.models.arbitration_result import ResponseDirective
 from stella_v2_agent.prompts.response_prompt import (
@@ -28,24 +26,6 @@ from stella_v2_agent.prompts.response_prompt import (
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-class _StreamingResponseCallback(LLMStreamingCallback):
-    """Callback that pushes streaming tokens into an asyncio.Queue."""
-
-    def __init__(self, queue: asyncio.Queue):
-        self._queue = queue
-        self._accumulated = ""
-
-    async def on_token(self, token: str, accumulated_text: str) -> None:
-        self._accumulated = accumulated_text
-        await self._queue.put(("token", token))
-
-    async def on_complete(self, final_response: LLMResponse) -> None:
-        await self._queue.put(("complete", final_response))
-
-    async def on_error(self, error: Exception) -> None:
-        await self._queue.put(("error", error))
 
 
 class ResponseGenerator:
@@ -118,10 +98,11 @@ class ResponseGenerator:
             sm_context, directive, plan_system_prompt,
             custom_persona=self.custom_persona,
             custom_guidelines=self.custom_guidelines,
+            conversation_history=conversation_history,
+            history_limit=self.history_limit or 10,
+            bridge=bridge,
         )
-        user_message = build_response_user_message(
-            user_input, conversation_history, history_limit=self.history_limit or 10
-        )
+        user_message = build_response_user_message(user_input)
 
         messages = [
             LLMMessage(role="system", content=system_prompt),
@@ -153,10 +134,14 @@ class ResponseGenerator:
             ))
             messages.append(LLMMessage(role="assistant", content=spoken_prefix))
         elif bridge:
-            messages.insert(1, LLMMessage(
-                role="system",
-                content=f'You already said "{bridge}" out loud as a natural acknowledgment. Now continue with your actual response. The combined output (bridge + your continuation) will be spoken as one seamless utterance, so it MUST flow naturally as a single conversation turn.\n\nRules:\n- Do NOT repeat or rephrase anything already covered in the bridge\n- Do NOT comment on the bridge (no "I\'m glad to hear that", no "That said...")\n- Do NOT add another greeting or acknowledgment\n- Pick up right where the bridge left off — your continuation should feel like the same person kept talking\n- Example: bridge "Oh nice, okay." → you continue with "So three times a week is solid." → spoken together: "Oh nice, okay. So three times a week is solid."\n- Example: bridge "Yeah, okay, I get that, it\'s been a lot." → you continue with "Let\'s talk about what might work for you right now." → spoken together: "Yeah, okay, I get that, it\'s been a lot. Let\'s talk about what might work for you right now."',
-            ))
+            # The "continue from the opener, don't repeat it" guidance is PROSE, so
+            # it lives in the editable response prompt right around the {{bridge}}
+            # injection (build_response_system_prompt renders {{#if bridge}} /
+            # {{bridge}}) — visible to operators, not hidden in the background.
+            # The only thing auto-injected here is the crucial, non-prose mechanism:
+            # replay the bridge as the assistant's own in-progress turn so the model
+            # literally continues it. The two share one transcript_id → one seamless
+            # utterance.
             messages.append(LLMMessage(role="assistant", content=bridge))
 
         config = LLMConfig(
@@ -169,68 +154,31 @@ class ResponseGenerator:
 
         if not transcript_id:
             transcript_id = f"response_{uuid.uuid4().hex[:8]}"
-        queue: asyncio.Queue = asyncio.Queue()
-        callback = _StreamingResponseCallback(queue)
 
-        # Start LLM generation in background
-        generation_task = asyncio.create_task(
-            self._llm_service.generate(
-                messages=messages,
-                config=config,
-                callback=callback,
-                component_name="response_generator",
-            )
-        )
-
-        # Prepend already-spoken prefix (bridge and/or deterministic safety line)
-        # so TTS speaks prefix + response as one seamless utterance.
+        # Prepend the already-spoken prefix (bridge and/or deterministic safety
+        # line) so TTS speaks prefix + response as one seamless utterance. The LLM
+        # streams just its own continuation; we put the prefix back in front of
+        # each accumulated chunk.
         spoken_prefix = " ".join(p for p in (bridge, prepend) if p)
-        accumulated = (spoken_prefix + " ") if spoken_prefix else ""
+        prefix = (spoken_prefix + " ") if spoken_prefix else ""
+
+        # Consume the stream through the shared SDK adapter (single source of
+        # truth for callback→async-iterator) instead of hand-rolling a queue.
         try:
-            while True:
-                event = await queue.get()
-                event_type = event[0]
-
-                if event_type == "token":
-                    token = event[1]
-                    accumulated += token
-                    yield AgentOutput.text_chunk(
-                        session_id,
-                        accumulated.strip(),
-                        transcript_id=transcript_id,
-                        is_final=False,
-                    )
-
-                elif event_type == "complete":
-                    # Send final chunk
-                    if accumulated.strip():
-                        yield AgentOutput.text_chunk(
-                            session_id,
-                            accumulated.strip(),
-                            transcript_id=transcript_id,
-                            is_final=True,
-                        )
-                    break
-
-                elif event_type == "error":
-                    error = event[1]
-                    logger.error(f"Streaming error: {error}")
-                    # Send error as final text
-                    error_msg = "I'm sorry, I encountered an issue. Could you try again?"
-                    yield AgentOutput.text_chunk(
-                        session_id,
-                        error_msg,
-                        transcript_id=transcript_id,
-                        is_final=True,
-                    )
-                    break
-
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            if not generation_task.done():
-                generation_task.cancel()
-            raise
-
-        # Ensure generation task completes
-        if not generation_task.done():
-            await generation_task
+            async for llm_text, is_final in stream_completion(
+                self._llm_service, messages, config, component_name="response_generator",
+            ):
+                yield AgentOutput.text_chunk(
+                    session_id,
+                    (prefix + llm_text).strip(),
+                    transcript_id=transcript_id,
+                    is_final=is_final,
+                )
+        except Exception as error:
+            logger.error(f"Streaming error: {error}")
+            yield AgentOutput.text_chunk(
+                session_id,
+                "I'm sorry, I encountered an issue. Could you try again?",
+                transcript_id=transcript_id,
+                is_final=True,
+            )

@@ -15,17 +15,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, List, Optional
 
-from stella_agent_sdk.agent.base import BaseAgent
-from stella_agent_sdk.messages.input import AgentInput
-from stella_agent_sdk.messages.output import AgentOutput
-from stella_agent_sdk.messages.types import StatusSubtype, BargeInDecision
+from stella_agent_sdk import BaseAgent
+from stella_agent_sdk import AgentInput
+from stella_agent_sdk import AgentOutput
+from stella_agent_sdk import StatusSubtype, BargeInDecision
 from stella_agent_sdk.tools import ToolRegistry
 from stella_agent_sdk.tools.state_machine import create_state_machine_tools
-from stella_agent_sdk.services.state_machine_client import StateMachineClient
+from stella_agent_sdk.services import StateMachineClient
 from stella_agent_sdk.progress import progress_from_full_state, build_last_transition
 
-from stella_light_agent.llm.service import LLMService
-from stella_light_agent.barge_in_evaluator import BargeInEvaluator
+from stella_agent_sdk.llm import LLMService
+from stella_agent_sdk.agent import BargeInEvaluator
+from stella_agent_sdk.language import LanguageResolver
 from stella_light_agent.tool_processor import ToolProcessor, ToolProcessorResult
 from stella_light_agent.prompts import LightPromptBuilder
 from stella_agent_sdk import prompts as sdk_prompts
@@ -91,6 +92,12 @@ class StellaLightAgent(BaseAgent):
         # Prompt builder (tool-based state management).
         self.prompt_builder = LightPromptBuilder()
 
+        # Conversation-language resolution (shared SDK logic — single source of
+        # truth, identical to stella-v2). One resolved language per turn flows to
+        # the prompt's {{language}} directive and to TTS via output metadata.
+        self.language_resolver = LanguageResolver()
+        self._session_language: Optional[str] = None
+
         # Tool-based components (initialized per session).
         # State machine shares the same gRPC port as agent registration (50051).
         self._state_machine_address = state_machine_address or os.environ.get(
@@ -116,6 +123,11 @@ class StellaLightAgent(BaseAgent):
         # Legacy fields, still honored for configs saved before persona/guidelines were merged.
         self._custom_persona: Optional[str] = None
         self._custom_guidelines: Optional[str] = None
+        # Operator-editable prose blocks (response.* slots) — default text lives in
+        # the prompt builder; these override it so the developer owns them from the
+        # config screen without code edits.
+        self._custom_safety_guidelines: Optional[str] = None
+        self._custom_state_transition_note: Optional[str] = None
         self._history_limit: int = 20
         # Explicit prompt-compiler version (never implicit/latest). Defaults to the
         # version this agent was authored against; can be overridden via config.
@@ -168,6 +180,10 @@ class StellaLightAgent(BaseAgent):
             self._custom_persona = response["persona"]
         if response.get("conversation_guidelines"):
             self._custom_guidelines = response["conversation_guidelines"]
+        if response.get("safety_guidelines"):
+            self._custom_safety_guidelines = response["safety_guidelines"]
+        if response.get("state_transition_note"):
+            self._custom_state_transition_note = response["state_transition_note"]
 
         if "history_limit" in thresholds:
             try:
@@ -179,6 +195,12 @@ class StellaLightAgent(BaseAgent):
         barge_in = nodes.get("barge_in", {}) or {}
         if isinstance(barge_in, dict) and barge_in:
             self.barge_in_evaluator.apply_config(barge_in)
+
+        # Language resolver overrides (supported/default/thresholds) — same shared
+        # SDK resolver and config surface as stella-v2.
+        language_config = nodes.get("language", {}) or {}
+        if isinstance(language_config, dict) and language_config:
+            self.language_resolver.apply_config(language_config)
 
         print(
             f"[StellaLightAgent] Pipeline config applied: "
@@ -219,6 +241,10 @@ class StellaLightAgent(BaseAgent):
             sm_context["custom_persona"] = render(self._custom_persona)
         if self._custom_guidelines:
             sm_context["custom_guidelines"] = render(self._custom_guidelines)
+        if self._custom_safety_guidelines:
+            sm_context["custom_safety_guidelines"] = render(self._custom_safety_guidelines)
+        if self._custom_state_transition_note:
+            sm_context["custom_state_transition_note"] = render(self._custom_state_transition_note)
         # The plan system prompt may also contain placeholders.
         if sm_context.get("plan_system_prompt"):
             sm_context["plan_system_prompt"] = render(sm_context["plan_system_prompt"])
@@ -237,8 +263,14 @@ class StellaLightAgent(BaseAgent):
         self._custom_system_prompt = None
         self._custom_persona = None
         self._custom_guidelines = None
+        self._custom_safety_guidelines = None
+        self._custom_state_transition_note = None
         self._history_limit = 20
         self._state_just_changed = False
+        # Fresh language lock per session so a resolved language never leaks
+        # between conversations (config — supported/default/thresholds — kept).
+        self.language_resolver.reset()
+        self._session_language = None
         # Explicit compiler version: config override, else the agent's pinned default.
         self._compiler_version = config.get("compiler_version") or PROMPT_COMPILER_VERSION
 
@@ -517,6 +549,25 @@ class StellaLightAgent(BaseAgent):
             sm_context["plan_system_prompt"] = self._plan_system_prompt
             print(f"[StellaLightAgent] Using plan system prompt: {self._plan_system_prompt[:100]}...")
 
+        # Resolve the conversation language for this turn (single source of truth,
+        # shared SDK logic — identical to stella-v2). The plan language seeds it;
+        # STT's acoustic detection (input metadata) overrides when confident, else
+        # the bundled text classifier reads input.text. Flows to {{language}} and
+        # to TTS via output metadata below.
+        self.language_resolver.set_seed((self._plan_config or {}).get("language"))
+        meta = getattr(input, "metadata", None) or {}
+        detected_language = meta.get("detected_language") or None
+        language_signal = (
+            (detected_language, float(meta.get("language_confidence") or 0.0))
+            if detected_language
+            else None
+        )
+        self._session_language = self.language_resolver.resolve(
+            input.text, signal=language_signal
+        )
+        sm_context["language"] = self._session_language
+        print(f"[StellaLightAgent] Resolved language for turn: {self._session_language}")
+
         # Inject configured prompts, resolving {{placeholder}} variables against
         # the live runtime context (same principle as stella-v2).
         self._inject_configured_prompts(sm_context, conversation_history, input.text)
@@ -553,6 +604,11 @@ class StellaLightAgent(BaseAgent):
             if isinstance(output, ToolProcessorResult):
                 result = output
             else:
+                # Stamp the resolved language so the SDK routes TTS to the right
+                # voice (parity with stella-v2). Guard: not every output carries a
+                # mutable metadata dict.
+                if self._session_language and getattr(output, "metadata", None) is not None:
+                    output.metadata["language"] = self._session_language
                 yield output
 
         # Handle results

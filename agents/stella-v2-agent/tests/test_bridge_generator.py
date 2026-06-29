@@ -1,6 +1,9 @@
 """Tests for typed bridge selection and the fast-path (#304 A2/A3)."""
 
+import os
+
 import pytest
+import yaml
 
 from stella_v2_agent.pipeline.bridge_generator import (
     BridgeGenerator,
@@ -17,7 +20,59 @@ from stella_v2_agent.pipeline.bridge_generator import (
     ACKNOWLEDGEMENT_BRIDGES_EN,
     ACKNOWLEDGEMENT_BRIDGES_DE,
     _BRIDGE_INVENTORY,
+    _screen_risk,
+    _gate_stream,
 )
+from stella_agent_sdk.llm import LLMResponse
+from stella_v2_agent.prompts.template import render_prompt
+
+
+class _FakeStreamingLLM:
+    """Streams ``text`` token-by-token via callback.on_token(token, accumulated),
+    then on_complete — mimicking the real streaming LLM service for the bridge."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.called = False
+
+    async def generate(self, messages, config, callback, component_name="unknown"):
+        self.called = True
+        acc = ""
+        for tok in self.text.split(" "):
+            piece = (" " if acc else "") + tok
+            acc += piece
+            await callback.on_token(piece, acc)
+        resp = LLMResponse(content=acc, model="t", provider="t")
+        await callback.on_complete(resp)
+        return resp
+
+
+async def _drain(agen):
+    return [x async for x in agen]
+
+
+def _iter_dicts(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _iter_dicts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_dicts(v)
+
+
+def _slot_default(node_id: str, slot_id: str) -> str:
+    """Read a configurator slot's default from agent.yaml — the prompt that
+    actually runs in production (code prompts are only minimal fallbacks)."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "agent.yaml")) as f:
+        cfg = yaml.safe_load(f)
+    for d in _iter_dicts(cfg):
+        if d.get("id") == node_id and isinstance(d.get("slots"), list):
+            for slot in d["slots"]:
+                if slot.get("id") == slot_id:
+                    return slot.get("default", "")
+    raise AssertionError(f"{node_id}.{slot_id} not found in agent.yaml")
 
 
 class TestSelectBridgeType:
@@ -151,3 +206,204 @@ class TestApplyConfig:
         assert gen.bridge_model == "gpt-4o"
         assert gen.bridge_temperature == 0.2
         assert gen.bridge_max_tokens == 40
+
+
+class TestAppraisalRiskScreen:
+    """The cheap, deterministic screen that gates the appraisal tier (#343)."""
+
+    @pytest.mark.parametrize("text", [
+        "I hurt my knee last month",
+        "I've been really depressed lately",
+        "No, not really, I've been pretty lazy",
+        "Ich hab mir das Knie verletzt",
+        "Ich war ziemlich faul",
+        "I haven't been doing much",
+        "my dad died last week",
+        "I might need a lawyer for this",
+    ])
+    def test_sensitive_or_dispreferred_trips_screen(self, text):
+        assert _screen_risk(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "I've been running three times a week",
+        "I usually work out in the mornings",
+        "Ich laufe dreimal die Woche",
+        "I want to get stronger and feel better",
+    ])
+    def test_benign_clears_screen(self, text):
+        assert _screen_risk(text) is False
+
+
+class TestValidateBridgeAppraisalGate:
+    """Evaluative openers are rejected by default, allowed only under the gate."""
+
+    def test_evaluative_opener_rejected_by_default(self):
+        assert BridgeGenerator._validate_bridge("That's a good amount to work with.") == ""
+
+    def test_evaluative_opener_allowed_when_appraisal(self):
+        out = BridgeGenerator._validate_bridge(
+            "That's a good amount to work with.", allow_appraisal=True
+        )
+        assert out == "That's a good amount to work with."
+
+    def test_question_still_rejected_even_with_appraisal(self):
+        # The appraisal gate must NOT relax the no-questions rule.
+        assert BridgeGenerator._validate_bridge("That's good, right?", allow_appraisal=True) == ""
+
+
+class TestValidateBridgeLength:
+    """The bridge now carries the full reaction (up to ~35 words / 2-3 short
+    sentences), so a fuller reflective opener must pass while runaway output is
+    still rejected. A richer bridge speaks longer and covers more of the gap."""
+
+    def test_fuller_reflective_bridge_within_35_words_passes(self):
+        # The empathetic two-sentence opener that should land in the BRIDGE (not
+        # be deferred into the main reply, leaving an awkward gap).
+        bridge = (
+            "Okay, I hear you. Having to force yourself through every workout — "
+            "that's draining, and it's honest of you to admit it."
+        )
+        assert len(bridge.split()) <= 35
+        assert BridgeGenerator._validate_bridge(bridge) == bridge
+
+    def test_thirty_word_bridge_passes(self):
+        bridge = " ".join(["word"] * 30) + "."
+        assert BridgeGenerator._validate_bridge(bridge) == bridge
+
+    def test_over_35_words_rejected(self):
+        bridge = " ".join(["word"] * 36) + "."
+        assert BridgeGenerator._validate_bridge(bridge) == ""
+
+
+class TestAppraisalConfig:
+    def test_appraisal_defaults_off(self):
+        gen = BridgeGenerator(llm_service=None)
+        assert gen.appraisal_enabled is False
+
+    def test_appraisal_toggle_from_select_string(self):
+        gen = BridgeGenerator(llm_service=None)
+        gen.apply_config({"appraisal": "on"})
+        assert gen.appraisal_enabled is True
+        gen.apply_config({"appraisal": "off"})
+        assert gen.appraisal_enabled is False
+
+
+class TestBridgePromptRendering:
+    """The appraisal permission/ban is wired through the PRODUCTION (agent.yaml)
+    bridge prompt via the template conditionals — not the code fallback."""
+
+    _BAN = "Do NOT evaluate what they said"
+    _PERMISSION = "You MAY add a brief, understated appraisal"
+
+    def test_ban_present_when_appraisal_off(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        rendered = render_prompt(prompt, {"allowAppraisal": False})
+        assert self._BAN in rendered
+        assert self._PERMISSION not in rendered
+
+    def test_ban_dropped_and_permission_added_when_appraisal_on(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        rendered = render_prompt(prompt, {"allowAppraisal": True})
+        assert self._BAN not in rendered
+        assert self._PERMISSION in rendered
+
+
+class TestConfigCarriesTheImprovements:
+    """The voice improvements must live in agent.yaml (user-editable), not be
+    hidden in code — these guard that the config screen is the source of truth."""
+
+    def test_yaml_guidelines_forbid_empty_praise(self):
+        guidelines = _slot_default("response_generator", "conversation_guidelines")
+        assert "NEVER praise a mundane answer" in guidelines
+
+    def test_yaml_bridge_carries_full_reflection(self):
+        prompt = _slot_default("bridge_generator", "system_prompt")
+        # The bridge owns the ENTIRE reaction and is told to lean long (a fuller
+        # reflective bridge sounds present and buys the reply time), not just emit
+        # a bare acknowledgment.
+        assert "carry the ENTIRE reaction" in prompt
+        assert "Lean LONG" in prompt
+
+    def test_appraisal_default_on_in_config(self):
+        assert _slot_default("bridge_generator", "appraisal") == "on"
+
+
+class TestGateStream:
+    """The sentence-gated streaming validator (_gate_stream) keeps the bridge's
+    guarantees per completed sentence so TTS can start before it's finished."""
+
+    def test_releases_only_complete_sentences(self):
+        # Trailing incomplete text is held back (never speak half a sentence).
+        out, stop = _gate_stream("Okay, I hear you. That sounds", allow_appraisal=False, final=False)
+        assert out == "Okay, I hear you."
+        assert stop is False
+
+    def test_final_flushes_remainder_with_terminal_punctuation(self):
+        out, stop = _gate_stream("Okay, I hear you. That sounds draining", allow_appraisal=False, final=True)
+        assert out == "Okay, I hear you. That sounds draining."
+
+    def test_question_sentence_is_dropped_and_stops(self):
+        out, stop = _gate_stream("Okay, got it. So what do you enjoy?", allow_appraisal=False, final=True)
+        assert out == "Okay, got it."
+        assert stop is True
+
+    def test_question_only_yields_nothing(self):
+        out, stop = _gate_stream("What do you enjoy?", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_word_cap_stops_before_overrun(self):
+        out, stop = _gate_stream(" ".join(["word"] * 40) + ".", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_evaluative_opener_blocked_by_default(self):
+        out, stop = _gate_stream("That's a great routine.", allow_appraisal=False, final=True)
+        assert out == ""
+        assert stop is True
+
+    def test_evaluative_opener_allowed_under_appraisal(self):
+        out, stop = _gate_stream("That's a great routine.", allow_appraisal=True, final=True)
+        assert out == "That's a great routine."
+        assert stop is False
+
+
+class TestGenerateStream:
+    """End-to-end streaming through a fake LLM: accumulated chunks, guardrails,
+    and safe fallbacks — the path agent.py drives for early sentence-level TTS."""
+
+    @pytest.mark.asyncio
+    async def test_streams_multi_sentence_bridge_incrementally(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("Okay, I hear you. That sounds really draining."))
+        gen.bridge_timeout_s = 5.0
+        out = await _drain(gen.generate_stream("I force myself to work out", [], language="en"))
+        # First emit is just the opening sentence; final is the whole bridge.
+        assert out[0] == "Okay, I hear you."
+        assert out[-1] == "Okay, I hear you. That sounds really draining."
+        # Each chunk is the full accumulated text so far (monotonic prefixes).
+        assert all(out[-1].startswith(chunk) for chunk in out)
+
+    @pytest.mark.asyncio
+    async def test_question_only_falls_back_to_canned_bridge(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("What do you enjoy doing?"))
+        gen.bridge_timeout_s = 5.0
+        out = await _drain(gen.generate_stream("x", [], language="en"))
+        assert out, "must always yield at least a fallback"
+        assert "?" not in out[-1]
+        assert out[-1] in ACKNOWLEDGEMENT_BRIDGES_EN + PENSIVE_BRIDGES_EN
+
+    @pytest.mark.asyncio
+    async def test_fast_path_yields_single_canned_chunk_without_llm(self):
+        fake = _FakeStreamingLLM("should not be used")
+        gen = BridgeGenerator(llm_service=fake)
+        gen.fast_path_enabled = True
+        out = await _drain(gen.generate_stream("I run three times a week", [], language="en"))
+        assert len(out) == 1 and out[0] in ACKNOWLEDGEMENT_BRIDGES_EN
+        assert fake.called is False
+
+    @pytest.mark.asyncio
+    async def test_generate_delegates_and_returns_final_accumulated(self):
+        gen = BridgeGenerator(llm_service=_FakeStreamingLLM("Right, that makes sense. Thanks for sharing."))
+        gen.bridge_timeout_s = 5.0
+        full = await gen.generate("x", [], language="en")
+        assert full == "Right, that makes sense. Thanks for sharing."

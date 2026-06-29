@@ -1,22 +1,29 @@
 """Bridge Generator — natural conversational bridge for early TTS synthesis.
 
-Generates a brief, human-sounding acknowledgment (1-15 words, scaled to
-the user's energy) that buys time while the main pipeline
-(gate → experts → arbitration → response) completes. Runs in parallel with
-the Input Gate via asyncio.gather().
+Generates a human-sounding reaction (a couple of words for a greeting, up to
+~35 / two-three short sentences to fully receive a personal turn) that buys
+time while the main pipeline (experts → arbitration → response) completes. The
+bridge carries the whole reaction so the reply only has to move forward — and a
+fuller bridge speaks longer, covering more of the gap before the reply lands.
+Runs in parallel with the Expert Pool via asyncio.gather() (#363: there is no
+Input Gate to run beside).
 
 On failure: returns a short fallback bridge. Every turn always gets a bridge.
 """
 
 import asyncio
 import random
+import re
 import time
 from typing import Dict, Any, List, Optional
 
 from stella_agent_sdk.env import env_bool as _env_bool, env_float as _env_float
-from stella_v2_agent.llm.service import LLMService, LLMConfig, LLMMessage, LLMProvider
-from stella_v2_agent.pipeline.language_resolver import LANGUAGE_NAMES as _LANGUAGE_NAMES
+from stella_agent_sdk.llm import (
+    LLMService, LLMConfig, LLMMessage, LLMProvider, stream_completion,
+)
+from stella_agent_sdk.language import LANGUAGE_NAMES as _LANGUAGE_NAMES
 from stella_v2_agent.prompts.template import render_prompt
+from stella_agent_sdk.prompts import format_history
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,50 +40,25 @@ def _coerce_bool(value: Any) -> bool:
         return value.strip().lower() in ("true", "1", "yes", "on")
     return bool(value)
 
-BRIDGE_SYSTEM_PROMPT = """You are a person in a conversation. You just heard what the user said and you're about to give your full answer, but first you naturally acknowledge them — the way a real human would before continuing their thought. This will be spoken aloud by TTS.
+# Minimal fallback only. The full, editable bridge prompt lives in agent.yaml
+# (bridge_generator → system_prompt) and is what runs in production; this default
+# is used solely when no configured prompt is provided. It stays reflection-only
+# and short so the fallback is always safe (no appraisal, no questions).
+BRIDGE_SYSTEM_PROMPT = """You just heard the user and you're about to answer, but first you briefly acknowledge them the way a real person would — a short, natural beat, spoken aloud on its own.
+{{#if conversationHistory}}
 
-Think of how people actually talk. When someone tells you something, you don't just launch into your answer — you react briefly first. The bridge is that brief, human moment.
-
-LENGTH RULE — match the user's energy:
-- One word from user ("yes", "no", "okay") → one-two words from you. "Sure." / "Yeah." / "Okay."
-- A greeting ("hi", "hello") → greet back casually. "Hey." / "Hi there." / "Hello."
-- A short sentence → a short acknowledgment, up to 5-6 words. "Yeah, I get that." / "Okay, gotcha."
-- A longer thought or story → you can reflect back briefly, up to 12 words. "Right, yeah, that sounds like it's been on your mind." / "Okay, so you've been dealing with that for a while."
-- Something emotional or vulnerable → warm but grounded. "Yeah, I hear you." / "Right, that makes total sense."
-
-WHAT MAKES A GOOD BRIDGE:
-- It sounds like something a real person would say mid-conversation
-- It can reference what the user said WITHOUT answering, advising, or completing any task
-- It feels like a natural lead-in to whatever comes next
-- It uses casual spoken language (contractions, "yeah" instead of "yes", etc.)
-
-WHAT TO AVOID:
-- NEVER answer the user's question or give advice — you're just acknowledging before your real answer
-- NEVER ask a question. No question marks.
-- NEVER be a cheerleader — no "Oh that's wonderful!", "That's amazing!", "Great question!"
-- NEVER evaluate what they said — no "That's interesting", "That's a good point"
-- NEVER use filler sounds that render poorly in TTS: "mhm", "hmm", "uh-huh", "ah"
-- NEVER use the same bridge twice in a conversation
-
-EXAMPLES (user → bridge):
-- "I've been running three times a week" → "Oh nice, okay."
-- "Not really, I've been pretty lazy" → "Yeah, no worries."
-- "I hurt my knee last month so I can't really exercise" → "Oh okay, yeah, that's tough."
-- "hello" → "Hey."
-- "yes" → "Okay."
-- "I don't know, I guess I just haven't had the motivation lately and work has been really stressful" → "Yeah, okay, I get that, it's been a lot."
-- "Ich laufe dreimal die Woche" → "Oh schön, okay."
-- "Nee, ich war ziemlich faul" → "Ja, kein Ding."
-- "Ich hab mir letzten Monat das Knie verletzt" → "Oh okay, ja, das ist echt blöd."
-- "hallo" → "Hey."
-- "ja" → "Okay."
-- "Ich weiß nicht, ich hatte einfach keine Motivation und die Arbeit war echt stressig" → "Ja, okay, das kann ich verstehen."
-
-LANGUAGE: Always match the user's language. If the user speaks German, your bridge MUST be in German. If the user speaks English, your bridge MUST be in English.
-{{#if isBargeIn}}
-BARGE-IN: The user just interrupted you mid-sentence. Acknowledge the interruption naturally and yield the floor — short and unflustered ("Oh, sorry — go ahead." / "Yeah?" / "Of course."). Do not resume your previous point.
+Recent context:
+{{conversationHistory}}
 {{/if}}
-Output ONLY the bridge. No quotes, no labels, no explanation."""
+
+- End with . or ! — never ask a question.
+- 1-2 words for a short answer or greeting; up to ~35 words to fully receive a longer or more personal turn — mirror it back and name the feeling or effort you hear, in their own words.
+- Never answer, advise, or evaluate what they said — just receive it and lead in. Naming what you hear ("that sounds draining") is reflection and welcome; advice or the next question is not.
+- Mirror the specific thing they said, not a generic "okay". Match the user's language.
+{{#if isBargeIn}}
+The user just interrupted you — acknowledge it briefly and yield ("Oh, go ahead."). Don't continue your previous point.
+{{/if}}
+Output ONLY the bridge. No quotes, no labels."""
 
 # ── Typed bridge inventories (#304 A2) ───────────────────────────────────────
 # Listener tokens are NOT interchangeable (Yngve 1970; Schegloff 1982). We pick
@@ -244,12 +226,150 @@ def pick_bridge_from_inventory(
     return random.choice(inventory)
 
 
+# ── Appraisal risk screen (bridge naturalness, #343 follow-up) ───────────────
+# The bridge runs BEFORE the experts, so it cannot know whether the agent's real
+# answer will be dispreferred (a "no", a caution, a correction). A light appraisal
+# ("that's a solid routine") is jarring — or unsafe — ahead of such an answer.
+# Before allowing any appraisal we run this cheap, deterministic, LLM-free screen
+# on the user input; if it trips, the bridge clamps back to pure reflection.
+#
+# The screen is intentionally trigger-happy: suppressing appraisal is the SAFE
+# direction (you just fall back to a reflective bridge), so over-triggering costs
+# nothing, while a miss is the exact failure mode we're guarding against. It does
+# NOT replace the experts — they still govern the real response — it only decides
+# whether the pre-expert bridge may affirm.
+_APPRAISAL_RISK_WORDS = {
+    # health / medical (EN)
+    "hurt", "injured", "injury", "pain", "painful", "sick", "ill", "illness",
+    "disease", "diagnosis", "diagnosed", "symptom", "symptoms", "surgery",
+    "hospital", "doctor", "medication", "meds", "chronic", "disabled", "disability",
+    # health / medical (DE)
+    "verletzt", "verletzung", "schmerz", "schmerzen", "krank", "krankheit",
+    "diagnose", "operation", "krankenhaus", "arzt", "ärztin", "medikament",
+    # mental health / distress (EN)
+    "depressed", "depression", "anxious", "anxiety", "stressed", "overwhelmed",
+    "burnout", "burnt", "exhausted", "suicidal", "hopeless", "lonely", "grief",
+    "grieving", "died", "death", "struggling", "panic",
+    # mental health / distress (DE)
+    "depressiv", "angst", "gestresst", "überfordert", "erschöpft", "einsam",
+    "trauer", "gestorben", "panik", "hoffnungslos",
+    # legal (EN/DE)
+    "lawyer", "lawsuit", "court", "sue", "sued", "legal", "anwalt", "gericht",
+    "klage", "rechtlich",
+    # dispreferred / negation markers (EN/DE) — a "no"/"didn't"/"never" turn
+    "no", "not", "didn't", "haven't", "won't", "can't", "cannot", "never",
+    "nothing", "lazy", "failed", "fail", "nein", "nicht", "nee", "nie",
+    "nichts", "faul",
+}
+
+# Multi-word markers a single-token scan would miss.
+_APPRAISAL_RISK_PHRASES = (
+    "not really", "haven't been", "have not been", "gave up", "give up",
+    "kann nicht", "keine lust", "keine motivation", "aufgegeben", "war faul",
+)
+
+
+# Shared bridge-validation invariants — referenced by BOTH the whole-string
+# validator (_validate_bridge, used by the non-streaming path) and the
+# sentence-gated streaming validator (_gate_stream), so the two can't drift.
+_BRIDGE_MAX_WORDS = 35
+# Evaluative openers rejected unless the risk-screened appraisal tier is active.
+_EVALUATIVE_OPENERS = ("that's a", "that's an", "what a", "what an")
+
+# A sentence boundary for streaming gates: terminal . ! ? followed by whitespace
+# or end-of-text. Used only to decide how much of the streamed bridge is safe to
+# release to TTS yet — the SDK's own segmenter (with its abbreviation guard) does
+# the actual TTS sentence splitting on the emitted text.
+_BRIDGE_SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)")
+
+
+def _split_complete_sentences(text: str) -> tuple:
+    """Split ``text`` into (complete_sentences, trailing_remainder).
+
+    A complete sentence ends at a ``.!?`` boundary; the trailing remainder is the
+    still-incomplete tail (held back while streaming so a half sentence is never
+    spoken). Decimals like "3.5" don't match (no whitespace after the dot).
+    """
+    sentences: List[str] = []
+    last = 0
+    for m in _BRIDGE_SENTENCE_END.finditer(text):
+        seg = text[last:m.end()].strip()
+        if seg:
+            sentences.append(seg)
+        last = m.end()
+    return sentences, text[last:].strip()
+
+
+def _clean_stream_text(raw: str) -> str:
+    """Normalize streamed bridge text: drop surrounding quotes the model may add."""
+    t = (raw or "").strip()
+    if t[:1] in ('"', "'"):
+        t = t[1:].lstrip()
+    if t[-1:] in ('"', "'"):
+        t = t[:-1].rstrip()
+    return t
+
+
+def _gate_stream(raw: str, allow_appraisal: bool, final: bool) -> tuple:
+    """Decide how much of the streamed bridge is safe to release to TTS yet.
+
+    The whole-string validator can't run mid-stream (TTS speaks sentence 1 before
+    the bridge finishes), so we validate per completed sentence and return the
+    longest validated prefix. Returns ``(accepted_text, stop)`` where ``stop``
+    means a rule tripped (a question, the word cap, or an evaluative opener) and
+    no further sentences should be released this turn.
+
+    Mirrors :meth:`BridgeGenerator._validate_bridge`'s invariants
+    (``_BRIDGE_MAX_WORDS``, ``_EVALUATIVE_OPENERS``, no question marks) at
+    sentence granularity. Incomplete trailing text is held back unless ``final``.
+    """
+    text = _clean_stream_text(raw)
+    if not text:
+        return "", False
+
+    sentences, remainder = _split_complete_sentences(text)
+    candidates = list(sentences)
+    if final and remainder:
+        candidates.append(remainder)  # closing fragment; terminal punct added below
+
+    accepted: List[str] = []
+    words = 0
+    for idx, s in enumerate(candidates):
+        if "?" in s:  # a bridge never asks — drop this sentence and stop
+            return " ".join(accepted), True
+        if idx == 0 and not allow_appraisal and s.lower().startswith(_EVALUATIVE_OPENERS):
+            return " ".join(accepted), True
+        n = len(s.split())
+        if words + n > _BRIDGE_MAX_WORDS:  # would overrun the cap — stop before it
+            return " ".join(accepted), True
+        accepted.append(s)
+        words += n
+
+    out = " ".join(accepted)
+    if final and out and out[-1] not in ".!":
+        out += "."
+    return out, False
+
+
+def _screen_risk(user_input: str) -> bool:
+    """Return True when the turn is too sensitive/dispreferred for an appraisal.
+
+    Cheap and deterministic — no LLM, no dependency on the (being-removed) input
+    gate. Biased toward suppression: a hit means "clamp the bridge to reflection".
+    """
+    text = user_input.lower()
+    words = set(re.findall(r"[a-zäöüß']+", text))
+    if words & _APPRAISAL_RISK_WORDS:
+        return True
+    return any(phrase in text for phrase in _APPRAISAL_RISK_PHRASES)
+
+
 class BridgeGenerator:
     """Generates a short conversational bridge for early TTS synthesis.
 
     Uses a dedicated LLM call with higher temperature for natural variety.
-    Runs in parallel with InputGate.classify() — whichever finishes first
-    is used immediately.
+    Emitted up front (before the experts run) so the user hears a natural beat
+    while the rest of the pipeline computes.
     """
 
     def __init__(self, llm_service: LLMService):
@@ -257,7 +377,10 @@ class BridgeGenerator:
 
         # LLM config (overridable via apply_config)
         self.bridge_model = "gpt-4o-mini"
-        self.bridge_max_tokens = 50
+        # Headroom for a fuller reflective bridge (up to ~35 words / 2-3 short
+        # sentences). agent.yaml's bridge_generator.max_tokens overrides this when
+        # a config is loaded; this is the no-config default.
+        self.bridge_max_tokens = 80
         self.bridge_temperature = 0.7
         self.custom_system_prompt: Optional[str] = None
         self.history_limit: int = 0  # 0 = default (2)
@@ -274,6 +397,16 @@ class BridgeGenerator:
         # LLM bridge's contextual richness for guaranteed timing, so it's opt-in
         # via BRIDGE_FAST_PATH and easy to A/B against the A1 baseline.
         self.fast_path_enabled: bool = _env_bool("BRIDGE_FAST_PATH", False)
+
+        # Appraisal tier (#343 follow-up). When OFF (default), the bridge is
+        # strictly reflective — it never evaluates what the user said (the #304 A2
+        # guarantee). When ON, the LLM bridge MAY add a brief, understated
+        # appraisal of the user's situation, but ONLY when the risk screen
+        # (_screen_risk) clears — so it never affirms ahead of a sensitive or
+        # dispreferred answer. The templated fast-path/fallback never appraises
+        # regardless, so the deterministic route stays veto-proof. Opt-in and
+        # A/B-able via BRIDGE_APPRAISAL, mirroring BRIDGE_FAST_PATH.
+        self.appraisal_enabled: bool = _env_bool("BRIDGE_APPRAISAL", False)
 
     def apply_config(self, config: dict) -> None:
         """Apply configuration overrides from the Agent Configurator.
@@ -296,6 +429,8 @@ class BridgeGenerator:
             self.history_limit = int(config["history_limit"])
         if "fast_path" in config:
             self.fast_path_enabled = _coerce_bool(config["fast_path"])
+        if "appraisal" in config:
+            self.appraisal_enabled = _coerce_bool(config["appraisal"])
         if config.get("timeout_ms") not in (None, ""):
             self.bridge_timeout_s = float(config["timeout_ms"]) / 1000
 
@@ -315,6 +450,40 @@ class BridgeGenerator:
         bridge_type = select_bridge_type(user_input)
         return pick_bridge_from_inventory(bridge_type, is_german)
 
+    def _build_messages(
+        self,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        language: Optional[str],
+        variables: Optional[Dict[str, Any]],
+        allow_appraisal: bool,
+    ) -> List[LLMMessage]:
+        """Render the bridge system prompt + user message. Shared by the
+        streaming and non-streaming paths so they prompt the LLM identically."""
+        raw_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
+        # Render template variables into the prompt so the bridge can adapt:
+        # the recent context ({{conversationHistory}}), whether the turn is a
+        # barge-in ({{isBargeIn}}), and whether a brief appraisal is permitted
+        # ({{allowAppraisal}}).
+        ctx = {
+            **(variables or {}),
+            "userInput": user_input,
+            "conversationHistory": format_history(conversation_history, self.history_limit or 2),
+            "allowAppraisal": allow_appraisal,
+        }
+        system_prompt = render_prompt(raw_prompt, ctx)
+        if language:
+            system_prompt += (
+                f"\n\nRESOLVED LANGUAGE (overrides the rule above): "
+                f"Produce the bridge in {_LANGUAGE_NAMES.get(language, language)} only."
+            )
+        return [
+            LLMMessage(role="system", content=system_prompt),
+            # The interruption/answer being reacted to is the bare user message;
+            # all context is placed by the prompt via template variables.
+            LLMMessage(role="user", content=user_input),
+        ]
+
     async def generate(
         self,
         user_input: str,
@@ -322,95 +491,124 @@ class BridgeGenerator:
         language: Optional[str] = None,
         variables: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Generate a bridge phrase for the given user input.
+        """Generate the complete bridge phrase (non-streaming convenience).
 
-        Args:
-            user_input: The current user message.
-            conversation_history: Recent conversation messages.
-            language: The resolved session language (e.g. "de"). When provided,
-                it is the single source of truth — the bridge and its fallback
-                are produced in this language, keeping the bridge coherent with
-                the main response (RFC §8.2.1). When None, falls back to the
-                legacy "match the user" heuristic.
-            variables: Template variables for prompt rendering (e.g.
-                ``isBargeIn``). Lets the configured bridge prompt react to
-                context such as the turn being a barge-in.
+        Thin wrapper over :meth:`generate_stream` that drains the stream and
+        returns the final accumulated bridge — for callers that want the whole
+        phrase at once. The live pipeline uses ``generate_stream`` directly so
+        each sentence reaches TTS as soon as it's ready.
 
         Returns:
-            A validated bridge phrase (1-15 words, scaled to user energy). Always returns a bridge (fallback on failure).
+            A validated bridge phrase (a couple of words up to ~35, scaled to the
+            user's turn). Always returns a bridge (fallback on failure).
+        """
+        bridge = ""
+        async for accumulated in self.generate_stream(
+            user_input, conversation_history, language=language, variables=variables
+        ):
+            bridge = accumulated
+        return bridge
+
+    async def generate_stream(
+        self,
+        user_input: str,
+        conversation_history: List[Dict[str, str]],
+        language: Optional[str] = None,
+        variables: Optional[Dict[str, Any]] = None,
+    ):
+        """Stream the bridge as accumulated text, one validated sentence at a time.
+
+        Yields the FULL accumulated bridge text each time another complete
+        sentence has been validated and released, so the consumer can hand each
+        sentence to TTS the instant it's ready — the same shape the Response
+        Generator streams in, sharing the response transcript_id so bridge +
+        reply are one seamless utterance. The key win for the "lean long" bridge:
+        the first sentence starts speaking after a few hundred ms instead of
+        waiting for the whole (now richer) bridge to generate.
+
+        Because TTS starts before the bridge finishes, the whole-string validator
+        (_validate_bridge) can't gate it — so each sentence is validated as it
+        completes (``_gate_stream``: never release a question, an over-length run,
+        or an evaluative opener). If the very first sentence is rejected or the
+        LLM times out/fails before anything is released, a canned templated bridge
+        is yielded instead (safe — nothing has been spoken yet).
+
+        Args mirror :meth:`generate`. Yields ``str`` (accumulated bridge text);
+        always yields at least one non-empty value (fallback on failure).
         """
         start_time = time.time()
 
         # Fast-path (#304 A3): skip the LLM entirely and serve an instant typed
-        # template. Guarantees the bridge lands inside the gap window instead of
-        # waiting up to ``bridge_timeout_s`` for the LLM that masks latency.
+        # template as a single chunk. Guarantees the bridge lands inside the gap
+        # window instead of waiting on the LLM that masks latency.
         if self.fast_path_enabled:
             bridge = self.fast_bridge(user_input, language)
             logger.info(f"Fast-path bridge '{bridge}' in {(time.time() - start_time) * 1000:.0f}ms")
-            return bridge
+            yield bridge
+            return
 
+        # Appraisal is allowed only when enabled AND the turn clears the risk
+        # screen — so the bridge never affirms ahead of a sensitive/dispreferred
+        # answer it can't yet see. Off → strictly reflective (the #304 A2 default).
+        allow_appraisal = self.appraisal_enabled and not _screen_risk(user_input)
+
+        released = ""  # accumulated, validated bridge text yielded so far
         try:
-            user_message = self._build_user_message(user_input, conversation_history)
-
-            raw_prompt = self.custom_system_prompt or BRIDGE_SYSTEM_PROMPT
-            # Render template variables (isBargeIn, etc.) into the prompt so the
-            # bridge can adapt — e.g. acknowledge that the user just interrupted.
-            system_prompt = render_prompt(raw_prompt, variables or {})
-            if language:
-                system_prompt += (
-                    f"\n\nRESOLVED LANGUAGE (overrides the rule above): "
-                    f"Produce the bridge in {_LANGUAGE_NAMES.get(language, language)} only."
-                )
-            messages = [
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user", content=user_message),
-            ]
-
+            messages = self._build_messages(
+                user_input, conversation_history, language, variables, allow_appraisal
+            )
             config = LLMConfig(
                 model=self.bridge_model,
                 temperature=self.bridge_temperature,
                 max_tokens=self.bridge_max_tokens,
                 provider=LLMProvider.OPENAI_LANGCHAIN,
-                streaming=False,
+                streaming=True,
                 json_mode=False,
             )
 
-            # Bound the bridge on wall-clock — a slow LLM must not stall the
-            # whole turn (the user otherwise hears nothing and thinks the agent
-            # is dead). On timeout, fall back to a canned bridge.
-            response = await asyncio.wait_for(
-                self._llm_service.generate(
-                    messages=messages,
-                    config=config,
-                    component_name="bridge_generator",
-                ),
-                timeout=self.bridge_timeout_s,
-            )
+            # Consume the LLM stream through the shared SDK adapter (single source
+            # of truth for callback→async-iterator), bounded on wall-clock so a
+            # slow LLM never stalls the turn. The timeout covers first-byte AND the
+            # tail; on timeout we keep whatever validated sentences already
+            # streamed (or fall back below if none did).
+            async with asyncio.timeout(self.bridge_timeout_s):
+                async for raw, final in stream_completion(
+                    self._llm_service, messages, config, component_name="bridge_generator",
+                ):
+                    candidate, stop = _gate_stream(raw, allow_appraisal, final=final)
+                    if candidate and candidate != released and candidate.startswith(released):
+                        released = candidate
+                        yield released
+                    if stop:
+                        break
 
             latency_ms = (time.time() - start_time) * 1000
-            bridge = self._validate_bridge(response.content)
-            if bridge:
-                logger.info(f"'{bridge}' in {latency_ms:.0f}ms")
-                return bridge
-
-            # Validation failed — use context-appropriate fallback
-            fallback = self.fast_bridge(user_input, language)
-            logger.info(f"Validation failed, fallback '{fallback}' in {latency_ms:.0f}ms")
-            return fallback
-
+            if released:
+                logger.info(f"'{released}' streamed in {latency_ms:.0f}ms")
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
+            if released:
+                # Already spoke valid sentence(s); just stop cleanly.
+                logger.warning(f"Bridge stream ended early after {latency_ms:.0f}ms: {e}")
+            else:
+                logger.error(f"Bridge stream failed in {latency_ms:.0f}ms: {e}")
+
+        # Nothing valid was released (rejected first sentence, timeout/error
+        # before first byte, or empty output) → safe canned fallback.
+        if not released.strip():
             fallback = self.fast_bridge(user_input, language)
-            logger.error(f"Failed in {latency_ms:.0f}ms: {e}, fallback '{fallback}'")
-            return fallback
+            logger.info(f"Fallback bridge '{fallback}'")
+            yield fallback
 
     @staticmethod
-    def _validate_bridge(raw: str) -> str:
+    def _validate_bridge(raw: str, allow_appraisal: bool = False) -> str:
         """Validate the bridge phrase. Returns "" if invalid.
 
         The bridge must be a natural spoken acknowledgment ending with . or !
         Questions are always rejected — bridges must never ask the user anything.
-        Evaluative commentary is rejected — bridges must not judge the user's input.
+        Evaluative commentary is rejected UNLESS ``allow_appraisal`` is set (the
+        risk-screened appraisal tier) — by default bridges must not judge the
+        user's input.
         """
         if not isinstance(raw, str) or not raw.strip():
             return ""
@@ -428,13 +626,16 @@ class BridgeGenerator:
         if "?" in bridge:
             return ""
 
-        # Max 15 words — allows longer bridges that reference user input
-        if len(bridge.split()) > 15:
+        # Cap the bridge length — it carries the full reaction (acknowledge +
+        # mirror + name the feeling/effort, and a brief appraisal when allowed),
+        # up to two or three short sentences for a personal turn. A richer bridge
+        # both sounds more present and buys the main reply more time to land.
+        if len(bridge.split()) > _BRIDGE_MAX_WORDS:
             return ""
 
         # Reject evaluative commentary ("That's a great question!", "What a nice thought!")
-        lower = bridge.lower()
-        if lower.startswith(("that's a", "that's an", "what a", "what an")):
+        # unless the risk-screened appraisal tier is active for this turn.
+        if not allow_appraisal and bridge.lower().startswith(_EVALUATIVE_OPENERS):
             return ""
 
         # Must end with sentence-ending punctuation (no questions)
@@ -442,19 +643,3 @@ class BridgeGenerator:
             bridge += "."
 
         return bridge
-
-    def _build_user_message(
-        self,
-        user_input: str,
-        conversation_history: List[Dict[str, str]],
-    ) -> str:
-        """Build the user message with minimal context."""
-        limit = self.history_limit or 2
-        parts = []
-        if conversation_history:
-            recent = conversation_history[-limit:]
-            lines = [f"[{msg['role'].upper()}]: {msg['content']}" for msg in recent]
-            parts.append("CONTEXT:\n" + "\n".join(lines))
-
-        parts.append(f"USER: {user_input}")
-        return "\n\n".join(parts)

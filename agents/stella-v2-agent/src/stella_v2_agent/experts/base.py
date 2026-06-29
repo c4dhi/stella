@@ -83,7 +83,8 @@ class ExpertConfig:
 
     Attributes:
         name: Unique expert identifier (e.g. "noise_detection").
-        description: What this expert does (shown to Input Gate).
+        description: What this expert does (shown in the agent configurator's
+            expert summary; #363 removed the Input Gate that also consumed it).
         priority: Higher priority wins in arbitration conflicts.
         enabled: Whether this expert is active.
         model: LLM model to use for this expert.
@@ -109,7 +110,6 @@ class ExpertConfig:
     output_schema: Dict[str, Any] = field(default_factory=dict)
     output_format: str = ""
     trigger_criteria: str = ""
-    always_triggered: bool = False
     history_limit: int = 0  # 0 = use runner default (8 for most, 10 for task_extraction)
     min_confidence: float = 0.0  # 0 = not applicable (unused with tool-calling experts)
     # Per-verdict deterministic response directives: {verdict_value: VerdictDirective}.
@@ -136,7 +136,6 @@ class ExpertConfig:
             output_schema=data.get("output_schema", {}),
             output_format=data.get("output_format", ""),
             trigger_criteria=data.get("trigger_criteria", ""),
-            always_triggered=data.get("always_triggered", False),
             history_limit=data.get("history_limit", 0),
             min_confidence=data.get("min_confidence", 0.0),
             verdict_directives=data.get("verdict_directives", {}),
@@ -156,7 +155,6 @@ class ExpertConfig:
             "output_schema": self.output_schema,
             "output_format": self.output_format,
             "trigger_criteria": self.trigger_criteria,
-            "always_triggered": self.always_triggered,
             "history_limit": self.history_limit,
             "min_confidence": self.min_confidence,
             "verdict_directives": {

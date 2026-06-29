@@ -122,23 +122,24 @@ def test_directive_section_included_when_directive_has_content():
 
 
 # ---------------------------------------------------------------------------
-# build_response_user_message()
+# Context flows through the template (system prompt), the user message is bare
 # ---------------------------------------------------------------------------
 
-def test_no_history_returns_only_user_message():
-    result = build_response_user_message("Hello there", [])
-    assert result == "[USER]: Hello there"
+def test_user_message_is_the_bare_input():
+    assert build_response_user_message("Hello there") == "Hello there"
 
 
-def test_with_history_prepends_formatted_lines():
+def test_history_is_rendered_into_the_system_prompt():
     history = [
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello"},
     ]
-    result = build_response_user_message("How are you?", history)
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), conversation_history=history
+    )
+    # Context goes via {{conversationHistory}} in the (rendered) guidelines.
     assert "[USER]: Hi" in result
     assert "[ASSISTANT]: Hello" in result
-    assert "[USER]: How are you?" in result
 
 
 def test_history_limit_truncates_older_messages():
@@ -147,9 +148,83 @@ def test_history_limit_truncates_older_messages():
         {"role": "assistant", "content": "msg2"},
         {"role": "user", "content": "msg3"},
     ]
-    result = build_response_user_message("latest", history, history_limit=1)
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), conversation_history=history, history_limit=1
+    )
     assert "msg3" in result
     assert "msg1" not in result
+
+
+def test_state_context_is_rendered_into_the_system_prompt():
+    sm = {"state": {"title": "Intro", "description": "Greet the user"}}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    # State machine context reaches the prompt via {{stateContext}}.
+    assert "Intro" in result
+
+
+def test_bridge_is_rendered_into_the_system_prompt_with_continuation_guidance():
+    # When a bridge was spoken, the final-stage prompt must carry it via {{bridge}}
+    # plus the "continue from your opener" guidance so the reply extends it
+    # seamlessly instead of restarting (#bridge-seam).
+    result = build_response_system_prompt(
+        {}, ResponseDirective(), bridge="Got it, being healthier is the goal."
+    )
+    assert "Got it, being healthier is the goal." in result
+    assert "CONTINUE FROM" in result.upper()
+
+
+def test_no_bridge_omits_continuation_block():
+    # No bridge spoken -> the {{#if bridge}} block must not render (no dangling
+    # "continue from your opener" instruction on a fresh turn).
+    result = build_response_system_prompt({}, ResponseDirective(), bridge="")
+    assert "CONTINUE FROM" not in result.upper()
+
+
+# ---------------------------------------------------------------------------
+# State-condition flags drive the behavioral NOTE prose from the template,
+# not from hardcoded strings in _state_machine_section (#config-control).
+# ---------------------------------------------------------------------------
+
+def _sm_with_just_collected(*, all_pending_done: bool):
+    # current_task has one deliverable key that was just collected; a second
+    # pending deliverable exists unless all_pending_done.
+    deliverables = [{"key": "user_name", "status": "pending", "description": "name"}]
+    if not all_pending_done:
+        deliverables.append({"key": "age", "status": "pending", "description": "age"})
+    return {
+        "state": {"title": "Intro", "description": "Greet"},
+        "current_task": {"description": "Ask name", "deliverable_keys": ["user_name"]},
+        "deliverables": deliverables,
+        "_collected_keys": ["user_name"],
+    }
+
+
+def test_task_just_collected_renders_acknowledge_guidance():
+    sm = _sm_with_just_collected(all_pending_done=False)
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just answered for this task" in result
+    # The hardcoded "NOTE:" prose must no longer live in the structural section.
+    assert "NOTE: The user just provided" not in result
+
+
+def test_state_completing_renders_transition_guidance():
+    sm = _sm_with_just_collected(all_pending_done=True)
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "glide into the next topic" in result
+
+
+def test_state_just_changed_renders_ease_in_guidance():
+    sm = {"state": {"title": "Goals"}, "state_just_changed": True}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just moved into a new phase" in result
+
+
+def test_quiet_turn_renders_no_state_notes():
+    # Nothing special happened — none of the conditional NOTE blocks should fire.
+    sm = {"state": {"title": "Intro", "description": "Greet"}}
+    result = build_response_system_prompt(sm, ResponseDirective())
+    assert "just answered for this task" not in result
+    assert "just moved into a new phase" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -169,3 +244,86 @@ def test_apply_config_overrides_persona_and_history_limit():
     gen.apply_config({"persona": "You are a coach.", "history_limit": 5})
     assert gen.custom_persona == "You are a coach."
     assert gen.history_limit == 5
+
+
+# ---------------------------------------------------------------------------
+# ResponseGenerator.generate() message assembly — the bridge-continuation
+# guidance is PROSE owned by the editable response prompt (rendered around the
+# {{bridge}} injection in the system prompt), not hidden in code. The only
+# auto-injected mechanism here is replaying the bridge as the assistant's
+# in-progress turn so the model literally continues it (one seamless utterance).
+# ---------------------------------------------------------------------------
+
+import asyncio
+
+from stella_agent_sdk.llm import LLMResponse
+
+
+class _CapturingLLMService:
+    """Captures the messages passed to generate() and drives the callback to
+    completion so ResponseGenerator.generate() can be awaited without a real LLM."""
+
+    def __init__(self):
+        self.captured_messages = None
+
+    async def generate(self, messages, config, callback, component_name="unknown"):
+        self.captured_messages = messages
+        resp = LLMResponse(content="continued reply", model="test", provider="test")
+        await callback.on_complete(resp)
+        return resp
+
+
+def _run_generate(gen, **kwargs):
+    async def _collect():
+        return [o async for o in gen.generate(**kwargs)]
+
+    return asyncio.run(_collect())
+
+
+def _roles_and_contents(messages):
+    return [(m.role, m.content) for m in messages]
+
+
+def test_bridge_continuation_guidance_lives_in_the_system_prompt():
+    # The "continue from the opener, don't re-greet" guidance is rendered into the
+    # system prompt around {{bridge}} (editable, visible) — NOT a hidden code-only
+    # system message. The bridge is also replayed as the assistant's in-progress turn.
+    svc = _CapturingLLMService()
+    gen = ResponseGenerator(llm_service=svc)
+    _run_generate(
+        gen,
+        session_id="s1",
+        user_input="I like bodyweight exercises",
+        directive=ResponseDirective(),
+        conversation_history=[],
+        sm_context={},
+        bridge="Bodyweight exercises are great!",
+    )
+    rc = _roles_and_contents(svc.captured_messages)
+    # Exactly ONE system message (the rendered prompt) — no extra hidden injection.
+    system_msgs = [c for r, c in rc if r == "system"]
+    assert len(system_msgs) == 1
+    # That single system prompt carries both the bridge text and the prose guidance.
+    assert "Bodyweight exercises are great!" in system_msgs[0]
+    assert "CONTINUE FROM" in system_msgs[0].upper()
+    # The bridge is replayed as the assistant's own in-progress turn (the mechanism).
+    assert ("assistant", "Bodyweight exercises are great!") in rc
+
+
+def test_no_bridge_has_no_continuation_guidance_or_replay():
+    # On a fresh turn (no spoken opener) the bridge block must not render and there
+    # must be no assistant replay message.
+    svc = _CapturingLLMService()
+    gen = ResponseGenerator(llm_service=svc)
+    _run_generate(
+        gen,
+        session_id="s1",
+        user_input="Hello",
+        directive=ResponseDirective(),
+        conversation_history=[],
+        sm_context={},
+        bridge="",
+    )
+    rc = _roles_and_contents(svc.captured_messages)
+    assert not any("CONTINUE FROM" in c.upper() for _, c in rc)
+    assert not any(r == "assistant" for r, _ in rc)
