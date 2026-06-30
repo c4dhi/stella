@@ -9,6 +9,7 @@
 #   ./scripts/start-k8s.sh --setup --local    # Setup for local development
 #   ./scripts/start-k8s.sh --setup --production  # Setup for production
 #   ./scripts/start-k8s.sh --config           # Full configuration (all variables)
+#   ./scripts/start-k8s.sh --backup           # Guided backup & restore (export/import)
 #
 # Deployment:
 #   ./scripts/start-k8s.sh                    # Local development (auto-detect changes)
@@ -99,6 +100,7 @@ VERBOSE_MODE=false
 ENV_FLAG=""
 SETUP_MODE=false
 CONFIG_MODE=false
+BACKUP_MODE=false
 
 # =============================================================================
 # Argument Parsing (single-pass)
@@ -144,6 +146,9 @@ parse_args() {
             --config)
                 CONFIG_MODE=true
                 ;;
+            --backup)
+                BACKUP_MODE=true
+                ;;
             --namespace)
                 shift
                 KUBERNETES_NAMESPACE="$1"
@@ -179,6 +184,7 @@ show_help() {
     echo "Configuration Wizards:"
     echo "  --setup         Run onboarding wizard (required variables first)"
     echo "  --config        Run full configuration wizard (all variables)"
+    echo "  --backup        Guided backup & restore (export/import the whole system)"
     echo ""
     echo "Environment Options:"
     echo "  --local         Run in local development mode (default)"
@@ -229,7 +235,7 @@ main() {
     detect_environment
 
     # Phase 1b: Handle wizard modes (before normal startup)
-    if [[ "$SETUP_MODE" == "true" ]] || [[ "$CONFIG_MODE" == "true" ]]; then
+    if [[ "$SETUP_MODE" == "true" ]] || [[ "$CONFIG_MODE" == "true" ]] || [[ "$BACKUP_MODE" == "true" ]]; then
         # Source wizard modules
         source "$LIB_DIR/variables.sh"
         source "$LIB_DIR/wizard.sh"
@@ -241,6 +247,10 @@ main() {
         elif [[ "$CONFIG_MODE" == "true" ]]; then
             source "$LIB_DIR/config_wizard.sh"
             run_config_wizard "$ENV_FLAG"
+            exit $?
+        elif [[ "$BACKUP_MODE" == "true" ]]; then
+            source "$LIB_DIR/backup_wizard.sh"
+            run_backup_wizard "$ENV_FLAG"
             exit $?
         fi
     fi

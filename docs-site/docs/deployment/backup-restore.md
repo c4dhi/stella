@@ -74,6 +74,19 @@ Export is a **logical** backup, so it needs a **running system**:
 is down if not. A fully wound-down deployment cannot be exported — bring it up
 (or scale Postgres + backend up) first.
 
+## Guided wizard (easiest)
+
+For an interactive flow that walks you through both directions — choosing
+encryption, metrics, and the bundle to restore — run:
+
+```bash
+./scripts/start-k8s.sh --backup
+```
+
+It prompts for the high-level choices and then runs the same export/restore
+scripts below (which still handle passphrase entry and confirmations). The
+direct script invocations remain available for automation/CI.
+
 ## Export
 
 ```bash
