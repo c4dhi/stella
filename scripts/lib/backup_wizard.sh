@@ -10,6 +10,14 @@
 #
 # Entry point: run_backup_wizard "$ENV_FLAG"
 
+# Clear the screen and redraw the header. Called before every prompt so each
+# step replaces the previous one instead of stacking (matching setup/config).
+_backup_wizard_header() {
+    wizard_clear_screen
+    echo -e "\n  ${BOLD}STELLA — Backup & Restore${NC}"
+    echo -e "  ${DIM}Export the whole deployment to a portable bundle, or restore one onto this machine.${NC}\n"
+}
+
 run_backup_wizard() {
     local env_flag="${1:-}"
     local env_arg=""
@@ -19,10 +27,7 @@ run_backup_wizard() {
     local scripts_dir
     scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-    wizard_clear_screen 2>/dev/null || true
-    echo -e "\n  ${BOLD}STELLA — Backup & Restore${NC}"
-    echo -e "  ${DIM}Export the whole deployment to a portable bundle, or restore one onto this machine.${NC}\n"
-
+    _backup_wizard_header
     local action
     action="$(wizard_select_input \
         "What would you like to do?" \
@@ -32,11 +37,15 @@ run_backup_wizard() {
 
     case "$action" in
         Export)
-            local enc met
+            _backup_wizard_header
+            local enc
             enc="$(wizard_boolean_input \
                 "Encrypt the bundle with a passphrase?" \
                 "Recommended — the bundle contains all secrets. You'll be prompted for the passphrase." \
                 "true")"
+
+            _backup_wizard_header
+            local met
             met="$(wizard_boolean_input \
                 "Include metrics & logs?" \
                 "Larger bundle; usually not needed to restore a working system." \
@@ -47,23 +56,26 @@ run_backup_wizard() {
             [[ "$enc" == "true" ]] && args+=("--encrypt")
             [[ "$met" == "true" ]] && args+=("--include-metrics")
 
-            echo
+            _backup_wizard_header
             info "Starting export — the system must be running."
             echo
             "$scripts_dir/backup-export.sh" "${args[@]}"
             ;;
 
         Restore)
+            _backup_wizard_header
             local bundle
             bundle="$(wizard_text_input \
                 "Path to the backup bundle" \
                 "e.g. ./stella-backup-20260101-120000.zip (or .zip.enc)" \
                 "" "")"
             if [[ -z "$bundle" ]]; then
+                _backup_wizard_header
                 error "No bundle path provided — aborting restore."
                 return 1
             fi
             if [[ ! -f "$bundle" ]]; then
+                _backup_wizard_header
                 error "File not found: $bundle"
                 return 1
             fi
@@ -71,7 +83,7 @@ run_backup_wizard() {
             local args=("--in" "$bundle")
             [[ -n "$env_arg" ]] && args+=("$env_arg")
 
-            echo
+            _backup_wizard_header
             warning "Restore OVERWRITES all data and config in this deployment."
             info "You'll be asked to confirm (and for the passphrase, if encrypted) before anything changes."
             echo
@@ -79,6 +91,7 @@ run_backup_wizard() {
             ;;
 
         *)
+            _backup_wizard_header
             info "Cancelled — nothing was changed."
             ;;
     esac
