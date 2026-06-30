@@ -79,6 +79,24 @@ import type {
 } from '../lib/api-types'
 import { getRuntimeConfig } from '../config/runtime'
 
+/** Result of a full-system backup import (#378). Mirrors the backend report. */
+export interface BackupImportReport {
+  warnings: string[]
+  tables: Array<{
+    name: string
+    expected: number
+    actual: number
+    match: boolean
+  }>
+  packages: {
+    expected: number
+    restored: number
+    missingOnDisk: string[]
+  }
+  orphanPackagePaths: string[]
+  keyStatus: 'match' | 'mismatch-overridden'
+}
+
 class SessionManagementClient {
   private pendingRequests: Map<string, Promise<any>> = new Map()
 
@@ -878,6 +896,58 @@ class SessionManagementClient {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  /**
+   * Restore a full-system backup bundle (#378), OVERWRITING all existing data.
+   *
+   * SystemAdmin-only. `confirmOverwrite` is always sent true — the caller must
+   * gate this behind an explicit user confirmation before invoking. Uploads via
+   * multipart FormData (the browser sets the multipart boundary, so no manual
+   * Content-Type); the JWT rides in the Authorization header, and the optional
+   * decrypt passphrase in a header (never the URL).
+   */
+  async importBackup(
+    file: File,
+    options?: { allowKeyMismatch?: boolean; passphrase?: string },
+  ): Promise<BackupImportReport> {
+    const params = new URLSearchParams({ confirmOverwrite: 'true' })
+    if (options?.allowKeyMismatch) params.append('allowKeyMismatch', 'true')
+
+    const token =
+      localStorage.getItem('stella_auth_token') ||
+      localStorage.getItem('grace_auth_token')
+
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    if (options?.passphrase) {
+      headers['X-Backup-Passphrase'] = options.passphrase
+    }
+
+    const form = new FormData()
+    form.append('file', file)
+
+    const response = await fetch(
+      `${this.getBaseUrl()}/admin/backup/import?${params.toString()}`,
+      { method: 'POST', headers, body: form },
+    )
+
+    if (!response.ok) {
+      let errorData: any
+      try {
+        errorData = await response.json()
+      } catch {
+        errorData = {
+          statusCode: response.status,
+          message: response.statusText,
+        }
+      }
+      throw errorData
+    }
+
+    return response.json()
   }
 
   // ============================================================================

@@ -133,6 +133,7 @@ const sidebars: SidebarsConfig = {
         'deployment/production-checklist',
         'deployment/monitoring',
         'deployment/agent-validation',
+        'deployment/backup-restore',
       ],
     },
     {
