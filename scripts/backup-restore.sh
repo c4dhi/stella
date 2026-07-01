@@ -60,7 +60,27 @@ require_host_tools() {
     echo -e "  unblocks normal setup. Install the above, then re-run this command."
     exit 1
 }
+
+# The host-side bundle helper (backup-bundle.ts) runs via ts-node and imports the
+# backend's archiver/yauzl-based zip code, so those packages must exist in this
+# checkout's node_modules. A stale node_modules (e.g. from before these deps were
+# added) fails deep inside ts-node with a cryptic "Cannot find module" — check up
+# front and point at the fix.
+require_backup_deps() {
+    local root; root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    ( cd "$root" && node -e "require.resolve('archiver'); require.resolve('yauzl')" ) >/dev/null 2>&1 && return 0
+    error "Backup helper packages are missing on this machine."
+    echo
+    echo -e "  The export/restore helper needs the project's npm packages (archiver, yauzl),"
+    echo -e "  but this checkout's node_modules is missing them (it's likely out of date)."
+    echo
+    echo -e "      → Run:  ${BOLD:-}npm install${NC:-}   in ${root}"
+    echo
+    echo -e "  Then re-run this command."
+    exit 1
+}
 require_host_tools
+require_backup_deps
 
 BUNDLE=""
 ALLOW_KEY_MISMATCH=""
