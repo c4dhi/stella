@@ -127,8 +127,24 @@ kubectl rollout restart deployment session-management-server -n "$KUBERNETES_NAM
 kubectl rollout status deployment session-management-server -n "$KUBERNETES_NAMESPACE" --timeout=300s
 
 # 2. Restore data: copy the bundle into a fresh backend pod and import it.
-POD="$(kubectl get pod -n "$KUBERNETES_NAMESPACE" -l app=session-management-server \
-        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+#
+# `rollout status` can return for the PRE-restart generation (the
+# observedGeneration race: the controller may not have observed the restart's
+# new generation yet), so at this instant there may be no stable pod. Wait for
+# an actually-Ready pod, then select a Running one via a retry loop with a
+# phase filter — never a Terminating/Pending pod, which kubectl cp/exec would
+# fail against.
+kubectl wait --for=condition=ready pod -l app=session-management-server \
+    -n "$KUBERNETES_NAMESPACE" --timeout=300s >/dev/null 2>&1 || true
+
+POD=""
+for _ in $(seq 1 30); do
+    POD="$(kubectl get pod -n "$KUBERNETES_NAMESPACE" -l app=session-management-server \
+            --field-selector=status.phase=Running \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    [[ -n "$POD" ]] && break
+    sleep 2
+done
 [[ -z "$POD" ]] && { error "No running backend pod after restart"; exit 1; }
 
 POD_IN="/tmp/stella-restore-$(date +%s).zip"
