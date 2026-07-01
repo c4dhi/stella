@@ -87,3 +87,7 @@ prisma/seed.js
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Backup bundles (#378) — contain the full deployment incl. all secrets; never commit
+stella-backup-*.zip
+stella-backup-*.zip.enc
