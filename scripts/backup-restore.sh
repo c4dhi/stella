@@ -21,6 +21,8 @@ LIB_DIR="$SCRIPT_DIR/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/colors.sh"
 # shellcheck source=/dev/null
+source "$LIB_DIR/utils.sh"       # environment.sh depends on ensure_dir() from here
+# shellcheck source=/dev/null
 source "$LIB_DIR/environment.sh"
 # shellcheck source=/dev/null
 source "$LIB_DIR/deploy.sh"
