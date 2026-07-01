@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
-import AdmZip from 'adm-zip'
 import * as fs from 'fs/promises'
+import { createReadStream } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as crypto from 'crypto'
@@ -14,19 +14,34 @@ import {
   readMigrationHead,
   tablesForExport,
   validateForImport,
+  allTableNames,
+  metricsTableNames,
   BackupManifest,
   PackageEntry,
-  CORE_TABLES,
-  METRICS_TABLES,
+  EXPORT_CHUNK_ROWS,
 } from './manifest'
 import {
   encryptBundle,
   decryptBundle,
   isEncryptedBundle,
 } from './bundle-crypto'
+import { ZipReader, ZipWriter } from './bundle-zip'
 
-/** Every table name we will ever trust from an (untrusted) uploaded manifest. */
-const KNOWN_TABLES = new Set<string>([...CORE_TABLES, ...METRICS_TABLES])
+/**
+ * Every table name we will ever trust from an (untrusted) uploaded manifest.
+ * Derived from the live schema, so it automatically covers new tables and can
+ * never drift out of sync with what export produces.
+ */
+const knownTables = (): Set<string> => new Set<string>(allTableNames())
+
+/**
+ * Both the export snapshot and the destructive import run as single
+ * transactions. A whole-deployment clone can take a while, so the interactive
+ * timeout is generous — far better than the Prisma 5 s default, which would
+ * abort any real-sized restore mid-flight.
+ */
+const TX_MAX_WAIT_MS = 60_000
+const TX_TIMEOUT_MS = 2 * 60 * 60 * 1000 // 2 hours
 
 export interface BackupExportOptions {
   /** Include the high-volume metrics/observability tables (default false). */
@@ -78,7 +93,8 @@ export interface BackupImportReport {
 /**
  * Full-system data export/import (#378).
  *
- * Engine: pure Prisma + Postgres, no external binaries (no pg_dump / zip / kubectl).
+ * Engine: pure Prisma + Postgres for the data, archiver/yauzl for the container,
+ * Node crypto for encryption — no external binaries (no pg_dump / zip / kubectl).
  * The same code runs identically on a developer's Mac, a dev box, and a
  * production Kubernetes pod — nothing has to be installed on any host.
  *
@@ -86,7 +102,14 @@ export interface BackupImportReport {
  * `json_agg(row)::text` and re-imported via `json_populate_recordset`, which
  * casts the JSON back through the table's own column types. The aggregate is
  * kept as TEXT end-to-end (never parsed in JS), so even int8/BigInt values
- * round-trip with full precision. Bundling uses adm-zip (pure JS).
+ * round-trip with full precision.
+ *
+ * Scale: every stage is bounded-memory. Tables are paginated (ctid keyset) into
+ * fixed-size chunk files rather than one giant JSON string; the zip is streamed
+ * entry-by-entry; encryption streams through the cipher. So a bundle the size of
+ * the whole deployment moves through constant RAM. Export reads under a single
+ * REPEATABLE READ snapshot for a consistent point-in-time image; import applies
+ * the DB restore in one transaction so it is all-or-nothing.
  */
 @Injectable()
 export class BackupService {
@@ -102,39 +125,49 @@ export class BackupService {
     options: BackupExportOptions = {},
   ): Promise<BackupExportResult> {
     const includeMetrics = options.includeMetrics ?? false
-    const zip = new AdmZip()
+    const exportedAt = new Date().toISOString()
 
-    // 1. Table data — one JSON file per table (raw json_agg text).
-    for (const table of tablesForExport(includeMetrics)) {
-      const json = await this.dumpTableJson(table)
-      zip.addFile(`tables/${table}.json`, Buffer.from(json, 'utf8'))
-    }
+    const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'stella-backup-'))
+    const stamp = exportedAt.replace(/[:.]/g, '-')
+    const appVersion = await this.readAppVersion()
+    let filename = `stella-backup-${appVersion}-${stamp}.zip`
+    let bundlePath = path.join(outDir, filename)
 
-    // 2. Agent-package files (added to the zip + checksummed).
+    const zip = new ZipWriter(bundlePath)
+
+    // 1. Agent-package files — streamed straight from disk into the archive.
     const packages = await this.addPackagesToZip(zip)
 
-    // 3. Manifest — the safety record that gates import.
-    const manifest = await buildManifest({
-      prisma: this.prisma,
-      appVersion: await this.readAppVersion(),
-      exportedAt: new Date().toISOString(),
-      encryptionKeyFingerprint: this.encryption.getKeyFingerprint(),
-      includeMetrics,
-      packages,
-    })
-    zip.addFile(
+    // 2. Table data + manifest, all read from one consistent snapshot. Tables
+    //    are chunked so no single JSON string ever holds a whole table.
+    const manifest = await this.prisma.$transaction(
+      async (tx) => {
+        for (const table of tablesForExport(includeMetrics)) {
+          await this.dumpTableChunks(tx, table, zip)
+        }
+        return buildManifest({
+          prisma: tx,
+          appVersion,
+          exportedAt,
+          encryptionKeyFingerprint: this.encryption.getKeyFingerprint(),
+          includeMetrics,
+          packages,
+        })
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        maxWait: TX_MAX_WAIT_MS,
+        timeout: TX_TIMEOUT_MS,
+      },
+    )
+
+    zip.addBuffer(
       'manifest.json',
       Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'),
     )
+    await zip.finalize()
 
-    // 4. Write the bundle to a temp file and hand back a stream-able path.
-    const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'stella-backup-'))
-    const stamp = manifest.exportedAt.replace(/[:.]/g, '-')
-    let filename = `stella-backup-${manifest.appVersion}-${stamp}.zip`
-    let bundlePath = path.join(outDir, filename)
-    zip.writeZip(bundlePath)
-
-    // 5. Optionally encrypt the whole bundle at rest.
+    // 3. Optionally encrypt the whole bundle at rest (streamed).
     if (options.passphrase) {
       const encPath = `${bundlePath}.enc`
       await encryptBundle(bundlePath, encPath, options.passphrase)
@@ -167,6 +200,7 @@ export class BackupService {
     }
 
     let decryptedPath: string | null = null
+    let reader: ZipReader | null = null
     try {
       // Decrypt first if the bundle was exported with a passphrase.
       let bundlePath = options.bundlePath
@@ -190,8 +224,8 @@ export class BackupService {
         bundlePath = decryptedPath
       }
 
-      const zip = this.openBundle(bundlePath)
-      const manifest = this.readManifest(zip)
+      reader = await this.openBundle(bundlePath)
+      const manifest = await this.readManifest(reader)
 
       // --- Guards: refuse before any write ---------------------------------
       const target = {
@@ -208,33 +242,48 @@ export class BackupService {
         })
       }
 
-      // Only allowlisted table names are ever trusted from the uploaded manifest.
+      // Only tables that exist in the live schema are ever trusted from the
+      // uploaded manifest (also the SQL-injection allowlist for table names).
+      const known = knownTables()
       const bundleTables = Object.keys(manifest.tables).filter((t) =>
-        KNOWN_TABLES.has(t),
+        known.has(t),
       )
+      const order = this.insertionOrder().filter((t) =>
+        bundleTables.includes(t),
+      )
+      const readerRef = reader
 
-      // --- Destructive phase -----------------------------------------------
+      // --- Destructive phase: DB restore is ONE transaction ----------------
+      // truncate + all inserts commit together, so any failure mid-restore
+      // rolls back to the pre-import state rather than leaving a half-wiped DB.
       this.logger.warn(
         `Importing backup — OVERWRITING ${bundleTables.length} tables and the ` +
           `agent-package store.`,
       )
-      await this.truncateTables(bundleTables)
-
-      // Insert parents before children so foreign keys hold (no superuser tricks).
-      const order = this.insertionOrder().filter((t) =>
-        bundleTables.includes(t),
+      await this.prisma.$transaction(
+        async (tx) => {
+          await this.truncateTables(tx, bundleTables)
+          for (const table of order) {
+            for (const chunkName of readerRef.entryNamesUnder(
+              `tables/${table}/`,
+            )) {
+              const buf = await readerRef.readBuffer(chunkName)
+              if (!buf) continue
+              await this.restoreTableJson(tx, table, buf.toString('utf8'))
+            }
+          }
+        },
+        { maxWait: TX_MAX_WAIT_MS, timeout: TX_TIMEOUT_MS },
       )
-      for (const table of order) {
-        const entry = zip.getEntry(`tables/${table}.json`)
-        if (!entry) continue
-        await this.restoreTableJson(table, entry.getData().toString('utf8'))
-      }
 
-      await this.restorePackages(zip)
+      // Filesystem package restore can't join the DB transaction; do it after
+      // the DB is committed. Missing/partial packages surface in the report.
+      await this.restorePackages(reader)
 
       // --- Verify ----------------------------------------------------------
       const report = await this.verifyRestore(manifest, bundleTables)
       report.warnings.push(...guard.warnings)
+      report.warnings.push(...this.cascadeWarnings(manifest, bundleTables))
       this.logger.log(
         `Import complete: ${report.tables.length} tables, ` +
           `${report.packages.restored}/${report.packages.expected} packages, ` +
@@ -242,6 +291,7 @@ export class BackupService {
       )
       return report
     } finally {
+      reader?.close()
       // The uploaded bundle (and any decrypted copy) is a credential — delete.
       await fs.rm(options.bundlePath, { force: true }).catch(() => undefined)
       if (decryptedPath) {
@@ -254,40 +304,107 @@ export class BackupService {
   // Table data — Postgres does the type round-trip; JS never parses the rows.
   // ---------------------------------------------------------------------------
 
-  /** Export one table as a JSON array string (kept as text for fidelity). */
-  private async dumpTableJson(table: string): Promise<string> {
-    const rows = await this.prisma.$queryRawUnsafe<Array<{ data: string }>>(
-      `SELECT coalesce(json_agg(t)::text, '[]') AS data FROM "${table}" t`,
-    )
-    return rows[0]?.data ?? '[]'
+  /**
+   * Export one table as a sequence of bounded JSON chunk files
+   * (`tables/<table>/<seq>.json`). Pages are walked by ctid keyset — a stable
+   * cursor that works on any table without assuming a specific primary key —
+   * within the caller's REPEATABLE READ snapshot, so ctids don't shift under us.
+   * The system `__ctid` column is stripped from each emitted row.
+   */
+  private async dumpTableChunks(
+    tx: Prisma.TransactionClient,
+    table: string,
+    zip: ZipWriter,
+  ): Promise<void> {
+    let lastCtid: string | null = null
+    let seq = 0
+    for (;;) {
+      const rows = await tx.$queryRawUnsafe<
+        Array<{ data: string; last_ctid: string | null; n: number }>
+      >(
+        `WITH page AS (
+           SELECT t.*, t.ctid AS __ctid
+           FROM "${table}" t
+           WHERE ($1::tid IS NULL OR t.ctid > $1::tid)
+           ORDER BY t.ctid
+           LIMIT ${EXPORT_CHUNK_ROWS}
+         )
+         SELECT coalesce(json_agg(to_jsonb(page) - '__ctid'), '[]')::text AS data,
+                max(__ctid)::text AS last_ctid,
+                count(*)::int AS n
+         FROM page`,
+        lastCtid,
+      )
+      const row = rows[0]
+      const n = row?.n ?? 0
+      if (n === 0) break
+      zip.addBuffer(
+        `tables/${table}/${String(seq).padStart(6, '0')}.json`,
+        Buffer.from(row.data, 'utf8'),
+      )
+      seq += 1
+      lastCtid = row.last_ctid
+      if (n < EXPORT_CHUNK_ROWS) break
+    }
   }
 
-  /** Restore one table from a JSON array string via json_populate_recordset. */
-  private async restoreTableJson(table: string, json: string): Promise<void> {
-    await this.prisma.$executeRawUnsafe(
+  /** Restore one chunk of a table from a JSON array string via
+   * json_populate_recordset. Runs on the caller's transaction client. */
+  private async restoreTableJson(
+    tx: Prisma.TransactionClient,
+    table: string,
+    json: string,
+  ): Promise<void> {
+    await tx.$executeRawUnsafe(
       `INSERT INTO "${table}" SELECT * FROM json_populate_recordset(NULL::"${table}", $1::json)`,
       json,
     )
   }
 
   /** Empty the given tables. CASCADE + RESTART IDENTITY so order/sequences are
-   * irrelevant. Names are allowlist-checked already. */
-  private async truncateTables(tables: string[]): Promise<void> {
+   * irrelevant. Names are allowlist-checked already. Runs on the caller's tx. */
+  private async truncateTables(
+    tx: Prisma.TransactionClient,
+    tables: string[],
+  ): Promise<void> {
     if (tables.length === 0) return
     const quoted = tables.map((t) => `"${t}"`).join(', ')
-    await this.prisma.$executeRawUnsafe(
-      `TRUNCATE ${quoted} RESTART IDENTITY CASCADE`,
+    await tx.$executeRawUnsafe(`TRUNCATE ${quoted} RESTART IDENTITY CASCADE`)
+  }
+
+  /**
+   * Warn when a core-only restore will have emptied metrics/log tables as a
+   * side effect: those tables FK to core rows, so `TRUNCATE ... CASCADE` on the
+   * core set empties them even though the bundle never restores them. Harmless
+   * when cloning onto a fresh target, but silent data loss on a live one.
+   */
+  private cascadeWarnings(
+    manifest: BackupManifest,
+    bundleTables: string[],
+  ): string[] {
+    if (manifest.includesMetrics) return []
+    const cascaded = metricsTableNames().filter(
+      (t) => !bundleTables.includes(t),
     )
+    if (cascaded.length === 0) return []
+    return [
+      `Metrics/log tables were emptied via TRUNCATE CASCADE and NOT restored ` +
+        `(bundle excluded metrics): ${cascaded.join(', ')}. Expected when ` +
+        `cloning onto a fresh target; on a live system this drops its existing ` +
+        `metrics/logs.`,
+    ]
   }
 
   /**
    * Topological insert order (dependencies first) derived from the live Prisma
    * schema, so it adapts to schema changes instead of being hand-maintained.
    * A model "depends on" any model it holds a foreign key to (relationFromFields).
+   * Returns Postgres table names (honouring @@map), matching the bundle's keys.
    */
   private insertionOrder(): string[] {
     const models = Prisma.dmmf.datamodel.models
     const names = new Set(models.map((m) => m.name))
+    const tableOf = new Map(models.map((m) => [m.name, m.dbName ?? m.name]))
     const deps = new Map<string, Set<string>>()
     for (const m of models) {
       const set = new Set<string>()
@@ -314,7 +431,7 @@ export class BackupService {
       for (const d of deps.get(n) ?? []) visit(d)
       inProgress.delete(n)
       visited.add(n)
-      order.push(n)
+      order.push(tableOf.get(n) ?? n)
     }
     for (const m of models) visit(m.name)
     return order
@@ -324,9 +441,9 @@ export class BackupService {
   // Agent-package files
   // ---------------------------------------------------------------------------
 
-  /** Add the whole agent-package tree to the zip under `packages/`, returning a
-   * checksum manifest. Returns [] when no packages exist yet. */
-  private async addPackagesToZip(zip: AdmZip): Promise<PackageEntry[]> {
+  /** Add the whole agent-package tree to the zip under `packages/`, streaming
+   * each file from disk. Returns a checksum manifest ([] when none exist yet). */
+  private async addPackagesToZip(zip: ZipWriter): Promise<PackageEntry[]> {
     const root = this.storage.getStorageRoot()
     try {
       await fs.access(root)
@@ -337,7 +454,7 @@ export class BackupService {
   }
 
   private async walkPackages(
-    zip: AdmZip,
+    zip: ZipWriter,
     dir: string,
     base: string,
   ): Promise<PackageEntry[]> {
@@ -348,31 +465,43 @@ export class BackupService {
       if (dirent.isDirectory()) {
         entries.push(...(await this.walkPackages(zip, abs, base)))
       } else if (dirent.isFile()) {
-        const data = await fs.readFile(abs)
         const rel = path.relative(base, abs)
-        zip.addFile(`packages/${rel}`, data)
+        // Stream the file into the archive; hash it in a separate streamed pass
+        // so neither step holds the whole file in memory.
+        zip.addFile(`packages/${rel}`, abs)
         entries.push({
           path: rel,
-          bytes: data.length,
-          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+          bytes: (await fs.stat(abs)).size,
+          sha256: await this.hashFile(abs),
         })
       }
     }
     return entries
   }
 
-  /** Replace the entire agent-package store with the bundle's `packages/` tree. */
-  private async restorePackages(zip: AdmZip): Promise<void> {
+  private async hashFile(absPath: string): Promise<string> {
+    const hash = crypto.createHash('sha256')
+    await new Promise<void>((resolve, reject) => {
+      createReadStream(absPath)
+        .on('data', (d) => hash.update(d))
+        .on('end', () => resolve())
+        .on('error', reject)
+    })
+    return hash.digest('hex')
+  }
+
+  /** Replace the entire agent-package store with the bundle's `packages/` tree,
+   * streaming each entry to disk. */
+  private async restorePackages(reader: ZipReader): Promise<void> {
     const root = this.storage.getStorageRoot()
     await fs.rm(root, { recursive: true, force: true })
     await fs.mkdir(root, { recursive: true })
     const prefix = 'packages/'
-    for (const entry of zip.getEntries()) {
-      if (entry.isDirectory || !entry.entryName.startsWith(prefix)) continue
-      const rel = entry.entryName.slice(prefix.length)
+    for (const name of reader.entryNamesUnder(prefix)) {
+      const rel = name.slice(prefix.length)
       const dest = this.storage.getAbsolutePath(rel)
       await fs.mkdir(path.dirname(dest), { recursive: true })
-      await fs.writeFile(dest, entry.getData())
+      await reader.extractTo(name, dest)
     }
   }
 
@@ -380,21 +509,21 @@ export class BackupService {
   // Bundle + manifest helpers
   // ---------------------------------------------------------------------------
 
-  private openBundle(bundlePath: string): AdmZip {
+  private async openBundle(bundlePath: string): Promise<ZipReader> {
     try {
-      return new AdmZip(bundlePath)
+      return await ZipReader.open(bundlePath)
     } catch {
       throw new BadRequestException('Invalid bundle: not a readable .zip archive.')
     }
   }
 
-  private readManifest(zip: AdmZip): BackupManifest {
-    const entry = zip.getEntry('manifest.json')
-    if (!entry) {
+  private async readManifest(reader: ZipReader): Promise<BackupManifest> {
+    const buf = await reader.readBuffer('manifest.json')
+    if (!buf) {
       throw new BadRequestException('Invalid bundle: manifest.json is missing.')
     }
     try {
-      return JSON.parse(entry.getData().toString('utf8')) as BackupManifest
+      return JSON.parse(buf.toString('utf8')) as BackupManifest
     } catch {
       throw new BadRequestException('Invalid bundle: manifest.json is unreadable.')
     }

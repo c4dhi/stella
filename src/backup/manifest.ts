@@ -1,4 +1,15 @@
+import { Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
+
+/**
+ * The subset of the Prisma client these helpers need. Declared structurally so
+ * they work with both the injected {@link PrismaService} and an interactive
+ * transaction client (`prisma.$transaction(tx => ...)`), letting export read all
+ * counts inside the same snapshot as the row dumps.
+ */
+export type RawSqlClient = {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>
+}
 
 /**
  * Full-system backup manifest (#378).
@@ -16,14 +27,31 @@ import { PrismaService } from '../prisma/prisma.service'
  * The key itself is NEVER written to the bundle — only its SHA-256 fingerprint.
  */
 
-/** Bump when the bundle layout or manifest shape changes incompatibly. */
-export const BACKUP_FORMAT_VERSION = 1
+/** Bump when the bundle layout or manifest shape changes incompatibly.
+ *  v2: per-table data is chunked into `tables/<Table>/<seq>.json` (was a single
+ *  `tables/<Table>.json`) so no table is ever materialized as one JSON string. */
+export const BACKUP_FORMAT_VERSION = 2
 
 /**
- * High-volume, low-migration-value observability tables. Excluded from the
- * bundle by default; included only when the operator passes the metrics flag.
+ * Max rows per exported table chunk. Keeps each JSON chunk (and the string built
+ * to insert it) comfortably under Postgres' 1 GB field cap and V8's ~512 MB
+ * single-string cap, no matter how large a table grows.
  */
-export const METRICS_TABLES = [
+export const EXPORT_CHUNK_ROWS = 1000
+
+/**
+ * The set of tables a backup covers is DERIVED FROM THE PRISMA SCHEMA, not a
+ * hand-maintained list — so extending the schema automatically extends the
+ * backup, and no table can be silently left out. Model names map to Postgres
+ * table names via `@@map` (`dbName`) when present, else the model name itself.
+ *
+ * The ONLY hand-maintained bit is {@link METRICS_MODELS}: an opt-out list of
+ * high-volume, low-migration-value observability tables that are excluded by
+ * default (and included with the metrics flag). Forgetting to add a new
+ * high-volume table here is safe — it just gets exported as core data, i.e. the
+ * bundle stays complete, only larger.
+ */
+export const METRICS_MODELS = [
   'UsageMetricsSnapshot',
   'ServerMetricsSnapshot',
   'SessionActivityLog',
@@ -31,35 +59,33 @@ export const METRICS_TABLES = [
   'AgentBuildLog',
 ] as const
 
-/**
- * The durable application data — the FK graph that defines a deployment. These
- * are always exported. Quoted with their Prisma model names, which equal the
- * Postgres table names (the schema declares no @@map).
- */
-export const CORE_TABLES = [
-  'User',
-  'ProjectMembership',
-  'Project',
-  'Session',
-  'SessionState',
-  'Room',
-  'AgentType',
-  'AgentInstance',
-  'Participant',
-  'Invitation',
-  'Message',
-  'PlanTemplate',
-  'EnvVarTemplate',
-  'UserMessage',
-  'ProjectInvitation',
-  'AgentConfiguration',
-] as const
+/** Postgres table name for a Prisma model (honours @@map). */
+function tableNameOf(model: { name: string; dbName?: string | null }): string {
+  return model.dbName ?? model.name
+}
+
+/** Every table defined by the live schema — the single source of truth. */
+export function allTableNames(): string[] {
+  return Prisma.dmmf.datamodel.models.map(tableNameOf)
+}
+
+/** Table names for the metrics opt-out models that actually exist in the schema. */
+export function metricsTableNames(): string[] {
+  const opt = new Set<string>(METRICS_MODELS)
+  return Prisma.dmmf.datamodel.models
+    .filter((m) => opt.has(m.name))
+    .map(tableNameOf)
+}
+
+/** Durable application data: everything that isn't a metrics/observability table. */
+export function coreTableNames(): string[] {
+  const metrics = new Set(metricsTableNames())
+  return allTableNames().filter((t) => !metrics.has(t))
+}
 
 /** Resolve the set of tables to count/restore for the chosen metrics policy. */
 export function tablesForExport(includeMetrics: boolean): string[] {
-  return includeMetrics
-    ? [...CORE_TABLES, ...METRICS_TABLES]
-    : [...CORE_TABLES]
+  return includeMetrics ? allTableNames() : coreTableNames()
 }
 
 /** One bundled agent-package file (from AGENT_STORAGE_PATH). */
@@ -93,24 +119,28 @@ export interface BackupManifest {
  * "migration head". Two deployments are schema-compatible iff their heads match.
  */
 export async function readMigrationHead(
-  prisma: PrismaService,
+  prisma: RawSqlClient,
 ): Promise<string | null> {
+  // Order by finished_at (most-recently-applied) with migration_name as a
+  // deterministic tiebreaker. Prisma names are timestamp-prefixed, so for the
+  // normal in-order apply path this equals the logically-latest migration; the
+  // tiebreaker only matters under out-of-order repair/resolve.
   const rows = await prisma.$queryRawUnsafe<Array<{ migration_name: string }>>(
     `SELECT migration_name FROM _prisma_migrations
        WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
-       ORDER BY finished_at DESC
+       ORDER BY finished_at DESC, migration_name DESC
        LIMIT 1`,
   )
   return rows.length > 0 ? rows[0].migration_name : null
 }
 
 /**
- * Count rows for each given table. Names come exclusively from the hardcoded
- * CORE_TABLES/METRICS_TABLES constants — never user input — so interpolating
- * them into the query is safe.
+ * Count rows for each given table. Names come exclusively from the live Prisma
+ * schema (via {@link allTableNames}) or an allowlist filtered against it — never
+ * raw user input — so interpolating them into the query is safe.
  */
 export async function countTables(
-  prisma: PrismaService,
+  prisma: RawSqlClient,
   tables: string[],
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
@@ -125,7 +155,7 @@ export async function countTables(
 
 /** Inputs gathered by the export service before writing the manifest. */
 export interface BuildManifestInput {
-  prisma: PrismaService
+  prisma: RawSqlClient
   appVersion: string
   exportedAt: string
   encryptionKeyFingerprint: string | null

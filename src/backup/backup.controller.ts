@@ -36,9 +36,11 @@ export class BackupController {
    * Header X-Backup-Passphrase: <passphrase> (only if the bundle is encrypted)
    *
    * Accepts a bundle upload and restores it, OVERWRITING all existing data. The
-   * file streams to a temp path on disk (never buffered in memory) so multi-GB
-   * bundles are handled. `confirmOverwrite=true` is required — the service
-   * refuses otherwise, mirroring the UI's overwrite confirmation.
+   * upload streams to a temp path on disk, and the whole restore pipeline
+   * (decrypt, unzip, per-table insert) is bounded-memory — it processes the
+   * bundle one entry/chunk at a time rather than loading it whole — so the
+   * effective ceiling is disk, not RAM. `confirmOverwrite=true` is required —
+   * the service refuses otherwise, mirroring the UI's overwrite confirmation.
    */
   @Post('import')
   @UseInterceptors(
@@ -48,7 +50,8 @@ export class BackupController {
         filename: (_req, _file, cb) =>
           cb(null, `stella-import-${randomBytes(8).toString('hex')}.zip`),
       }),
-      // 20 GB ceiling — a backstop, not an expected size.
+      // 20 GB ceiling — a backstop, not an expected size. The streamed pipeline
+      // keeps memory flat regardless of bundle size.
       limits: { fileSize: 20 * 1024 * 1024 * 1024 },
     }),
   )

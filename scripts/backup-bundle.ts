@@ -15,9 +15,9 @@
  *       Decrypt if needed (BACKUP_PASSPHRASE), extract the embedded .env →
  *       <outEnvFile>, and write the plain data bundle → <outDataBundle>.
  *
- * Reuses the backend's bundle-crypto + adm-zip so on-disk formats match exactly.
+ * Reuses the backend's bundle-crypto + bundle-zip helpers so on-disk formats
+ * match exactly. Every step is streamed (bounded memory), matching the engine.
  */
-import AdmZip from 'adm-zip'
 import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
@@ -27,6 +27,7 @@ import {
   decryptBundle,
   isEncryptedBundle,
 } from '../src/backup/bundle-crypto'
+import { ZipReader, copyZipAdding } from '../src/backup/bundle-zip'
 
 // Where the deployment .env is parked inside the bundle.
 const CONFIG_ENTRY = 'config/deployment.env'
@@ -40,17 +41,21 @@ async function finalize(
   envFile: string,
   out: string,
 ): Promise<void> {
-  const zip = new AdmZip(dataBundle)
-  zip.addFile(CONFIG_ENTRY, await fs.readFile(envFile))
-
+  const config = await fs.readFile(envFile)
   const passphrase = process.env.BACKUP_PASSPHRASE
+
   if (passphrase) {
+    // Stream-copy the data bundle + config into a plain temp zip, then
+    // stream-encrypt it to the output — neither archive is held in memory.
     const plain = tmp('stella-fin')
-    zip.writeZip(plain)
-    await encryptBundle(plain, out, passphrase)
-    await fs.rm(plain, { force: true })
+    try {
+      await copyZipAdding(dataBundle, plain, [{ name: CONFIG_ENTRY, data: config }])
+      await encryptBundle(plain, out, passphrase)
+    } finally {
+      await fs.rm(plain, { force: true })
+    }
   } else {
-    zip.writeZip(out)
+    await copyZipAdding(dataBundle, out, [{ name: CONFIG_ENTRY, data: config }])
   }
 }
 
@@ -62,28 +67,37 @@ async function prepareRestore(
   let zipPath = bundle
   let decrypted: string | null = null
 
-  if (await isEncryptedBundle(bundle)) {
-    const passphrase = process.env.BACKUP_PASSPHRASE
-    if (!passphrase) {
-      throw new Error('bundle is encrypted; set BACKUP_PASSPHRASE to decrypt it')
+  try {
+    if (await isEncryptedBundle(bundle)) {
+      const passphrase = process.env.BACKUP_PASSPHRASE
+      if (!passphrase) {
+        throw new Error('bundle is encrypted; set BACKUP_PASSPHRASE to decrypt it')
+      }
+      decrypted = tmp('stella-dec')
+      await decryptBundle(bundle, decrypted, passphrase)
+      zipPath = decrypted
     }
-    decrypted = tmp('stella-dec')
-    await decryptBundle(bundle, decrypted, passphrase)
-    zipPath = decrypted
+
+    // The decrypted/plain zip IS the data bundle the pod importer reads; the
+    // embedded config entry is harmless (the importer only reads manifest.json,
+    // tables/*, packages/*). So we just pull the config out and hand the plain
+    // zip through unchanged, both streamed.
+    const reader = await ZipReader.open(zipPath)
+    try {
+      const cfg = await reader.readBuffer(CONFIG_ENTRY)
+      if (!cfg) {
+        throw new Error(
+          'bundle has no embedded deployment config (config/deployment.env)',
+        )
+      }
+      await fs.writeFile(outEnvFile, cfg)
+    } finally {
+      reader.close()
+    }
+    await fs.copyFile(zipPath, outDataBundle)
+  } finally {
+    if (decrypted) await fs.rm(decrypted, { force: true })
   }
-
-  const zip = new AdmZip(zipPath)
-  const cfg = zip.getEntry(CONFIG_ENTRY)
-  if (!cfg) {
-    throw new Error('bundle has no embedded deployment config (config/deployment.env)')
-  }
-  await fs.writeFile(outEnvFile, cfg.getData())
-
-  // The data bundle for the pod import. The embedded config entry is harmless —
-  // the importer only reads manifest.json, tables/*, and packages/*.
-  zip.writeZip(outDataBundle)
-
-  if (decrypted) await fs.rm(decrypted, { force: true })
 }
 
 async function main(): Promise<void> {

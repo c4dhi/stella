@@ -31,6 +31,22 @@ is handled by Postgres itself, so a restore reproduces the source exactly. (The
 scripts still use the host's normal deploy toolchain — `node` and `kubectl`; see
 [Prerequisites](#prerequisites).)
 
+**Schema-driven — extends itself.** The set of tables a bundle covers is derived
+from the live Prisma schema, not a hand-maintained list. Add a model to
+`schema.prisma` and it is automatically included in every backup and restore —
+there is no list to update and no way to silently leave a new table out. The only
+hand-maintained input is a small opt-out list of high-volume observability tables
+(`METRICS_MODELS`) that are excluded by default; forgetting to add a new table
+there is harmless (it just exports as normal data).
+
+**Bounded memory at any size.** Every stage streams: tables are paginated into
+fixed-size chunk files (never one giant JSON string), the zip is read/written one
+entry at a time, and encryption streams through the cipher. A bundle the size of
+the whole deployment moves through constant RAM — the practical ceiling is disk,
+not memory. Export reads under a single consistent snapshot; the destructive part
+of import runs in **one transaction**, so a failure mid-restore rolls back instead
+of leaving a half-wiped database.
+
 :::danger A bundle is a full credential
 Because the bundle embeds the deployment config, it contains **every secret** —
 password hashes, `ENV_VAR_ENCRYPTION_KEY`, API keys. A leaked bundle is a total
@@ -133,6 +149,16 @@ an admin can restore just the **data** from the dashboard:
 This path restores data + packages but **not** deployment config — so the target
 must already have the correct encryption key, or the key-fingerprint guard will
 stop the import.
+
+:::warning Restoring a core-only bundle onto a *live* system also clears its metrics
+Restore empties the bundle's tables with `TRUNCATE … CASCADE`. When the bundle
+excludes metrics (the default), truncating core tables such as `User`/`Session`/
+`Room` cascades into the metrics/log tables that reference them — so those tables
+are emptied even though they are not restored. This is expected and harmless when
+cloning onto a **fresh** target, but on a **live** system it drops the target's
+existing metrics/logs. The import report lists exactly which tables this affected.
+Export with `--include-metrics` if you need them carried over.
+:::
 
 ## What the manifest guards
 

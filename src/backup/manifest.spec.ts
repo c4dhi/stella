@@ -1,6 +1,12 @@
+import { Prisma } from '@prisma/client'
 import {
   BACKUP_FORMAT_VERSION,
   BackupManifest,
+  METRICS_MODELS,
+  allTableNames,
+  coreTableNames,
+  metricsTableNames,
+  tablesForExport,
   ImportTarget,
   validateForImport,
 } from './manifest'
@@ -105,5 +111,43 @@ describe('validateForImport', () => {
     )
     expect(result.ok).toBe(false)
     expect(result.blockers.length).toBe(3)
+  })
+})
+
+/**
+ * The exported table set is derived from the live Prisma schema, so a new model
+ * is included automatically. These tests lock in that property (completeness by
+ * construction) and guard the one hand-maintained input — the metrics opt-out
+ * list — against typos and drift.
+ */
+describe('table classification is schema-driven', () => {
+  const modelTableNames = Prisma.dmmf.datamodel.models.map(
+    (m) => m.dbName ?? m.name,
+  )
+
+  it('exports EVERY schema table when metrics are included (no omissions)', () => {
+    expect([...tablesForExport(true)].sort()).toEqual(
+      [...modelTableNames].sort(),
+    )
+  })
+
+  it('partitions all tables into core + metrics with no overlap or gap', () => {
+    const core = new Set(coreTableNames())
+    const metrics = new Set(metricsTableNames())
+    // Disjoint.
+    expect([...core].filter((t) => metrics.has(t))).toEqual([])
+    // Complete.
+    expect([...core, ...metrics].sort()).toEqual([...allTableNames()].sort())
+  })
+
+  it('core export excludes exactly the metrics tables', () => {
+    const core = new Set(tablesForExport(false))
+    for (const t of metricsTableNames()) expect(core.has(t)).toBe(false)
+  })
+
+  it('every metrics opt-out model actually exists in the schema', () => {
+    const modelNames = new Set(Prisma.dmmf.datamodel.models.map((m) => m.name))
+    const stale = METRICS_MODELS.filter((m) => !modelNames.has(m))
+    expect(stale).toEqual([])
   })
 })

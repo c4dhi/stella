@@ -98,7 +98,7 @@ fi
 
 PASSPHRASE=""
 # Peek the first bytes to see if the bundle is encrypted (matches bundle-crypto's MAGIC).
-if [[ "$(head -c 9 "$BUNDLE" 2>/dev/null)" == "STELLABK1" ]]; then
+if [[ "$(head -c 9 "$BUNDLE" 2>/dev/null)" == "STELLABK2" ]]; then
     read -r -s -p "Decryption passphrase: " PASSPHRASE; echo
     [[ -z "$PASSPHRASE" ]] && { error "Bundle is encrypted; passphrase required"; exit 1; }
 fi
