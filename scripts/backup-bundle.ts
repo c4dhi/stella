@@ -102,6 +102,14 @@ async function prepareRestore(
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
+  if (command === 'check') {
+    // Self-check preflight: reaching here means ts-node compiled this file and
+    // every import it needs (archiver, yauzl, crypto, …) resolved. The wizard
+    // scripts run this before the slow export so a broken host toolchain fails
+    // fast with a clear message instead of deep inside finalize.
+    process.stdout.write('ok\n')
+    return
+  }
   if (command === 'finalize') {
     const [dataBundle, envFile, out] = rest
     if (!dataBundle || !envFile || !out) {

@@ -54,26 +54,48 @@ require_host_tools() {
     exit 1
 }
 
-# The host-side bundle helper (backup-bundle.ts) runs via ts-node and imports the
-# backend's archiver/yauzl-based zip code, so those packages must exist in this
-# checkout's node_modules. A stale node_modules (e.g. from before these deps were
-# added) fails deep inside ts-node with a cryptic "Cannot find module" — check up
-# front and point at the fix.
-require_backup_deps() {
-    local root; root="$(cd "$SCRIPT_DIR/.." && pwd)"
-    ( cd "$root" && node -e "require.resolve('archiver'); require.resolve('yauzl')" ) >/dev/null 2>&1 && return 0
-    error "Backup helper packages are missing on this machine."
+# Actionable failure for a host toolchain that can't run the backup helper.
+backup_helper_unavailable() {
+    local root="$1" reason="$2" detail="${3:-}"
+    error "Can't run the backup helper on this machine — ${reason}."
     echo
-    echo -e "  The export/restore helper needs the project's npm packages (archiver, yauzl),"
-    echo -e "  but this checkout's node_modules is missing them (it's likely out of date)."
+    echo -e "  The export/restore helper (scripts/backup-bundle.ts) runs via ts-node and"
+    echo -e "  needs this checkout's npm packages (ts-node, typescript, archiver, yauzl)."
+    echo -e "  Your node_modules is missing or out of date."
     echo
     echo -e "      → Run:  ${BOLD:-}npm install${NC:-}   in ${root}"
     echo
     echo -e "  Then re-run this command."
+    if [[ -n "$detail" ]]; then
+        echo
+        echo -e "  ${DIM:-}Underlying error:${NC:-}"
+        local useful
+        useful="$(printf '%s\n' "$detail" | grep -iE "cannot find module|error TS[0-9]|MODULE_NOT_FOUND|^Error:" | head -4)"
+        [[ -z "$useful" ]] && useful="$(printf '%s\n' "$detail" | head -4)"
+        printf '%s\n' "$useful" | sed 's/^/    /'
+    fi
     exit 1
 }
+
+# Preflight the host-side bundle helper by actually loading it through ts-node
+# BEFORE the (slow) in-pod export runs. Compiling backup-bundle.ts exercises its
+# whole toolchain — ts-node, typescript, and every import (archiver, yauzl,
+# crypto) — so this catches the entire class of "host can't run the helper"
+# problems (stale/missing node_modules, a production --omit=dev install without
+# ts-node, a future added dependency) up front, with one real check instead of a
+# hardcoded package list.
+preflight_backup_helper() {
+    local root; root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    # Verify ts-node/typescript resolve first so npx never tries to fetch them.
+    ( cd "$root" && node -e "require.resolve('ts-node'); require.resolve('typescript')" ) >/dev/null 2>&1 \
+        || backup_helper_unavailable "$root" "ts-node / typescript are not installed"
+    # Load the real helper (the 'check' command does no work, just returns ok).
+    local out
+    out="$( cd "$root" && npx --no-install ts-node "$SCRIPT_DIR/backup-bundle.ts" check 2>&1 )" \
+        || backup_helper_unavailable "$root" "the backup helper failed to load" "$out"
+}
 require_host_tools
-require_backup_deps
+preflight_backup_helper
 
 # Ready replica count for a deployment (0 if absent/not ready).
 deployment_ready() {
