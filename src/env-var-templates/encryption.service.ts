@@ -60,6 +60,26 @@ export class EncryptionService implements OnModuleInit {
   }
 
   /**
+   * A non-reversible fingerprint of the configured ENV_VAR_ENCRYPTION_KEY.
+   *
+   * Used by the backup manifest (#378) to detect, on import, that a bundle was
+   * exported under a DIFFERENT key than the target is running — which would
+   * leave every EnvVarTemplate / AgentInstance secret undecryptable. We compare
+   * fingerprints, never the key itself: the raw key is never written to a
+   * bundle. SHA-256 over the key bytes is collision-safe and reveals nothing
+   * about the key.
+   *
+   * Returns null when no key is configured (encryption disabled), so the
+   * manifest can record "no key" honestly rather than fingerprinting absence.
+   */
+  getKeyFingerprint(): string | null {
+    if (!this.key) {
+      return null;
+    }
+    return crypto.createHash('sha256').update(this.key).digest('hex');
+  }
+
+  /**
    * Encrypt a dictionary of environment variables
    * @param data Key-value pairs of environment variables
    * @returns Encrypted string in format: iv:authTag:encryptedData

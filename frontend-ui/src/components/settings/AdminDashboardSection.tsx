@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type ChangeEvent } from 'react'
 import { motion } from 'framer-motion'
 import { useThemeStore } from '../../store/themeStore'
 import { useToastStore } from '../../store/toastStore'
 import { useAdminDashboardStream, useUsageHistory, useAllSessions } from '../../hooks/useAdminMetrics'
 import { useServerMetricsStream } from '../../hooks/useServerMetrics'
 import { apiClient } from '../../services/ApiClient'
+import type { BackupImportReport } from '../../services/ApiClient'
 import StatsCard from './admin/StatsCard'
 import SessionsGrid from './admin/SessionsGrid'
 import ServerPerformanceMonitor from './admin/ServerPerformanceMonitor'
@@ -157,6 +158,75 @@ export default function AdminDashboardSection() {
   const handleRangeChange = useCallback((days: number) => {
     setHistoryDays(days)
   }, [])
+
+  // Full-system backup import (#378) — restore a bundle (database + agent
+  // packages) produced by the wizard export. Export itself is a wizard/deploy
+  // script, not a dashboard action, so it can also capture deployment config.
+  // Import is destructive, so a file selection opens a confirmation dialog
+  // before anything is uploaded.
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null)
+  const [importPassphrase, setImportPassphrase] = useState('')
+  const [isImporting, setIsImporting] = useState(false)
+
+  const handleImportFileChosen = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0] ?? null
+      // Reset the input so re-selecting the same file fires onChange again.
+      e.target.value = ''
+      if (file) setPendingImportFile(file)
+    },
+    [],
+  )
+
+  const summariseReport = useCallback((report: BackupImportReport): string => {
+    const tableMismatches = report.tables.filter((t) => !t.match).length
+    const parts = [
+      `${report.tables.length} tables restored`,
+      `${report.packages.restored}/${report.packages.expected} packages`,
+    ]
+    if (tableMismatches > 0) parts.push(`${tableMismatches} row-count mismatches`)
+    if (report.orphanPackagePaths.length > 0)
+      parts.push(`${report.orphanPackagePaths.length} missing package files`)
+    if (report.keyStatus === 'mismatch-overridden')
+      parts.push('encryption-key mismatch — secrets will not decrypt')
+    return parts.join(' · ')
+  }, [])
+
+  const handleConfirmImport = useCallback(async () => {
+    if (!pendingImportFile) return
+    const file = pendingImportFile
+    const passphrase = importPassphrase
+    setPendingImportFile(null)
+    setImportPassphrase('')
+    setIsImporting(true)
+    try {
+      const report = await apiClient.importBackup(file, {
+        passphrase: passphrase || undefined,
+      })
+      const hasIssues =
+        report.tables.some((t) => !t.match) ||
+        report.orphanPackagePaths.length > 0 ||
+        report.keyStatus !== 'match' ||
+        report.warnings.length > 0
+      addToast({
+        message: `Import complete — ${summariseReport(report)}`,
+        type: hasIssues ? 'info' : 'success',
+      })
+    } catch (err) {
+      const blockers = (err as { blockers?: string[] })?.blockers
+      addToast({
+        message: blockers?.length
+          ? `Import rejected: ${blockers.join(' ')}`
+          : err instanceof Error
+            ? err.message
+            : (err as { message?: string })?.message ?? 'Backup import failed',
+        type: 'error',
+      })
+    } finally {
+      setIsImporting(false)
+    }
+  }, [pendingImportFile, importPassphrase, addToast, summariseReport])
 
   const connectionIndicator = (
     <div className="flex items-center gap-2">
@@ -322,11 +392,131 @@ export default function AdminDashboardSection() {
           </div>
         </motion.div>
       )}
+
+      {/* Full-system backup (#378) */}
+      <motion.div
+        variants={itemVariants}
+        className={`p-5 rounded-xl border ${
+          isDark ? 'bg-white/5 border-white/10' : 'bg-black/[0.02] border-black/5'
+        }`}
+      >
+        <h3
+          className={`text-body font-medium mb-1 ${
+            isDark ? 'text-content-inverse' : 'text-content'
+          }`}
+        >
+          Restore from backup
+        </h3>
+        <p
+          className={`text-caption mb-4 ${
+            isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+          }`}
+        >
+          Import a full-system backup bundle (database + agent packages) produced
+          by the deployment&apos;s export script. This replaces all current data.
+          If the bundle was encrypted at export, you&apos;ll be asked for its
+          passphrase.
+        </p>
+        <div className="flex flex-wrap items-center gap-4">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip,.enc"
+            className="hidden"
+            onChange={handleImportFileChosen}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            disabled={isImporting}
+            className={`px-4 py-2 rounded-lg text-body-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              isDark
+                ? 'bg-red-500/15 hover:bg-red-500/25 text-red-300'
+                : 'bg-red-50 hover:bg-red-100 text-red-600'
+            }`}
+          >
+            {isImporting ? 'Importing…' : 'Import backup…'}
+          </button>
+        </div>
+      </motion.div>
     </>
   )
 
   return (
     <div ref={fullscreenRef}>
+      {/* Backup import confirmation (#378) — destructive, requires explicit OK. */}
+      {pendingImportFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${
+              isDark
+                ? 'bg-surface-dark border-white/10'
+                : 'bg-surface border-black/10'
+            }`}
+          >
+            <h3
+              className={`text-heading-sm mb-2 ${
+                isDark ? 'text-content-inverse' : 'text-content'
+              }`}
+            >
+              Overwrite everything?
+            </h3>
+            <p
+              className={`text-body-sm mb-3 ${
+                isDark ? 'text-content-inverse-secondary' : 'text-content-secondary'
+              }`}
+            >
+              Importing{' '}
+              <span className="font-medium break-all">
+                {pendingImportFile.name}
+              </span>{' '}
+              will <strong>permanently replace ALL current data</strong> —
+              users, projects, sessions, messages and agent packages. This cannot
+              be undone. Export a backup first if you may need the current state.
+            </p>
+            <p
+              className={`text-caption mb-4 ${
+                isDark ? 'text-content-inverse-tertiary' : 'text-content-tertiary'
+              }`}
+            >
+              The import is rejected automatically if the bundle's schema or
+              encryption key does not match this server.
+            </p>
+            <input
+              type="password"
+              value={importPassphrase}
+              onChange={(e) => setImportPassphrase(e.target.value)}
+              placeholder="Passphrase (only if the backup is encrypted)"
+              autoComplete="off"
+              className={`w-full mb-5 px-3 py-2 rounded-lg text-body-sm border outline-none ${
+                isDark
+                  ? 'bg-white/5 border-white/10 text-content-inverse placeholder:text-content-inverse-tertiary'
+                  : 'bg-black/[0.02] border-black/10 text-content placeholder:text-content-tertiary'
+              }`}
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setPendingImportFile(null)
+                  setImportPassphrase('')
+                }}
+                className={`px-4 py-2 rounded-lg text-body-sm font-medium transition-colors ${
+                  isDark
+                    ? 'bg-white/10 hover:bg-white/15 text-content-inverse'
+                    : 'bg-black/5 hover:bg-black/10 text-content'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmImport}
+                className="px-4 py-2 rounded-lg text-body-sm font-medium transition-colors bg-red-600 hover:bg-red-700 text-white"
+              >
+                Overwrite &amp; import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isFullscreen ? (
         /* Fullscreen layout — fills the entire screen */
         <div
