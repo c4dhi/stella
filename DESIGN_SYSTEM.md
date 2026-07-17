@@ -1,323 +1,163 @@
 # STELLA Design System
 
-A comprehensive guide to the visual design language used across the STELLA landing page.
+The visual design language for the STELLA landing page and documentation site.
+Imported from the Claude Design project **"STELLA Design System"** and implemented in
+`docs-site/src/css/custom.css` and `docs-site/tailwind.config.js`.
 
 ## Brand Identity
 
-**STELLA** - System for Testing & Engineering of Large-Language Conversational Agents
+**STELLA** — open-source voice-conversation infrastructure for research.
 
-The design conveys:
-- Scientific precision and research credibility
-- Futuristic AI technology
-- Elegance and sophistication
-- Transparency and openness
+The design is **dark-first and engineered**: crisp cool-neutral (zinc) surfaces, hairline
+structure, monospace "signal" for metadata and code, and a single electric purple accent.
+It conveys scientific precision, self-hosted control, and technical credibility — no
+decorative gradients competing for attention.
+
+The system ships **both dark and light themes**, toggled via `[data-theme]`. Dark is the
+primary, design-led mode.
 
 ---
 
 ## Color Palette
 
-### Background Colors
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `bg-primary` | `#0a0a14` | Main page background |
-| `bg-secondary` | `#0f0f1a` | Section alternates, cards |
+All colors are exposed as CSS variables in `:root` (light) and `[data-theme='dark']` (dark).
+Prefer the `var(--token)` names below over raw hex so theming stays consistent.
 
-### Accent Colors
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `accent-violet` | `#7c3aed` | Primary accent, CTAs, highlights |
-| `accent-cyan` | `#06b6d4` | Secondary accent, status indicators |
-| `accent-blue` | `#3b82f6` | Tertiary accent, gradients |
+### Neutrals — cool zinc (not warm stone)
 
-### Text Colors
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `--bg` | `#08090a` | `#fafafa` | Page background |
+| `--bg-2` | `#0b0d0e` | `#f4f4f5` | Alternate background |
+| `--surface` | `#111315` | `#ffffff` | Cards, panels |
+| `--surface-2` | `#18181b` | `#fafafa` | Raised / nested surfaces |
+| `--text` | `#fafafa` | `#0a0a0a` | Headings, primary text |
+| `--text-2` | `#a1a1aa` | `#52525b` | Body text |
+| `--muted` | `#71717a` | `#71717a` | Labels, metadata |
+
+### Borders — hairline
+
+| Token | Dark | Light |
+|-------|------|-------|
+| `--border` | `rgba(255,255,255,.10)` | `#e4e4e7` |
+| `--border-strong` | `rgba(255,255,255,.16)` | `#d4d4d8` |
+| `--grid-line` | `rgba(255,255,255,.04)` | `rgba(0,0,0,.035)` |
+
+### Accent — one electric purple
+
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `--accent` | `#a855f7` | `#9333ea` | Links, highlights, accent dots |
+| `--accent-bright` | `#c084fc` | `#7c3aed` | Hover/bright accent, gradient text |
+| `--accent-solid` | `#7c3aed` | `#7c3aed` | Primary button fill |
+| `--accent-hover` | `#6d28d9` | `#6d28d9` | Primary button hover |
+| `--on-accent` | `#ffffff` | `#ffffff` | Text on accent |
+
+### Semantic
+
 | Token | Value | Usage |
 |-------|-------|-------|
-| `text-primary` | `#ffffff` | Headings, important text |
-| `text-secondary` | `rgba(255, 255, 255, 0.6)` | Body text, descriptions |
-| `text-muted` | `rgba(255, 255, 255, 0.4)` | Subtle labels, metadata |
+| `--success` | `#22c55e` | Online / pass / "green" agent |
+| `--warning` | `#eab308` | Caution |
+| `--destructive` | `#ef4444` | Error / fail |
+| `--info` | `#3b82f6` | Info / "custom" agent variant |
 
-### Gradient Combinations
+Blue and green appear **only** as semantic colors (e.g. differentiating agent variants).
+They are never used decoratively — purple is the single brand accent.
+
+### Accent glow
+
 ```css
-/* Primary text gradient */
-background: linear-gradient(135deg, #fff 0%, #7c3aed 50%, #06b6d4 100%);
-
-/* Button gradient */
-background: linear-gradient(to right, #7c3aed, #3b82f6);
-
-/* Glow effect */
-box-shadow: 0 0 100px rgba(124, 58, 237, 0.5), 0 0 200px rgba(6, 182, 212, 0.3);
+/* Dark */ --glow: 0 0 48px rgba(168, 85, 247, .32);
+/* Light */ --glow: 0 0 48px rgba(147, 51, 234, .18);
 ```
+
+Reserved for primary actions and the hero accent — used sparingly.
 
 ---
 
 ## Typography
 
-### Font Families
-- **Headings**: Playfair Display (serif) - elegant, editorial feel
-- **Body**: Inter (sans-serif) - clean, readable, modern
+| Family | Token | Usage |
+|--------|-------|-------|
+| **Inter** | `--ifm-font-family-base` | All headings and body (weight 600 for headings, tight tracking) |
+| **JetBrains Mono** | `--ifm-font-family-monospace` | Code, labels, metadata, version chips, "terminal" signal |
 
-### Scale
-| Element | Size | Weight | Tracking |
-|---------|------|--------|----------|
-| H1 (Hero) | `clamp(4rem, 12vw, 10rem)` | 400 | Tight |
-| H2 (Section) | `text-5xl md:text-6xl` | 400 | Normal |
-| H3 (Card) | `text-2xl` | 600 | Tight |
-| Body | `text-lg` | 400 | Normal |
-| Label | `text-xs` | 600 | `0.3em` (uppercase) |
+There is **no serif**. Headings are Inter 600 with negative letter-spacing — engineered, not editorial.
 
-### Text Styles
-```jsx
-// Section label (appears before headings)
-<div className="text-xs font-semibold tracking-[0.3em] uppercase text-accent-violet">
-  <span className="w-10 h-[1px] bg-accent-violet"></span>
-  Label Text
-</div>
-
-// Gradient text
-<span className="text-gradient">STELLA</span>
-
-// Navigation brand
-<div className="font-serif text-2xl font-semibold tracking-[0.3em]">
-```
+Eyebrow / section labels: monospace, uppercase, `letter-spacing: .16em`, in `--accent-bright`,
+often preceded by a small glowing accent dot.
 
 ---
 
-## Spacing
+## Radius & Shape
 
-### Section Padding
-- Vertical: `py-44` (176px)
-- Horizontal: `px-8 md:px-20`
+Modest, consistent corners — no fully-round pill buttons for primary actions.
 
-### Component Gaps
-- Large: `gap-28` (112px) - Grid sections
-- Medium: `gap-16` (64px) - Footer columns
-- Small: `gap-10` (40px) - Card lists
-- Tiny: `gap-6` (24px) - Button groups
+| Token | Value |
+|-------|-------|
+| `--r-sm` / `--stella-radius-sm` | `0.375rem` |
+| `--r-md` / `--stella-radius-md` | `0.5rem` (buttons, inputs) |
+| `--r-lg` / `--stella-radius-lg` | `0.75rem` (cards) |
+| `--r-xl` / `--stella-radius-xl` | `1rem` |
 
-### Content Max Widths
-- Hero text: `max-w-[1000px]`
-- Section intro: `max-w-[800px]`
-- Body paragraphs: `max-w-[600px]` or `max-w-[700px]`
+Small status badges may use a pill radius; primary CTAs use `--r-md`.
 
 ---
 
 ## Components
 
-### Cards
-```jsx
-// Standard card
-<div className="p-12 bg-white/5 border border-white/5 rounded-3xl
-               hover:bg-accent-violet/5 hover:border-accent-violet/20
-               hover:-translate-y-1 transition-all duration-500">
-```
-
-### Buttons
-
-**Primary CTA:**
-```jsx
-<button className="px-8 py-4 bg-gradient-to-r from-accent-violet to-accent-blue
-                   rounded-full text-white font-semibold text-lg
-                   shadow-lg shadow-accent-violet/30
-                   hover:shadow-xl hover:shadow-accent-violet/40
-                   hover:-translate-y-1 transition-all duration-300">
-```
-
-**Status Badge:**
-```jsx
-<div className="inline-flex items-center gap-3 px-6 py-3
-                bg-gradient-to-r from-accent-violet/20 to-accent-cyan/20
-                border border-accent-violet/40 rounded-full backdrop-blur-sm">
-  <span className="relative flex h-2.5 w-2.5">
-    <span className="animate-ping absolute h-full w-full rounded-full bg-accent-cyan opacity-75" />
-    <span className="relative rounded-full h-2.5 w-2.5 bg-accent-cyan" />
-  </span>
-  <span className="text-base font-medium tracking-wider text-white/90">Coming Soon</span>
-</div>
-```
-
-### Links
-```jsx
-// Navigation link with underline animation
-<a className="text-text-secondary text-sm font-medium tracking-widest uppercase
-              relative group hover:text-white transition-colors">
-  Link Text
-  <span className="absolute -bottom-2 left-0 w-0 h-[1px] bg-accent-violet
-                   transition-all duration-300 group-hover:w-full" />
-</a>
-```
-
----
-
-## The Sphere
-
-The animated sphere is the central visual element representing STELLA's AI core.
-
-### Structure
-```jsx
-<div className="relative w-[300px] h-[300px] animate-[breathe_4s_ease-in-out_infinite]">
-  {/* Outer glow */}
-  <div className="absolute w-[150%] h-[150%] -top-1/4 -left-1/4
-                  bg-[radial-gradient(circle,rgba(124,58,237,0.3)_0%,transparent_60%)]" />
-
-  {/* Orbit ring */}
-  <div className="absolute border border-accent-violet/20 rounded-full
-                  animate-[spin_25s_linear_infinite] w-[160%] h-[160%]"
-       style={{ transform: 'rotateX(70deg)' }} />
-
-  {/* Main sphere with gradient */}
-  <div className="main-sphere w-full h-full rounded-full
-                  animate-[sphere-rotate_20s_linear_infinite]" />
-
-  {/* Inner rotating glow */}
-  <div className="w-full h-full rounded-full animate-[sphere-rotate-reverse_15s_linear_infinite] opacity-60"
-       style={{ background: 'radial-gradient(circle at 40% 40%, rgba(6, 182, 212, 0.4) 0%, transparent 50%)' }} />
-</div>
-```
-
-### Sphere Gradient (CSS)
+### Primary button
 ```css
-.main-sphere {
-  background:
-    radial-gradient(circle at 30% 30%, rgba(124, 58, 237, 0.8) 0%, transparent 50%),
-    radial-gradient(circle at 70% 60%, rgba(6, 182, 212, 0.6) 0%, transparent 40%),
-    radial-gradient(circle at 50% 80%, rgba(59, 130, 246, 0.5) 0%, transparent 40%),
-    radial-gradient(circle at 50% 50%, rgba(20, 20, 40, 1) 0%, rgba(10, 10, 20, 1) 100%);
-  box-shadow:
-    0 0 100px rgba(124, 58, 237, 0.5),
-    0 0 200px rgba(6, 182, 212, 0.3),
-    inset 0 0 100px rgba(0, 0, 0, 0.5),
-    inset 0 -50px 100px rgba(124, 58, 237, 0.3);
-}
+background: var(--accent-solid);
+color: var(--on-accent);
+padding: 12px 20px;
+border-radius: var(--r-md);
+box-shadow: var(--glow);
+font-weight: 600;
+/* hover */ background: var(--accent-hover);
+```
+
+### Secondary button
+```css
+background: var(--surface);
+color: var(--text);
+border: 1px solid var(--border);
+border-radius: var(--r-md);
+/* hover */ border-color: var(--border-strong); background: var(--surface-2);
+```
+
+### Card
+```css
+background: var(--surface);
+border: 1px solid var(--border);
+border-radius: var(--r-lg);
+/* hover */ border-color: var(--border-strong);
 ```
 
 ---
 
-## Animations
+## Background Pattern
 
-### Core Animations
-| Name | Duration | Purpose |
-|------|----------|---------|
-| `breathe` | 4s | Subtle sphere scale pulsing |
-| `glow-breathe` | 4s | Glow intensity cycling |
-| `sphere-rotate` | 20s | Slow sphere rotation |
-| `sphere-rotate-reverse` | 15s | Counter-rotation for depth |
-
-### Scroll-Triggered Reveals
-Uses Intersection Observer with GSAP for scroll-driven animations:
-```jsx
-// Reveal component pattern
-<div className="opacity-0 translate-y-[60px] transition-all duration-1000"
-     style={{ transitionDelay: `${delay}s` }}>
-```
-
-### Hover Transitions
-Standard duration: `duration-300` to `duration-500`
-Easing: Default ease or `cubic-bezier(0.16, 1, 0.3, 1)`
-
----
-
-## Visual Effects
-
-### Background Grid Pattern
-```jsx
-<div className="bg-[linear-gradient(rgba(124,58,237,0.03)_1px,transparent_1px),
-                   linear-gradient(90deg,rgba(124,58,237,0.03)_1px,transparent_1px)]
-                bg-[size:100px_100px]
-                [mask-image:radial-gradient(ellipse_at_center,black_0%,transparent_70%)]" />
-```
-
-### Radial Gradient Overlays
-```jsx
-// Section background accents
-<div className="bg-[radial-gradient(ellipse_at_30%_50%,rgba(124,58,237,0.15)_0%,transparent_50%),
-                   radial-gradient(ellipse_at_70%_50%,rgba(6,182,212,0.1)_0%,transparent_50%)]" />
-```
-
-### Glass Effect
-```jsx
-// Glassmorphism for navigation
-className="bg-gradient-to-b from-bg-primary/90 to-transparent backdrop-blur-xl"
-```
-
-### Borders
-- Standard: `border border-white/5`
-- Hover: `border-accent-violet/20` or `border-accent-violet/30`
-- Active: `border-accent-violet/40`
-
----
-
-## Responsive Breakpoints
-
-Following Tailwind defaults:
-- `sm`: 640px
-- `md`: 768px
-- `lg`: 1024px
-- `xl`: 1280px
-
-### Common Patterns
-```jsx
-// Sphere sizing
-className="w-[200px] sm:w-[260px] md:w-[300px] lg:w-[340px] xl:w-[380px]"
-
-// Text scaling
-className="text-5xl md:text-6xl"
-className="text-4xl md:text-5xl"
-
-// Layout shifts
-className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
-className="px-8 md:px-20"
-```
-
----
-
-## Selection & Cursor
+The signature backdrop is a subtle **engineered dot-grid**, not a line grid or layered glows:
 
 ```css
-/* Custom selection color */
-::selection {
-  @apply bg-accent-violet/30 text-white;
-}
-
-/* Interactive elements use custom cursor states */
-.interactive { cursor: pointer; }
+background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+background-size: 32px 32px;
 ```
+
+The hero pairs this dot-grid with one or two soft purple radial glows; everything else
+relies on the dot-grid alone. Exposed as `--bg-dot-color` / `--bg-dot-spacing` and the
+`.constellation-bg` helper.
 
 ---
 
-## Z-Index Layers
+## Implementation Notes
 
-| Layer | Z-Index | Usage |
-|-------|---------|-------|
-| Navigation | `z-[1000]` | Fixed header |
-| Story text | `z-30` | Scroll sequence text |
-| Sphere | `z-20` | Main sphere during scroll |
-| Hero content | `z-10` | Initial hero section |
-| Background | Default | Patterns, grids |
-
----
-
-## Icon Usage
-
-Icons from **Lucide React** library:
-- Stroke width: `1.5`
-- Size: `w-6 h-6` (small) to `w-7 h-7` (cards)
-- Color: `text-accent-violet`
-
-```jsx
-import { Zap, Sparkles, Rocket } from 'lucide-react';
-
-<item.Icon className="w-7 h-7 text-accent-violet" strokeWidth={1.5} />
-```
-
----
-
-## Dark Mode
-
-The site is dark-mode only:
-```css
-:root {
-  color-scheme: dark;
-}
-```
-
-All colors are designed for dark backgrounds. There is no light mode variant.
+- Design tokens live in `docs-site/src/css/custom.css` (`:root`, `[data-theme='dark']`,
+  plus a Shadcn-compatible HSL block for landing components).
+- Tailwind (`docs-site/tailwind.config.js`) maps `primary.*` to the purple scale and the
+  `sans` / `mono` families to Inter / JetBrains Mono. `preflight` is disabled to avoid
+  clobbering Docusaurus base styles.
+- Icons: **Lucide React**, `strokeWidth={1.5}`, colored with `--accent`.
+- Both themes are first-class; design and review in dark mode first.

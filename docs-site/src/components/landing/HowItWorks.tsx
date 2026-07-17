@@ -1,32 +1,32 @@
 import { useState, useEffect } from 'react';
-import { Link2, Play, Mic, Bot, CheckCircle } from 'lucide-react';
+import { Workflow, Link2, Play, Mic, Bot, Database } from 'lucide-react';
 import { AnimatedSection } from './AnimatedSection';
 
 const steps = [
   {
-    icon: Link2,
-    title: 'Share Link',
-    description: 'Send your unique agent URL to users. No app downloads or sign-ups required.',
+    icon: Workflow,
+    title: 'Design the Conversation',
+    description: 'Build your flow in the visual editor—stages, questions, and the data to collect. No code.',
   },
   {
-    icon: Play,
-    title: 'Session Starts',
-    description: 'STELLA auto-provisions a dedicated session with WebRTC connection.',
+    icon: Link2,
+    title: 'Share a Link',
+    description: 'Send participants a link. No app downloads or sign-ups required.',
   },
   {
     icon: Mic,
-    title: 'User Speaks',
+    title: 'Participant Speaks',
     description: 'Voice is captured and streamed in real-time with echo cancellation.',
   },
   {
     icon: Bot,
-    title: 'Agent Responds',
-    description: 'Speech-to-text, LLM processing, and text-to-speech in one pipeline.',
+    title: 'Agent Leads',
+    description: 'STELLA guides the conversation through your stages and gathers the information you defined.',
   },
   {
-    icon: CheckCircle,
-    title: 'Session Ends',
-    description: 'Resources are automatically cleaned up when the conversation ends.',
+    icon: Database,
+    title: 'Data Is Captured',
+    description: 'Transcripts and structured data are saved for analysis; the session cleans up automatically.',
   },
 ];
 
@@ -53,9 +53,12 @@ const HowItWorks = () => {
       <div className="section-container">
         <AnimatedSection animation="fade-up">
           <div className="section-header">
+            <div className="landing-eyebrow">
+              Flow / <span className="landing-eyebrow-path">pipeline</span>
+            </div>
             <h2 className="section-title">How It Works</h2>
             <p className="section-subtitle">
-              Share a link, let users talk—STELLA handles the rest
+              Design it, share a link, let participants talk—STELLA handles the rest
             </p>
           </div>
         </AnimatedSection>

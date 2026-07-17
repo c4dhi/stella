@@ -8,9 +8,12 @@ const AgentTypes = () => {
       <div className="section-container">
         <AnimatedSection animation="fade-up">
           <div className="section-header">
+            <div className="landing-eyebrow">
+              Agents / <span className="landing-eyebrow-path">runtimes</span>
+            </div>
             <h2 className="section-title">Choose Your Agent</h2>
             <p className="section-subtitle">
-              Use pre-built agents or create your own with the Agent SDK
+              Start with a ready-made conversation engine—or build your own
             </p>
           </div>
         </AnimatedSection>
@@ -26,7 +29,7 @@ const AgentTypes = () => {
                 </div>
                 <h3 className="agent-card-title">stella-agent</h3>
                 <p className="agent-card-desc">
-                  Multi-stage pipeline with intelligent routing for complex, agent-supported multi-turn conversations
+                  Rich, guided conversations with multiple reasoning stages—ideal for in-depth interviews and interventions
                 </p>
               </div>
               <div className="agent-card-features">
@@ -64,7 +67,7 @@ const AgentTypes = () => {
                 </div>
                 <h3 className="agent-card-title">stella-light</h3>
                 <p className="agent-card-desc">
-                  Single LLM call architecture optimized for quick responses
+                  Fast, single-step responses—great for lightweight conversations and quick check-ins
                 </p>
               </div>
               <div className="agent-card-features">
@@ -102,7 +105,7 @@ const AgentTypes = () => {
                 </div>
                 <h3 className="agent-card-title">Build Your Own</h3>
                 <p className="agent-card-desc">
-                  Full control over processing logic. STELLA handles the audio pipeline—you focus on the conversation.
+                  Full control over the conversation logic. STELLA handles the voice pipeline—you focus on the conversation.
                 </p>
               </div>
               <div className="agent-card-custom-content">

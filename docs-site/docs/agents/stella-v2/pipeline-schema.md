@@ -12,13 +12,13 @@ The `pipelineSchema` in `agent.yaml` defines the configurable surface of a pipel
 ```yaml
 pipelineSchema:
   nodes:        # Pipeline stages with configurable slots
-    - id: input_gate
-      slots: [...]
     - id: expert_pool
       slots: [...]
+    - id: arbitration
+      slots: [...]
   edges:        # Data flow connections between nodes
-    - source: input_gate
-      target: expert_pool
+    - source: expert_pool
+      target: arbitration
   thresholds:   # Global pipeline parameters
     - id: history_limit
 ```
@@ -47,19 +47,18 @@ Each node represents a pipeline stage.
 
 ```yaml
 nodes:
-  - id: input_gate              # Unique identifier (used in config overrides)
-    label: "Input Gate"          # Display name
-    description: "Fast JSON classification (~100ms)"
-    icon: "🚦"                   # Emoji icon
+  - id: expert_pool             # Unique identifier (used in config overrides)
+    label: "Expert Pool"         # Display name
+    description: "Parallel expert execution with structured verdicts (~200ms)"
+    icon: "🧪"                   # Emoji icon
     position:                    # Layout position (row/col grid)
       row: 0
-      col: 0
+      col: 1
     slots:                       # Configurable parameters
-      - id: model
-        label: "Model"
-        type: select
-        options: ["gpt-4o-mini", "gpt-4o"]
-        default: "gpt-4o-mini"
+      - id: experts
+        label: "Built-in Experts"
+        type: expert_list
+        description: "Configure built-in experts"
 ```
 
 ### Node Fields
@@ -97,10 +96,10 @@ Free-form text input. Used for prompts, personas, and messages.
 - id: system_prompt
   label: "System Prompt"
   type: text
-  description: "System prompt for the routing classifier"
+  description: "System prompt for the bridge generator"
   maxLength: 5000     # Optional character limit
   default: |
-    You are a routing classifier...
+    You produce a short conversational filler phrase...
 ```
 
 | Extra Field | Type | Description |
@@ -145,14 +144,14 @@ Single choice from predefined options.
 
 #### `string_list`
 
-Ordered list of strings. Used for expert names and tags.
+Ordered list of strings. Used for tags and other simple list-valued parameters.
 
 ```yaml
-- id: always_run
-  label: "Always Run"
+- id: stop_sequences
+  label: "Stop Sequences"
   type: string_list
-  description: "Experts that always run regardless of routing"
-  default: ["task_extraction"]
+  description: "Strings that halt generation"
+  default: ["\n\n"]
 ```
 
 #### `key_value`
@@ -220,9 +219,9 @@ Edges define data flow connections between nodes.
 
 ```yaml
 edges:
-  - source: input_gate
-    target: expert_pool
-    label: "expert names[]"
+  - source: expert_pool
+    target: arbitration
+    label: "ExpertVerdict[]"
 
   - source: bridge_generator
     target: response_generator
@@ -275,9 +274,8 @@ When a user saves a configuration, only the overridden values are stored:
 ```json
 {
   "nodes": {
-    "input_gate": {
-      "model": "gpt-4o",
-      "temperature": 0.1
+    "arbitration": {
+      "gate_failure_message": "Sorry, I didn't catch that — could you repeat it?"
     },
     "response_generator": {
       "persona": "You are a medical intake assistant...",
@@ -329,7 +327,7 @@ The backend validates configurations before saving:
 
 ## Complete Example
 
-See `agents/stella-v2-agent/agent.yaml` for the full stella-v2 pipeline schema with 5 nodes, 4 edges, and 1 threshold.
+See `agents/stella-v2-agent/agent.yaml` for the full stella-v2 pipeline schema with 5 nodes (expert_pool, arbitration, response_generator, bridge_generator, barge_in), 3 edges, and 1 threshold.
 
 ## See Also
 
