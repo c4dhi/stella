@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use STELLA in your research, please cite it as below."
+title: "STELLA — System for Testing and Engineering LLM-based Conversational Agents"
+abstract: >-
+  An open-source platform for running voice conversations with research
+  participants — qualitative interviews, digital interventions, and guided
+  dialogues — designed without code and run on your own hardware.
+type: software
+license: MIT
+repository-code: "https://github.com/c4dhi/STELLA"
+url: "https://c4dhi.github.io/STELLA/"
+version: "0.3.0"
+authors:
+  - name: "Center for Digital Health Interventions (C4DHI)"
+    website: "https://www.c4dhi.org/"
+# TODO before the first tagged release (see RELEASING.md):
+#   - Replace the organisation author above with the individual authors
+#     (given-names / family-names / affiliation / orcid).
+#   - Add the Zenodo DOI minted by the GitHub release, e.g.:
+#       doi: "10.5281/zenodo.XXXXXXX"
+#   - Set `date-released` to the release date.
