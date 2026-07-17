@@ -312,6 +312,15 @@ html[data-theme='dark'] :has(.landing-page-content) .navbar-github-btn:hover {
   border-color: rgba(255, 255, 255, 0.25) !important;
 }
 
+/* Theme toggle: shown on docs pages, hidden on the landing page. The landing
+   page is dark-first by design (navbar and tokens are pinned dark above), so a
+   switch there would be a no-op. Keyed off the SSR'd .landing-page-content
+   marker (not the JS-added body.landing-page class, which is absent at first
+   paint) so the button never flashes in before hydration. */
+:has(.landing-page-content) .navbar [class*='colorModeToggle'] {
+  display: none !important;
+}
+
 /* Landing is dark-first by design: pin design-system tokens to dark values
    regardless of the docs theme toggle. --ds-* are landing-only aliases that
    sidestep the Shadcn HSL tokens of the same name (--border/--accent/--muted). */
@@ -330,6 +339,15 @@ body:has(.landing-page-content) {
   --on-accent: #ffffff;
   --text: #fafafa;
   --text-2: #a1a1aa;
+}
+
+/* Pin the page background to the landing dark base regardless of the docs theme
+   toggle. Without this, a light-mode session (toggled on a docs page) bleeds a
+   light gutter/footer through the html/body behind the dark landing content. */
+html:has(.landing-page-content),
+body.landing-page,
+body:has(.landing-page-content) {
+  background-color: #08090a !important;
 }
 
 /* ================================================================

@@ -65,7 +65,9 @@ const config: Config = {
     image: 'img/stella-social-card.png',
     colorMode: {
       defaultMode: 'dark',
-      disableSwitch: true,
+      // Toggle is shown on docs pages; hidden on the landing page via CSS
+      // (see the ".landing-page-content ... colorModeToggle" rule in custom.css).
+      disableSwitch: false,
       respectPrefersColorScheme: true,
     },
     navbar: {
