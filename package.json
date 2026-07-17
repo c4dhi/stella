@@ -2,9 +2,9 @@
   "name": "session-management-server",
   "version": "0.3.0",
   "description": "",
-  "author": "",
+  "author": "Center for Digital Health Interventions (C4DHI)",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
