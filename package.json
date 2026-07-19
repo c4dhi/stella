@@ -52,7 +52,7 @@
     "@nestjs/websockets": "^11.1.6",
     "@prisma/client": "^6.0.0",
     "@types/uuid": "^10.0.0",
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.0",
     "ajv": "^8.18.0",
     "archiver": "^7.0.1",
     "bcrypt": "^6.0.0",
