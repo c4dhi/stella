@@ -2,7 +2,7 @@
   "name": "session-management-server",
   "version": "0.3.0",
   "description": "",
-  "author": "Center for Digital Health Interventions (C4DHI)",
+  "author": "Universität St. Gallen (HSG) & University of Zurich (UZH)",
   "private": true,
   "license": "MIT",
   "scripts": {

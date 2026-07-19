@@ -33,8 +33,8 @@ You can [sign up for a free LiveKit Cloud account](https://cloud.livekit.io) to 
 Clone the STELLA repository and navigate to the project directory.
 
 ```bash title="terminal"
-git clone https://github.com/c4dhi/STELLA_backend.git
-cd STELLA_backend
+git clone https://github.com/c4dhi/STELLA.git
+cd STELLA
 ```
 
 </Step>

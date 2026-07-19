@@ -11,10 +11,12 @@ repository-code: "https://github.com/c4dhi/STELLA"
 url: "https://c4dhi.github.io/STELLA/"
 version: "0.3.0"
 authors:
-  - name: "Center for Digital Health Interventions (C4DHI)"
-    website: "https://www.c4dhi.org/"
+  - name: "Universität St. Gallen (HSG)"
+  - name: "University of Zurich (UZH)"
+# Maintained by the Center for Digital Health Interventions (C4DHI),
+# https://www.c4dhi.org/
 # TODO before the first tagged release (see RELEASING.md):
-#   - Replace the organisation author above with the individual authors
+#   - Replace the institution authors above with the individual authors
 #     (given-names / family-names / affiliation / orcid).
 #   - Add the Zenodo DOI minted by the GitHub release, e.g.:
 #       doi: "10.5281/zenodo.XXXXXXX"

@@ -16,8 +16,8 @@ Thank you for your interest in contributing to STELLA! This document provides gu
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/c4dhi/STELLA_backend.git
-   cd STELLA_backend
+   git clone https://github.com/c4dhi/STELLA.git
+   cd STELLA
    ```
 
 2. **Set up environment variables**
@@ -51,7 +51,7 @@ Thank you for your interest in contributing to STELLA! This document provides gu
 
 ### 🐛 Reporting Bugs
 
-1. Check if the bug has already been reported in [Issues](https://github.com/c4dhi/STELLA_backend/issues)
+1. Check if the bug has already been reported in [Issues](https://github.com/c4dhi/STELLA/issues)
 2. If not, create a new issue using the bug report template
 3. Include as much detail as possible:
    - Steps to reproduce
@@ -61,7 +61,7 @@ Thank you for your interest in contributing to STELLA! This document provides gu
 
 ### ✨ Suggesting Features
 
-1. Check existing [Issues](https://github.com/c4dhi/STELLA_backend/issues) for similar requests
+1. Check existing [Issues](https://github.com/c4dhi/STELLA/issues) for similar requests
 2. Create a new issue using the feature request template
 3. Describe the use case and proposed solution
 
@@ -143,7 +143,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 ## 📁 Project Structure
 
 ```
-STELLA_backend/
+STELLA/
 ├── src/                    # Backend source code
 │   ├── controllers/        # API route handlers
 │   ├── services/           # Business logic
@@ -190,8 +190,8 @@ python -m pytest tests/
 
 ## 🆘 Getting Help
 
-- Check the [documentation](https://c4dhi.github.io/STELLA_backend/)
-- Ask in [Discussions](https://github.com/c4dhi/STELLA_backend/discussions)
+- Check the [documentation](https://c4dhi.github.io/STELLA/)
+- Ask in [Discussions](https://github.com/c4dhi/STELLA/discussions)
 - Join our community chat (if available)
 
 ## 📄 License

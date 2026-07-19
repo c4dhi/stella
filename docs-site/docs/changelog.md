@@ -6,7 +6,7 @@ description: Release history and notable changes
 
 # Changelog
 
-All notable changes to STELLA are documented here. For the full changelog, see [CHANGELOG.md](https://github.com/c4dhi/STELLA_backend/blob/main/CHANGELOG.md) on GitHub.
+All notable changes to STELLA are documented here. For the full changelog, see [CHANGELOG.md](https://github.com/c4dhi/STELLA/blob/main/CHANGELOG.md) on GitHub.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and STELLA uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 

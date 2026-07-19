@@ -87,7 +87,7 @@ export class LiveKitService {
   /**
    * Get publicly accessible LiveKit server URL
    * Used by frontend/browsers to connect to LiveKit
-   * This uses wss://livekit-v1.c4dhi.moserfelix.com in production
+   * This uses the configured public LiveKit URL (e.g. wss://livekit.example.com) in production
    *
    * Backend returns this URL to the frontend for WebRTC connections
    */

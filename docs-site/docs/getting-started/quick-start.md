@@ -18,8 +18,8 @@ Before starting, ensure you have:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/c4dhi/STELLA_backend.git
-cd STELLA_backend
+git clone https://github.com/c4dhi/STELLA.git
+cd STELLA
 
 # 2. Create .env file with your credentials
 cp .env.example .env
