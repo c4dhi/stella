@@ -54,7 +54,7 @@ npm run docusaurus docs:version X.Y.Z
 ```
 
 Then update `lastVersion`/`versions` in `docusaurus.config.ts` as needed. The
-docs deploy to https://c4dhi.github.io/STELLA/ automatically on push to `main`
+docs deploy to https://c4dhi.github.io/stella/ automatically on push to `main`
 via the `Deploy Documentation` GitHub Action.
 
 ## Checklist

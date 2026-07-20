@@ -1,6 +1,6 @@
 # Coherent language handling (STT → LLM → TTS)
 
-- **Ticket:** [#214 — Coherent language handling for STT, TTS, and user selection](https://github.com/c4dhi/STELLA/issues/214)
+- **Ticket:** [#214 — Coherent language handling for STT, TTS, and user selection](https://github.com/c4dhi/stella/issues/214)
 - **Branch / PR:** `feature/language-handling-214` · PR #244
 - **Status:** Implemented. One item is a deployment toggle, not code — see [§9](#9-whats-left).
 

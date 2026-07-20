@@ -7,8 +7,8 @@ abstract: >-
   dialogues — designed without code and run on your own hardware.
 type: software
 license: MIT
-repository-code: "https://github.com/c4dhi/STELLA"
-url: "https://c4dhi.github.io/STELLA/"
+repository-code: "https://github.com/c4dhi/stella"
+url: "https://c4dhi.github.io/stella/"
 version: "0.3.0"
 authors:
   - name: "Universität St. Gallen (HSG)"

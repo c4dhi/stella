@@ -6,7 +6,7 @@ description: Release history and notable changes
 
 # Changelog
 
-All notable changes to STELLA are documented here. For the full changelog, see [CHANGELOG.md](https://github.com/c4dhi/STELLA/blob/main/CHANGELOG.md) on GitHub.
+All notable changes to STELLA are documented here. For the full changelog, see [CHANGELOG.md](https://github.com/c4dhi/stella/blob/main/CHANGELOG.md) on GitHub.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and STELLA uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -21,8 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 **Open source & project governance**
-- STELLA is now released under the **[MIT License](https://github.com/c4dhi/STELLA/blob/main/LICENSE)** (© Universität St. Gallen (HSG) & University of Zurich (UZH)) — free to use, modify, and self-host
-- Public documentation and a **researcher-focused landing page** are now hosted on **GitHub Pages** at [c4dhi.github.io/STELLA](https://c4dhi.github.io/STELLA/), auto-deployed from `main`
+- STELLA is now released under the **[MIT License](https://github.com/c4dhi/stella/blob/main/LICENSE)** (© Universität St. Gallen (HSG) & University of Zurich (UZH)) — free to use, modify, and self-host
+- Public documentation and a **researcher-focused landing page** are now hosted on **GitHub Pages** at [c4dhi.github.io/stella](https://c4dhi.github.io/stella/), auto-deployed from `main`
 - Community & release files added to the repository: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (private vulnerability reporting), `NOTICE.md` (third-party attributions), `CITATION.cff` (GitHub "Cite this repository"), and `RELEASING.md`
 
 **Backup, restore & relocation (#378)**

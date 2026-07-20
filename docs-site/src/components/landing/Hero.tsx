@@ -64,7 +64,7 @@ const Hero = () => {
                   variant="outline"
                   className="hero-btn-secondary"
                 >
-                  <Link to="https://github.com/c4dhi/STELLA">
+                  <Link to="https://github.com/c4dhi/stella">
                     <Github className="mr-2 w-5 h-5" />
                     GitHub
                   </Link>

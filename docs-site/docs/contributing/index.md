@@ -53,13 +53,13 @@ Thank you for your interest in contributing to STELLA! This guide will help you 
 ```bash
 # Fork on GitHub, then:
 git clone https://github.com/YOUR_USERNAME/STELLA.git
-cd STELLA
+cd stella
 git checkout -b feature/my-new-feature
 ```
 
 ## Code of Conduct
 
-We are committed to providing a welcoming and inclusive experience for everyone. Please read and follow our [Code of Conduct](https://github.com/c4dhi/STELLA/blob/main/CODE_OF_CONDUCT.md).
+We are committed to providing a welcoming and inclusive experience for everyone. Please read and follow our [Code of Conduct](https://github.com/c4dhi/stella/blob/main/CODE_OF_CONDUCT.md).
 
 ## Getting Help
 

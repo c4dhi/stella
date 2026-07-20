@@ -1,6 +1,6 @@
 // Client module to detect landing page and apply body class
 export function onRouteDidUpdate({ location }) {
-  const isLandingPage = location.pathname === '/' || location.pathname === '/STELLA/' || location.pathname === '/STELLA';
+  const isLandingPage = location.pathname === '/' || location.pathname === '/stella/' || location.pathname === '/stella';
 
   // Add/remove landing-page class on body for styling purposes
   document.body.classList.toggle('landing-page', isLandingPage);

@@ -8,7 +8,7 @@ conversations with research participants and may handle sensitive data.
 **Please do not report security vulnerabilities through public GitHub issues.**
 
 Instead, report them privately using GitHub's
-[private vulnerability reporting](https://github.com/c4dhi/STELLA/security/advisories/new)
+[private vulnerability reporting](https://github.com/c4dhi/stella/security/advisories/new)
 ("Report a vulnerability" under the repository's **Security** tab). This notifies
 the maintainers privately and lets us coordinate a fix and disclosure with you.
 

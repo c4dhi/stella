@@ -6,11 +6,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/c4dhi/STELLA/stargazers"><img src="https://img.shields.io/github/stars/c4dhi/STELLA?style=flat-square" alt="GitHub Stars"></a>
-  <a href="https://github.com/c4dhi/STELLA/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a855f7?style=flat-square" alt="License: MIT"></a>
+  <a href="https://github.com/c4dhi/stella/stargazers"><img src="https://img.shields.io/github/stars/c4dhi/STELLA?style=flat-square" alt="GitHub Stars"></a>
+  <a href="https://github.com/c4dhi/stella/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a855f7?style=flat-square" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/version-0.3.0-blue?style=flat-square" alt="Version 0.3.0">
-  <a href="https://c4dhi.github.io/STELLA/"><img src="https://img.shields.io/badge/docs-live-green?style=flat-square" alt="Documentation"></a>
-  <a href="https://github.com/c4dhi/STELLA/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
+  <a href="https://c4dhi.github.io/stella/"><img src="https://img.shields.io/badge/docs-live-green?style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/c4dhi/stella/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
 </p>
 
 <p align="center">
@@ -53,13 +53,13 @@ That's it. Kubernetes (OrbStack's built-in cluster or auto-installed K3s), `kube
 Two commands. That's it.
 
 ```bash
-git clone https://github.com/c4dhi/STELLA.git && cd STELLA
+git clone https://github.com/c4dhi/stella.git && cd stella
 ./scripts/start-k8s.sh   # First run launches the setup wizard — no manual .env needed
 ```
 
 **Frontend** at `http://localhost:5173` · **API** at `http://localhost:3000`
 
-> New here? The [Getting Started](https://c4dhi.github.io/STELLA/docs/getting-started/prerequisites) guide walks you through everything — prerequisites, LiveKit setup, and deploying your first agent.
+> New here? The [Getting Started](https://c4dhi.github.io/stella/docs/getting-started/prerequisites) guide walks you through everything — prerequisites, LiveKit setup, and deploying your first agent.
 
 ## 🏗️ Architecture
 
@@ -75,16 +75,16 @@ Everything runs inside a single **Kubernetes cluster** (OrbStack on macOS, K3s o
 
 ## 📖 Documentation
 
-Full docs live at **[c4dhi.github.io/STELLA](https://c4dhi.github.io/STELLA/)**.
+Full docs live at **[c4dhi.github.io/stella](https://c4dhi.github.io/stella/)**.
 
 | | Section | What you'll find |
 |---|---------|-----------------|
-| 🚀 | [Getting Started](https://c4dhi.github.io/STELLA/docs/getting-started/prerequisites) | Prerequisites, installation, first agent |
-| 🏗️ | [Architecture](https://c4dhi.github.io/STELLA/docs/architecture/overview) | System design and component deep-dive |
-| 🤖 | [Building Agents](https://c4dhi.github.io/STELLA/docs/building-agents/agent-overview) | Create your own conversational agents |
-| 📦 | [Agent SDK Reference](https://c4dhi.github.io/STELLA/docs/agent-sdk/overview) | Python SDK API reference |
-| 🚢 | [Deployment](https://c4dhi.github.io/STELLA/docs/deployment/overview) | Production deployment guide |
-| 🤝 | [Contributing](https://c4dhi.github.io/STELLA/docs/contributing) | How to get involved |
+| 🚀 | [Getting Started](https://c4dhi.github.io/stella/docs/getting-started/prerequisites) | Prerequisites, installation, first agent |
+| 🏗️ | [Architecture](https://c4dhi.github.io/stella/docs/architecture/overview) | System design and component deep-dive |
+| 🤖 | [Building Agents](https://c4dhi.github.io/stella/docs/building-agents/agent-overview) | Create your own conversational agents |
+| 📦 | [Agent SDK Reference](https://c4dhi.github.io/stella/docs/agent-sdk/overview) | Python SDK API reference |
+| 🚢 | [Deployment](https://c4dhi.github.io/stella/docs/deployment/overview) | Production deployment guide |
+| 🤝 | [Contributing](https://c4dhi.github.io/stella/docs/contributing) | How to get involved |
 
 ## 🤝 Contributing
 
@@ -92,8 +92,8 @@ We'd love your help! Whether it's bug reports, feature ideas, docs improvements,
 
 ## 💬 Community & Support
 
-- [GitHub Issues](https://github.com/c4dhi/STELLA/issues) — Bug reports and feature requests
-- [Documentation](https://c4dhi.github.io/STELLA/) — Guides, tutorials, and API reference
+- [GitHub Issues](https://github.com/c4dhi/stella/issues) — Bug reports and feature requests
+- [Documentation](https://c4dhi.github.io/stella/) — Guides, tutorials, and API reference
 
 ## 📚 Citation
 

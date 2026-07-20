@@ -25,8 +25,8 @@ const steps = [
 ];
 
 const terminalLines = [
-  { line: 1, text: 'git clone https://github.com/c4dhi/STELLA.git', type: 'command' },
-  { line: 2, text: 'cd STELLA', type: 'command' },
+  { line: 1, text: 'git clone https://github.com/c4dhi/stella.git', type: 'command' },
+  { line: 2, text: 'cd stella', type: 'command' },
   { line: 3, text: '', type: 'empty' },
   { line: 4, text: '# First launch runs the setup wizard', type: 'comment' },
   { line: 5, text: './scripts/start-k8s.sh', type: 'command' },
