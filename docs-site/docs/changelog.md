@@ -20,6 +20,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+**Open source & project governance**
+- STELLA is now released under the **[MIT License](https://github.com/c4dhi/STELLA/blob/main/LICENSE)** (© Universität St. Gallen (HSG) & University of Zurich (UZH)) — free to use, modify, and self-host
+- Public documentation and a **researcher-focused landing page** are now hosted on **GitHub Pages** at [c4dhi.github.io/STELLA](https://c4dhi.github.io/STELLA/), auto-deployed from `main`
+- Community & release files added to the repository: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (private vulnerability reporting), `NOTICE.md` (third-party attributions), `CITATION.cff` (GitHub "Cite this repository"), and `RELEASING.md`
+
+**Backup, restore & relocation (#378)**
+- **Full-system export/import** for backups and machine-to-machine migration, driven by a guided wizard (`./scripts/start-k8s.sh --backup`) with a readable restore report
+- `STELLA_DATA_ROOT` relocates all heavy storage (PVCs, models, temp) onto a chosen disk
+
+**Voice — TTS providers & voices**
+- Multiple text-to-speech providers: **Piper** (default local), **in-process Qwen3-TTS**, **ChatterBox** multilingual (EN/DE), and **Voxtral** (opt-in, GPU) with low-VRAM 4-bit/8-bit knobs
+- Default **Stella voice registry** shipped with de + en reference clips, plus language-aware, per-agent and per-stream reference-voice selection
+
+**Language handling**
+- End-to-end language support: **STT acoustic language detection**, coherent **per-turn language resolution** moved into the SDK and adopted by both agents, and a configurable resolver with sensible defaults
+
+**Barge-in**
+- Users can **interrupt the agent mid-speech** (voice and text), reusing the voice plumbing, via a configurable COMMIT/RESUME evaluator — at parity across stella-v2 and stella-light
+
+**Setup wizard & deployment**
+- Chapter-based onboarding wizard: **auto-generates required secrets**, guides the LiveKit internal URL with same-machine IP detection, prompts for `STELLA_DATA_ROOT` and a Hugging Face token, and adds a skippable initial-admin bootstrap chapter
+- **Independently configurable** public frontend and backend URLs; manifest-driven runtime-variable palette with a minimum config-compiler version; env-var templates and pipeline configs **scoped to agent type + version**
+
+**Sessions & transcripts**
+- Sessions **auto-end** on inactivity or max-duration
+- Transcript download with a **mode selector** (transcript / + verdicts / full debug export) and per-message-type checkboxes
+- **Word-by-word** speech highlighting (teleprompter) on both chat surfaces
+
 **Agent Configurator — Expert Module**
 - Deterministic, literature-informed **verdict responses**: each expert verdict maps to an action (`inform`/`prepend`/`override`/`short_circuit`) + template, applied by priority in the arbitration layer so safety-critical output doesn't depend on the LLM's interpretation
 - **Generic, editable verdict labels** with LLM-facing explanations (label + explanation handed to the classifier; action stays in arbitration); fixed output interface
@@ -37,10 +65,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+**Editable agent prompts**
+- **stella-v2:** response and bridge behavioral prose moved into editable prompt slots behind one unified template interface; the bridge now streams to TTS and carries the full reaction to cover the response gap; sharper per-expert engage/tap-out contracts
+- **stella-light:** persona + conversation guidelines merged into a single editable System Prompt; safety guardrails and phase-transition notes moved into editable slots; deliverable-driven steering with precise skip semantics
+
 **State machine — task completion (#291)**
 - Task completion is now derived from collected data: a task with deliverables is addressed automatically once its **required** deliverables are collected (or, for an all-optional task, once **every** declared deliverable is in), with no separate "mark complete" step. Deliverable-less tasks still require an explicit complete/skip. A state advances only once **every** task (required *and* optional) is addressed, and is never vacuously complete on entry.
 
+### Removed
+
+**stella-v2 — Input Gate (#363)**
+- Removed the Input Gate stage from the stella-v2 pipeline — experts now self-gate and arbitration filters, simplifying the pipeline to five stages
+
 ### Fixed
+
+**Audio & deployment reliability**
+- Prevent the STT stall when an audio track ends or the participant mutes; audio-output readiness is now a real-time round-trip test
+- LiveKit audio and webhook-processing fixes; barge-in now silences client audio on interrupt with a hardened evaluator
+- Agent image caching now rebuilds when Docker/config changes so config edits actually take effect
 
 **Progress / to-do rendering (#291)**
 - A skipped task no longer renders as pending — it shows as skipped and counts toward "tasks done". Skipping a task now also marks its uncollected deliverables `skipped`.
@@ -53,7 +95,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
-## [0.3.0] - 2025-01-29
+## [0.3.0] - 2026-01-29
 
 ### Added
 
@@ -106,7 +148,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
-## [0.2.0] - 2025-01-17
+## [0.2.0] - 2026-01-17
 
 ### Added
 - Complete documentation site with Docusaurus
@@ -124,7 +166,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
-## [0.1.0] - 2025-01-10
+## [0.1.0] - 2026-01-10
 
 ### Added
 - Initial STELLA backend release
