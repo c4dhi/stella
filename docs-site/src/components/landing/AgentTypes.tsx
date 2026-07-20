@@ -21,15 +21,15 @@ const AgentTypes = () => {
         <div className="agents-grid agents-grid--three">
           {/* stella-agent */}
           <AnimatedSection animation="fade-up" delay={100}>
-            <Link to="/docs/agents/stella-agent" className="agent-card">
+            <Link to="/docs/agents/stella-v2" className="agent-card">
               <div className="agent-card-badge agent-card-badge--primary">Full Featured</div>
               <div className="agent-card-header">
                 <div className="agent-card-icon agent-card-icon--primary">
                   <Zap className="w-7 h-7" />
                 </div>
-                <h3 className="agent-card-title">stella-agent</h3>
+                <h3 className="agent-card-title">stella-v2</h3>
                 <p className="agent-card-desc">
-                  Rich, guided conversations with multiple reasoning stages—ideal for in-depth interviews and interventions
+                  Rich, guided conversations with multiple reasoning stages—built for high-stakes interviews and interventions where every response matters
                 </p>
               </div>
               <div className="agent-card-features">
@@ -46,8 +46,8 @@ const AgentTypes = () => {
                   <Check className="agent-card-feature-check" />
                 </div>
                 <div className="agent-card-feature">
-                  <span>Latency</span>
-                  <span className="agent-card-feature-value">2-3s</span>
+                  <span>Backchannel</span>
+                  <Check className="agent-card-feature-check" />
                 </div>
               </div>
               <div className="agent-card-link agent-card-link--primary">
@@ -84,8 +84,8 @@ const AgentTypes = () => {
                   <X className="agent-card-feature-x" />
                 </div>
                 <div className="agent-card-feature">
-                  <span>Latency</span>
-                  <span className="agent-card-feature-value">1-2s</span>
+                  <span>Backchannel</span>
+                  <X className="agent-card-feature-x" />
                 </div>
               </div>
               <div className="agent-card-link agent-card-link--green">

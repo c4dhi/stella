@@ -63,24 +63,26 @@ const QuickStart = () => {
           {/* Steps */}
           <AnimatedSection animation="fade-right" delay={100}>
             <div className="quickstart-steps">
-              {steps.map((step) => (
-                <div
-                  key={step.number}
-                  className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
-                  onMouseEnter={() => setActiveStep(step.number)}
-                  onMouseLeave={() => setActiveStep(null)}
-                >
-                  <div className="quickstart-step-inner">
-                    <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
-                      {step.number}
-                    </div>
-                    <div>
-                      <h3 className="quickstart-step-title">{step.title}</h3>
-                      <p className="quickstart-step-desc">{step.description}</p>
+              <div className="quickstart-step-list">
+                {steps.map((step) => (
+                  <div
+                    key={step.number}
+                    className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
+                    onMouseEnter={() => setActiveStep(step.number)}
+                    onMouseLeave={() => setActiveStep(null)}
+                  >
+                    <div className="quickstart-step-inner">
+                      <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
+                        {step.number}
+                      </div>
+                      <div>
+                        <h3 className="quickstart-step-title">{step.title}</h3>
+                        <p className="quickstart-step-desc">{step.description}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
 
               {/* Read Full Guide Link */}
               <Link to="/docs/guides/getting-started" className="quickstart-link">

@@ -5653,7 +5653,17 @@ tr:nth-child(even) td {
   gap: 1.25rem;
 }
 
+/* Equal-height step cards: grid-auto-rows: 1fr sizes every row to the tallest.
+   The "Read the full guide" link stays outside this list so it isn't stretched. */
+.quickstart-step-list {
+  display: grid;
+  grid-auto-rows: 1fr;
+  gap: 1.25rem;
+}
+
 .quickstart-step {
+  display: flex;
+  align-items: center;
   padding: 0.75rem 1.25rem;
   border-radius: 0.75rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -5676,6 +5686,7 @@ tr:nth-child(even) td {
   display: flex;
   align-items: center;
   gap: 1rem;
+  width: 100%;
 }
 
 .quickstart-step-number {
