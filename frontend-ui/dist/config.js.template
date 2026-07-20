@@ -1,6 +1,0 @@
-// Runtime configuration injected by nginx at container startup
-// This file is generated from environment variables
-window.__ENV__ = {
-  apiUrl: '${VITE_API_URL}',
-  livekitUrl: '${VITE_LIVEKIT_URL}'
-};

@@ -2,74 +2,64 @@ import React, { useEffect, useState, useRef } from 'react';
 import styles from './Affiliations.module.css';
 import { AnimatedSection } from './AnimatedSection';
 
-// Import university logos
-import hsgLogo from '@site/assets/universities/HSG_Logo_DE_RGB.svg.png';
-import uzhLogo from '@site/assets/universities/uzh-logo-white.png';
-import ethLogo from '@site/assets/universities/ETH_Zürich_Logo_white.png';
-import tumLogo from '@site/assets/universities/tum-logo-white.webp';
-import yaleLogo from '@site/assets/universities/yale-white@2x.png';
-
 const affiliations = [
   {
     name: 'University of St. Gallen',
     abbr: 'HSG',
-    logo: hsgLogo,
-    invert: true,
     url: 'https://www.unisg.ch',
-    height: 38, // Visual balance adjustment
   },
   {
     name: 'University of Zurich',
     abbr: 'UZH',
-    logo: uzhLogo,
-    invert: false,
     url: 'https://www.uzh.ch',
-    height: 50,
   },
   {
     name: 'ETH Zurich',
     abbr: 'ETH',
-    logo: ethLogo,
-    invert: false,
     url: 'https://ethz.ch',
-    height: 32,
   },
   {
     name: 'TU Munich',
     abbr: 'TUM',
-    logo: tumLogo,
-    invert: false,
     url: 'https://www.tum.de',
-    height: 39,
   },
   {
     name: 'Yale University',
     abbr: 'Yale',
-    logo: yaleLogo,
-    invert: false,
     url: 'https://www.yale.edu',
-    height: 72,
   },
 ];
 
 const Affiliations = () => {
-  const [isMobile, setIsMobile] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Switch to the infinite carousel whenever the names don't fit on one row.
+  const [useCarousel, setUseCarousel] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
+    const check = () => {
+      const container = containerRef.current;
+      const measure = measureRef.current;
+      if (!container || !measure) return;
+      // The hidden measurer lays out every name in a single non-wrapping row at
+      // its natural size; if that's wider than the container, we can't fit them.
+      setUseCarousel(measure.scrollWidth > container.clientWidth);
     };
 
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    check();
+    const ro = new ResizeObserver(check);
+    if (containerRef.current) ro.observe(containerRef.current);
+    window.addEventListener('resize', check);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', check);
+    };
   }, []);
 
-  // Double the items for infinite scroll effect
-  const scrollItems = isMobile ? [...affiliations, ...affiliations] : affiliations;
+  // Duplicate the items so the -50% scroll loop is seamless.
+  const scrollItems = [...affiliations, ...affiliations];
 
-  const renderLogo = (affiliation: typeof affiliations[0], index?: number) => (
+  const renderName = (affiliation: typeof affiliations[0], index?: number) => (
     <a
       key={index !== undefined ? `${affiliation.abbr}-${index}` : affiliation.abbr}
       href={affiliation.url}
@@ -78,40 +68,58 @@ const Affiliations = () => {
       className={styles.logoLink}
       title={affiliation.name}
     >
-      <img
-        src={affiliation.logo}
-        alt={affiliation.name}
-        className={`${styles.logo} ${affiliation.invert ? styles.logoInvert : ''}`}
-        style={{ height: `${affiliation.height}px` }}
-      />
+      <span className={styles.name}>{affiliation.name}</span>
     </a>
+  );
+
+  const separator = (key: string) => (
+    <span key={key} className={styles.separator} aria-hidden="true">
+      –
+    </span>
   );
 
   return (
     <section className={styles.section}>
-      <div className={styles.container}>
+      <div className={styles.container} ref={containerRef}>
         <AnimatedSection animation="fade">
           <p className={styles.label}>Developed by researchers from</p>
         </AnimatedSection>
 
-        {isMobile ? (
+        {/* Hidden measurer: natural single-row width of all names + separators */}
+        <div className={styles.measure} ref={measureRef} aria-hidden="true">
+          {affiliations.map((affiliation, index) => (
+            <React.Fragment key={affiliation.abbr}>
+              <span className={styles.logoLink}>
+                <span className={styles.name}>{affiliation.name}</span>
+              </span>
+              {index < affiliations.length - 1 && separator(`m-sep-${index}`)}
+            </React.Fragment>
+          ))}
+        </div>
+
+        {useCarousel ? (
           <AnimatedSection animation="fade-up" delay={100}>
             <div className={styles.carouselWrapper}>
-              <div className={styles.carousel} ref={scrollRef}>
-                {scrollItems.map((affiliation, index) => renderLogo(affiliation, index))}
+              <div className={styles.carousel}>
+                {/* Trailing separator after every item so the loop seam reads "… | A | …" */}
+                {scrollItems.map((affiliation, index) => (
+                  <React.Fragment key={`${affiliation.abbr}-${index}`}>
+                    {renderName(affiliation, index)}
+                    {separator(`c-sep-${index}`)}
+                  </React.Fragment>
+                ))}
               </div>
             </div>
           </AnimatedSection>
         ) : (
           <div className={styles.logoGrid}>
             {affiliations.map((affiliation, index) => (
-              <AnimatedSection
-                key={affiliation.abbr}
-                animation="fade-up"
-                delay={100 + index * 100}
-              >
-                {renderLogo(affiliation)}
-              </AnimatedSection>
+              <React.Fragment key={affiliation.abbr}>
+                <AnimatedSection animation="fade-up" delay={100 + index * 100}>
+                  {renderName(affiliation)}
+                </AnimatedSection>
+                {index < affiliations.length - 1 && separator(`g-sep-${index}`)}
+              </React.Fragment>
             ))}
           </div>
         )}

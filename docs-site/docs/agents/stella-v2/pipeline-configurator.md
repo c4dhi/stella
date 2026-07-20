@@ -27,28 +27,18 @@ Agent behavior depends on many parameters: which experts are enabled, what promp
 
 ## Pipeline Stages
 
-### Input Gate
-
-**Purpose**: Fast JSON routing classifier that determines which experts to activate for each user message.
-
-| Slot | Type | Default | Rationale |
-|------|------|---------|-----------|
-| `system_prompt` | text | Routing rules | Defines which experts map to which topics. Customize to add domain-specific routing. |
-| `model` | select | `gpt-4o-mini` | Small, fast model is sufficient for classification. |
-| `temperature` | number | `0.0` | Zero temperature ensures deterministic routing — the same input always activates the same experts. |
-| `max_tokens` | number | `60` | Capped low because the output is structured JSON (expert list), not prose. Keeps latency ~100ms. |
-
-**When to customize**: Add routing rules for custom experts, or switch to a larger model if classification accuracy is insufficient for complex domains.
+:::note No Input Gate
+Earlier versions began with an **Input Gate** — a JSON routing classifier that picked which experts to run. It was removed in #363. Every enabled expert now runs on every turn and *self-gates* (abstains via a non-flagging verdict), and Arbitration drops the abstentions. There is no routing slot to configure.
+:::
 
 ### Expert Pool
 
-**Purpose**: Runs domain experts in parallel to analyze the user's message from different angles.
+**Purpose**: Runs all enabled experts in parallel to analyze the user's message from different angles. Each expert self-gates — on most turns it "taps out" by returning a non-flagging verdict.
 
 | Slot | Type | Default | Rationale |
 |------|------|---------|-----------|
 | `experts` | expert_list | Built-in set | Enable/disable experts, set per-expert model, temperature, prompt, and priority. |
 | `custom_experts` | expert_list | Empty | Define entirely new experts with custom prompts for domain-specific analysis. |
-| `always_run` | string_list | `["task_extraction"]` | Experts that run on every message. `task_extraction` must always run because it extracts structured data from every user response. |
 
 **When to customize**: Add custom experts for domain-specific analysis (e.g., a "compliance" expert for regulated industries). Reorder expert priority to change which expert "wins" in arbitration conflicts. Wire each expert's verdicts to deterministic responses in the [Expert Module](#expert-module--verdict-responses).
 
@@ -94,7 +84,7 @@ This is the clinical-determinism knob: each expert maps each verdict to an actio
 | `temperature` | number | `0.4` | Low-moderate for slight variation without unpredictability. Bridges should feel natural but not surprising. |
 | `max_tokens` | number | `30` | Very low cap because output is a single short sentence (e.g., "Good question.", "Absolutely.", "I appreciate that."). |
 
-**Why the Bridge Generator exists**: In voice conversations, silence after the user stops speaking feels like the agent is unresponsive. The bridge fills this gap with a natural acknowledgment while the full pipeline (Input Gate → Experts → Arbitration → Response Generator) runs in parallel. This reduces **perceived** latency from ~800ms to ~100ms without affecting actual processing time. The bridge phrase is spoken as a standalone TTS segment, and the full response follows immediately after.
+**Why the Bridge Generator exists**: In voice conversations, silence after the user stops speaking feels like the agent is unresponsive. The bridge fills this gap with a natural acknowledgment while the full pipeline (Expert Pool → Arbitration → Response Generator) runs in parallel. This reduces **perceived** latency from ~800ms to ~100ms without affecting actual processing time. The bridge phrase is spoken as a standalone TTS segment, and the full response follows immediately after.
 
 **When to customize**: Adjust the system prompt to match your agent's personality (e.g., more formal bridges for professional domains, warmer bridges for casual ones).
 

@@ -65,11 +65,11 @@ sudo mv kubectl /usr/local/bin/
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/STELLA_backend.git
-cd STELLA_backend
+git clone https://github.com/YOUR_USERNAME/STELLA.git
+cd STELLA
 
 # Add upstream remote
-git remote add upstream https://github.com/c4dhi/STELLA_backend.git
+git remote add upstream https://github.com/c4dhi/STELLA.git
 
 # Verify remotes
 git remote -v
@@ -79,7 +79,7 @@ git remote -v
 
 ```bash
 # Navigate to root (backend is at root level)
-cd STELLA_backend
+cd STELLA
 
 # Install dependencies
 npm install

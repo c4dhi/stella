@@ -7,9 +7,9 @@
 
 <p align="center">
   <a href="https://github.com/c4dhi/STELLA/stargazers"><img src="https://img.shields.io/github/stars/c4dhi/STELLA?style=flat-square" alt="GitHub Stars"></a>
-  <a href="https://github.com/c4dhi/STELLA/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-TBD-lightgrey?style=flat-square" alt="License"></a>
+  <a href="https://github.com/c4dhi/STELLA/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a855f7?style=flat-square" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/version-0.3.0-blue?style=flat-square" alt="Version 0.3.0">
-  <a href="https://c4dhi.github.io/STELLA_Documentation/"><img src="https://img.shields.io/badge/docs-live-green?style=flat-square" alt="Documentation"></a>
+  <a href="https://c4dhi.github.io/STELLA/"><img src="https://img.shields.io/badge/docs-live-green?style=flat-square" alt="Documentation"></a>
   <a href="https://github.com/c4dhi/STELLA/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
 </p>
 
@@ -30,26 +30,36 @@ You bring the agent logic. STELLA handles the audio/video streaming, orchestrati
 - 🎙️ Voice & text conversations via WebRTC (LiveKit)
 - ☸️ On-demand Kubernetes agent orchestration
 - 🐍 Python Agent SDK with built-in STT/TTS pipeline
-- 🤖 Multi-agent support (stella-v2-agent, stella-light-agent, custom agents)
+- 🤖 Multi-agent support (stella-v2, stella-light-agent, and custom agents)
+- 🛡️ Expert Pool for safe handling of sensitive, high-stakes conversations
 - 📋 Plan-driven conversation flows with state machine
 - 🔐 Project & session management with role-based access
 - 💬 Real-time transcript & event timeline
 - 📊 Admin dashboard with live metrics
 - 🚀 One-command deployment (`./scripts/start-k8s.sh`)
 
+## ✅ Requirements
+
+To run STELLA you need three things:
+
+- **Docker** — [OrbStack](https://orbstack.dev) (recommended) or [Docker Desktop](https://docker.com/products/docker-desktop) on macOS, Docker Engine on Linux, or Docker via WSL2 on Windows
+- **An OpenAI API key** — OpenAI is the default LLM provider (and powers the STT/TTS pipeline). Support for local models via [Ollama](https://ollama.com) and additional providers is on the way
+- **A LiveKit server** — [LiveKit Cloud](https://livekit.io/cloud) (easiest) or [self-hosted](https://docs.livekit.io/home/self-hosting/local/), for real-time voice/video
+
+That's it. Kubernetes (OrbStack's built-in cluster or auto-installed K3s), `kubectl`, and PostgreSQL are provisioned automatically by the startup script — you don't install them yourself.
+
 ## 🚀 Quick Start
 
-Three commands. That's it.
+Two commands. That's it.
 
 ```bash
 git clone https://github.com/c4dhi/STELLA.git && cd STELLA
-cp .env.example .env   # Add your LiveKit + OpenAI keys
-./scripts/start-k8s.sh
+./scripts/start-k8s.sh   # First run launches the setup wizard — no manual .env needed
 ```
 
 **Frontend** at `http://localhost:5173` · **API** at `http://localhost:3000`
 
-> New here? The [Getting Started](https://c4dhi.github.io/STELLA_Documentation/docs/getting-started/prerequisites) guide walks you through everything — prerequisites, LiveKit setup, and deploying your first agent.
+> New here? The [Getting Started](https://c4dhi.github.io/STELLA/docs/getting-started/prerequisites) guide walks you through everything — prerequisites, LiveKit setup, and deploying your first agent.
 
 ## 🏗️ Architecture
 
@@ -65,16 +75,16 @@ Everything runs inside a single **Kubernetes cluster** (OrbStack on macOS, K3s o
 
 ## 📖 Documentation
 
-Full docs live at **[c4dhi.github.io/STELLA_Documentation](https://c4dhi.github.io/STELLA_Documentation/)**.
+Full docs live at **[c4dhi.github.io/STELLA](https://c4dhi.github.io/STELLA/)**.
 
 | | Section | What you'll find |
 |---|---------|-----------------|
-| 🚀 | [Getting Started](https://c4dhi.github.io/STELLA_Documentation/docs/getting-started/prerequisites) | Prerequisites, installation, first agent |
-| 🏗️ | [Architecture](https://c4dhi.github.io/STELLA_Documentation/docs/architecture/overview) | System design and component deep-dive |
-| 🤖 | [Building Agents](https://c4dhi.github.io/STELLA_Documentation/docs/building-agents/agent-overview) | Create your own conversational agents |
-| 📦 | [Agent SDK Reference](https://c4dhi.github.io/STELLA_Documentation/docs/agent-sdk/overview) | Python SDK API reference |
-| 🚢 | [Deployment](https://c4dhi.github.io/STELLA_Documentation/docs/deployment/overview) | Production deployment guide |
-| 🤝 | [Contributing](https://c4dhi.github.io/STELLA_Documentation/docs/contributing) | How to get involved |
+| 🚀 | [Getting Started](https://c4dhi.github.io/STELLA/docs/getting-started/prerequisites) | Prerequisites, installation, first agent |
+| 🏗️ | [Architecture](https://c4dhi.github.io/STELLA/docs/architecture/overview) | System design and component deep-dive |
+| 🤖 | [Building Agents](https://c4dhi.github.io/STELLA/docs/building-agents/agent-overview) | Create your own conversational agents |
+| 📦 | [Agent SDK Reference](https://c4dhi.github.io/STELLA/docs/agent-sdk/overview) | Python SDK API reference |
+| 🚢 | [Deployment](https://c4dhi.github.io/STELLA/docs/deployment/overview) | Production deployment guide |
+| 🤝 | [Contributing](https://c4dhi.github.io/STELLA/docs/contributing) | How to get involved |
 
 ## 🤝 Contributing
 
@@ -83,4 +93,18 @@ We'd love your help! Whether it's bug reports, feature ideas, docs improvements,
 ## 💬 Community & Support
 
 - [GitHub Issues](https://github.com/c4dhi/STELLA/issues) — Bug reports and feature requests
-- [Documentation](https://c4dhi.github.io/STELLA_Documentation/) — Guides, tutorials, and API reference
+- [Documentation](https://c4dhi.github.io/STELLA/) — Guides, tutorials, and API reference
+
+## 📚 Citation
+
+If you use STELLA in your research, please cite it. GitHub's "Cite this
+repository" button (backed by [`CITATION.cff`](CITATION.cff)) generates APA and
+BibTeX entries. A permanent, versioned DOI will be minted via Zenodo with the
+first tagged release — see [`RELEASING.md`](RELEASING.md).
+
+## 📄 License
+
+STELLA is released under the [MIT License](LICENSE) — © Universität St. Gallen
+(HSG) & University of Zurich (UZH). It runs on your own hardware and is free to
+use, modify, and redistribute. See [`NOTICE.md`](NOTICE.md) for third-party
+component attributions.

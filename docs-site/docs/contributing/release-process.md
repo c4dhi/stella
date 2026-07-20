@@ -192,7 +192,7 @@ After merge:
 
 Documentation is deployed automatically:
 
-- **main branch** → https://c4dhi.github.io/STELLA_backend/
+- **main branch** → https://c4dhi.github.io/STELLA/
 - **Pull requests** → Preview builds (if configured)
 
 ## Changelog Format

@@ -6,35 +6,35 @@ import { AnimatedSection } from './AnimatedSection';
 const steps = [
   {
     number: 1,
-    title: 'Clone & Config',
-    description: 'Clone the repository and set up your environment',
+    title: 'Get STELLA',
+    description: 'Clone the repository onto your own computer or server',
     lines: [1, 2],
   },
   {
     number: 2,
-    title: 'Add Credentials',
-    description: 'Configure your API keys and settings',
-    lines: [4, 5, 6, 7],
+    title: 'Run One Command',
+    description: 'The setup wizard runs on first launch—no technical background needed',
+    lines: [4, 5, 6],
   },
   {
     number: 3,
-    title: 'Deploy',
-    description: 'Launch your voice AI agent',
-    lines: [9, 10],
+    title: 'Configure Anytime',
+    description: 'Keys, environments and backups are all handled through our scripts',
+    lines: [8, 9, 10],
   },
 ];
 
 const terminalLines = [
-  { line: 1, text: 'git clone https://github.com/c4dhi/STELLA_backend.git', type: 'command' },
-  { line: 2, text: 'cd STELLA_backend', type: 'command' },
+  { line: 1, text: 'git clone https://github.com/c4dhi/STELLA.git', type: 'command' },
+  { line: 2, text: 'cd STELLA', type: 'command' },
   { line: 3, text: '', type: 'empty' },
-  { line: 4, text: '# Configure environment', type: 'comment' },
-  { line: 5, text: 'cp .env.example .env', type: 'command' },
-  { line: 6, text: 'export OPENAI_API_KEY="sk-..."', type: 'command' },
-  { line: 7, text: 'export LIVEKIT_API_KEY="..."', type: 'command' },
-  { line: 8, text: '', type: 'empty' },
-  { line: 9, text: './scripts/start.sh', type: 'command' },
-  { line: 10, text: '✓ STELLA is running at http://localhost:3000', type: 'success' },
+  { line: 4, text: '# First launch runs the setup wizard', type: 'comment' },
+  { line: 5, text: './scripts/start-k8s.sh', type: 'command' },
+  { line: 6, text: '✓ STELLA is running at http://localhost:3000', type: 'success' },
+  { line: 7, text: '', type: 'empty' },
+  { line: 8, text: "# Reconfigure anytime — it's all scripted", type: 'comment' },
+  { line: 9, text: './scripts/start-k8s.sh --setup', type: 'command' },
+  { line: 10, text: './scripts/start-k8s.sh --config', type: 'command' },
 ];
 
 const QuickStart = () => {
@@ -51,8 +51,11 @@ const QuickStart = () => {
       <div className="section-container">
         <AnimatedSection animation="fade-up">
           <div className="section-header">
+            <div className="landing-eyebrow">
+              Install / <span className="landing-eyebrow-path">one command</span>
+            </div>
             <h2 className="section-title">Quick Start</h2>
-            <p className="section-subtitle">Get up and running in minutes</p>
+            <p className="section-subtitle">Run it on your own hardware—no technical background, just one command</p>
           </div>
         </AnimatedSection>
 
@@ -60,24 +63,26 @@ const QuickStart = () => {
           {/* Steps */}
           <AnimatedSection animation="fade-right" delay={100}>
             <div className="quickstart-steps">
-              {steps.map((step) => (
-                <div
-                  key={step.number}
-                  className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
-                  onMouseEnter={() => setActiveStep(step.number)}
-                  onMouseLeave={() => setActiveStep(null)}
-                >
-                  <div className="quickstart-step-inner">
-                    <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
-                      {step.number}
-                    </div>
-                    <div>
-                      <h3 className="quickstart-step-title">{step.title}</h3>
-                      <p className="quickstart-step-desc">{step.description}</p>
+              <div className="quickstart-step-list">
+                {steps.map((step) => (
+                  <div
+                    key={step.number}
+                    className={`quickstart-step ${activeStep === step.number ? 'quickstart-step--active' : ''}`}
+                    onMouseEnter={() => setActiveStep(step.number)}
+                    onMouseLeave={() => setActiveStep(null)}
+                  >
+                    <div className="quickstart-step-inner">
+                      <div className={`quickstart-step-number ${activeStep === step.number ? 'quickstart-step-number--active' : ''}`}>
+                        {step.number}
+                      </div>
+                      <div>
+                        <h3 className="quickstart-step-title">{step.title}</h3>
+                        <p className="quickstart-step-desc">{step.description}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
 
               {/* Read Full Guide Link */}
               <Link to="/docs/guides/getting-started" className="quickstart-link">

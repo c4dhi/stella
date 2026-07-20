@@ -1,6 +1,6 @@
 # Agent Failure Collection
 
-We maintain a dedicated folder at [`docs/agent-failures/`](../../../docs/agent-failures) where we systematically collect agent failures and edge cases as we encounter them. These entries serve as regression test cases and feed into agent documentation.
+We maintain a dedicated folder at [`docs/agent-failures/`](https://github.com/c4dhi/STELLA/tree/main/docs/agent-failures) where we systematically collect agent failures and edge cases as we encounter them. These entries serve as regression test cases and feed into agent documentation.
 
 ## Purpose
 

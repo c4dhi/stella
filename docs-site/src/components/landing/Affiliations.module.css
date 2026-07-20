@@ -18,25 +18,28 @@
   margin-bottom: 3rem;
 }
 
+/* Hidden measurer: lays out every name in one non-wrapping row so we can
+   detect whether the grid would overflow and switch to the carousel. Mirrors
+   the grid's responsive gaps so the measurement matches the real layout. */
+.measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 1.75rem;
+}
+
 /* Desktop: Static grid */
 .logoGrid {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 4rem;
-}
-
-@media (min-width: 1024px) {
-  .logoGrid {
-    gap: 5rem;
-  }
-}
-
-@media (min-width: 1280px) {
-  .logoGrid {
-    gap: 6rem;
-  }
+  gap: 1.75rem;
 }
 
 /* Link wrapper for logos */
@@ -49,22 +52,31 @@
   padding: 0.5rem;
 }
 
-.logo {
-  width: auto;
-  max-width: 200px;
-  object-fit: contain;
-  opacity: 0.5;
-  transition: opacity 0.3s ease;
-  filter: grayscale(100%);
+/* Institution names rendered as text (logos are not licensed for use) */
+.name {
+  font-size: 1.6rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  color: #a1a1aa;
+  opacity: 0.7;
+  transition: color 0.3s ease, opacity 0.3s ease;
 }
 
-.logo:hover {
-  opacity: 0.85;
+.logoLink:hover .name {
+  color: #fafafa;
+  opacity: 1;
 }
 
-/* For logos with dark/black colors that need to be inverted to white */
-.logoInvert {
-  filter: grayscale(100%) invert(1);
+/* Divider between names */
+.separator {
+  display: flex;
+  align-items: center;
+  font-size: 1.6rem;
+  font-weight: 300;
+  color: #3f3f46;
+  user-select: none;
+  flex-shrink: 0;
 }
 
 /* Mobile: Infinite carousel */
@@ -90,17 +102,13 @@
 .carousel {
   display: flex;
   align-items: center;
-  gap: 3rem;
+  gap: 1.75rem;
   width: max-content;
   animation: scroll 25s linear infinite;
 }
 
 .carousel .logoLink {
-  padding: 0 1rem;
-}
-
-.carousel .logo {
-  max-width: 150px;
+  padding: 0 0.25rem;
 }
 
 @keyframes scroll {

@@ -5,7 +5,7 @@ title: "Overview"
 
 # stella-v2
 
-A streamlined 5-stage voice AI pipeline with deterministic arbitration, parallel expert execution, and a configurable pipeline architecture.
+A streamlined voice AI pipeline with deterministic arbitration, parallel expert execution that self-gates, and a configurable pipeline architecture.
 
 ## Why V2?
 
@@ -21,24 +21,26 @@ V2 also adds a **Bridge Generator** that produces an ultra-short spoken phrase (
 ## Pipeline Architecture
 
 ```
-                                    ┌───────────────────┐
-                                    │  Bridge Generator  │
-                                    │  (~100ms, 6 words) │
-                                    └─────────┬─────────┘
-                                              │ bridge phrase (non-blocking)
-                                              ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────────┐
-│  Input Gate  │───►│  Expert Pool │───►│  Arbitration  │───►│Response Generator │
-│  (~100ms)    │    │  (~200ms)    │    │  (~1ms)       │    │  (~500ms)         │
-│              │    │              │    │               │    │                   │
-│ JSON routing │    │ Parallel     │    │ Priority-based│    │ Streaming final   │
-│ classifier   │    │ execution    │    │ resolution    │    │ answer            │
-└──────────────┘    └──────────────┘    └───────────────┘    └───────────────────┘
-   expert names[]      ExpertVerdict[]     ResponseDirective
+                                  ┌────────────────────┐
+                                  │  Bridge Generator  │
+                                  │  (~100ms, 6 words) │
+                                  └─────────┬──────────┘
+                                            │ bridge phrase (non-blocking)
+                                            ▼
+                 ┌──────────────┐    ┌───────────────┐    ┌───────────────────┐
+                 │  Expert Pool │───►│  Arbitration  │───►│Response Generator │
+                 │  (~200ms)    │    │  (~1ms)       │    │  (~500ms)         │
+                 │              │    │               │    │                   │
+                 │ Parallel     │    │ Priority-based│    │ Streaming final   │
+                 │ experts,     │    │ resolution,   │    │ answer            │
+                 │ self-gating  │    │ drops abstain │    │                   │
+                 └──────────────┘    └───────────────┘    └───────────────────┘
+                    ExpertVerdict[]     ResponseDirective
 ```
 
+There is **no Input Gate / routing classifier**. Every enabled expert runs on every turn and *self-gates* — most turns it "taps out" by returning a non-flagging verdict — and Arbitration is the sole gate, dropping those abstentions (the centralized router was removed in #363). Garbled input is handled by the `noise_detection` expert's `unclear` → short-circuit verdict rather than a gate-failure path.
+
 **Data flow:**
-- **Input Gate → Expert Pool**: List of expert names to activate (e.g., `["medical", "probing"]`)
 - **Expert Pool → Arbitration**: Structured `ExpertVerdict[]` with findings, confidence, and recommendations
 - **Arbitration → Response Generator**: A single `ResponseDirective` containing the winning verdict, tone, and context
 - **Bridge Generator → Response Generator**: A short bridge phrase spoken via TTS while the main pipeline runs; non-blocking
@@ -54,7 +56,7 @@ V1's Aggregator uses an LLM to combine multiple expert findings into one respons
 
 ### Parallel Expert Execution with Background Experts
 
-All selected experts run via `asyncio.gather()` in parallel. Some experts (like `task_extraction`) are marked as **background experts** — their results are collected after the response is already being generated, so they don't add to response latency. This is useful for side-effect experts that extract structured data without influencing the spoken response.
+All enabled experts run via `asyncio.gather()` in parallel — there is no routing step selecting a subset; each expert self-gates. Some experts (like `task_extraction`) are marked as **background experts** — their results are collected after the response is already being generated, so they don't add to response latency. This is useful for side-effect experts that extract structured data without influencing the spoken response.
 
 ### Sparse Configuration Overrides
 
