@@ -33,53 +33,33 @@ You can [sign up for a free LiveKit Cloud account](https://cloud.livekit.io) to 
 Clone the STELLA repository and navigate to the project directory.
 
 ```bash title="terminal"
-git clone https://github.com/c4dhi/STELLA.git
-cd STELLA
+git clone https://github.com/c4dhi/stella.git
+cd stella
 ```
 
 </Step>
 
-<Step number={2} title="Configure environment variables">
+<Step number={2} title="Start the services">
 
-Copy the example environment file and add your credentials.
-
-```bash title="terminal"
-cp .env.example .env
-```
-
-Edit the `.env` file with your essential configuration:
-
-```bash title=".env"
-# LiveKit (required)
-LIVEKIT_URL=wss://your-app.livekit.cloud
-LIVEKIT_API_KEY=your-api-key
-LIVEKIT_API_SECRET=your-api-secret
-
-# AI (required)
-OPENAI_API_KEY=sk-your-openai-key
-```
-
-<EnvVarReference description="See all available configuration options including database, security, and provider settings." />
-
-</Step>
-
-<Step number={3} title="Start the services">
-
-Deploy the entire STELLA stack with a single command.
+Deploy the entire STELLA stack with a single command:
 
 ```bash title="terminal"
 ./scripts/start-k8s.sh
 ```
 
-This script will:
-- Build all Docker images
-- Create the Kubernetes namespace
-- Deploy PostgreSQL, backend, and frontend services
-- Set up port forwarding for local access
+On first launch a **setup wizard runs automatically** — no manual `.env` editing needed. It prompts you for the required credentials (your LiveKit URL, API key, and secret, plus your OpenAI API key) and auto-generates the remaining secrets. You can re-run it anytime with `./scripts/start-k8s.sh --setup`, or open the full configuration with `./scripts/start-k8s.sh --config`.
+
+The script then:
+- Builds all Docker images
+- Creates the Kubernetes namespace
+- Deploys PostgreSQL, backend, and frontend services
+- Sets up port forwarding for local access
+
+<EnvVarReference description="Prefer to configure things yourself? See all available options including database, security, and provider settings." />
 
 </Step>
 
-<Step number={4} title="Verify the deployment" isLast>
+<Step number={3} title="Verify the deployment" isLast>
 
 Check that all services are running:
 
