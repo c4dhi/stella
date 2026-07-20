@@ -5031,10 +5031,12 @@ tr:nth-child(even) td {
 
 /* Title */
 .cta-title {
-  font-size: clamp(2rem, 7vw, 4rem);
+  /* Match the hero title's scale and rhythm so the closing CTA feels part of
+     the same design instead of oversized. */
+  font-size: clamp(1.875rem, 3vw, 2.5rem);
   font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
   color: #fafafa;
   margin-bottom: 1.5rem;
 }
@@ -5159,10 +5161,12 @@ tr:nth-child(even) td {
 }
 
 .features-title {
-  font-size: clamp(2rem, 5vw, 2.75rem);
+  /* Unified landing header scale — matches the hero title so every section
+     heading shares one consistent format. */
+  font-size: clamp(1.875rem, 3vw, 2.5rem);
   font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.025em;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
   color: #fafafa;
   margin-bottom: 1rem;
 }
@@ -5330,10 +5334,12 @@ tr:nth-child(even) td {
 }
 
 .section-title {
-  font-size: clamp(2rem, 5vw, 2.75rem);
+  /* Unified landing header scale — matches the hero title so every section
+     heading shares one consistent format. */
+  font-size: clamp(1.875rem, 3vw, 2.5rem);
   font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.025em;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
   color: #fafafa;
   margin-bottom: 1rem;
 }
