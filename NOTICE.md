@@ -11,6 +11,21 @@ inherit.
 - Upstream: https://github.com/rsms/inter
 - License text: `frontend-ui/public/fonts/inter/OFL.txt`
 
+## Bundled default voice clips
+
+The default reference voice clips shipped in `tts-service/assets/` are
+**synthetically generated** — no human voice or likeness is involved, so there
+are no personality/publicity rights attached. They may be freely redistributed
+under the generating models' permissive licenses.
+
+### German — `voices/stella_de.mp3` and `ref_audio.mp3`
+- Generated with **Chatterbox** (Resemble AI), License: **MIT**
+- Upstream: https://github.com/resemble-ai/chatterbox
+
+### English — `voices/stella_en.mp3`
+- Generated with **Kokoro** (`hexgrad/Kokoro-82M`), License: **Apache-2.0**
+- Upstream: https://huggingface.co/hexgrad/Kokoro-82M
+
 ## Downloaded at build time
 
 ### Silero VAD (stt-service)

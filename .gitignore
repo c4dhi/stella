@@ -65,6 +65,9 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 
+# Personal / local-only voice clips (kept out of the public repo)
+tts-service/assets/voices/personal/
+
 # temp directory
 .temp
 .tmp
