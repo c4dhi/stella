@@ -1411,6 +1411,20 @@ tr:nth-child(even) td {
   background: var(--ifm-background-surface-color);
 }
 
+/* On narrow screens, let wide tables scroll horizontally inside their own
+   box instead of forcing the whole page to scroll sideways. */
+@media (max-width: 768px) {
+  .theme-doc-markdown table,
+  .markdown table,
+  table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* ================================================================
    Admonitions
    ================================================================ */

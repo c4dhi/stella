@@ -3,6 +3,11 @@
   background: #0a090c;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  /* position:relative makes this the containing block for the absolutely
+     positioned .measure below, so the overflow:hidden here actually clips its
+     natural (wider-than-viewport) single-row width instead of letting it push
+     the whole page sideways. */
+  position: relative;
   overflow: hidden;
 }
 
@@ -31,6 +36,11 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 1.75rem;
+  /* Never let the measurer's natural width extend the page: cap its box to the
+     container and clip the overflow. scrollWidth still reports the true
+     single-row width, which is all the fit check needs. */
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* Desktop: Static grid */
