@@ -1,4 +1,4 @@
-import { ArrowRight, Github, Mic } from 'lucide-react';
+import { ArrowRight, Github } from 'lucide-react';
 import Link from '@docusaurus/Link';
 import { Button } from '../ui/button';
 import { AnimatedSection } from './AnimatedSection';
@@ -104,25 +104,6 @@ const Hero = () => {
                 <div className="hero-browser-content">
                   <div className="hero-sphere-container">
                     <HeroSphereDemo />
-                  </div>
-                </div>
-                {/* Hover Overlay */}
-                <div className="hero-browser-overlay">
-                  <div className="hero-browser-overlay-border" />
-                  <div className="hero-browser-overlay-content">
-                    <div className="hero-browser-overlay-icon">
-                      <Mic />
-                    </div>
-                    <h3 className="hero-browser-overlay-title">Try the Demo</h3>
-                    <p className="hero-browser-overlay-text">
-                      Experience a STELLA voice conversation firsthand.
-                    </p>
-                    <button className="hero-browser-overlay-btn" disabled>
-                      Currently Unavailable
-                    </button>
-                    <p className="hero-browser-overlay-disclaimer">
-                      Clicking will redirect you to an external demo session.
-                    </p>
                   </div>
                 </div>
               </div>
